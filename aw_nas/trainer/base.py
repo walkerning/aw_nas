@@ -89,6 +89,8 @@ class BaseTrainer(Component):
                              self.epoch, self._save_path())
 
     def _save_path(self, name=""):
+        if self.train_dir is None:
+            return None
         dir_ = utils.makedir(os.path.join(self.train_dir, str(self.epoch)))
         return os.path.join(dir_, name)
 
@@ -105,7 +107,7 @@ class BaseTrainer(Component):
             self.weights_manager.load(wm_path)
             self.load(trainer_path)
         self.save_every = save_every
-        self.train_dir = utils.makedir(train_dir)
+        self.train_dir = utils.makedir(train_dir) if train_dir is not None else train_dir
         self.is_setup = True
 
     def prepare_data_queues(self, splits, queue_cfg_lst):

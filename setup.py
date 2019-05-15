@@ -2,7 +2,7 @@
 import os
 from setuptools import setup, find_packages
 
-here = os.path.dirname(os.path.abspath((__file__)))
+HERE = os.path.dirname(os.path.abspath((__file__)))
 
 # meta infos
 NAME = "aw_nas"
@@ -21,16 +21,20 @@ PACKAGES = find_packages(exclude=["tests.*", "tests"])
 
 # dependencies
 INSTALL_REQUIRES = [
-    "six",      # 2-3 compatability
-    "PyYaml",   # config file parsing
-    "click",    # command line interface
-    "graphviz"  # visualize architecture dag
+    "torch>=1.0.0", # torch
+    "torchvision",  # torch
+    "numpy",        # math lib
+    "scipy",        # math lib
+    "six",          # 2-3 compatability
+    "PyYaml",       # config file parsing
+    "click",        # command line interface
+    "graphviz"      # visualize architecture dag
 ]
 
 TESTS_REQUIRE = []
 
 def read_long_description(filename):
-    path = os.path.join(here, filename)
+    path = os.path.join(HERE, filename)
     if os.path.exists(path):
         return open(path).read()
     return ""

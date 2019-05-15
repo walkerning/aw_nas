@@ -56,7 +56,6 @@ class CandidateNet(nn.Module):
         """
         Get the device of the candidate net.
         """
-        pass
 
     def train_queue(self, queue, optimizer, criterion=nn.CrossEntropyLoss(), steps=1):
         for _ in range(steps):

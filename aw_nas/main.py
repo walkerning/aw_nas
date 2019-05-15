@@ -3,13 +3,16 @@
 The main entrypoint of aw_nas.
 """
 
+import os
+import sys
 import random
-import yaml
-import click
+import shutil
 
+import click
 import numpy as np
 import torch
 from torch.backends import cudnn
+import yaml
 
 from aw_nas import utils
 from aw_nas.utils import RegistryMeta
@@ -56,18 +59,36 @@ def main():
 @click.option("--train-dir", default=None, type=str,
               help="the directory to save checkpoints")
 def search(gpu, seed, cfg_file, load, save_every, train_dir):
+    if train_dir:
+        # backup config file
+        train_dir = utils.makedir(train_dir)
+        shutil.copyfile(cfg_file, os.path.join(train_dir, "config.yaml"))
+
+        # add log file handler
+        log_file = os.path.join(train_dir, "search.log")
+        _logger.addFile(log_file)
+
+    LOGGER.info("CWD: %s", os.getcwd())
+    LOGGER.info("CMD: %s", " ".join(sys.argv))
+
+    # set gpu
     _set_gpu(gpu)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     # set seed
     if seed is not None:
+        LOGGER.info("Setting random seed: %d.", seed)
         np.random.seed(seed)
         random.seed(seed)
         torch.manual_seed(seed)
 
+    # load components config
+    LOGGER.info("Loading configuration files.")
     with open(cfg_file, "r") as f:
-        cfg = yaml.load(f)
+        cfg = yaml.safe_load(f)
 
     # initialize components
+    LOGGER.info("Initializing components.")
     search_space = _init_component(cfg, "search_space")
     weights_manager = _init_component(cfg, "weights_manager",
                                       search_space=search_space, device=device)
@@ -76,6 +97,7 @@ def search(gpu, seed, cfg_file, load, save_every, train_dir):
     whole_dataset = _init_component(cfg, "dataset")
 
     # initialize, setup, run trainer
+    LOGGER.info("Initializing trainer and starting the search.")
     trainer = _init_component(cfg, "trainer", weights_manager=weights_manager,
                               controller=controller, dataset=whole_dataset)
     trainer.setup(load, save_every, train_dir)

@@ -44,12 +44,17 @@ class SubCandidateNet(CandidateNet):
         """
 
         w_clone = {k: v.clone() for k, v in self.named_parameters()}
+        buffer_clone = {k: v.clone() for k, v in self.named_buffers()}
 
         yield
 
         for n, v in self.named_parameters():
             v.data.copy_(w_clone[n])
         del w_clone
+
+        for n, v in self.named_buffers():
+            v.data.copy_(buffer_clone[n])
+        del buffer_clone
 
     def get_device(self):
         return self._device
@@ -60,7 +65,7 @@ class SubCandidateNet(CandidateNet):
     def plot_arch(self):
         return self.super_net.search_space.plot_arch(self.genotypes)
 
-    def named_parameters(self, prefix="", recurse=True):
+    def named_parameters(self, prefix="", recurse=True): #pylint: disable=arguments-differ
         """
         Get the generator of name-parameter pairs active
         in this candidate network. Always recursive.
@@ -352,6 +357,11 @@ if __name__ == "__main__":
         c_names = set(c_params.keys())
         assert len(s_names.intersection(c_names)) == len(c_names)
 
+        c_buffers = dict(cand_net.named_buffers())
+        s_b_names = set(dict(net.named_buffers()).keys())
+        c_b_names = set(c_buffers.keys())
+        assert len(s_b_names.intersection(c_b_names)) == len(c_b_names)
+
         # test forward
         data = (torch.tensor(np.random.rand(1, 3, 28, 28)).float(), torch.tensor([0]).long()) #pylint: disable=not-callable
 
@@ -362,6 +372,7 @@ if __name__ == "__main__":
 
         # test `gradient`, `begin_virtual`
         w_prev = {k: v.clone() for k, v in six.iteritems(c_params)}
+        buffer_prev = {k: v.clone() for k, v in six.iteritems(c_buffers)}
         with cand_net.begin_virtual():
             grads = cand_net.gradient(data)
             assert len(grads) == len(c_names)
@@ -375,7 +386,13 @@ if __name__ == "__main__":
             optimizer.step()
             for n, grad in grads:
                 assert (w_prev[n] - (grad + grads_2[n]) * LR - c_params[n]).abs().sum().item() < EPS
+            for n in buffer_prev:
+                # a simple check, make sure buffer is at least updated
+                assert (buffer_prev[n] - c_buffers[n]).abs().sum().item() > EPS
 
         for n in c_params:
             assert (w_prev[n] - c_params[n]).abs().sum().item() < EPS
+        for n in c_buffers:
+            assert (buffer_prev[n] - c_buffers[n]).abs().sum().item() < EPS
+        buffer_prev = {k: v.clone() for k, v in six.iteritems(c_buffers)}
 #pylint: enable=invalid-name,ungrouped-imports

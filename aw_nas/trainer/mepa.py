@@ -240,7 +240,8 @@ class MepaTrainer(BaseTrainer):
         mean_acc = np.mean(accs)
         mean_loss = np.mean(losses)
         save_path = self._save_path("arch")
-        rollouts[idx].plot_arch(save_path, label=str(self.epoch))
+        if save_path is not None:
+            rollouts[idx].plot_arch(save_path, label=str(self.epoch))
 
         self.logger.info("TEST Epoch %3d: Among %d sampled archs: "
                          "BEST (in acc): accuracy %.1f %% (mean: %.1f %%); "
