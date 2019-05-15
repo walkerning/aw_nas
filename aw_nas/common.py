@@ -4,11 +4,10 @@ Definitions that will be used by multiple components
 
 import abc
 import collections
-import six
 
 import numpy as np
 
-from aw_nas.utils import RegistryMeta
+from aw_nas import Component
 
 
 class Rollout(object):
@@ -55,9 +54,11 @@ class SearchSpaceException(Exception):
     pass
 
 
-@six.add_metaclass(RegistryMeta)
-class SearchSpace(object):
+class SearchSpace(Component):
     REGISTRY = "search_space"
+
+    def __init__(self):
+        super(SearchSpace, self).__init__(schedule_cfg=None)
 
     @abc.abstractmethod
     def random_sample(self):
@@ -137,6 +138,9 @@ class CNNSearchSpace(SearchSpace):
                      "sep_conv_5x5",
                      "dil_conv_3x3",
                      "dil_conv_5x5")):
+
+        super(CNNSearchSpace, self).__init__()
+
         ## inner-cell
         # number of nodes in every cell
         self.num_steps = num_steps

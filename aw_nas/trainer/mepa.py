@@ -67,10 +67,10 @@ class MepaTrainer(BaseTrainer):
                  surrogate_scheduler=None,
                  controller_scheduler=None,
                  mepa_scheduler=None,
-                 mepa_surrogate_steps=3, mepa_samples=8,
-                 controller_steps=2000, controller_surrogate_steps=3, controller_samples=8,
+                 mepa_surrogate_steps=313, mepa_samples=1,
+                 controller_steps=2000, controller_surrogate_steps=1, controller_samples=4,
                  data_portion=(0.2, 0.4, 0.4), derive_queue="controller",
-                 derive_surrogate_steps=3, derive_samples=8,
+                 derive_surrogate_steps=1, derive_samples=8,
                  schedule_cfg=None):
         super(MepaTrainer, self).__init__(controller, weights_manager, dataset, schedule_cfg)
 
@@ -141,12 +141,21 @@ class MepaTrainer(BaseTrainer):
                 rollouts = self.get_new_candidates(self.mepa_samples)
                 for i_sample in range(self.mepa_samples):
                     candidate_net = rollouts[i_sample].candidate_net
-                    _surrogate_optimizer = self.get_surrogate_optimizer()
-                    with candidate_net.begin_virtual(): # surrogate train steps
-                        candidate_net.train_queue(self.surrogate_queue,
-                                                  optimizer=_surrogate_optimizer,
-                                                  criterion=self._criterion,
-                                                  steps=self.mepa_surrogate_steps)
+                    if self.mepa_surrogate_steps:
+                        _surrogate_optimizer = self.get_surrogate_optimizer()
+                        with candidate_net.begin_virtual(): # surrogate train steps
+                            candidate_net.train_queue(self.surrogate_queue,
+                                                      optimizer=_surrogate_optimizer,
+                                                      criterion=self._criterion,
+                                                      steps=self.mepa_surrogate_steps)
+                            # gradients: List(Tuple(parameter name, gradient))
+                            gradients, (loss, acc) = candidate_net.gradient(
+                                mepa_data,
+                                criterion=self._criterion,
+                                eval_criterions=[_ce_loss_mean,
+                                                 _top1_acc]
+                            )
+                    else: # ENAS
                         # gradients: List(Tuple(parameter name, gradient))
                         gradients, (loss, acc) = candidate_net.gradient(
                             mepa_data,
@@ -183,14 +192,20 @@ class MepaTrainer(BaseTrainer):
                     rollout = rollouts[i_sample]
                     candidate_net = rollout.candidate_net
                     _surrogate_optimizer = self.get_surrogate_optimizer()
-                    with candidate_net.begin_virtual(): # surrogate train steps
-                        candidate_net.train_queue(self.surrogate_queue,
-                                                  optimizer=_surrogate_optimizer,
-                                                  criterion=self._criterion,
-                                                  steps=self.controller_surrogate_steps)
+                    if self.controller_surrogate_steps:
+                        with candidate_net.begin_virtual(): # surrogate train steps
+                            candidate_net.train_queue(self.surrogate_queue,
+                                                      optimizer=_surrogate_optimizer,
+                                                      criterion=self._criterion,
+                                                      steps=self.controller_surrogate_steps)
+                            loss, acc = candidate_net.eval_data(controller_data,
+                                                                criterions=[_ce_loss_mean,
+                                                                            _top1_acc])
+                    else: # ENAS
                         loss, acc = candidate_net.eval_data(controller_data,
                                                             criterions=[_ce_loss_mean,
                                                                         _top1_acc])
+
                     acc = acc / 100
                     loss_meter.update(loss)
                     acc_meter.update(acc)

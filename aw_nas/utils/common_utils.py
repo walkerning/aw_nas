@@ -2,11 +2,16 @@
 #pylint: disable=attribute-defined-outside-init
 
 import os
+import sys
+import inspect
 import collections
+import six
 
 import numpy as np
 import scipy
 import scipy.signal
+
+from aw_nas.utils.registry import RegistryMeta
 
 class AverageMeter(object):
     def __init__(self):
@@ -37,6 +42,39 @@ def compute_returns(rewards, gamma, length=None):
     else:
         _rewards = rewards
     return scipy.signal.lfilter([1], [1, -gamma], _rewards[::-1], axis=0)[::-1]
+
+def get_default_argspec(func):
+    if sys.version_info.major == 3:
+        # python 3
+        sig = inspect.signature(func)
+        return [(n, param.default) for n, param in six.iteritems(sig.parameters) \
+                if not param.default is param.empty]
+    # python 2
+    sig = inspect.getargspec(func) #pylint: disable=deprecated-method
+    return list(reversed(list(zip(reversed(sig.args),
+                                  reversed(sig.defaults)))))
+
+def _add_text_prefix(text, prefix):
+    lines = text.split("\n")
+    return "\n".join([prefix + line if line else line for line in lines])
+
+def component_sample_config_str(comp_name, prefix):
+    all_text = prefix + "## ---- Component {} ----\n".format(comp_name)
+
+    for type_name, cls in six.iteritems(RegistryMeta.all_classes(comp_name)):
+
+        all_text += prefix + "# ---- Type {} ----\n".format(type_name)
+        all_text += prefix + "{}_type: {}\n".format(comp_name, type_name)
+        all_text += prefix + "{}_cfg:\n".format(comp_name)
+
+        # write the default configuration
+        config_str = cls.get_default_config_str()
+        all_text += _add_text_prefix(config_str, prefix + "  ")
+
+        all_text += prefix + "# ---- End Type {} ----\n".format(type_name)
+
+    all_text += prefix + "## ---- End Component {} ----\n".format(comp_name)
+    return all_text
 
 def get_cfg_wrapper(cfg, key):
     if isinstance(cfg, dict):

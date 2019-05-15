@@ -14,7 +14,7 @@ class BaseDataset(Component):
             data_dir (str): The directory to store the datasets,
                 by default: `data` directory under the current working directory.
         """
-        super(BaseDataset, self).__init__()
+        super(BaseDataset, self).__init__(schedule_cfg=None)
 
         self.data_dir = data_dir
 

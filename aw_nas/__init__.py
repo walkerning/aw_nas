@@ -6,6 +6,10 @@ AW_NAS package.
 from pkg_resources import resource_string
 __version__ = resource_string(__name__, "VERSION").decode("ascii")
 
+from .utils import RegistryMeta
+
+from .base import Component
+
 from .common import (
     SearchSpace,
     Rollout,
@@ -13,10 +17,6 @@ from .common import (
     RNNSearchSpace,
     get_search_space,
 )
-
-from .utils import RegistryMeta
-
-from .base import Component
 
 from .dataset import *
 

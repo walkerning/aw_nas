@@ -38,8 +38,8 @@ class RegistryMeta(abc.ABCMeta):
                 entry = namespace.get("NAME", name.lower())
                 setattr(cls, "NAME", entry)
                 RegistryMeta.registry_dct[table][entry] = cls
-                LOGGER.info("Register class `%s` as entry `%s` in table `%s`.",
-                            name, entry, table)
+                LOGGER.debug("Register class `%s` as entry `%s` in table `%s`.",
+                             name, entry, table)
             else:
                 if "NAME" in namespace:
                     entry = namespace["NAME"]

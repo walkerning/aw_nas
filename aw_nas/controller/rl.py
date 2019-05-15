@@ -6,6 +6,7 @@ RL-based controllers
 import torch
 from torch import nn
 
+from aw_nas import utils
 from aw_nas.common import Rollout
 from aw_nas.controller.base import BaseController
 from aw_nas.controller.rl_networks import BaseRLControllerNet
@@ -112,6 +113,16 @@ class RLController(BaseController, nn.Module):
         super(RLController, self).on_epoch_end(epoch)
         [c.on_epoch_end(epoch) for c in self.controllers]
         [a.on_epoch_end(epoch) for a in self.agents]
+
+    @classmethod
+    def get_default_config_str(cls):
+        # Override. As there are sub-component in RLController
+        all_str = super(RLController, cls).get_default_config_str()
+        # Possible controller_network configs
+        all_str += utils.component_sample_config_str("controller_network", prefix="#   ") + "\n"
+        # Possible rl_agent configs
+        all_str += utils.component_sample_config_str("rl_agent", prefix="#   ")
+        return all_str
 
     @staticmethod
     def _split_rollout(rollout):

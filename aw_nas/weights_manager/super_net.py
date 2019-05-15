@@ -370,6 +370,11 @@ if __name__ == "__main__":
             EPS = 1e-5
             for n, grad in grads:
                 assert (w_prev[n] - grad * LR - c_params[n]).abs().sum().item() < EPS
+            grads_2 = dict(cand_net.gradient(data))
+            assert len(grads) == len(c_names)
+            optimizer.step()
+            for n, grad in grads:
+                assert (w_prev[n] - (grad + grads_2[n]) * LR - c_params[n]).abs().sum().item() < EPS
 
         for n in c_params:
             assert (w_prev[n] - c_params[n]).abs().sum().item() < EPS

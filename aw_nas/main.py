@@ -11,10 +11,12 @@ import numpy as np
 import torch
 from torch.backends import cudnn
 
+from aw_nas import utils
 from aw_nas.utils import RegistryMeta
 from aw_nas.utils import logger as _logger
 
 LOGGER = _logger.getChild("main")
+
 
 def _init_component(cfg, registry_name, **addi_args):
     type_ = cfg[registry_name + "_type"]
@@ -24,12 +26,8 @@ def _init_component(cfg, registry_name, **addi_args):
     addi_args.update(cfg)
     return RegistryMeta.get_class(registry_name, type_)(**addi_args)
 
-@click.group(help="The awnas NAS framework command line interface. "
-             "Use `AWNAS_LOG_LEVEL` environment variable to modify the log level.")
-@click.option("--gpu", default=0, type=int,
-              help="the gpu to run training on")
-def main(gpu):
-    # set device
+
+def _set_gpu(gpu):
     if torch.cuda.is_available():
         torch.cuda.set_device(gpu)
         cudnn.benchmark = True
@@ -38,8 +36,17 @@ def main(gpu):
     else:
         LOGGER.warn('No GPU available, use CPU!!')
 
-@main.command()
+
+@click.group(help="The awnas NAS framework command line interface. "
+             "Use `AWNAS_LOG_LEVEL` environment variable to modify the log level.")
+def main():
+    pass
+
+
+@main.command(help="Searching for architecture.")
 @click.argument("cfg_file", required=True, type=str)
+@click.option("--gpu", default=0, type=int,
+              help="the gpu to run training on")
 @click.option("--seed", default=None, type=int,
               help="the random seed to run training")
 @click.option("--load", default=None, type=str,
@@ -48,7 +55,8 @@ def main(gpu):
               help="the number of epochs to save checkpoint every")
 @click.option("--train-dir", default=None, type=str,
               help="the directory to save checkpoints")
-def search(seed, cfg_file, load, save_every, train_dir):
+def search(gpu, seed, cfg_file, load, save_every, train_dir):
+    _set_gpu(gpu)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # set seed
     if seed is not None:
@@ -74,5 +82,15 @@ def search(seed, cfg_file, load, save_every, train_dir):
     trainer.train()
 
 
+@main.command(help="Dump the sample configuration.")
+@click.argument("out_file", required=True, type=str)
+def gen_sample_config(out_file):
+    with open(out_file, "w") as out_f:
+        for comp_name in ["search_space", "dataset",
+                          "controller", "weights_manager", "trainer"]:
+            out_f.write(utils.component_sample_config_str(comp_name, prefix="# "))
+            out_f.write("\n")
+
+
 if __name__ == "__main__":
-    main() #pylint: disable=no-value-for-parameter
+    main()

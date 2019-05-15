@@ -1,6 +1,12 @@
 # -*- coding: utf-8 -*-
 
+try:
+    from StringIO import StringIO
+except ImportError:
+    from io import StringIO
+
 import six
+import yaml
 
 from aw_nas import utils
 from aw_nas.utils import RegistryMeta
@@ -37,3 +43,15 @@ class Component(object):
 
     def on_epoch_end(self, epoch):
         pass
+
+    @classmethod
+    def get_default_config(cls):
+        return utils.get_default_argspec(cls)
+
+    @classmethod
+    def get_default_config_str(cls):
+        stream = StringIO()
+        stream.write("# Schedulable attributes: {}\n".format(", ".join(cls.SCHEDULABLE_ATTRS)))
+        cfg = dict(cls.get_default_config())
+        yaml.safe_dump(cfg, stream=stream, default_flow_style=False)
+        return stream.getvalue()

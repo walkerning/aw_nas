@@ -141,7 +141,7 @@ class BaseTrainer(Component):
 
         for n, portion in used_portions.items():
             if portion != 1.:
-                self.logger.warn("Dataset split %s is not fully used (%.2f %%)!"
+                self.logger.warn("Dataset split %s is not fully used (%.2f %%)! "
                                  "Check the `data_queues` section of the configuration.",
                                  n, portion*100)
         return queues
