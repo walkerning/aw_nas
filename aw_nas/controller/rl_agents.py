@@ -72,22 +72,29 @@ class PGAgent(BaseRLAgent):
         return loss.item()
 
     def step(self, rollouts, optimizer):
-        losses = []
         if self.batch_update:
             log_probs = torch.stack([torch.cat(r.info["log_probs"]) for r in rollouts])
             entropies = torch.stack([torch.cat(r.info["entropies"]) for r in rollouts])
             returns = np.array([utils.compute_returns(r.get_perf(), self.gamma,
                                                       log_probs.shape[-1]) for r in rollouts])
-            return self._step(log_probs, entropies, returns, optimizer)
-        for i, rollout in enumerate(rollouts):
-            log_probs = torch.cat(rollout.info["log_probs"]).unsqueeze(0)
-            entropies = torch.cat(rollout.info["entropies"]).unsqueeze(0)
-            returns = utils.compute_returns(rollout.get_perf(),
-                                            self.gamma, len(log_probs))[None, :]
-            loss = self._step(log_probs, entropies, returns, optimizer,
-                              retain_graph=i < len(rollouts)-1)
-            losses.append(loss)
-        return np.mean(losses)
+            loss = self._step(log_probs, entropies, returns, optimizer)
+        else:
+            losses = []
+            for i, rollout in enumerate(rollouts):
+                log_probs = torch.cat(rollout.info["log_probs"]).unsqueeze(0)
+                entropies = torch.cat(rollout.info["entropies"]).unsqueeze(0)
+                returns = utils.compute_returns(rollout.get_perf(),
+                                                self.gamma, len(log_probs))[None, :]
+                loss = self._step(log_probs, entropies, returns, optimizer,
+                                  retain_graph=i < len(rollouts)-1)
+                losses.append(loss)
+            loss = np.mean(losses)
+
+        if not self.writer.is_none():
+            # maybe write tensorboard info
+            self.writer.add_scalar("last_baseline", self.baseline[-1], self.epoch)
+
+        return loss
 
     def save(self, path):
         np.save(path, self.baseline)

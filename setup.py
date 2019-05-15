@@ -31,6 +31,10 @@ INSTALL_REQUIRES = [
     "graphviz"      # visualize architecture dag
 ]
 
+EXTRAS_REQUIRE = {
+    "vis": ["tensorboardX"]
+}
+
 TESTS_REQUIRE = []
 
 def read_long_description(filename):
@@ -58,7 +62,9 @@ setup(
             "awnas=aw_nas.main:main"
         ]
     },
+
     install_requires=INSTALL_REQUIRES,
+    extras_require=EXTRAS_REQUIRE,
     tests_require=TESTS_REQUIRE,
 
     zip_safe=True,

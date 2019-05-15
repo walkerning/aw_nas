@@ -17,6 +17,9 @@ class AverageMeter(object):
     def __init__(self):
         self.reset()
 
+    def is_empty(self):
+        return self.cnt == 0
+
     def reset(self):
         self.avg = 0.
         self.sum = 0.

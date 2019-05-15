@@ -11,6 +11,7 @@ import yaml
 from aw_nas import utils
 from aw_nas.utils import RegistryMeta
 from aw_nas.utils import logger as _logger
+from aw_nas.utils.vis_utils import WrapWriter
 
 @six.add_metaclass(RegistryMeta)
 class Component(object):
@@ -29,8 +30,15 @@ class Component(object):
                     )
                 utils.check_schedule_cfg(cfg)
 
+        self.writer = WrapWriter(None) # a none writer
+        self.epoch = 0
+
+    def setup_writer(self, writer):
+        self.writer = writer
+
     def on_epoch_start(self, epoch):
         assert epoch >= 1, "Epoch should >= 1"
+        self.epoch = epoch
         if self.schedule_cfg:
             new_values = []
             for name, cfg in self.schedule_cfg:

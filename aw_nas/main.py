@@ -15,6 +15,7 @@ from torch.backends import cudnn
 import yaml
 
 from aw_nas import utils
+from aw_nas.utils.vis_utils import WrapWriter
 from aw_nas.utils import RegistryMeta
 from aw_nas.utils import logger as _logger
 
@@ -58,7 +59,24 @@ def main():
               help="the number of epochs to save checkpoint every")
 @click.option("--train-dir", default=None, type=str,
               help="the directory to save checkpoints")
-def search(gpu, seed, cfg_file, load, save_every, train_dir):
+@click.option("--vis-dir", default=None, type=str,
+              help="the directory to save tensorboard events. "
+              "need `tensorboard` extra, `pip install aw_nas[tensorboard]`")
+def search(gpu, seed, cfg_file, load, save_every, train_dir, vis_dir):
+    # check dependency and initialize visualization writer
+    if vis_dir:
+        try:
+            import tensorboardX
+        except ImportError:
+            LOGGER.error("Error importing module tensorboardX. Will IGNORE the `--vis-dir` option! "
+                         "Try installing the dependency manually, or `pip install aw_nas[vis]`")
+            _writer = None
+        else:
+            _writer = tensorboardX.SummaryWriter(log_dir=vis_dir)
+    else:
+        _writer = None
+    writer = WrapWriter(_writer)
+
     if train_dir:
         # backup config file
         train_dir = utils.makedir(train_dir)
@@ -100,7 +118,7 @@ def search(gpu, seed, cfg_file, load, save_every, train_dir):
     LOGGER.info("Initializing trainer and starting the search.")
     trainer = _init_component(cfg, "trainer", weights_manager=weights_manager,
                               controller=controller, dataset=whole_dataset)
-    trainer.setup(load, save_every, train_dir)
+    trainer.setup(load, save_every, train_dir, writer=writer)
     trainer.train()
 
 

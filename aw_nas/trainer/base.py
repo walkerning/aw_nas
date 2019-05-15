@@ -94,7 +94,7 @@ class BaseTrainer(Component):
         dir_ = utils.makedir(os.path.join(self.train_dir, str(self.epoch)))
         return os.path.join(dir_, name)
 
-    def setup(self, load=None, save_every=None, train_dir=None, **kwargs):
+    def setup(self, load=None, save_every=None, train_dir=None, writer=None):
         """
         Setup the scaffold: saving/loading/visualization settings.
         @TODO: tensorboard or visdom interface
@@ -108,6 +108,10 @@ class BaseTrainer(Component):
             self.load(trainer_path)
         self.save_every = save_every
         self.train_dir = utils.makedir(train_dir) if train_dir is not None else train_dir
+        if writer is not None:
+            self.setup_writer(writer.get_sub_writer("trainer"))
+            self.controller.setup_writer(writer.get_sub_writer("controller"))
+            self.weights_manager.setup_writer(writer.get_sub_writer("weights_manager"))
         self.is_setup = True
 
     def prepare_data_queues(self, splits, queue_cfg_lst):
@@ -125,6 +129,10 @@ class BaseTrainer(Component):
             batch_size = cfg["batch_size"]
             split = cfg["split"]
             portion = cfg["portion"]
+
+            if portion == 0:
+                queues.append(None)
+                continue
 
             used_portion = used_portions[split]
             size = dset_sizes[split]

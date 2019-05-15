@@ -114,6 +114,12 @@ class RLController(BaseController, nn.Module):
         [c.on_epoch_end(epoch) for c in self.controllers]
         [a.on_epoch_end(epoch) for a in self.agents]
 
+    def setup_writer(self, writer):
+        [a.setup_writer(writer.get_sub_writer("rl_agent_{}".format(i))) \
+         for i, a in enumerate(self.agents)]
+        [c.setup_writer(writer.get_sub_writer("controller_network_{}".format(i))) \
+         for i, c in enumerate(self.controllers)]
+
     @classmethod
     def get_default_config_str(cls):
         # Override. As there are sub-component in RLController

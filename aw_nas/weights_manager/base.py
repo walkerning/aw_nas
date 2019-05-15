@@ -57,16 +57,28 @@ class CandidateNet(nn.Module):
         Get the device of the candidate net.
         """
 
-    def train_queue(self, queue, optimizer, criterion=nn.CrossEntropyLoss(), steps=1):
+    def train_queue(self, queue, optimizer, criterion=nn.CrossEntropyLoss(),
+                    eval_criterions=None, steps=1):
+        average_ans = None
         for _ in range(steps):
             data = next(queue)
             data = (data[0].to(self.get_device()), data[1].to(self.get_device()))
             _, targets = data
             outputs = self.forward_data(*data)
             loss = criterion(outputs, targets)
+            if eval_criterions:
+                ans = [c(outputs, targets) for c in eval_criterions]
+                if average_ans is None:
+                    average_ans = ans
+                else:
+                    average_ans = [s + x for s, x in zip(average_ans, ans)]
             self.zero_grad()
             loss.backward()
             optimizer.step()
+
+        if eval_criterions:
+            return [s / steps for s in average_ans]
+        return []
 
     def forward_data(self, inputs, targets=None):
         """Forward the candidate net on the data.
@@ -122,7 +134,6 @@ class CandidateNet(nn.Module):
 
     def eval_queue(self, queue, criterions, steps=1):
         average_ans = None
-        count = 0
         with torch.no_grad():
             for _ in range(steps):
                 data = next(queue)
@@ -133,8 +144,7 @@ class CandidateNet(nn.Module):
                     average_ans = ans
                 else:
                     average_ans = [s + x for s, x in zip(average_ans, ans)]
-                count += 1
-        return [s / count for s in average_ans]
+        return [s / steps for s in average_ans]
 
     def eval_data(self, data, criterions):
         """

@@ -94,7 +94,7 @@
 #     type: Adam
 #   controller_samples: 4
 #   controller_scheduler: null
-#   controller_steps: 2000
+#   controller_steps: 313
 #   controller_surrogate_steps: 1
 #   data_portion:
 #   - 0.2
@@ -111,7 +111,7 @@
 #     weight_decay: 0.0003
 #   mepa_samples: 1
 #   mepa_scheduler: null
-#   mepa_surrogate_steps: 313
+#   mepa_surrogate_steps: 1
 #   schedule_cfg: null
 #   surrogate_optimizer:
 #     lr: 0.001

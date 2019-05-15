@@ -269,8 +269,6 @@ if __name__ == "__main__":
     arch, log_probs, entropies, (hx, cx) = net.sample(batch_size)
     assert len(hx) == net.num_lstm_layers
     assert hx[0].shape == (batch_size, net.controller_hid)
-    import pdb
-    pdb.set_trace()
     assert len(arch) == batch_size
     num_actions = len(arch[0][0]) + len(arch[0][1])
     assert log_probs.shape == (batch_size, num_actions)

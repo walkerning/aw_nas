@@ -67,8 +67,8 @@ class MepaTrainer(BaseTrainer):
                  surrogate_scheduler=None,
                  controller_scheduler=None,
                  mepa_scheduler=None,
-                 mepa_surrogate_steps=313, mepa_samples=1,
-                 controller_steps=2000, controller_surrogate_steps=1, controller_samples=4,
+                 mepa_surrogate_steps=1, mepa_samples=1,
+                 controller_steps=313, controller_surrogate_steps=1, controller_samples=4,
                  data_portion=(0.2, 0.4, 0.4), derive_queue="controller",
                  derive_surrogate_steps=1, derive_samples=8,
                  schedule_cfg=None):
@@ -85,7 +85,13 @@ class MepaTrainer(BaseTrainer):
         self.controller_samples = controller_samples
         self.derive_surrogate_steps = derive_surrogate_steps
         self.derive_samples = derive_samples
+        # do some checks
         assert derive_queue in {"surrogate", "controller", "mepa"}
+        assert len(data_portion) == 3
+        if self.mepa_surrogate_steps == 0 and self.mepa_surrogate_steps == 0:
+            assert data_portion[0] == 0, \
+                "Do not waste data, set the first element of `data_portion` to 0 "\
+                "when there are not surrogate steps."
 
         # initialize the optimizers
         self.surrogate_optimizer = self._init_optimizer(self.weights_manager.parameters(),
@@ -118,13 +124,15 @@ class MepaTrainer(BaseTrainer):
         self.epoch = 1
         self._criterion = nn.CrossEntropyLoss()
 
-    def train(self): #pylint: disable=too-many-statements
+    def train(self): #pylint: disable=too-many-statements,too-many-branches
         assert self.is_setup, "Must call `trainer.setup` method before calling `trainer.train`."
         for epoch in range(self.begin_epoch, self.epochs+1):
-            self.epoch = epoch
+            self.epoch = epoch # this is redundant as Component.on_epoch_start also set this
+            surrogate_loss_meter = utils.AverageMeter()
+            surrogate_acc_meter = utils.AverageMeter()
+            valid_loss_meter = utils.AverageMeter()
+            valid_acc_meter = utils.AverageMeter()
             controller_loss_meter = utils.AverageMeter()
-            loss_meter = utils.AverageMeter()
-            acc_meter = utils.AverageMeter()
 
             # schedule values and optimizer learning rates
             self.on_epoch_start(epoch) # call `on_epoch_start` of sub-components
@@ -144,10 +152,13 @@ class MepaTrainer(BaseTrainer):
                     if self.mepa_surrogate_steps:
                         _surrogate_optimizer = self.get_surrogate_optimizer()
                         with candidate_net.begin_virtual(): # surrogate train steps
-                            candidate_net.train_queue(self.surrogate_queue,
-                                                      optimizer=_surrogate_optimizer,
-                                                      criterion=self._criterion,
-                                                      steps=self.mepa_surrogate_steps)
+                            train_loss, train_acc \
+                                = candidate_net.train_queue(self.surrogate_queue,
+                                                            optimizer=_surrogate_optimizer,
+                                                            criterion=self._criterion,
+                                                            eval_criterions=[_ce_loss_mean,
+                                                                             _top1_acc],
+                                                            steps=self.mepa_surrogate_steps)
                             # gradients: List(Tuple(parameter name, gradient))
                             gradients, (loss, acc) = candidate_net.gradient(
                                 mepa_data,
@@ -155,6 +166,8 @@ class MepaTrainer(BaseTrainer):
                                 eval_criterions=[_ce_loss_mean,
                                                  _top1_acc]
                             )
+                            surrogate_loss_meter.update(train_loss)
+                            surrogate_acc_meter.update(train_acc / 100)
                     else: # ENAS
                         # gradients: List(Tuple(parameter name, gradient))
                         gradients, (loss, acc) = candidate_net.gradient(
@@ -164,9 +177,8 @@ class MepaTrainer(BaseTrainer):
                                              _top1_acc]
                         )
 
-                    acc = acc / 100
-                    loss_meter.update(loss)
-                    acc_meter.update(acc)
+                    valid_loss_meter.update(loss)
+                    valid_acc_meter.update(acc / 100)
                     for n, g_v in gradients:
                         all_gradients[n] += g_v
                         counts[n] += 1
@@ -176,12 +188,31 @@ class MepaTrainer(BaseTrainer):
                 self.weights_manager.step(all_gradients.items(), self.mepa_optimizer)
 
             print("\r", end="")
-            self.logger.info("Epoch %3d: [mepa update] mean accuracy: %.2f %% ; "
-                             "mean cross entropy loss: %.3f",
-                             epoch, acc_meter.avg * 100, loss_meter.avg)
+            self.logger.info("Epoch %3d: [mepa update] surrogate train acc: %.2f %% ; loss: %.3f ; "
+                             "valid acc: %.2f %% ; valid loss: %.3f",
+                             epoch, surrogate_acc_meter.avg * 100, surrogate_loss_meter.avg,
+                             valid_acc_meter.avg * 100, valid_loss_meter.avg)
 
-            acc_meter.reset()
-            loss_meter.reset()
+           # maybe write tensorboard info
+            if not self.writer.is_none():
+                self.writer.add_scalars("acc", {
+                    "mepa_valid": valid_acc_meter.avg
+                }, self.epoch)
+                self.writer.add_scalars("loss", {
+                    "mepa_valid": valid_loss_meter.avg,
+                }, self.epoch)
+                if not surrogate_loss_meter.is_empty():
+                    self.writer.add_scalars("acc", {
+                        "mepa_train_surrogate": surrogate_acc_meter.avg
+                    }, self.epoch)
+                    self.writer.add_scalars("loss", {
+                        "mepa_train_surrogate": surrogate_loss_meter.avg,
+                    }, self.epoch)
+
+            surrogate_acc_meter.reset()
+            surrogate_loss_meter.reset()
+            valid_acc_meter.reset()
+            valid_loss_meter.reset()
 
             # controller training
             for i_cont in range(self.controller_steps):
@@ -194,21 +225,26 @@ class MepaTrainer(BaseTrainer):
                     _surrogate_optimizer = self.get_surrogate_optimizer()
                     if self.controller_surrogate_steps:
                         with candidate_net.begin_virtual(): # surrogate train steps
-                            candidate_net.train_queue(self.surrogate_queue,
-                                                      optimizer=_surrogate_optimizer,
-                                                      criterion=self._criterion,
-                                                      steps=self.controller_surrogate_steps)
+                            train_loss, train_acc \
+                                = candidate_net.train_queue(self.surrogate_queue,
+                                                            optimizer=_surrogate_optimizer,
+                                                            criterion=self._criterion,
+                                                            eval_criterions=[_ce_loss_mean,
+                                                                             _top1_acc],
+                                                            steps=self.controller_surrogate_steps)
                             loss, acc = candidate_net.eval_data(controller_data,
                                                                 criterions=[_ce_loss_mean,
                                                                             _top1_acc])
+                        surrogate_loss_meter.update(train_loss)
+                        surrogate_acc_meter.update(train_acc / 100)
                     else: # ENAS
                         loss, acc = candidate_net.eval_data(controller_data,
                                                             criterions=[_ce_loss_mean,
                                                                         _top1_acc])
 
                     acc = acc / 100
-                    loss_meter.update(loss)
-                    acc_meter.update(acc)
+                    valid_loss_meter.update(loss)
+                    valid_acc_meter.update(acc)
                     rollout.set_perf(acc)
 
                 controller_loss = self.controller.step(rollouts, self.controller_optimizer)
@@ -216,9 +252,28 @@ class MepaTrainer(BaseTrainer):
 
             print("\r", end="")
             self.logger.info("Epoch %3d: [controller update] controller loss: %.3f ; "
-                             "mean accuracy: %.2f %% ; mean cross entropy loss: %.3f",
+                             "surrogate train acc: %.2f %% ; loss: %.3f ; "
+                             "mean accuracy (reward): %.2f %% ; mean cross entropy loss: %.3f",
                              epoch, controller_loss_meter.avg,
-                             acc_meter.avg * 100, loss_meter.avg)
+                             surrogate_acc_meter.avg * 100, surrogate_loss_meter.avg,
+                             valid_acc_meter.avg * 100, valid_loss_meter.avg)
+
+            # maybe write tensorboard info
+            if not self.writer.is_none():
+                self.writer.add_scalars("acc", {
+                    "controller_valid": valid_acc_meter.avg
+                }, self.epoch)
+                self.writer.add_scalars("loss", {
+                    "controller_valid": valid_loss_meter.avg,
+                }, self.epoch)
+                if not surrogate_loss_meter.is_empty():
+                    self.writer.add_scalars("acc", {
+                        "controller_train_surrogate": surrogate_acc_meter.avg
+                    }, self.epoch)
+                    self.writer.add_scalars("loss", {
+                        "controller_train_surrogate": surrogate_loss_meter.avg,
+                    }, self.epoch)
+                self.writer.add_scalar("controller_loss", controller_loss_meter.avg, self.epoch)
 
             # maybe save checkpoints
             self.maybe_save()
