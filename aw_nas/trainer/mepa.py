@@ -141,7 +141,10 @@ class MepaTrainer(BaseTrainer):
             _lr_schedule_str = "\n\t".join(["{:10}: {:.5f}".format(n, v) for n, v in lrs])
             self.logger.info("Epoch %3d: LR values:\n\t%s", epoch, _lr_schedule_str)
 
+
             # meta parameter training
+            self.controller.set_mode("eval")
+
             for i_mepa in range(self.mepa_steps): # mepa stands for meta param
                 print("\rmepa step {}/{}".format(i_mepa, self.mepa_steps), end="")
                 mepa_data = next(self.mepa_queue)
@@ -165,7 +168,8 @@ class MepaTrainer(BaseTrainer):
                                 mepa_data,
                                 criterion=self._criterion,
                                 eval_criterions=[_ce_loss_mean,
-                                                 _top1_acc]
+                                                 _top1_acc],
+                                mode="eval"
                             )
                             surrogate_loss_meter.update(train_loss)
                             surrogate_acc_meter.update(train_acc / 100)
@@ -216,6 +220,8 @@ class MepaTrainer(BaseTrainer):
             valid_loss_meter.reset()
 
             # controller training
+            self.controller.set_mode("train")
+
             for i_cont in range(self.controller_steps):
                 print("\rcontroller step {}/{}".format(i_cont, self.controller_steps), end="")
                 controller_data = next(self.controller_queue)

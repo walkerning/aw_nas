@@ -14,6 +14,10 @@ class BaseController(Component):
         self.search_space = search_space
 
     @abc.abstractmethod
+    def set_mode(self, mode):
+        """Set the mode of the controller"""
+
+    @abc.abstractmethod
     def sample(self, n):
         """Sample a architecture rollout, which can be used to assemble an architecture.
 

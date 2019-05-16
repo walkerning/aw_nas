@@ -3,7 +3,6 @@
 RL-based controllers
 """
 
-import torch
 from torch import nn
 
 from aw_nas import utils
@@ -51,8 +50,16 @@ class RLController(BaseController, nn.Module):
 
         self.controller = nn.ModuleList(self.controllers)
 
+    def set_mode(self, mode):
+        if mode == "train":
+            nn.Module.train(self)
+        elif mode == "eval":
+            nn.Module.eval(self)
+        else:
+            raise Exception("Unrecognized mode: {}".format(mode))
+
     def forward(self, n=1): #pylint: disable=arguments-differ
-        self.sample(n=n)
+        return self.sample(n=n)
 
     def sample(self, n=1):
         arch_lst = []
@@ -140,27 +147,3 @@ class RLController(BaseController, nn.Module):
             }, search_space=rollout.search_space))
             rollouts[-1].perf = rollout.perf
         return rollouts
-
-
-#pylint: disable=invalid-name,ungrouped-imports
-if __name__ == "__main__":
-    import numpy as np
-    from aw_nas.common import get_search_space
-    search_space = get_search_space(cls="cnn")
-    device = "cuda"
-    controller = RLController(search_space, device)
-    controller_i = RLController(search_space, device,
-                                independent_cell_group=True,
-                                rl_agent_cfg={"batch_update": False})
-    assert len(list(controller.parameters())) == 10
-    assert len(list(controller_i.parameters())) == 20
-    rollouts = controller.sample(3)
-    [r.set_perf(np.random.rand(1)) for r in rollouts]
-    optimizer = torch.optim.SGD(controller.parameters(), lr=0.01)
-    loss = controller.step(rollouts, optimizer)
-
-    rollouts = controller_i.sample(3)
-    [r.set_perf(np.random.rand(1)) for r in rollouts]
-    optimizer = torch.optim.SGD(controller_i.parameters(), lr=0.01)
-    loss = controller_i.step(rollouts, optimizer)
-#pylint: enable=invalid-name,ungrouped-imports

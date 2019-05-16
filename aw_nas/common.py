@@ -310,17 +310,3 @@ def get_search_space(cls, **cfg):
     if cls == "rnn":
         return RNNSearchSpace(**cfg)
     return None
-
-
-#pylint: disable=invalid-name
-if __name__ == "__main__":
-    ss = get_search_space(cls="cnn")
-    arch = ss.random_sample()
-    rollout = Rollout(arch, info={}, search_space=ss)
-    mock_edge_label = np.random.rand(ss.num_cell_groups,
-                                     ss.num_steps*ss.num_node_inputs)
-    mock_edge_label = np.vectorize("{:.3f}".format)(mock_edge_label)
-    print("genotype: ", rollout.genotype)
-    rollout.plot_arch("./try_plot", label="try plot",
-                      edge_labels=mock_edge_label.tolist())
-#pylint: enable=invalid-name

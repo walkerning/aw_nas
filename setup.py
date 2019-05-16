@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 import os
+import sys
 from setuptools import setup, find_packages
+from setuptools.command.test import test as TestCommand
 
 HERE = os.path.dirname(os.path.abspath((__file__)))
 
@@ -38,13 +40,28 @@ EXTRAS_REQUIRE = {
     "vis": ["tensorboardX"]
 }
 
-TESTS_REQUIRE = []
+TESTS_REQUIRE = [
+    "pytest==4.5.0",
+    "pytest-cov",
+]
 
 def read_long_description(filename):
     path = os.path.join(HERE, filename)
     if os.path.exists(path):
         return open(path).read()
     return ""
+
+class PyTest(TestCommand):
+    def finalize_options(self):
+        TestCommand.finalize_options(self)
+        self.test_args = ["tests/", "-x", "--cov"]
+        self.test_suite = True
+
+    def run_tests(self):
+        # import here, cause outside the eggs aren"t loaded
+        import pytest
+        errno = pytest.main(self.test_args)
+        sys.exit(errno)
 
 setup(
     name=NAME,
@@ -69,6 +86,8 @@ setup(
     install_requires=INSTALL_REQUIRES,
     extras_require=EXTRAS_REQUIRE,
     tests_require=TESTS_REQUIRE,
+
+    cmdclass={"test": PyTest},
 
     zip_safe=True,
     package_data={

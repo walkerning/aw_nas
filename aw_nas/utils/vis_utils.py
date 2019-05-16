@@ -31,27 +31,3 @@ class WrapWriter(object):
             _func.__doc__ = method.__doc__   # for python 2
             return _func
         return method
-
-
-#pylint: disable=invalid-name,no-self-use
-if __name__ == "__main__":
-
-    class MockUnderlyWriter(object):
-        def add_scalar(self, tag, value):
-            """Add scalar!"""
-            print("add_scalar", tag, value)
-
-        def add_scalars(self, main_tag, value):
-            """Add scarlas!"""
-            print("add_scalars", main_tag, value)
-
-    _writer = MockUnderlyWriter()
-    sub_writer = WrapWriter(_writer, "controller")
-    subsub_writer = sub_writer.get_sub_writer("rl_agent")
-    sub_writer.add_scalar("loss", 3.0)
-    subsub_writer.add_scalars("losses", {"entropy": 1, "regularization": 0.1})
-
-    _writer = None
-    sub_writer = WrapWriter(_writer, "controller")
-    assert sub_writer.add_scalar("loss", 3.0) is None
-#pylint: enable=invalid-name,no-self-use

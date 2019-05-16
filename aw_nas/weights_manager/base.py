@@ -57,39 +57,30 @@ class CandidateNet(nn.Module):
         Get the device of the candidate net.
         """
 
-    def train_queue(self, queue, optimizer, criterion=nn.CrossEntropyLoss(),
-                    eval_criterions=None, steps=1):
-        average_ans = None
-        for _ in range(steps):
-            data = next(queue)
-            data = (data[0].to(self.get_device()), data[1].to(self.get_device()))
-            _, targets = data
-            outputs = self.forward_data(*data)
-            loss = criterion(outputs, targets)
-            if eval_criterions:
-                ans = [c(outputs, targets) for c in eval_criterions]
-                if average_ans is None:
-                    average_ans = ans
-                else:
-                    average_ans = [s + x for s, x in zip(average_ans, ans)]
-            self.zero_grad()
-            loss.backward()
-            optimizer.step()
+    def set_mode(self, mode):
+        if mode is None:
+            return
+        if mode == "train":
+            self.train()
+        elif mode == "eval":
+            self.eval()
+        else:
+            raise Exception("Unrecognized mode: {}".format(mode))
 
-        if eval_criterions:
-            return [s / steps for s in average_ans]
-        return []
-
-    def forward_data(self, inputs, targets=None):
+    def forward_data(self, inputs, targets=None, mode=None):
         """Forward the candidate net on the data.
         Args:
         Returns:
             output of the last layer.
         """
+        self.set_mode(mode)
+
         inputs = inputs.to(self.get_device())
         return self(inputs)
 
-    def forward_queue(self, queue, steps=1):
+    def forward_queue(self, queue, steps=1, mode=None):
+        self.set_mode(mode)
+
         outputs = []
         for _ in range(steps):
             data = next(queue)
@@ -98,7 +89,7 @@ class CandidateNet(nn.Module):
         return torch.cat(outputs, dim=0)
 
     def gradient(self, data, criterion=nn.CrossEntropyLoss(),
-                 parameters=None, eval_criterions=None):
+                 parameters=None, eval_criterions=None, mode=None):
         """Get the gradient with respect to the candidate net parameters.
 
         Args:
@@ -107,6 +98,8 @@ class CandidateNet(nn.Module):
         Returns:
             grads (dict of name: grad tensor)
         """
+        self.set_mode(mode)
+
         active_parameters = dict(self.named_parameters())
         if parameters is not None:
             _parameters = dict(parameters)
@@ -132,7 +125,34 @@ class CandidateNet(nn.Module):
             return grads, eval_res
         return grads
 
+    def train_queue(self, queue, optimizer, criterion=nn.CrossEntropyLoss(),
+                    eval_criterions=None, steps=1):
+        self.set_mode("train")
+
+        average_ans = None
+        for _ in range(steps):
+            data = next(queue)
+            data = (data[0].to(self.get_device()), data[1].to(self.get_device()))
+            _, targets = data
+            outputs = self.forward_data(*data)
+            loss = criterion(outputs, targets)
+            if eval_criterions:
+                ans = [c(outputs, targets) for c in eval_criterions]
+                if average_ans is None:
+                    average_ans = ans
+                else:
+                    average_ans = [s + x for s, x in zip(average_ans, ans)]
+            self.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+        if eval_criterions:
+            return [s / steps for s in average_ans]
+        return []
+
     def eval_queue(self, queue, criterions, steps=1):
+        self.set_mode("eval")
+
         average_ans = None
         with torch.no_grad():
             for _ in range(steps):
@@ -151,6 +171,8 @@ class CandidateNet(nn.Module):
         Returns:
            results (list of results return by criterions)
         """
+        self.set_mode("eval")
+
         with torch.no_grad():
             data = (data[0].to(self.get_device()), data[1].to(self.get_device()))
             outputs = self.forward_data(data[0])

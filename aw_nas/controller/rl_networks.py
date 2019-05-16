@@ -257,20 +257,3 @@ class AnchorControlNet(BaseRLControllerNet):
                for _ in range(self.num_lstm_layers)]
         cxs = [v.clone() for v in hxs]
         return (hxs, cxs)
-
-
-#pylint: disable=invalid-name
-if __name__ == "__main__":
-    from aw_nas.common import get_search_space
-    search_space = get_search_space(cls="cnn")
-    device = "cuda"
-    net = AnchorControlNet(search_space, device)
-    batch_size = 3
-    arch, log_probs, entropies, (hx, cx) = net.sample(batch_size)
-    assert len(hx) == net.num_lstm_layers
-    assert hx[0].shape == (batch_size, net.controller_hid)
-    assert len(arch) == batch_size
-    num_actions = len(arch[0][0]) + len(arch[0][1])
-    assert log_probs.shape == (batch_size, num_actions)
-    assert entropies.shape == (batch_size, num_actions)
-#pylint: enable=invalid-name
