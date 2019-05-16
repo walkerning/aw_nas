@@ -22,6 +22,7 @@ class Rollout(object):
         self.candidate_net = candidate_net
 
         self.perf = {}
+        self._genotype = None # calc when need
 
     def set_candidate_net(self, c_net):
         self.candidate_net = c_net
@@ -33,13 +34,19 @@ class Rollout(object):
         self.perf[name] = value
 
     def plot_arch(self, filename, label="", edge_labels=None):
-        return self.search_space.plot_arch(self.arch,
+        return self.search_space.plot_arch(self.genotype_list(),
                                            filename,
                                            label=label,
                                            edge_labels=edge_labels)
 
+    def genotype_list(self):
+        return list(self.genotype._asdict().items())
+
+    @property
     def genotype(self):
-        return self.search_space.genotype(self.arch)
+        if self._genotype is None:
+            self._genotype = self.search_space.genotype(self.arch)
+        return self._genotype
 
     def __repr__(self):
         _info = ",".join(self.info.keys()) if isinstance(self.info, dict) else self.info
@@ -69,7 +76,7 @@ class SearchSpace(Component):
         pass
 
     @abc.abstractmethod
-    def plot_arch(self, arch, filename, label, **kwargs):
+    def plot_arch(self, genotypes, filename, label, **kwargs):
         pass
 
     @abc.abstractmethod
@@ -272,16 +279,21 @@ class CNNSearchSpace(SearchSpace):
 
         graph.render(filename, view=False)
 
-    def plot_arch(self, arch, filename, label="", edge_labels=None): #pylint: disable=arguments-differ
+        return filename + ".png"
+
+    def plot_arch(self, genotypes, filename, label="", edge_labels=None): #pylint: disable=arguments-differ
         """Plot an architecture to files on disk"""
 
         if edge_labels is None:
             edge_labels = [None] * self.num_cell_groups
-        genotypes = self.genotype(arch)._asdict().items()
+        fnames = []
         for e_label, (cg_n, cg_geno) in zip(edge_labels, genotypes):
-            self.plot_cell(cg_geno, filename+"-"+cg_n,
-                           label=cg_n + " " + label,
-                           edge_labels=e_label)
+            fname = self.plot_cell(cg_geno, filename+"-"+cg_n,
+                                   label=cg_n + " " + label,
+                                   edge_labels=e_label)
+            fnames.append((cg_n, fname))
+
+        return fnames
 
     def distance(self, arch1, arch2):
         raise NotImplementedError()
@@ -308,7 +320,7 @@ if __name__ == "__main__":
     mock_edge_label = np.random.rand(ss.num_cell_groups,
                                      ss.num_steps*ss.num_node_inputs)
     mock_edge_label = np.vectorize("{:.3f}".format)(mock_edge_label)
-    print("architecture: ", arch)
+    print("genotype: ", rollout.genotype)
     rollout.plot_arch("./try_plot", label="try plot",
                       edge_labels=mock_edge_label.tolist())
 #pylint: enable=invalid-name

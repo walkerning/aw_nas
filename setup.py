@@ -28,7 +28,10 @@ INSTALL_REQUIRES = [
     "six",          # 2-3 compatability
     "PyYaml",       # config file parsing
     "click",        # command line interface
-    "graphviz"      # visualize architecture dag
+    "graphviz",     # visualize architecture dag
+    # other utils
+    "imageio",
+    "setproctitle"
 ]
 
 EXTRAS_REQUIRE = {

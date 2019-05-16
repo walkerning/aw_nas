@@ -7,6 +7,7 @@ from __future__ import print_function
 from __future__ import division
 
 from collections import defaultdict
+import imageio
 import six
 
 import numpy as np
@@ -196,17 +197,17 @@ class MepaTrainer(BaseTrainer):
            # maybe write tensorboard info
             if not self.writer.is_none():
                 self.writer.add_scalars("acc", {
-                    "mepa_valid": valid_acc_meter.avg
+                    "mepa_update/valid": valid_acc_meter.avg
                 }, self.epoch)
                 self.writer.add_scalars("loss", {
-                    "mepa_valid": valid_loss_meter.avg,
+                    "mepa_update/valid": valid_loss_meter.avg,
                 }, self.epoch)
                 if not surrogate_loss_meter.is_empty():
                     self.writer.add_scalars("acc", {
-                        "mepa_train_surrogate": surrogate_acc_meter.avg
+                        "mepa_update/train_surrogate": surrogate_acc_meter.avg
                     }, self.epoch)
                     self.writer.add_scalars("loss", {
-                        "mepa_train_surrogate": surrogate_loss_meter.avg,
+                        "mepa_update/train_surrogate": surrogate_loss_meter.avg,
                     }, self.epoch)
 
             surrogate_acc_meter.reset()
@@ -261,19 +262,20 @@ class MepaTrainer(BaseTrainer):
             # maybe write tensorboard info
             if not self.writer.is_none():
                 self.writer.add_scalars("acc", {
-                    "controller_valid": valid_acc_meter.avg
+                    "arch_update/valid": valid_acc_meter.avg
                 }, self.epoch)
                 self.writer.add_scalars("loss", {
-                    "controller_valid": valid_loss_meter.avg,
+                    "arch_update/valid": valid_loss_meter.avg,
                 }, self.epoch)
                 if not surrogate_loss_meter.is_empty():
                     self.writer.add_scalars("acc", {
-                        "controller_train_surrogate": surrogate_acc_meter.avg
+                        "arch_update/train_surrogate": surrogate_acc_meter.avg
                     }, self.epoch)
                     self.writer.add_scalars("loss", {
-                        "controller_train_surrogate": surrogate_loss_meter.avg,
+                        "arch_update/train_surrogate": surrogate_loss_meter.avg,
                     }, self.epoch)
-                self.writer.add_scalar("controller_loss", controller_loss_meter.avg, self.epoch)
+                self.writer.add_scalar("loss/arch_update/controller_loss",
+                                       controller_loss_meter.avg, self.epoch)
 
             # maybe save checkpoints
             self.maybe_save()
@@ -294,16 +296,23 @@ class MepaTrainer(BaseTrainer):
         idx = np.argmax(accs)
         mean_acc = np.mean(accs)
         mean_loss = np.mean(losses)
-        save_path = self._save_path("arch")
+
+        save_path = self._save_path("rollout/cell")
         if save_path is not None:
-            rollouts[idx].plot_arch(save_path, label=str(self.epoch))
+            # NOTE: If `train_dir` is None, the image will not be saved to tensorboard too
+            fnames = rollouts[idx].plot_arch(save_path, label="epoch {}".format(self.epoch))
+            if not self.writer.is_none():
+                for cg_n, fname in fnames:
+                    image = imageio.imread(fname)
+                    self.writer.add_image("genotypes/{}".format(cg_n), image, self.epoch,
+                                          dataformats="HWC")
 
         self.logger.info("TEST Epoch %3d: Among %d sampled archs: "
                          "BEST (in acc): accuracy %.1f %% (mean: %.1f %%); "
                          "loss: %.2f (mean :%.3f); "
-                         "Saved this arch to %s.",
+                         "Saved this arch to %s.\nGenotype: %s",
                          self.epoch, self.derive_samples, accs[idx], mean_acc,
-                         losses[idx], mean_loss, save_path)
+                         losses[idx], mean_loss, save_path, rollouts[idx].genotype)
 
     def derive(self, n):
         rollouts = self.get_new_candidates(n)

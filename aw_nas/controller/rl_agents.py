@@ -52,6 +52,7 @@ class PGAgent(BaseRLAgent):
         self.batch_update = batch_update
 
         self.baseline = None
+        self.epoch = 0 # self.epoch is updated in Component base class
 
     def _step(self, log_probs, entropies, returns, optimizer, retain_graph=False):
         if self.baseline is None:

@@ -10,6 +10,7 @@ import shutil
 
 import click
 import numpy as np
+import setproctitle
 import torch
 from torch.backends import cudnn
 import yaml
@@ -88,6 +89,9 @@ def search(gpu, seed, cfg_file, load, save_every, train_dir, vis_dir):
 
     LOGGER.info("CWD: %s", os.getcwd())
     LOGGER.info("CMD: %s", " ".join(sys.argv))
+
+    setproctitle.setproctitle("awnas-search config: {}; train_dir: {}; vis_dir: {}; cwd: {}"\
+                              .format(cfg_file, train_dir, vis_dir, os.getcwd()))
 
     # set gpu
     _set_gpu(gpu)

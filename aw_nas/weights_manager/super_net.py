@@ -32,7 +32,7 @@ class SubCandidateNet(CandidateNet):
         self._device = self.super_net.device
         self.search_space = super_net.search_space
         self.rollout = rollout
-        self.genotypes = list(self.search_space.genotype(rollout.arch)._asdict().values())
+        self.genotypes = [g[1] for g in rollout.genotype_list()]
 
     @contextlib.contextmanager
     def begin_virtual(self):
