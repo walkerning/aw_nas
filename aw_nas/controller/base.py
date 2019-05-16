@@ -2,16 +2,27 @@
 """Base class definition of Controller"""
 
 import abc
+import contextlib
 
 from aw_nas import Component
 
 class BaseController(Component):
     REGISTRY = "controller"
 
-    def __init__(self, search_space, schedule_cfg=None):
+    def __init__(self, search_space, mode="eval", schedule_cfg=None):
         super(BaseController, self).__init__(schedule_cfg)
 
         self.search_space = search_space
+        self.mode = mode
+
+    @contextlib.contextmanager
+    def begin_mode(self, mode):
+        prev_mode = self.mode
+        self.set_mode(mode)
+
+        yield
+
+        self.set_mode(prev_mode)
 
     @abc.abstractmethod
     def set_mode(self, mode):
@@ -31,6 +42,13 @@ class BaseController(Component):
 
         Args:
             rollouts (list of Rollout)
+        """
+
+    @abc.abstractmethod
+    def summary(self, rollouts, prefix="", step=None):
+        """Summary the information in these rollouts.
+
+        Use self.logger to log theinformation.
         """
 
     @abc.abstractmethod

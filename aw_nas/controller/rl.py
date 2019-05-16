@@ -3,6 +3,7 @@
 RL-based controllers
 """
 
+import numpy as np
 from torch import nn
 
 from aw_nas import utils
@@ -15,6 +16,7 @@ class RLController(BaseController, nn.Module):
     NAME = "rl"
 
     def __init__(self, search_space, device,
+                 mode="eval",
                  controller_network_type="anchor_lstm", controller_network_cfg=None,
                  rl_agent_type="pg", rl_agent_cfg=None,
                  independent_cell_group=False):
@@ -23,6 +25,7 @@ class RLController(BaseController, nn.Module):
             search_space (aw_nas.SearchSpace): The controller will sample arch seeds
                 for this search space.
             device (str): `cuda` or `cpu`
+            mode (str): `train` or `eval`
             independent_cell_group (bool): If true, use independent controller and agent
                 for each cell group.
 
@@ -30,7 +33,7 @@ class RLController(BaseController, nn.Module):
             If `independent_cell_group` is set to true, do not merge anything across
             the graph of different cell groups.
         """
-        super(RLController, self).__init__(search_space)
+        super(RLController, self).__init__(search_space, mode)
         nn.Module.__init__(self)
 
         self.device = device
@@ -111,6 +114,29 @@ class RLController(BaseController, nn.Module):
             loss /= len(self.agents)
         return loss
 
+    def summary(self, rollouts, prefix="", step=None):
+        # log the total negative log prob and the entropies, averaged across the rollouts
+        # also the averaged info for each cell group
+        cg_logprobs = np.mean(np.array([[cg_lp.detach().cpu().numpy().sum() \
+                                         for cg_lp in r.info["log_probs"]]\
+                                        for r in rollouts]), 0)
+        total_logprob = cg_logprobs.sum()
+        cg_logprobs_str = ",".join(["{:.2f}".format(n) for n in cg_logprobs])
+        cg_entros = np.mean(np.array([[cg_e.detach().cpu().numpy().sum() \
+                                         for cg_e in r.info["entropies"]]\
+                                        for r in rollouts]), 0)
+        total_entro = cg_entros.sum()
+        cg_entro_str = ",".join(["{:.2f}".format(n) for n in cg_entros])
+        num = len(rollouts)
+
+        self.logger.info("%s%d rollouts: -LOG_PROB: %.2f (%s) ; ENTROPY: %2f (%s)",
+                         prefix, num,
+                         -total_logprob, cg_logprobs_str,
+                         total_entro, cg_entro_str)
+        if step is not None and not self.writer.is_none():
+            self.writer.add_scalar("log_prob", total_logprob, step)
+            self.writer.add_scalar("entropy", total_logprob, step)
+
     def on_epoch_start(self, epoch):
         super(RLController, self).on_epoch_start(epoch)
         [c.on_epoch_start(epoch) for c in self.controllers]
@@ -122,6 +148,7 @@ class RLController(BaseController, nn.Module):
         [a.on_epoch_end(epoch) for a in self.agents]
 
     def setup_writer(self, writer):
+        super(RLController, self).setup_writer(writer)
         [a.setup_writer(writer.get_sub_writer("rl_agent_{}".format(i))) \
          for i, a in enumerate(self.agents)]
         [c.setup_writer(writer.get_sub_writer("controller_network_{}".format(i))) \

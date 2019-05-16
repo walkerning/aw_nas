@@ -298,7 +298,7 @@ class SharedCell(nn.Module):
 
 class SharedOp(nn.Module):
     """
-    An operation on an edge, consisting of multiple primitives.
+    The operation on an edge, consisting of multiple primitives.
     """
 
     def __init__(self, C, stride, primitives):

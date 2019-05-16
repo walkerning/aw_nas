@@ -52,7 +52,6 @@ class PGAgent(BaseRLAgent):
         self.batch_update = batch_update
 
         self.baseline = None
-        self.epoch = 0 # self.epoch is updated in Component base class
 
     def _step(self, log_probs, entropies, returns, optimizer, retain_graph=False):
         if self.baseline is None:
@@ -91,10 +90,6 @@ class PGAgent(BaseRLAgent):
                 losses.append(loss)
             loss = np.mean(losses)
 
-        if not self.writer.is_none():
-            # maybe write tensorboard info
-            self.writer.add_scalar("last_baseline", self.baseline[-1], self.epoch)
-
         return loss
 
     def save(self, path):
@@ -102,3 +97,8 @@ class PGAgent(BaseRLAgent):
 
     def load(self, path):
         self.baseline = np.load(path)
+
+    def on_epoch_end(self, epoch):
+        if not self.writer.is_none():
+            # maybe write tensorboard info
+            self.writer.add_scalar("last_baseline", self.baseline[-1], epoch)
