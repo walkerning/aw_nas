@@ -12,3 +12,13 @@ class MockUnderlyWriter(object):
 @pytest.fixture
 def writer():
     return MockUnderlyWriter()
+
+@pytest.fixture
+def super_net(request):
+    cfg = getattr(request, "param", {})
+    from aw_nas.common import get_search_space
+    from aw_nas.weights_manager import SuperNet
+    search_space = get_search_space(cls="cnn")
+    device = "cuda"
+    net = SuperNet(search_space, device, **cfg)
+    return net

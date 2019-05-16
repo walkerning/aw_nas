@@ -51,8 +51,9 @@ class AnchorControlNet(BaseRLControllerNet):
     ]
 
     def __init__(self, search_space, device, num_lstm_layers=1,
-                 controller_hid=100, attention_hid=100,
-                 softmax_temperature=None, tanh_constant=None,
+                 controller_hid=64, attention_hid=64,
+                 softmax_temperature=None, tanh_constant=1.1,
+                 op_tanh_reduce=2.5,
                  schedule_cfg=None):
         """
         Args:
@@ -62,6 +63,7 @@ class AnchorControlNet(BaseRLControllerNet):
             softmax_temperature (float): Softmax temperature before each
                 decision softmax.
             tanh_constant (float):
+            op_tanh_reduce (float):
         """
         super(AnchorControlNet, self).__init__(search_space, device, schedule_cfg)
 
@@ -70,6 +72,7 @@ class AnchorControlNet(BaseRLControllerNet):
         self.attention_hid = attention_hid
         self.softmax_temperature = softmax_temperature
         self.tanh_constant = tanh_constant
+        self.op_tanh_reduce = op_tanh_reduce
 
         self._num_primitives = len(self.search_space.shared_primitives)
         self.func_names = self.search_space.shared_primitives
@@ -124,7 +127,7 @@ class AnchorControlNet(BaseRLControllerNet):
         hx, cx = self.stack_lstm(inputs, hidden)
         logits = self.w_op_soft(hx[-1])
 
-        logits = self._handle_logits(logits)
+        logits = self._handle_logits(logits, mode="op")
 
         return logits, (hx, cx)
 
@@ -138,7 +141,7 @@ class AnchorControlNet(BaseRLControllerNet):
         logits = self.w_node_soft(query).squeeze(-1).transpose(0, 1)
 
         # logits: (batch_size, num_choices)
-        logits = self._handle_logits(logits)
+        logits = self._handle_logits(logits, mode="node")
 
         return logits, (hx, cx)
 
@@ -239,14 +242,17 @@ class AnchorControlNet(BaseRLControllerNet):
         checkpoint = torch.load(path)
         self.load_state_dict(checkpoint["state_dict"])
 
-    def _handle_logits(self, logits):
+    def _handle_logits(self, logits, mode):
         if self.softmax_temperature is not None:
             logits /= self.softmax_temperature
 
         # exploration
         # if self.mode == "train": # foxfi: ?
         if self.tanh_constant is not None:
-            logits = (self.tanh_constant * F.tanh(logits))
+            tanh_constant = self.tanh_constant
+            if mode == "op":
+                tanh_constant /= self.op_tanh_reduce
+            logits = tanh_constant * torch.tanh(logits)
 
         return logits
 

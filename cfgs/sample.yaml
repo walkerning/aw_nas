@@ -1,3 +1,7 @@
+## NOTE: This sample might be outdated.
+##       Not essentially the same version with the default parameters of the newest code version.
+##       To get a new sample.yaml, run `awnas gen-sample-config`.
+
 # ## ---- Component search_space ----
 # # ---- Type cnn ----
 # search_space_type: cnn
@@ -41,6 +45,7 @@
 #   controller_network_cfg: null
 #   controller_network_type: anchor_lstm
 #   independent_cell_group: false
+#   mode: eval
 #   rl_agent_cfg: null
 #   rl_agent_type: pg
 #   #   ## ---- Component controller_network ----
@@ -48,12 +53,13 @@
 #   #   controller_network_type: anchor_lstm
 #   #   controller_network_cfg:
 #   #     # Schedulable attributes: softmax_temperature
-#   #     attention_hid: 100
-#   #     controller_hid: 100
+#   #     attention_hid: 64
+#   #     controller_hid: 64
 #   #     num_lstm_layers: 1
+#   #     op_tanh_reduce: 2.5
 #   #     schedule_cfg: null
 #   #     softmax_temperature: null
-#   #     tanh_constant: null
+#   #     tanh_constant: 1.1
 #   #   # ---- End Type anchor_lstm ----
 #   #   ## ---- End Component controller_network ----
 
@@ -62,9 +68,9 @@
 #   #   rl_agent_type: pg
 #   #   rl_agent_cfg:
 #   #     # Schedulable attributes: 
-#   #     alpha: 0.99
+#   #     alpha: 0.999
 #   #     batch_update: true
-#   #     entropy_coeff: 0.0
+#   #     entropy_coeff: 0.0001
 #   #     gamma: 1.0
 #   #     max_grad_norm: null
 #   #   # ---- End Type pg ----
@@ -77,7 +83,11 @@
 # weights_manager_type: supernet
 # weights_manager_cfg:
 #   # Schedulable attributes: 
+#   candidate_cache_named_members: false
+#   candidate_member_mask: true
+#   dropout_rate: 0.1
 #   init_channels: 16
+#   max_grad_norm: 5.0
 #   num_classes: 10
 #   stem_multiplier: 3
 # # ---- End Type supernet ----
@@ -90,16 +100,17 @@
 #   # Schedulable attributes: 
 #   batch_size: 64
 #   controller_optimizer:
-#     lr: 0.0003
+#     lr: 0.0035
 #     type: Adam
 #   controller_samples: 4
 #   controller_scheduler: null
 #   controller_steps: 313
 #   controller_surrogate_steps: 1
+#   controller_train_every: 1
 #   data_portion:
 #   - 0.2
-#   - 0.4
-#   - 0.4
+#   - 0.6
+#   - 0.2
 #   derive_queue: controller
 #   derive_samples: 8
 #   derive_surrogate_steps: 1
@@ -108,9 +119,13 @@
 #     lr: 0.01
 #     momentum: 0.9
 #     type: SGD
-#     weight_decay: 0.0003
+#     weight_decay: 0.0001
 #   mepa_samples: 1
-#   mepa_scheduler: null
+#   mepa_scheduler:
+#     eta_min: 0.0001
+#     factor: 2.0
+#     t_0: 10
+#     type: CosineWithRestarts
 #   mepa_surrogate_steps: 1
 #   schedule_cfg: null
 #   surrogate_optimizer:

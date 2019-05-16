@@ -135,7 +135,7 @@ class RLController(BaseController, nn.Module):
                          total_entro, cg_entro_str)
         if step is not None and not self.writer.is_none():
             self.writer.add_scalar("log_prob", total_logprob, step)
-            self.writer.add_scalar("entropy", total_logprob, step)
+            self.writer.add_scalar("entropy", total_entro, step)
 
     def on_epoch_start(self, epoch):
         super(RLController, self).on_epoch_start(epoch)

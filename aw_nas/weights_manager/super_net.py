@@ -26,12 +26,17 @@ class SubCandidateNet(CandidateNet):
     The candidate net for SuperNet weights manager.
     """
 
-    def __init__(self, super_net, rollout):
+    def __init__(self, super_net, rollout, member_mask, cache_named_members=False):
         super(SubCandidateNet, self).__init__()
         self.super_net = super_net
         self._device = self.super_net.device
         self.search_space = super_net.search_space
         self.rollout = rollout
+        self.member_mask = member_mask
+        self.cache_named_members = cache_named_members
+        self._cached_np = None
+        self._cached_nb = None
+
         self.genotypes = [g[1] for g in rollout.genotype_list()]
 
     @contextlib.contextmanager
@@ -66,6 +71,41 @@ class SubCandidateNet(CandidateNet):
         return self.super_net.search_space.plot_arch(self.genotypes)
 
     def named_parameters(self, prefix="", recurse=True): #pylint: disable=arguments-differ
+        if self.member_mask:
+            if self.cache_named_members:
+                # use cached members
+                if self._cached_np is None:
+                    self._cached_np = []
+                    for n, v in self.active_named_parameters(prefix=""):
+                        self._cached_np.append((n, v))
+                prefix = prefix + ("/" if prefix else "")
+                for n, v in self._cached_np:
+                    yield prefix + n, v
+            else:
+                for n, v in self.active_named_parameters(prefix=prefix):
+                    yield n, v
+        else:
+            for n, v in self.super_net.named_parameters(prefix=prefix):
+                yield n, v
+
+    def named_buffers(self, prefix="", recurse=True): #pylint: disable=arguments-differ
+        if self.member_mask:
+            if self.cache_named_members:
+                if self._cached_nb is None:
+                    self._cached_nb = []
+                    for n, v in self.active_named_buffers(prefix=""):
+                        self._cached_nb.append((n, v))
+                prefix = prefix + ("/" if prefix else "")
+                for n, v in self._cached_nb:
+                    yield prefix + n, v
+            else:
+                for n, v in self.active_named_buffers(prefix=prefix):
+                    yield n, v
+        else:
+            for n, v in self.super_net.named_buffers(prefix=prefix):
+                yield n, v
+
+    def active_named_parameters(self, prefix="", recurse=True):
         """
         Get the generator of name-parameter pairs active
         in this candidate network. Always recursive.
@@ -75,7 +115,7 @@ class SubCandidateNet(CandidateNet):
                                                      member="parameters"):
             yield n, v
 
-    def named_buffers(self, prefix="", recurse=True):
+    def active_named_buffers(self, prefix="", recurse=True):
         """
         Get the generator of name-buffer pairs active
         in this candidate network.
@@ -93,7 +133,20 @@ class SuperNet(BaseWeightsManager, nn.Module):
     NAME = "supernet"
 
     def __init__(self, search_space, device,
-                 num_classes=10, init_channels=16, stem_multiplier=3):
+                 num_classes=10, init_channels=16, stem_multiplier=3,
+                 max_grad_norm=5.0, dropout_rate=0.1,
+                 candidate_member_mask=True, candidate_cache_named_members=False):
+        """
+        Args:
+            candidate_member_mask (bool): If true, the candidate network's `named_parameters`
+                or `named_buffers` method will only return parameters/buffers that is active,
+                `begin_virtual` just need to store/restore these active variables.
+                This should be more efficient.
+            candidate_cache_named_members (bool): If true, the candidate network's
+                named parameters/buffers will be cached on the first calculation.
+                It should not cause any logical, however, due to my benchmark, this bring no
+                performance increase. So default disable it.
+        """
         super(SuperNet, self).__init__(search_space, device)
         nn.Module.__init__(self)
 
@@ -104,6 +157,15 @@ class SuperNet(BaseWeightsManager, nn.Module):
         # channels of stem conv / init_channels
         self.stem_multiplier = stem_multiplier
 
+        # training
+        self.max_grad_norm = max_grad_norm
+        self.dropout_rate = dropout_rate
+
+        # candidate net with/without parameter mask
+        self.candidate_member_mask = candidate_member_mask
+        self.candidate_cache_named_members = candidate_cache_named_members
+
+        # search space configs
         self._num_init = self.search_space.num_init_nodes
         self._cell_layout = self.search_space.cell_layout
         self._reduce_cgs = self.search_space.reduce_cell_groups
@@ -138,6 +200,7 @@ class SuperNet(BaseWeightsManager, nn.Module):
             self.cells.append(cell)
 
         self.global_pooling = nn.AdaptiveAvgPool2d(1)
+        self.dropout = nn.Dropout(p=self.dropout_rate)
         self.classifier = nn.Linear(num_channels * self._out_multiplier,
                                     self.num_classes)
 
@@ -151,6 +214,7 @@ class SuperNet(BaseWeightsManager, nn.Module):
             states = states[1:]
 
         out = self.global_pooling(states[-1])
+        out = self.dropout(out)
         logits = self.classifier(out.view(out.size(0), -1))
         return logits
 
@@ -195,14 +259,19 @@ class SuperNet(BaseWeightsManager, nn.Module):
 
     # ---- APIs ----
     def assemble_candidate(self, rollout):
-        return SubCandidateNet(self, rollout)
+        return SubCandidateNet(self, rollout,
+                               member_mask=self.candidate_member_mask,
+                               cache_named_members=self.candidate_cache_named_members)
 
     def step(self, gradients, optimizer):
         self.zero_grad() # clear all gradients
         named_params = dict(self.named_parameters())
         for k, grad in gradients:
             named_params[k].grad = grad
-        optimizer.step() # apply the gradients
+        # clip the gradients
+        torch.nn.utils.clip_grad_norm_(self.parameters(), self.max_grad_norm)
+        # apply the gradients
+        optimizer.step()
 
     def save(self, path):
         torch.save({"state_dict": self.state_dict()}, path)

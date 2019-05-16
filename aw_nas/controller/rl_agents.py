@@ -33,8 +33,8 @@ class BaseRLAgent(Component):
 class PGAgent(BaseRLAgent):
     NAME = "pg"
 
-    def __init__(self, controller, alpha=0.99, gamma=1.,
-                 entropy_coeff=0., max_grad_norm=None, batch_update=True):
+    def __init__(self, controller, alpha=0.999, gamma=1.,
+                 entropy_coeff=0.0001, max_grad_norm=None, batch_update=True):
         """
         Args:
             controller (aw_nas.RLController)
