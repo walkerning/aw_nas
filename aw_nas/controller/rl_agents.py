@@ -34,7 +34,7 @@ class PGAgent(BaseRLAgent):
     NAME = "pg"
 
     def __init__(self, controller, alpha=0.999, gamma=1.,
-                 entropy_coeff=0.0001, max_grad_norm=None, batch_update=True):
+                 entropy_coeff=0.01, max_grad_norm=None, batch_update=True):
         """
         Args:
             controller (aw_nas.RLController)
@@ -99,6 +99,6 @@ class PGAgent(BaseRLAgent):
         self.baseline = np.load(path)
 
     def on_epoch_end(self, epoch):
-        if not self.writer.is_none():
+        if not self.writer.is_none() and self.baseline is not None:
             # maybe write tensorboard info
             self.writer.add_scalar("last_baseline", self.baseline[-1], epoch)

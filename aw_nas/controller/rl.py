@@ -3,6 +3,8 @@
 RL-based controllers
 """
 
+from collections import OrderedDict
+
 import numpy as np
 from torch import nn
 
@@ -114,7 +116,7 @@ class RLController(BaseController, nn.Module):
             loss /= len(self.agents)
         return loss
 
-    def summary(self, rollouts, prefix="", step=None):
+    def summary(self, rollouts, log=False, log_prefix="", step=None):
         # log the total negative log prob and the entropies, averaged across the rollouts
         # also the averaged info for each cell group
         cg_logprobs = np.mean(np.array([[cg_lp.detach().cpu().numpy().sum() \
@@ -129,13 +131,20 @@ class RLController(BaseController, nn.Module):
         cg_entro_str = ",".join(["{:.2f}".format(n) for n in cg_entros])
         num = len(rollouts)
 
-        self.logger.info("%s%d rollouts: -LOG_PROB: %.2f (%s) ; ENTROPY: %2f (%s)",
-                         prefix, num,
-                         -total_logprob, cg_logprobs_str,
-                         total_entro, cg_entro_str)
-        if step is not None and not self.writer.is_none():
-            self.writer.add_scalar("log_prob", total_logprob, step)
-            self.writer.add_scalar("entropy", total_entro, step)
+        if log:
+            # maybe log the summary
+            self.logger.info("%s%d rollouts: -LOG_PROB: %.2f (%s) ; ENTROPY: %2f (%s)",
+                             log_prefix, num,
+                             -total_logprob, cg_logprobs_str,
+                             total_entro, cg_entro_str)
+            if step is not None and not self.writer.is_none():
+                self.writer.add_scalar("log_prob", total_logprob, step)
+                self.writer.add_scalar("entropy", total_entro, step)
+        _ss = self.search_space
+        return OrderedDict([(n + " LOGPROB", logprob) for n, logprob in \
+                            zip(_ss.cell_group_names, cg_logprobs)] +
+                           [(n + " ENTRO", entro) for n, entro in \
+                            zip(_ss.cell_group_names, cg_entros)])
 
     def on_epoch_start(self, epoch):
         super(RLController, self).on_epoch_start(epoch)

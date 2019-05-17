@@ -45,8 +45,8 @@ class BaseController(Component):
         """
 
     @abc.abstractmethod
-    def summary(self, rollouts, prefix="", step=None):
-        """Summary the information in these rollouts.
+    def summary(self, rollouts, log=False, log_prefix="", step=None):
+        """Return the information in these rollouts. Maybe log/visualize the information.
 
         Use self.logger to log theinformation.
         """

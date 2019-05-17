@@ -6,7 +6,7 @@ Trainer definition, this is the orchestration of all the components.
 from __future__ import print_function
 from __future__ import division
 
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 import imageio
 import six
 
@@ -42,7 +42,7 @@ class MepaTrainer(BaseTrainer):
     """
 
     NAME = "mepa"
-    SCHEDULEABLE_ATTRS = [
+    SCHEDULABLE_ATTRS = [
         "mepa_surrogate_steps",
         "mepa_samples",
         "controller_steps",
@@ -76,8 +76,9 @@ class MepaTrainer(BaseTrainer):
                  mepa_surrogate_steps=1, mepa_samples=1,
                  controller_steps=313, controller_surrogate_steps=1, controller_samples=4,
                  controller_train_every=1,
-                 data_portion=(0.2, 0.6, 0.2), derive_queue="controller",
+                 data_portion=(0.2, 0.2, 0.6), derive_queue="controller",
                  derive_surrogate_steps=1, derive_samples=8,
+                 mepa_as_surrogate=False,
                  schedule_cfg=None):
         super(MepaTrainer, self).__init__(controller, weights_manager, dataset, schedule_cfg)
 
@@ -87,6 +88,7 @@ class MepaTrainer(BaseTrainer):
         self.test_every = test_every
         self.mepa_surrogate_steps = mepa_surrogate_steps
         self.mepa_samples = mepa_samples
+        self.mepa_as_surrogate = mepa_as_surrogate
         self.controller_steps = controller_steps
         self.controller_surrogate_steps = controller_surrogate_steps
         self.controller_samples = controller_samples
@@ -96,10 +98,14 @@ class MepaTrainer(BaseTrainer):
         # do some checks
         assert derive_queue in {"surrogate", "controller", "mepa"}
         assert len(data_portion) == 3
-        if self.mepa_surrogate_steps == 0 and self.mepa_surrogate_steps == 0:
+        if self.mepa_surrogate_steps == 0 and self.controller_surrogate_steps == 0:
             assert data_portion[0] == 0, \
                 "Do not waste data, set the first element of `data_portion` to 0 "\
                 "when there are not surrogate steps."
+        if mepa_as_surrogate:
+            assert data_portion[0] == 0, \
+                "`mepa_as_surrogate` is set true, will use mepa valid data as surrogate data "\
+                "set the first element of `data_portion` to 0."
 
         # initialize the optimizers
         self.surrogate_optimizer = self._init_optimizer(self.weights_manager.parameters(),
@@ -122,7 +128,16 @@ class MepaTrainer(BaseTrainer):
                        "batch_size": self.batch_size} for p in data_portion]
         self.surrogate_queue, self.controller_queue, self.mepa_queue \
             = self.prepare_data_queues(self.dataset.splits(), queue_cfgs)
+        if mepa_as_surrogate:
+            # use mepa data queue as surrogate data queue
+            self.surrogate_queue = self.mepa_queue
         self.derive_queue = getattr(self, derive_queue + "_queue")
+        self.logger.info("Data sizes: surrogate: %s; controller: %d; mepa: %d; derive: (%s queue)",
+                         str(len(self.surrogate_queue) * self.batch_size) \
+                         if not mepa_as_surrogate else "(mepa queue)",
+                         len(self.controller_queue) * self.batch_size,
+                         len(self.mepa_queue) * self.batch_size,
+                         derive_queue)
 
         self.mepa_steps = len(self.mepa_queue)
         self.derive_steps = len(self.derive_queue)
@@ -132,7 +147,7 @@ class MepaTrainer(BaseTrainer):
         self.epoch = 1
         self._criterion = nn.CrossEntropyLoss()
 
-    def train(self): #pylint: disable=too-many-statements,too-many-branches
+    def train(self): #pylint: disable=too-many-statements,too-many-branches,too-many-locals
         assert self.is_setup, "Must call `trainer.setup` method before calling `trainer.train`."
         for epoch in range(self.begin_epoch, self.epochs+1):
             self.epoch = epoch # this is redundant as Component.on_epoch_start also set this
@@ -221,6 +236,8 @@ class MepaTrainer(BaseTrainer):
             valid_acc_meter.reset()
             valid_loss_meter.reset()
 
+            controller_stat_meters = None
+
             # controller training
             if epoch % self.controller_train_every == 0:
                 self.controller.set_mode("train")
@@ -260,6 +277,11 @@ class MepaTrainer(BaseTrainer):
 
                     controller_loss = self.controller.step(rollouts, self.controller_optimizer)
                     controller_loss_meter.update(controller_loss)
+                    controller_stats = self.controller.summary(rollouts, log=False)
+                    if controller_stat_meters is None:
+                        controller_stat_meters = OrderedDict([(n, utils.AverageMeter())\
+                                                              for n in controller_stats])
+                    [controller_stat_meters[n].update(v) for n, v in controller_stats.items()]
 
                 print("\r", end="")
                 self.logger.info("Epoch %3d: [controller update] controller loss: %.3f ; "
@@ -268,6 +290,9 @@ class MepaTrainer(BaseTrainer):
                                  epoch, controller_loss_meter.avg,
                                  surrogate_acc_meter.avg * 100, surrogate_loss_meter.avg,
                                  valid_acc_meter.avg * 100, valid_loss_meter.avg)
+                self.logger.info("[controller stats] %s", \
+                                 "; ".join(["{}: {:.2f}".format(n, meter.avg) \
+                                            for n, meter in controller_stat_meters.items()]))
 
                 # maybe write tensorboard info
                 if not self.writer.is_none():
@@ -323,7 +348,7 @@ class MepaTrainer(BaseTrainer):
                          losses[idx], mean_loss)
         self.logger.info("Saved this arch to %s.\nGenotype: %s",
                          save_path, rollouts[idx].genotype)
-        self.controller.summary(rollouts, prefix="Rollouts Info: ", step=self.epoch)
+        self.controller.summary(rollouts, log=True, log_prefix="Rollouts Info: ", step=self.epoch)
 
     def derive(self, n):
         rollouts = self.get_new_candidates(n)
