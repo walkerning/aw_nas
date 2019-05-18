@@ -26,7 +26,8 @@ class SubCandidateNet(CandidateNet):
     The candidate net for SuperNet weights manager.
     """
 
-    def __init__(self, super_net, rollout, member_mask, cache_named_members=False):
+    def __init__(self, super_net, rollout, member_mask, cache_named_members=False,
+                 virtual_parameter_only=False):
         super(SubCandidateNet, self).__init__()
         self.super_net = super_net
         self._device = self.super_net.device
@@ -34,6 +35,7 @@ class SubCandidateNet(CandidateNet):
         self.rollout = rollout
         self.member_mask = member_mask
         self.cache_named_members = cache_named_members
+        self.virtual_parameter_only = virtual_parameter_only
         self._cached_np = None
         self._cached_nb = None
 
@@ -49,7 +51,8 @@ class SubCandidateNet(CandidateNet):
         """
 
         w_clone = {k: v.clone() for k, v in self.named_parameters()}
-        buffer_clone = {k: v.clone() for k, v in self.named_buffers()}
+        if not self.virtual_parameter_only:
+            buffer_clone = {k: v.clone() for k, v in self.named_buffers()}
 
         yield
 
@@ -57,9 +60,10 @@ class SubCandidateNet(CandidateNet):
             v.data.copy_(w_clone[n])
         del w_clone
 
-        for n, v in self.named_buffers():
-            v.data.copy_(buffer_clone[n])
-        del buffer_clone
+        if not self.virtual_parameter_only:
+            for n, v in self.named_buffers():
+                v.data.copy_(buffer_clone[n])
+            del buffer_clone
 
     def get_device(self):
         return self._device
@@ -135,7 +139,8 @@ class SuperNet(BaseWeightsManager, nn.Module):
     def __init__(self, search_space, device,
                  num_classes=10, init_channels=16, stem_multiplier=3,
                  max_grad_norm=5.0, dropout_rate=0.1,
-                 candidate_member_mask=True, candidate_cache_named_members=False):
+                 candidate_member_mask=True, candidate_cache_named_members=False,
+                 candidate_virtual_parameter_only=False):
         """
         Args:
             candidate_member_mask (bool): If true, the candidate network's `named_parameters`
@@ -146,6 +151,9 @@ class SuperNet(BaseWeightsManager, nn.Module):
                 named parameters/buffers will be cached on the first calculation.
                 It should not cause any logical, however, due to my benchmark, this bring no
                 performance increase. So default disable it.
+            candidate_virtual_parameter_only (bool): If true, the candidate network's
+                `begin_virtual` will only store/restore parameters, not buffers (e.g. running
+                mean/running std in BN layer).
         """
         super(SuperNet, self).__init__(search_space, device)
         nn.Module.__init__(self)
@@ -164,6 +172,7 @@ class SuperNet(BaseWeightsManager, nn.Module):
         # candidate net with/without parameter mask
         self.candidate_member_mask = candidate_member_mask
         self.candidate_cache_named_members = candidate_cache_named_members
+        self.candidate_virtual_parameter_only = candidate_virtual_parameter_only
 
         # search space configs
         self._num_init = self.search_space.num_init_nodes
@@ -261,7 +270,8 @@ class SuperNet(BaseWeightsManager, nn.Module):
     def assemble_candidate(self, rollout):
         return SubCandidateNet(self, rollout,
                                member_mask=self.candidate_member_mask,
-                               cache_named_members=self.candidate_cache_named_members)
+                               cache_named_members=self.candidate_cache_named_members,
+                               virtual_parameter_only=self.candidate_virtual_parameter_only)
 
     def step(self, gradients, optimizer):
         self.zero_grad() # clear all gradients

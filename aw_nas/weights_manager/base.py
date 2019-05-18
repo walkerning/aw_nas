@@ -89,7 +89,7 @@ class CandidateNet(nn.Module):
         return torch.cat(outputs, dim=0)
 
     def gradient(self, data, criterion=nn.CrossEntropyLoss(),
-                 parameters=None, eval_criterions=None, mode=None):
+                 parameters=None, eval_criterions=None, mode="train"):
         """Get the gradient with respect to the candidate net parameters.
 
         Args:
@@ -150,8 +150,8 @@ class CandidateNet(nn.Module):
             return [s / steps for s in average_ans]
         return []
 
-    def eval_queue(self, queue, criterions, steps=1):
-        self._set_mode("eval")
+    def eval_queue(self, queue, criterions, steps=1, mode="eval"):
+        self._set_mode(mode)
 
         average_ans = None
         with torch.no_grad():
@@ -166,12 +166,12 @@ class CandidateNet(nn.Module):
                     average_ans = [s + x for s, x in zip(average_ans, ans)]
         return [s / steps for s in average_ans]
 
-    def eval_data(self, data, criterions):
+    def eval_data(self, data, criterions, mode="eval"):
         """
         Returns:
            results (list of results return by criterions)
         """
-        self._set_mode("eval")
+        self._set_mode(mode)
 
         with torch.no_grad():
             data = (data[0].to(self.get_device()), data[1].to(self.get_device()))

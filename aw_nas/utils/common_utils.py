@@ -30,6 +30,13 @@ class AverageMeter(object):
         self.cnt += n
         self.avg = self.sum / self.cnt
 
+class keydefaultdict(collections.defaultdict): #pylint: disable=invalid-name
+    def __missing__(self, key):
+        if self.default_factory is None:
+            raise KeyError(key)
+        ret = self[key] = self.default_factory(key) #pylint: disable=not-callable
+        return ret
+
 class attr_dict_wrapper(object): #pylint: disable=invalid-name
     def __init__(self, dct):
         self.dct = dct

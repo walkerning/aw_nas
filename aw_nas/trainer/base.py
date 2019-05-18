@@ -94,18 +94,32 @@ class BaseTrainer(Component):
         dir_ = utils.makedir(os.path.join(self.train_dir, str(self.epoch)))
         return os.path.join(dir_, name)
 
-    def setup(self, load=None, save_every=None, train_dir=None, writer=None):
+    def setup(self, load=None, save_every=None, train_dir=None, writer=None, load_components=None):
         """
         Setup the scaffold: saving/loading/visualization settings.
-        @TODO: tensorboard or visdom interface
         """
         if load is not None:
-            c_path = os.path.join(load, "controller")
-            wm_path = os.path.join(load, "weights_manager")
-            trainer_path = os.path.join(load, "trainer")
-            self.controller.load(c_path)
-            self.weights_manager.load(wm_path)
-            self.load(trainer_path)
+            all_components = ("controller", "weights_manager", "trainer")
+            load_components = all_components\
+                              if load_components is None else load_components
+            assert set(load_components).issubset(all_components)
+
+            if "controller" in load_components:
+                path = os.path.join(load, "controller")
+                if os.path.exists(path):
+                    self.logger.info("Load controller from %s", path)
+                    self.controller.load(path)
+            if "weights_manager" in load_components:
+                path = os.path.join(load, "weights_manager")
+                if os.path.exists(path):
+                    self.logger.info("Load weights_manager from %s", path)
+                    self.weights_manager.load(path)
+            if "trainer" in load_components:
+                path = os.path.join(load, "trainer")
+                if os.path.exists(path):
+                    self.logger.info("Load trainer from %s", path)
+                    self.load(path)
+
         self.save_every = save_every
         self.train_dir = utils.makedir(train_dir) if train_dir is not None else train_dir
         if writer is not None:

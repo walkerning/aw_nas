@@ -1,4 +1,5 @@
 from aw_nas.common import get_search_space
+import pytest
 
 def test_rl_controller():
     import torch
@@ -24,15 +25,21 @@ def test_rl_controller():
     optimizer = torch.optim.SGD(controller_i.parameters(), lr=0.01)
     loss = controller_i.step(rollouts, optimizer)
 
-def test_controller_network():
-    from aw_nas.controller.rl_networks import AnchorControlNet
-
+@pytest.mark.parametrize("case", [
+    {"type": "anchor_lstm", "cfg": {}},
+    {"type": "embed_lstm", "cfg": {}},
+])
+def test_controller_network(case):
+    from aw_nas.controller.rl_networks import BaseRLControllerNet
     search_space = get_search_space(cls="cnn")
     device = "cuda"
-    net = AnchorControlNet(search_space, device)
+    cls = BaseRLControllerNet.get_class_(case["type"])
+    net = cls(search_space, device)
+
     batch_size = 3
     arch, log_probs, entropies, (hx, cx) = net.sample(batch_size)
     assert len(hx) == net.num_lstm_layers
+    assert len(cx) == net.num_lstm_layers
     assert hx[0].shape == (batch_size, net.controller_hid)
     assert len(arch) == batch_size
     num_actions = len(arch[0][0]) + len(arch[0][1])

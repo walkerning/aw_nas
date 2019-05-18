@@ -22,6 +22,9 @@ from aw_nas.utils import logger as _logger
 
 LOGGER = _logger.getChild("main")
 
+def _onlycopy_py(src, names):
+    return [name for name in names if not \
+            (name == "VERSION" or name.endswith(".py") or os.path.isdir(os.path.join(src, name)))]
 
 def _init_component(cfg, registry_name, **addi_args):
     type_ = cfg[registry_name + "_type"]
@@ -29,6 +32,7 @@ def _init_component(cfg, registry_name, **addi_args):
     if not cfg:
         cfg = {}
     addi_args.update(cfg)
+    LOGGER.info("Component [%s] type： %s", registry_name, type_)
     return RegistryMeta.get_class(registry_name, type_)(**addi_args)
 
 
@@ -63,7 +67,9 @@ def main():
 @click.option("--vis-dir", default=None, type=str,
               help="the directory to save tensorboard events. "
               "need `tensorboard` extra, `pip install aw_nas[tensorboard]`")
-def search(gpu, seed, cfg_file, load, save_every, train_dir, vis_dir):
+@click.option("--develop", default=False, type=bool, is_flag=True,
+              help="in develop mode, will copy the `aw_nas` source files into train_dir for backup")
+def search(gpu, seed, cfg_file, load, save_every, train_dir, vis_dir, develop):
     # check dependency and initialize visualization writer
     if vis_dir:
         try:
@@ -79,9 +85,18 @@ def search(gpu, seed, cfg_file, load, save_every, train_dir, vis_dir):
     writer = WrapWriter(_writer)
 
     if train_dir:
-        # backup config file
+        # backup config file, and if in `develop` mode, also backup the aw_nas source code
         train_dir = utils.makedir(train_dir)
         shutil.copyfile(cfg_file, os.path.join(train_dir, "config.yaml"))
+
+        if develop:
+            import pkg_resources
+            src_path = pkg_resources.resource_filename("aw_nas", "")
+            backup_code_path = os.path.join(train_dir, "aw_nas")
+            if os.path.exists(backup_code_path):
+                shutil.rmtree(backup_code_path)
+            LOGGER.info("Copy `aw_nas` source code to %s", backup_code_path)
+            shutil.copytree(src_path, backup_code_path, ignore=_onlycopy_py)
 
         # add log file handler
         log_file = os.path.join(train_dir, "search.log")

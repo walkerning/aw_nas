@@ -75,7 +75,7 @@ class MepaTrainer(BaseTrainer):
                  },
                  mepa_surrogate_steps=1, mepa_samples=1,
                  controller_steps=313, controller_surrogate_steps=1, controller_samples=4,
-                 controller_train_every=1,
+                 controller_train_every=1, controller_train_begin=1,
                  data_portion=(0.2, 0.2, 0.6), derive_queue="controller",
                  derive_surrogate_steps=1, derive_samples=8,
                  mepa_as_surrogate=False,
@@ -93,6 +93,7 @@ class MepaTrainer(BaseTrainer):
         self.controller_surrogate_steps = controller_surrogate_steps
         self.controller_samples = controller_samples
         self.controller_train_every = controller_train_every
+        self.controller_train_begin = controller_train_begin
         self.derive_surrogate_steps = derive_surrogate_steps
         self.derive_samples = derive_samples
         # do some checks
@@ -132,9 +133,10 @@ class MepaTrainer(BaseTrainer):
             # use mepa data queue as surrogate data queue
             self.surrogate_queue = self.mepa_queue
         self.derive_queue = getattr(self, derive_queue + "_queue")
+        len_surrogate = len(self.surrogate_queue) * self.batch_size \
+                        if self.surrogate_queue else 0
         self.logger.info("Data sizes: surrogate: %s; controller: %d; mepa: %d; derive: (%s queue)",
-                         str(len(self.surrogate_queue) * self.batch_size) \
-                         if not mepa_as_surrogate else "(mepa queue)",
+                         str(len_surrogate) if not mepa_as_surrogate else "(mepa queue)",
                          len(self.controller_queue) * self.batch_size,
                          len(self.mepa_queue) * self.batch_size,
                          derive_queue)
@@ -143,13 +145,13 @@ class MepaTrainer(BaseTrainer):
         self.derive_steps = len(self.derive_queue)
 
         # states and other help attributes
-        self.begin_epoch = 1
+        self.last_epoch = 0
         self.epoch = 1
         self._criterion = nn.CrossEntropyLoss()
 
     def train(self): #pylint: disable=too-many-statements,too-many-branches,too-many-locals
         assert self.is_setup, "Must call `trainer.setup` method before calling `trainer.train`."
-        for epoch in range(self.begin_epoch, self.epochs+1):
+        for epoch in range(self.last_epoch+1, self.epochs+1):
             self.epoch = epoch # this is redundant as Component.on_epoch_start also set this
             surrogate_loss_meter = utils.AverageMeter()
             surrogate_acc_meter = utils.AverageMeter()
@@ -200,7 +202,8 @@ class MepaTrainer(BaseTrainer):
                             mepa_data,
                             criterion=self._criterion,
                             eval_criterions=[_ce_loss_mean,
-                                             _top1_acc]
+                                             _top1_acc],
+                            mode="train"
                         )
 
                     valid_loss_meter.update(loss)
@@ -239,7 +242,7 @@ class MepaTrainer(BaseTrainer):
             controller_stat_meters = None
 
             # controller training
-            if epoch % self.controller_train_every == 0:
+            if epoch >= self.controller_train_begin and epoch % self.controller_train_every == 0:
                 self.controller.set_mode("train")
 
                 for i_cont in range(self.controller_steps):
@@ -262,13 +265,15 @@ class MepaTrainer(BaseTrainer):
                                                                 self.controller_surrogate_steps)
                                 loss, acc = candidate_net.eval_data(controller_data,
                                                                     criterions=[_ce_loss_mean,
-                                                                                _top1_acc])
+                                                                                _top1_acc],
+                                                                    mode="train")
                             surrogate_loss_meter.update(train_loss)
                             surrogate_acc_meter.update(train_acc / 100)
                         else: # ENAS
                             loss, acc = candidate_net.eval_data(controller_data,
                                                                 criterions=[_ce_loss_mean,
-                                                                            _top1_acc])
+                                                                            _top1_acc],
+                                                                mode="train")
 
                         acc = acc / 100
                         valid_loss_meter.update(loss)
@@ -374,31 +379,41 @@ class MepaTrainer(BaseTrainer):
 
     def save(self, path):
         optimizer_states = {}
+        scheduler_states = {}
         for compo_name in ["mepa", "controller", "surrogate"]:
             optimizer = getattr(self, compo_name + "_optimizer")
             if optimizer is not None:
                 optimizer_states[compo_name] = optimizer.state_dict()
+            scheduler = getattr(self, compo_name + "_scheduler")
+            if scheduler is not None:
+                scheduler_states[compo_name] = scheduler.state_dict()
+
         state_dict = {
             "epoch": self.epoch,
-            "optimizers": optimizer_states
+            "optimizers": optimizer_states,
+            "schedulers": scheduler_states
         }
         torch.save(state_dict, path)
 
     def load(self, path):
         checkpoint = torch.load(path)
-        self.begin_epoch = self.epoch = checkpoint["epoch"]
+        self.last_epoch = self.epoch = checkpoint["epoch"]
         optimizer_states = checkpoint["optimizers"]
+        scheduler_states = checkpoint["schedulers"]
         for compo_name in ["mepa", "controller", "surrogate"]:
             optimizer = getattr(self, compo_name + "_optimizer")
             if optimizer is not None:
                 optimizer.load_state_dict(optimizer_states[compo_name])
+            scheduler = getattr(self, compo_name + "_scheduler")
+            if scheduler is not None:
+                scheduler.load_state_dict(scheduler_states[compo_name])
 
     # ---- helper methods ----
     @staticmethod
     def _init_optimizer(params, cfg):
         if cfg:
             cfg = {k:v for k, v in six.iteritems(cfg)}
-            opt_cls = getattr(optim, cfg.pop("type", "SGD"))
+            opt_cls = getattr(optim, cfg.pop("type"))
             return opt_cls(params, **cfg)
         return None
 
