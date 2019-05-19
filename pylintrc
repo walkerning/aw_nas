@@ -56,6 +56,7 @@ confidence=
 # --disable=W"
 disable=missing-docstring,
 	too-many-ancestors,
+	duplicate-code,
 	expression-not-assigned,
 	cyclic-import,
 	unbalanced-tuple-unpacking,
@@ -341,6 +342,7 @@ good-names=i,
 	   w,
            ex,
 	   op,
+	   lr,
            Run,
 	   EPS,
            _

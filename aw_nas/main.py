@@ -69,7 +69,7 @@ def main():
               "need `tensorboard` extra, `pip install aw_nas[tensorboard]`")
 @click.option("--develop", default=False, type=bool, is_flag=True,
               help="in develop mode, will copy the `aw_nas` source files into train_dir for backup")
-def search(gpu, seed, cfg_file, load, save_every, train_dir, vis_dir, develop):
+def search(cfg_file, gpu, seed, load, save_every, train_dir, vis_dir, develop):
     # check dependency and initialize visualization writer
     if vis_dir:
         try:
@@ -141,12 +141,92 @@ def search(gpu, seed, cfg_file, load, save_every, train_dir, vis_dir, develop):
     trainer.train()
 
 
+@main.command(help="Train an architecture.")
+@click.argument("cfg_file", required=True, type=str)
+@click.option("--gpus", default="0", type=str,
+              help="the gpus to run training on, split by single comma")
+@click.option("--seed", default=None, type=int,
+              help="the random seed to run training")
+@click.option("--load", default=None, type=str,
+              help="the directory to load checkpoint")
+@click.option("--save-every", default=None, type=int,
+              help="the number of epochs to save checkpoint every")
+@click.option("--train-dir", default=None, type=str,
+              help="the directory to save checkpoints")
+def train(gpus, seed, cfg_file, load, save_every, train_dir):
+    import aw_nas.final #pylint: disable=unused-import
+    if train_dir:
+        # backup config file, and if in `develop` mode, also backup the aw_nas source code
+        train_dir = utils.makedir(train_dir)
+        shutil.copyfile(cfg_file, os.path.join(train_dir, "train_config.yaml"))
+
+        # add log file handler
+        log_file = os.path.join(train_dir, "train.log")
+        _logger.addFile(log_file)
+
+    LOGGER.info("CWD: %s", os.getcwd())
+    LOGGER.info("CMD: %s", " ".join(sys.argv))
+
+    setproctitle.setproctitle("awnas-train config: {}; train_dir: {}; cwd: {}"\
+                              .format(cfg_file, train_dir, os.getcwd()))
+
+    # set gpu
+    gpu_list = [int(g) for g in gpus.split(",")]
+    if not gpu_list:
+        _set_gpu(None)
+        device = "cpu"
+    else:
+        _set_gpu(gpu_list[0])
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # set seed
+    if seed is not None:
+        LOGGER.info("Setting random seed: %d.", seed)
+        np.random.seed(seed)
+        random.seed(seed)
+        torch.manual_seed(seed)
+
+    # load components config
+    LOGGER.info("Loading configuration files.")
+    with open(cfg_file, "r") as f:
+        cfg = yaml.safe_load(f)
+
+    # initialize components
+    LOGGER.info("Initializing components.")
+    search_space = _init_component(cfg, "search_space")
+    whole_dataset = _init_component(cfg, "dataset")
+    model = _init_component(cfg, "final_model",
+                            search_space=search_space,
+                            device=device)
+    trainer = _init_component(cfg, "final_trainer",
+                              dataset=whole_dataset,
+                              model=model,
+                              device=device,
+                              gpus=gpu_list)
+
+    # start training
+    LOGGER.info("Start training.")
+    trainer.setup(load, save_every, train_dir)
+    trainer.train()
+
+
 @main.command(help="Dump the sample configuration.")
 @click.argument("out_file", required=True, type=str)
 def gen_sample_config(out_file):
     with open(out_file, "w") as out_f:
         for comp_name in ["search_space", "dataset",
                           "controller", "weights_manager", "trainer"]:
+            out_f.write(utils.component_sample_config_str(comp_name, prefix="# "))
+            out_f.write("\n")
+
+
+@main.command(help="Dump the sample configuration for final training.")
+@click.argument("out_file", required=True, type=str)
+def gen_final_sample_config(out_file):
+    import aw_nas.final #pylint: disable=unused-import
+    with open(out_file, "w") as out_f:
+        for comp_name in ["search_space", "dataset",
+                          "final_model", "final_trainer"]:
             out_f.write(utils.component_sample_config_str(comp_name, prefix="# "))
             out_f.write("\n")
 

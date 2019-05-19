@@ -73,3 +73,15 @@ def get_numpy(arr):
     else:
         arr = np.array(arr)
     return arr
+
+def count_parameters_in_MB(model): #pylint: disable=invalid-name
+    return np.sum(np.prod(v.size()) for name, v in model.named_parameters() \
+                  if "auxiliary" not in name)/1e6
+
+def drop_path(x, drop_prob):
+    if drop_prob > 0.:
+        keep_prob = 1. - drop_prob
+        mask = torch.FloatTensor(x.size(0), 1, 1, 1).bernoulli_(keep_prob).to(x.device)
+        x.div_(keep_prob)
+        x.mul_(mask)
+    return x

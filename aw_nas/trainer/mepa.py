@@ -372,7 +372,8 @@ class MepaTrainer(BaseTrainer):
                         criterions=[
                             _ce_loss_mean,
                             _top1_acc
-                        ], steps=self.derive_steps)
+                        ], steps=self.derive_steps,
+                        mode="train")
                 rollout.set_perf(loss, name="loss")
                 rollout.set_perf(acc, name="acc")
         return rollouts
