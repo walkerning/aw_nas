@@ -155,8 +155,9 @@ class CandidateNet(nn.Module):
 
         average_ans = None
         with torch.no_grad():
-            for _ in range(steps):
+            for i in range(steps):
                 data = next(queue)
+                # print("{}/{}\r".format(i, steps), end="")
                 data = (data[0].to(self.get_device()), data[1].to(self.get_device()))
                 outputs = self.forward_data(data[0])
                 ans = [c(outputs, data[1]) for c in criterions]

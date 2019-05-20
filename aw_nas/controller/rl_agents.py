@@ -96,7 +96,10 @@ class PGAgent(BaseRLAgent):
         np.save(path, self.baseline)
 
     def load(self, path):
-        self.baseline = np.load(path)
+        try:
+            self.baseline = np.load(path)
+        except FileNotFoundError:
+            self.baseline = np.load(path + ".npy")
 
     def on_epoch_end(self, epoch):
         if not self.writer.is_none() and self.baseline is not None:

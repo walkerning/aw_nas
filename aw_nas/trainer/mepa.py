@@ -330,10 +330,11 @@ class MepaTrainer(BaseTrainer):
         """
         rollouts = self.derive(n=self.derive_samples)
 
-        accs, losses = zip(*[(r.get_perf("acc"), r.get_perf("loss")) for r in rollouts])
+        # accs, losses = zip(*[(r.get_perf("acc"), r.get_perf("loss")) for r in rollouts])
+        accs = [r.get_perf() for r in rollouts]
         idx = np.argmax(accs)
         mean_acc = np.mean(accs)
-        mean_loss = np.mean(losses)
+        # mean_loss = np.mean(losses)
 
         save_path = self._save_path("rollout/cell")
         if save_path is not None:
@@ -347,17 +348,18 @@ class MepaTrainer(BaseTrainer):
 
 
         self.logger.info("TEST Epoch %3d: Among %d sampled archs: "
-                         "BEST (in acc): accuracy %.1f %% (mean: %.1f %%); "
-                         "loss: %.2f (mean :%.3f)",
-                         self.epoch, self.derive_samples, accs[idx], mean_acc,
-                         losses[idx], mean_loss)
+                         "BEST (in acc): accuracy %.1f %% (mean: %.1f %%); ",
+                         #"loss: %.2f (mean :%.3f)",
+                         self.epoch, self.derive_samples, accs[idx], mean_acc)
+                         #losses[idx], mean_loss)
         self.logger.info("Saved this arch to %s.\nGenotype: %s",
                          save_path, rollouts[idx].genotype)
         self.controller.summary(rollouts, log=True, log_prefix="Rollouts Info: ", step=self.epoch)
+        return rollouts
 
     def derive(self, n):
-        rollouts = self.get_new_candidates(n)
         with self.controller.begin_mode("eval"):
+            rollouts = self.get_new_candidates(n)
             for i_sample in range(n):
                 rollout = rollouts[i_sample]
                 candidate_net = rollout.candidate_net
@@ -367,15 +369,19 @@ class MepaTrainer(BaseTrainer):
                     candidate_net.train_queue(self.surrogate_queue, optimizer=_surrogate_optimizer,
                                               criterion=self._criterion,
                                               steps=self.controller_surrogate_steps)
-                    loss, acc = candidate_net.eval_queue(
+                    _, acc = candidate_net.eval_queue(
                         self.derive_queue,
                         criterions=[
                             _ce_loss_mean,
                             _top1_acc
                         ], steps=self.derive_steps,
                         mode="train")
-                rollout.set_perf(loss, name="loss")
-                rollout.set_perf(acc, name="acc")
+                    # NOTE: if virtual buffers, must use train mode here...
+                    # if not virtual buffers(virtual parameter only), can use train/eval mode
+                    print("Finish test {}/{}\r".format(i_sample+1, n), end="")
+                # rollout.set_perf(loss, name="loss")
+                # rollout.set_perf(acc, name="acc")
+                rollout.set_perf(acc)
         return rollouts
 
     def save(self, path):

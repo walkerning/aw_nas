@@ -154,7 +154,7 @@ def search(cfg_file, gpu, seed, load, save_every, train_dir, vis_dir, develop):
 @click.option("--train-dir", default=None, type=str,
               help="the directory to save checkpoints")
 def train(gpus, seed, cfg_file, load, save_every, train_dir):
-    import aw_nas.final #pylint: disable=unused-import
+    import aw_nas.final #pylint: disable=unused-import,unused-variable
     if train_dir:
         # backup config file, and if in `develop` mode, also backup the aw_nas source code
         train_dir = utils.makedir(train_dir)
@@ -210,6 +210,88 @@ def train(gpus, seed, cfg_file, load, save_every, train_dir):
     trainer.train()
 
 
+def _dump(rollout, dump_mode, of):
+    if dump_mode == "list":
+        yaml.safe_dump([list(rollout.genotype._asdict().values())], of)
+    elif dump_mode == "str":
+        yaml.safe_dump([str(rollout.genotype)], of)
+    else:
+        raise Exception("Unexpected dump_mode: {}".format(dump_mode))
+
+@main.command(help="Derive architectures.")
+@click.argument("cfg_file", required=True, type=str)
+@click.option("--load", required=True, type=str,
+              help="the directory to load checkpoint")
+@click.option("-o", "--out-file", required=True, type=str,
+              help="the file to write the derived genotypes to")
+@click.option("-n", default=1, type=int,
+              help="number of architectures to derive")
+@click.option("--test", default=False, type=bool, is_flag=True,
+              help="If false, only the controller is loaded and use to sample rollouts; "
+              "Otherwise, weights_manager/trainer is also loaded and test these rollouts.")
+@click.option("--gpu", default=0, type=int,
+              help="the gpu to run deriving on")
+@click.option("--seed", default=None, type=int,
+              help="the random seed to run training")
+@click.option("--dump-mode", default="str", type=click.Choice(["list", "str"]))
+def derive(cfg_file, load, out_file, n, test, gpu, seed, dump_mode):
+    LOGGER.info("CWD: %s", os.getcwd())
+    LOGGER.info("CMD: %s", " ".join(sys.argv))
+
+    setproctitle.setproctitle("awnas-derive config: {}; load: {}; cwd: {}"\
+                              .format(cfg_file, load, os.getcwd()))
+
+    # set gpu
+    _set_gpu(gpu)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # set seed
+    if seed is not None:
+        LOGGER.info("Setting random seed: %d.", seed)
+        np.random.seed(seed)
+        random.seed(seed)
+        torch.manual_seed(seed)
+
+    # load components config
+    LOGGER.info("Loading configuration files.")
+    with open(cfg_file, "r") as f:
+        cfg = yaml.safe_load(f)
+
+    # initialize components
+    LOGGER.info("Initializing components.")
+    search_space = _init_component(cfg, "search_space")
+    controller = _init_component(cfg, "controller",
+                                 search_space=search_space, device=device)
+    if not test:
+        controller_path = os.path.join(load, "controller")
+        controller.load(controller_path)
+        rollouts = controller.sample(n)
+        with open(out_file, "w") as of:
+            for i, r in enumerate(rollouts):
+                of.write("# ---- Arch {} ----\n".format(i))
+                _dump(r, dump_mode, of)
+                of.write("\n")
+    else:
+        weights_manager = _init_component(cfg, "weights_manager",
+                                          search_space=search_space, device=device)
+        whole_dataset = _init_component(cfg, "dataset")
+
+        # initialize, setup, run trainer
+        trainer = _init_component(cfg, "trainer", weights_manager=weights_manager,
+                                  controller=controller, dataset=whole_dataset)
+        LOGGER.info("Loading from disk...")
+        trainer.setup(load=load)
+        LOGGER.info("Deriving and testing...")
+        rollouts = trainer.derive(n)
+        accs = [r.get_perf() for r in rollouts]
+        idxes = np.argsort(accs)[::-1]
+        with open(out_file, "w") as of:
+            for i, idx in enumerate(idxes):
+                rollout = rollouts[idx]
+                of.write("# ---- Arch {} (Acc {}) ----\n".format(i, rollout.get_perf()))
+                _dump(rollout, dump_mode, of)
+                of.write("\n")
+
 @main.command(help="Dump the sample configuration.")
 @click.argument("out_file", required=True, type=str)
 def gen_sample_config(out_file):
@@ -223,7 +305,7 @@ def gen_sample_config(out_file):
 @main.command(help="Dump the sample configuration for final training.")
 @click.argument("out_file", required=True, type=str)
 def gen_final_sample_config(out_file):
-    import aw_nas.final #pylint: disable=unused-import
+    import aw_nas.final #pylint: disable=unused-import,unused-variable
     with open(out_file, "w") as out_f:
         for comp_name in ["search_space", "dataset",
                           "final_model", "final_trainer"]:

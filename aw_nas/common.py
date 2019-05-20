@@ -50,8 +50,9 @@ class Rollout(object):
 
     def __repr__(self):
         _info = ",".join(self.info.keys()) if isinstance(self.info, dict) else self.info
-        return ("Rollout(search_space={sn}, info=<{info}>, "
+        return ("Rollout(search_space={sn}, arch={arch}, info=<{info}>, "
                 "candidate_net={cn}, perf={perf})").format(sn=self.search_space.NAME,
+                                                           arch=self.arch,
                                                            info=_info,
                                                            cn=self.candidate_net,
                                                            perf=self.perf)
@@ -229,7 +230,7 @@ class CNNSearchSpace(SearchSpace):
                 for i_in in range(self.num_node_inputs):
                     idx = i_out * self.num_node_inputs + i_in
                     genotype.append((self.shared_primitives[ops[idx]],
-                                     nodes[idx], i_out + self.num_init_nodes))
+                                     int(nodes[idx]), int(i_out + self.num_init_nodes)))
             genotype_list.append(genotype)
         return self.genotype_type(**dict(zip(self.cell_group_names,
                                              genotype_list)))

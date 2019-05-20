@@ -78,11 +78,13 @@ class BaseLSTM(BaseRLControllerNet):
     def save(self, path):
         """Save the network state to disk."""
         torch.save({"state_dict": self.state_dict()}, path)
+        self.logger.info("Saved controller network to %s", path)
 
     def load(self, path):
         """Load the network state from disk."""
         checkpoint = torch.load(path)
         self.load_state_dict(checkpoint["state_dict"])
+        self.logger.info("Loaded controller network from %s", path)
 
     def _handle_logits(self, logits, mode):
         if self.softmax_temperature is not None:

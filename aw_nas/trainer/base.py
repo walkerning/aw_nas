@@ -106,19 +106,16 @@ class BaseTrainer(Component):
 
             if "controller" in load_components:
                 path = os.path.join(load, "controller")
-                if os.path.exists(path):
-                    self.logger.info("Load controller from %s", path)
-                    self.controller.load(path)
+                self.logger.info("Load controller from %s", path)
+                self.controller.load(path)
             if "weights_manager" in load_components:
                 path = os.path.join(load, "weights_manager")
-                if os.path.exists(path):
-                    self.logger.info("Load weights_manager from %s", path)
-                    self.weights_manager.load(path)
+                self.logger.info("Load weights_manager from %s", path)
+                self.weights_manager.load(path)
             if "trainer" in load_components:
                 path = os.path.join(load, "trainer")
-                if os.path.exists(path):
-                    self.logger.info("Load trainer from %s", path)
-                    self.load(path)
+                self.logger.info("Load trainer from %s", path)
+                self.load(path)
 
         self.save_every = save_every
         self.train_dir = utils.makedir(train_dir) if train_dir is not None else train_dir
