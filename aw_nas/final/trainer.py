@@ -188,8 +188,15 @@ class FinalTrainer(Component):
 
     def on_epoch_start(self, epoch):
         super(FinalTrainer, self).on_epoch_start(epoch)
-        self.model.on_epoch_start(epoch)
+        if isinstance(self.model, nn.DataParallel):
+            self.model.module.on_epoch_start(epoch)
+        else:
+            self.model.on_epoch_start(epoch)
 
     def on_epoch_end(self, epoch):
         super(FinalTrainer, self).on_epoch_end(epoch)
-        self.model.on_epoch_end(epoch)
+        if isinstance(self.model, nn.DataParallel):
+            self.model.module.on_epoch_end(epoch)
+        else:
+            self.model.on_epoch_end(epoch)
+

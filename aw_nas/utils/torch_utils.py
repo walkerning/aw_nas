@@ -2,6 +2,7 @@ import six
 import numpy as np
 import torch
 from torch.autograd import Variable
+import torch.nn.functional as F
 
 class InfIterator(six.Iterator):
     def __init__(self, iterable):
@@ -85,3 +86,30 @@ def drop_path(x, drop_prob):
         x.div_(keep_prob)
         x.mul_(mask)
     return x
+
+# gumbel softmax
+def sample_gumbel(shape, eps=1e-20):
+    U = torch.rand(shape).cuda()
+    return Variable(-torch.log(-torch.log(U + eps) + eps))
+
+def gumbel_softmax_sample(logits, temperature, eps=None):
+    if eps is None:
+        eps = sample_gumbel(logits.size())
+    y = logits + eps
+    return F.softmax(y / temperature, dim=-1), eps
+
+def gumbel_softmax(logits, temperature, eps=None, hard=True):
+    """
+    input: [*, n_class]
+    return: [*, n_class] an one-hot vector
+    """
+    y, eps = gumbel_softmax_sample(logits, temperature, eps)
+    if hard:
+        shape = y.size()
+        _, ind = y.max(dim=-1)
+        y_hard = torch.zeros_like(y).view(-1, shape[-1])
+        y_hard.scatter_(1, ind.view(-1, 1), 1)
+        y_hard = y_hard.view(*shape)
+        return (y_hard - y).detach() + y, eps
+    else:
+        return y, eps
