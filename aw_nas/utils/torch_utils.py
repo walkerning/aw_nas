@@ -70,7 +70,7 @@ def get_variable(inputs, device, **kwargs):
 
 def get_numpy(arr):
     if isinstance(arr, (torch.Tensor, Variable)):
-        arr = arr.cpu().numpy()
+        arr = arr.detach().cpu().numpy()
     else:
         arr = np.array(arr)
     return arr
@@ -89,8 +89,8 @@ def drop_path(x, drop_prob):
 
 # gumbel softmax
 def sample_gumbel(shape, eps=1e-20):
-    U = torch.rand(shape).cuda()
-    return Variable(-torch.log(-torch.log(U + eps) + eps))
+    uniform_rand = torch.rand(shape).cuda()
+    return Variable(-torch.log(-torch.log(uniform_rand + eps) + eps))
 
 def gumbel_softmax_sample(logits, temperature, eps=None):
     if eps is None:
@@ -105,11 +105,13 @@ def gumbel_softmax(logits, temperature, eps=None, hard=True):
     """
     y, eps = gumbel_softmax_sample(logits, temperature, eps)
     if hard:
-        shape = y.size()
-        _, ind = y.max(dim=-1)
-        y_hard = torch.zeros_like(y).view(-1, shape[-1])
-        y_hard.scatter_(1, ind.view(-1, 1), 1)
-        y_hard = y_hard.view(*shape)
-        return (y_hard - y).detach() + y, eps
-    else:
-        return y, eps
+        y = straight_through(y)
+    return y, eps
+
+def straight_through(y):
+    shape = y.size()
+    _, ind = y.max(dim=-1)
+    y_hard = torch.zeros_like(y).view(-1, shape[-1])
+    y_hard.scatter_(1, ind.view(-1, 1), 1)
+    y_hard = y_hard.view(*shape)
+    return (y_hard - y).detach() + y

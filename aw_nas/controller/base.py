@@ -62,3 +62,7 @@ class BaseController(Component):
         """
         Load the state of the controller from `path` on disk.
         """
+
+    @abc.abstractmethod
+    def rollout_type(self):
+        """Return the produced rollout-type."""

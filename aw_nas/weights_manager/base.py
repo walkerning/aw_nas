@@ -37,6 +37,9 @@ class BaseWeightsManager(Component):
     def load(self, path):
         """Load the state of the weights_manager from `path` on disk."""
 
+    @abc.abstractmethod
+    def rollout_type(self):
+        """Return the accepted rollout-type."""
 
 class CandidateNet(nn.Module):
     @contextlib.contextmanager
@@ -155,7 +158,7 @@ class CandidateNet(nn.Module):
 
         average_ans = None
         with torch.no_grad():
-            for i in range(steps):
+            for _ in range(steps):
                 data = next(queue)
                 # print("{}/{}\r".format(i, steps), end="")
                 data = (data[0].to(self.get_device()), data[1].to(self.get_device()))

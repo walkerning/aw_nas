@@ -20,13 +20,13 @@ from aw_nas.utils.torch_utils import accuracy
 
 __all__ = ["MepaTrainer"]
 
-def _ce_loss_mean(*args, **kwargs):
-    return nn.CrossEntropyLoss()(*args, **kwargs).mean().item()
+def _ce_loss(*args, **kwargs):
+    return nn.CrossEntropyLoss()(*args, **kwargs).item()
 
 def _top1_acc(*args, **kwargs):
     return float(accuracy(*args, **kwargs)[0])
 
-class MepaTrainer(BaseTrainer):
+class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
     """
     Actually it's better called SurrogateStepTrainer...
     As the surrogate step technique can be incorporated
@@ -52,6 +52,7 @@ class MepaTrainer(BaseTrainer):
 
     def __init__(self, #pylint: disable=dangerous-default-value,too-many-arguments
                  controller, weights_manager, dataset,
+                 rollout_type="discrete",
                  epochs=200, batch_size=64, test_every=10,
                  # optimizers
                  surrogate_optimizer={"type": "SGD", "lr": 0.001},
@@ -83,6 +84,8 @@ class MepaTrainer(BaseTrainer):
         super(MepaTrainer, self).__init__(controller, weights_manager, dataset, schedule_cfg)
 
         # configurations
+        assert rollout_type in {"discrete", "differentiable"} # supported rollout types
+        self._rollout_type = rollout_type
         self.epochs = epochs
         self.batch_size = batch_size
         self.test_every = test_every
@@ -149,7 +152,12 @@ class MepaTrainer(BaseTrainer):
         self.epoch = 1
         self._criterion = nn.CrossEntropyLoss()
 
-    def train(self): #pylint: disable=too-many-statements,too-many-branches,too-many-locals
+        # eval criterions for controller
+        self._eval_criterions = [_ce_loss, _top1_acc] if self._rollout_type == "discrete" \
+                                else [self._criterion, _top1_acc]
+        self._eval_kwargs = {} if self._rollout_type == "discrete" else {"detach_arch": False}
+
+    def train(self): #pylint: disable=too-many-statements,too-many-branches,too-many-locals,too-many-nested-blocks
         assert self.is_setup, "Must call `trainer.setup` method before calling `trainer.train`."
         for epoch in range(self.last_epoch+1, self.epochs+1):
             self.epoch = epoch # this is redundant as Component.on_epoch_start also set this
@@ -183,14 +191,14 @@ class MepaTrainer(BaseTrainer):
                                 = candidate_net.train_queue(self.surrogate_queue,
                                                             optimizer=_surrogate_optimizer,
                                                             criterion=self._criterion,
-                                                            eval_criterions=[_ce_loss_mean,
+                                                            eval_criterions=[_ce_loss,
                                                                              _top1_acc],
                                                             steps=self.mepa_surrogate_steps)
                             # gradients: List(Tuple(parameter name, gradient))
                             gradients, (loss, acc) = candidate_net.gradient(
                                 mepa_data,
                                 criterion=self._criterion,
-                                eval_criterions=[_ce_loss_mean,
+                                eval_criterions=[_ce_loss,
                                                  _top1_acc],
                                 mode="train"
                             )
@@ -201,7 +209,7 @@ class MepaTrainer(BaseTrainer):
                         gradients, (loss, acc) = candidate_net.gradient(
                             mepa_data,
                             criterion=self._criterion,
-                            eval_criterions=[_ce_loss_mean,
+                            eval_criterions=[_ce_loss,
                                              _top1_acc],
                             mode="train"
                         )
@@ -216,6 +224,7 @@ class MepaTrainer(BaseTrainer):
                 all_gradients = {k: v / counts[k] for k, v in six.iteritems(all_gradients)}
                 self.weights_manager.step(all_gradients.items(), self.mepa_optimizer)
 
+            del all_gradients
             print("\r", end="")
             self.logger.info("Epoch %3d: [mepa update] surrogate train acc: %.2f %% ; loss: %.3f ; "
                              "valid acc: %.2f %% ; valid loss: %.3f",
@@ -244,11 +253,16 @@ class MepaTrainer(BaseTrainer):
             # controller training
             if epoch >= self.controller_train_begin and epoch % self.controller_train_every == 0:
                 self.controller.set_mode("train")
-
                 for i_cont in range(self.controller_steps):
                     print("\rcontroller step {}/{}".format(i_cont, self.controller_steps), end="")
                     controller_data = next(self.controller_queue)
                     rollouts = self.get_new_candidates(self.controller_samples)
+
+                    # gradient accumulator for controller parameters, when it's differentiable
+                    if self._rollout_type == "differentiable":
+                        all_gradients = defaultdict(float)
+                        step_loss = 0.
+
                     for i_sample in range(self.controller_samples):
                         rollout = rollouts[i_sample]
                         candidate_net = rollout.candidate_net
@@ -259,28 +273,46 @@ class MepaTrainer(BaseTrainer):
                                     = candidate_net.train_queue(self.surrogate_queue,
                                                                 optimizer=_surrogate_optimizer,
                                                                 criterion=self._criterion,
-                                                                eval_criterions=[_ce_loss_mean,
+                                                                eval_criterions=[_ce_loss,
                                                                                  _top1_acc],
                                                                 steps=\
                                                                 self.controller_surrogate_steps)
-                                loss, acc = candidate_net.eval_data(controller_data,
-                                                                    criterions=[_ce_loss_mean,
-                                                                                _top1_acc],
-                                                                    mode="train")
+                                loss, acc = candidate_net.eval_data(
+                                    controller_data,
+                                    criterions=self._eval_criterions,
+                                    mode="train",
+                                    **self._eval_kwargs
+                                )
                             surrogate_loss_meter.update(train_loss)
                             surrogate_acc_meter.update(train_acc / 100)
                         else: # ENAS
                             loss, acc = candidate_net.eval_data(controller_data,
-                                                                criterions=[_ce_loss_mean,
-                                                                            _top1_acc],
-                                                                mode="train")
+                                                                criterions=self._eval_criterions,
+                                                                mode="train",
+                                                                **self._eval_kwargs)
 
                         acc = acc / 100
-                        valid_loss_meter.update(loss)
+                        valid_loss_meter.update(utils.get_numpy(loss))
                         valid_acc_meter.update(acc)
-                        rollout.set_perf(acc)
+                        if self._rollout_type == "discrete":
+                            rollout.set_perf(acc)
+                        else: # differentiable sampling/rollouts
+                            _loss, gradients = self.controller.gradient(loss)
+                            for n, g_v in gradients:
+                                all_gradients[n] += g_v
+                            step_loss += _loss
+                            ## this consume too much memory when controller_samples > 1
+                            # rollout.set_perf(loss)
 
-                    controller_loss = self.controller.step(rollouts, self.controller_optimizer)
+                    if self._rollout_type == "discrete":
+                        controller_loss = self.controller.step(rollouts, self.controller_optimizer)
+                    else:
+                        all_gradients = {n: g/self.controller_samples \
+                                         for n, g in six.iteritems(all_gradients)}
+                        controller_loss = step_loss / self.controller_samples
+                        self.controller.step_gradient(all_gradients.items(),
+                                                      self.controller_optimizer)
+
                     controller_loss_meter.update(controller_loss)
                     controller_stats = self.controller.summary(rollouts, log=False)
                     if controller_stat_meters is None:
@@ -372,7 +404,7 @@ class MepaTrainer(BaseTrainer):
                     _, acc = candidate_net.eval_queue(
                         self.derive_queue,
                         criterions=[
-                            _ce_loss_mean,
+                            _ce_loss,
                             _top1_acc
                         ], steps=self.derive_steps,
                         mode="train")
@@ -414,6 +446,9 @@ class MepaTrainer(BaseTrainer):
             scheduler = getattr(self, compo_name + "_scheduler")
             if scheduler is not None:
                 scheduler.load_state_dict(scheduler_states[compo_name])
+
+    def rollout_type(self):
+        return self._rollout_type
 
     # ---- helper methods ----
     @staticmethod

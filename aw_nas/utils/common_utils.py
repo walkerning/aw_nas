@@ -165,3 +165,7 @@ def makedir(path):
     if not os.path.isdir(path):
         os.makedirs(path)
     return path
+
+def softmax(arr):
+    e_arr = np.exp(arr - np.max(arr, axis=-1, keepdims=True))
+    return e_arr / np.sum(e_arr, axis=-1, keepdims=True)

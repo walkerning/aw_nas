@@ -8,15 +8,10 @@ from __future__ import print_function
 import contextlib
 import six
 
-import numpy as np
 import torch
-from torch import nn
 
-from aw_nas.weights_manager.base import (
-    BaseWeightsManager,
-    CandidateNet
-)
-from aw_nas import ops
+from aw_nas.weights_manager.base import CandidateNet
+from aw_nas.weights_manager.shared import SharedNet, SharedCell, SharedOp
 
 __all__ = ["SubCandidateNet", "SuperNet"]
 
@@ -32,7 +27,6 @@ class SubCandidateNet(CandidateNet):
         self.super_net = super_net
         self._device = self.super_net.device
         self.search_space = super_net.search_space
-        self.rollout = rollout
         self.member_mask = member_mask
         self.cache_named_members = cache_named_members
         self.virtual_parameter_only = virtual_parameter_only
@@ -130,7 +124,7 @@ class SubCandidateNet(CandidateNet):
             yield n, v
 
 
-class SuperNet(BaseWeightsManager, nn.Module):
+class SuperNet(SharedNet):
     """
     A cell-based super network
     """
@@ -155,65 +149,15 @@ class SuperNet(BaseWeightsManager, nn.Module):
                 `begin_virtual` will only store/restore parameters, not buffers (e.g. running
                 mean/running std in BN layer).
         """
-        super(SuperNet, self).__init__(search_space, device)
-        nn.Module.__init__(self)
-
-        self.num_classes = num_classes
-        # init channel number of the first cell layers,
-        # x2 after every reduce cell
-        self.init_channels = init_channels
-        # channels of stem conv / init_channels
-        self.stem_multiplier = stem_multiplier
-
-        # training
-        self.max_grad_norm = max_grad_norm
-        self.dropout_rate = dropout_rate
+        super(SuperNet, self).__init__(search_space, device,
+                                       cell_cls=DiscreteSharedCell, op_cls=DiscreteSharedOp,
+                                       num_classes=10, init_channels=16, stem_multiplier=3,
+                                       max_grad_norm=5.0, dropout_rate=0.1)
 
         # candidate net with/without parameter mask
         self.candidate_member_mask = candidate_member_mask
         self.candidate_cache_named_members = candidate_cache_named_members
         self.candidate_virtual_parameter_only = candidate_virtual_parameter_only
-
-        # search space configs
-        self._num_init = self.search_space.num_init_nodes
-        self._cell_layout = self.search_space.cell_layout
-        self._reduce_cgs = self.search_space.reduce_cell_groups
-        self._num_layers = self.search_space.num_layers
-        self._out_multiplier = self.search_space.num_steps
-
-        ## initialize sub modules
-        c_stem = self.stem_multiplier * self.init_channels
-        self.stem = nn.Sequential(
-            nn.Conv2d(3, c_stem, 3, padding=1, bias=False),
-            nn.BatchNorm2d(c_stem)
-        )
-
-        self.cells = nn.ModuleList()
-        num_channels = self.init_channels
-        prev_num_channels = [c_stem] * self._num_init
-        strides = [2 if self._is_reduce(i_layer) else 1 for i_layer in range(self._num_layers)]
-
-        for i_layer, stride in enumerate(strides):
-            if stride > 1:
-                num_channels *= stride
-
-            cell = SharedCell(self.search_space,
-                              layer_index=i_layer,
-                              num_channels=num_channels,
-                              prev_num_channels=tuple(prev_num_channels),
-                              stride=stride,
-                              prev_strides=[1] * self._num_init + strides[:i_layer])
-
-            prev_num_channels.append(num_channels * self._out_multiplier)
-            prev_num_channels = prev_num_channels[1:]
-            self.cells.append(cell)
-
-        self.global_pooling = nn.AdaptiveAvgPool2d(1)
-        self.dropout = nn.Dropout(p=self.dropout_rate)
-        self.classifier = nn.Linear(num_channels * self._out_multiplier,
-                                    self.num_classes)
-
-        self.to(self.device)
 
     def forward(self, inputs, genotypes): #pylint: disable=arguments-differ
         states = [self.stem(inputs) for _ in range(self._num_init)]
@@ -263,9 +207,6 @@ class SuperNet(BaseWeightsManager, nn.Module):
                                                member=member):
                 yield n, v
 
-    def _is_reduce(self, layer_idx):
-        return self._cell_layout[layer_idx] in self._reduce_cgs
-
     # ---- APIs ----
     def assemble_candidate(self, rollout):
         return SubCandidateNet(self, rollout,
@@ -273,64 +214,12 @@ class SuperNet(BaseWeightsManager, nn.Module):
                                cache_named_members=self.candidate_cache_named_members,
                                virtual_parameter_only=self.candidate_virtual_parameter_only)
 
-    def step(self, gradients, optimizer):
-        self.zero_grad() # clear all gradients
-        named_params = dict(self.named_parameters())
-        for k, grad in gradients:
-            named_params[k].grad = grad
-        # clip the gradients
-        torch.nn.utils.clip_grad_norm_(self.parameters(), self.max_grad_norm)
-        # apply the gradients
-        optimizer.step()
+    def rollout_type(self):
+        return "discerete"
 
-    def save(self, path):
-        torch.save({"state_dict": self.state_dict()}, path)
-
-    def load(self, path):
-        checkpoint = torch.load(path)
-        self.load_state_dict(checkpoint["state_dict"])
-
-class SharedCell(nn.Module):
-    def __init__(self, search_space, layer_index, num_channels,
-                 prev_num_channels, stride, prev_strides):
-        super(SharedCell, self).__init__()
-        self.search_space = search_space
-        self.stride = stride
-        self.is_reduce = stride != 1
-        self.num_channels = num_channels
-        self.layer_index = layer_index
-
-        self._steps = self.search_space.num_steps
-        self._num_init = self.search_space.num_init_nodes
-        self._primitives = self.search_space.shared_primitives
-
-        self.preprocess_ops = nn.ModuleList()
-        prev_strides = list(np.cumprod(list(reversed(prev_strides))))
-        prev_strides.insert(0, 1)
-        prev_strides = reversed(prev_strides[:len(prev_num_channels)])
-        for prev_c, prev_s in zip(prev_num_channels, prev_strides):
-            if prev_s > 1:
-                # need skip connection, and is not the connection from the input image
-                preprocess = ops.FactorizedReduce(C_in=prev_c,
-                                                  C_out=num_channels,
-                                                  stride=prev_s,
-                                                  affine=False)
-            else: # prev_c == _steps * num_channels or inputs
-                preprocess = ops.ReLUConvBN(C_in=prev_c,
-                                            C_out=num_channels,
-                                            kernel_size=1,
-                                            stride=1,
-                                            padding=0,
-                                            affine=False)
-            self.preprocess_ops.append(preprocess)
-        assert len(self.preprocess_ops) == self._num_init
-
-        self.edges = nn.ModuleList()
-        for i in range(self._steps):
-            for j in range(i + self._num_init):
-                op = SharedOp(self.num_channels, stride=self.stride if j < self._num_init else 1,
-                              primitives=self._primitives)
-                self.edges.append(op)
+class DiscreteSharedCell(SharedCell):
+    def num_out_channel(self):
+        return self.num_channels * self.search_space.num_steps
 
     def forward(self, inputs, genotype): #pylint: disable=arguments-differ
         assert self._num_init == len(inputs)
@@ -375,23 +264,7 @@ class SharedCell(nn.Module):
                                                         member=member):
                 yield n, v
 
-class SharedOp(nn.Module):
-    """
-    The operation on an edge, consisting of multiple primitives.
-    """
-
-    def __init__(self, C, stride, primitives):
-        super(SharedOp, self).__init__()
-        self.primitives = primitives
-        self.stride = stride
-        self.p_ops = nn.ModuleList()
-        for primitive in self.primitives:
-            op = ops.get_op(primitive)(C, stride, False)
-            if "pool" in primitive:
-                op = nn.Sequential(op, nn.BatchNorm2d(C,
-                                                      affine=False))
-            self.p_ops.append(op)
-
+class DiscreteSharedOp(SharedOp):
     def forward(self, x, op_type): #pylint: disable=arguments-differ
         index = self.primitives.index(op_type)
         return self.p_ops[index](x)

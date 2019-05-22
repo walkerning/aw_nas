@@ -63,6 +63,13 @@ class BaseTrainer(Component):
         Load the trainer state from disk.
         """
 
+    @abc.abstractmethod
+    def rollout_type(self):
+        """
+        Return the handling rollout type.
+        """
+
+    # ---- some helper methods ----
     def on_epoch_start(self, epoch):
         """
         Default implementaion: dispatch `on_epoch_start` call to each sub-components.
@@ -79,7 +86,6 @@ class BaseTrainer(Component):
         self.controller.on_epoch_end(epoch)
         self.weights_manager.on_epoch_end(epoch)
 
-    # ---- some helper methods ----
     def maybe_save(self):
         if self.save_every is not None and self.train_dir and self.epoch % self.save_every == 0:
             self.controller.save(self._save_path("controller"))

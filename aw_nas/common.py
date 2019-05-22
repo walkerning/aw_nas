@@ -4,16 +4,40 @@ Definitions that will be used by multiple components
 
 import abc
 import collections
+import six
 
 import numpy as np
 
 from aw_nas import Component
+from aw_nas.utils import RegistryMeta
 
-
-class Rollout(object):
+@six.add_metaclass(RegistryMeta)
+class BaseRollout(object):
     """
     Rollout is the interface object that is passed through all the components.
     """
+    REGISTRY = "rollout"
+
+    @abc.abstractmethod
+    def set_candidate_net(self, c_net):
+        pass
+
+    @abc.abstractmethod
+    def plot_arch(self, filename, label="", edge_labels=None):
+        pass
+
+    @abc.abstractmethod
+    def set_perf(self, value, name="perf"):
+        pass
+
+    @abc.abstractmethod
+    def get_perf(self, name="perf"):
+        pass
+
+
+class Rollout(BaseRollout):
+    """Discrete rollout"""
+    NAME = "discrete"
 
     def __init__(self, arch, info, search_space, candidate_net=None):
         self.arch = arch
@@ -57,6 +81,76 @@ class Rollout(object):
                                                            cn=self.candidate_net,
                                                            perf=self.perf)
 
+
+class DifferentiableRollout(BaseRollout):
+    """Rollout based on differentiable relaxation"""
+    NAME = "differentiable"
+    def __init__(self, arch, sampled, logits, search_space, candidate_net=None):
+        self.arch = arch
+        self.sampled = sampled # softmax-relaxed sample
+        self.logits = logits
+        self.search_space = search_space
+        self.candidate_net = candidate_net
+
+        self.perf = {}
+        self._genotype = None # calc when need
+        self._discretized_arch = None # calc when need
+
+    def set_candidate_net(self, c_net):
+        self.candidate_net = c_net
+
+    def get_perf(self, name="perf"):
+        return self.perf[name]
+
+    def set_perf(self, value, name="perf"):
+        self.perf[name] = value
+
+    def plot_arch(self, filename, label="", edge_labels=None):
+        return self.search_space.plot_arch(self.genotype_list(),
+                                           filename,
+                                           label=label,
+                                           edge_labels=edge_labels)
+
+    def genotype_list(self):
+        return list(self.genotype._asdict().items())
+
+    def parse(self, weights):
+        """parse and get the discertized arch"""
+        archs = []
+        for cg_weight in weights:
+            start = 0
+            n = self.search_space.num_init_nodes
+            arch = [[], []]
+            for _ in range(self.search_space.num_steps):
+                end = start + n
+                w = cg_weight[start:end]
+                edges = sorted(range(n), key=lambda node_id: -max(w[node_id])) #pylint: disable=cell-var-from-loop
+                edges = edges[:self.search_space.num_node_inputs]
+                arch[0] += edges
+                arch[1] += [np.argmax(w[edge]) for edge in edges]
+                n += 1
+                start = end
+            archs.append(arch)
+        return archs
+
+    @property
+    def discretized_arch(self):
+        if self._discretized_arch is None:
+            self._discretized_arch = self.parse(self.sampled)
+        return self._discretized_arch
+
+    @property
+    def genotype(self):
+        if self._genotype is None:
+            self._genotype = self.search_space.genotype(self.discretized_arch)
+        return self._genotype
+
+    def __repr__(self):
+        return ("DifferentiableRollout(search_space={sn}, arch={arch}, "
+                "candidate_net={cn}, perf={perf})").format(sn=self.search_space.NAME,
+                                                           arch=self.arch,
+                                                           cn=self.candidate_net,
+                                                           perf=self.perf)
 
 class SearchSpaceException(Exception):
     pass

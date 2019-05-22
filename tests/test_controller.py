@@ -1,6 +1,7 @@
 from aw_nas.common import get_search_space
 import pytest
 
+# ---- test controller rl ----
 def test_rl_controller():
     import torch
     import numpy as np
@@ -45,3 +46,18 @@ def test_controller_network(case):
     num_actions = len(arch[0][0]) + len(arch[0][1])
     assert log_probs.shape == (batch_size, num_actions)
     assert entropies.shape == (batch_size, num_actions)
+
+# --- test controller differentiable ----
+def test_diff_controller():
+    import torch
+    import numpy as np
+
+    from aw_nas.controller import DiffController
+
+    search_space = get_search_space(cls="cnn")
+    device = "cuda"
+    controller = DiffController(search_space, device)
+
+    assert controller.cg_alphas[0].shape == (14, len(search_space.shared_primitives))
+    rollouts = controller.sample(3)
+    assert isinstance(rollouts[0].genotype, search_space.genotype_type)

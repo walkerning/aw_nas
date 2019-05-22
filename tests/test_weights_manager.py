@@ -93,3 +93,43 @@ def test_supernet_candidate_gradient_virtual(test_id, super_net):
     buffer_prev = {k: v.clone() for k, v in six.iteritems(c_buffers)}
 
 # ---- End test super_net ----
+
+# ---- Test diff_super_net ----
+def test_diff_supernet_forward(diff_super_net):
+    from aw_nas.common import get_search_space
+    from aw_nas.controller import DiffController
+
+    search_space = get_search_space(cls="cnn")
+    device = "cuda"
+    controller = DiffController(search_space, device)
+    rollout = controller.sample(1)[0]
+    cand_net = diff_super_net.assemble_candidate(rollout)
+
+    data = (torch.tensor(np.random.rand(2, 3, 28, 28)).float(), torch.tensor([0, 1]).long()) #pylint: disable=not-callable
+    logits = cand_net.forward_data(data[0])
+    assert tuple(logits.shape) == (2, 10)
+
+def test_diff_supernet_to_arch(diff_super_net):
+    from torch import nn
+    from aw_nas.common import get_search_space
+    from aw_nas.controller import DiffController
+
+    search_space = get_search_space(cls="cnn")
+    device = "cuda"
+    controller = DiffController(search_space, device)
+    rollout = controller.sample(1)[0]
+    cand_net = diff_super_net.assemble_candidate(rollout)
+
+    data = (torch.tensor(np.random.rand(2, 3, 28, 28)).float(), torch.tensor([0, 1]).long()) #pylint: disable=not-callable
+    logits = cand_net.forward_data(data[0])
+    loss = nn.CrossEntropyLoss()(logits, data[1].cuda())
+    assert controller.cg_alphas[0].grad is None
+    loss.backward()
+    assert controller.cg_alphas[0].grad is None
+
+    logits = cand_net.forward_data(data[0], detach_arch=False)
+    loss = nn.CrossEntropyLoss()(logits, data[1].cuda())
+    assert controller.cg_alphas[0].grad is None
+    loss.backward()
+    assert controller.cg_alphas[0].grad is not None
+# ---- End test diff_super_net ----

@@ -22,3 +22,13 @@ def super_net(request):
     device = "cuda"
     net = SuperNet(search_space, device, **cfg)
     return net
+
+@pytest.fixture
+def diff_super_net(request):
+    cfg = getattr(request, "param", {})
+    from aw_nas.common import get_search_space
+    from aw_nas.weights_manager import DiffSuperNet
+    search_space = get_search_space(cls="cnn")
+    device = "cuda"
+    net = DiffSuperNet(search_space, device, **cfg)
+    return net

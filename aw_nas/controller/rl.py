@@ -55,6 +55,7 @@ class RLController(BaseController, nn.Module):
 
         self.controller = nn.ModuleList(self.controllers)
 
+    # ---- APIs ----
     def set_mode(self, mode):
         if mode == "train":
             nn.Module.train(self)
@@ -119,12 +120,12 @@ class RLController(BaseController, nn.Module):
     def summary(self, rollouts, log=False, log_prefix="", step=None):
         # log the total negative log prob and the entropies, averaged across the rollouts
         # also the averaged info for each cell group
-        cg_logprobs = np.mean(np.array([[cg_lp.detach().cpu().numpy().sum() \
+        cg_logprobs = np.mean(np.array([[utils.get_numpy(cg_lp).sum() \
                                          for cg_lp in r.info["log_probs"]]\
                                         for r in rollouts]), 0)
         total_logprob = cg_logprobs.sum()
         cg_logprobs_str = ",".join(["{:.2f}".format(n) for n in cg_logprobs])
-        cg_entros = np.mean(np.array([[cg_e.detach().cpu().numpy().sum() \
+        cg_entros = np.mean(np.array([[utils.get_numpy(cg_e).sum() \
                                          for cg_e in r.info["entropies"]]\
                                         for r in rollouts]), 0)
         total_entro = cg_entros.sum()
@@ -146,6 +147,10 @@ class RLController(BaseController, nn.Module):
                            [(n + " ENTRO", entro) for n, entro in \
                             zip(_ss.cell_group_names, cg_entros)])
 
+    def rollout_type(self):
+        return "discrete"
+
+    # ---- Override some components functionality: dispatch to controller_networks and agents ----
     def on_epoch_start(self, epoch):
         super(RLController, self).on_epoch_start(epoch)
         [c.on_epoch_start(epoch) for c in self.controllers]

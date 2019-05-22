@@ -55,6 +55,7 @@ confidence=
 # no Warning level messages displayed, use"--disable=all --enable=classes
 # --disable=W"
 disable=missing-docstring,
+	abstract-method,
 	too-many-ancestors,
 	duplicate-code,
 	expression-not-assigned,

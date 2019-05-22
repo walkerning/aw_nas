@@ -131,12 +131,26 @@ def search(cfg_file, gpu, seed, load, save_every, train_dir, vis_dir, develop):
                                       search_space=search_space, device=device)
     controller = _init_component(cfg, "controller",
                                  search_space=search_space, device=device)
+
+    # check type of rollout match
+    assert weights_manager.rollout_type() == controller.rollout_type(), \
+        ("The type of the rollouts produced/received by the "
+         "controller/weights_manager should match! ({} VS. {})")\
+            .format(weights_manager.rollout_type(), controller.rollout_type())
+
     whole_dataset = _init_component(cfg, "dataset")
 
     # initialize, setup, run trainer
     LOGGER.info("Initializing trainer and starting the search.")
     trainer = _init_component(cfg, "trainer", weights_manager=weights_manager,
                               controller=controller, dataset=whole_dataset)
+
+    # check type of rollout match
+    assert trainer.rollout_type() == controller.rollout_type(), \
+        ("The type of the rollouts handled by the controller/weights_manager"
+         " and the trainer should match! ({} VS. {})")\
+            .format(controller.rollout_type(), trainer.rollout_type())
+
     trainer.setup(load, save_every, train_dir, writer=writer)
     trainer.train()
 

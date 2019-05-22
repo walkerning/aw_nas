@@ -199,4 +199,3 @@ class FinalTrainer(Component):
             self.model.module.on_epoch_end(epoch)
         else:
             self.model.on_epoch_end(epoch)
-
