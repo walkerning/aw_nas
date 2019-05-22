@@ -69,7 +69,7 @@ class DiffSubCandidateNet(CandidateNet):
         self._set_mode(mode)
 
         data = (data[0].to(self.get_device()), data[1].to(self.get_device()))
-        outputs = self.forward_data(data[0])
+        outputs = self.forward_data(data[0], detach_arch=detach_arch)
         return [c(outputs, data[1]) for c in criterions]
 
 

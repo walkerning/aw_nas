@@ -58,7 +58,7 @@ class DiffController(BaseController, nn.Module):
         _num_ops = len(self.search_space.shared_primitives)
         _num_init_nodes = self.search_space.num_init_nodes
         _num_edges = sum(_num_init_nodes+i for i in range(self.search_space.num_steps))
-        self.cg_alphas = nn.ParameterList([nn.Parameter(torch.randn(_num_edges, _num_ops)) \
+        self.cg_alphas = nn.ParameterList([nn.Parameter(1e-3*torch.randn(_num_edges, _num_ops)) \
                                            for _ in range(self.search_space.num_cell_groups)])
 
         self.to(self.device)
@@ -104,14 +104,14 @@ class DiffController(BaseController, nn.Module):
         self.logger.info("Loaded controller network from %s", path)
 
     def _entropy_loss(self):
-        probs = [F.softmax(alpha, dim=-1) for alpha in self.cg_alphas]
-        return sum(-(torch.log(prob) * prob).sum() for prob in probs)
+        if self.entropy_coeff > 0:
+            probs = [F.softmax(alpha, dim=-1) for alpha in self.cg_alphas]
+            return self.entropy_coeff * sum(-(torch.log(prob) * prob).sum() for prob in probs)
+        return 0.
 
     def gradient(self, loss):
         self.zero_grad()
-        _loss = loss
-        if self.entropy_coeff:
-            _loss += self._entropy_loss()
+        _loss = loss + self._entropy_loss()
         _loss.backward()
         return utils.get_numpy(_loss), [(k, v.grad.clone()) for k, v in self.named_parameters()]
 

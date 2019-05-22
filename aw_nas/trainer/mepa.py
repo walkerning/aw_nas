@@ -50,7 +50,7 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
         "controller_samples"
     ]
 
-    def __init__(self, #pylint: disable=dangerous-default-value,too-many-arguments
+    def __init__(self, #pylint: disable=dangerous-default-value,too-many-arguments,too-many-locals
                  controller, weights_manager, dataset,
                  rollout_type="discrete",
                  epochs=200, batch_size=64, test_every=10,
@@ -75,12 +75,21 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
                      "factor": 2.0
                  },
                  mepa_surrogate_steps=1, mepa_samples=1,
-                 controller_steps=313, controller_surrogate_steps=1, controller_samples=4,
+                 controller_steps=None, controller_surrogate_steps=1, controller_samples=4,
                  controller_train_every=1, controller_train_begin=1,
                  data_portion=(0.2, 0.2, 0.6), derive_queue="controller",
                  derive_surrogate_steps=1, derive_samples=8,
                  mepa_as_surrogate=False,
+                 interleave_controller_every=None, interleave_report_every=50,
                  schedule_cfg=None):
+        """
+        Args:
+            controller_steps (int): If None, (not explicitly given), assume every epoch consume
+                one pass of the controller queue.
+            interleave_controller_every (int): Interleave controller update steps every
+                `interleave_controller_every` steps. If None, do not interleave, which means
+                controller will only be updated after one epoch of mepa update.
+        """
         super(MepaTrainer, self).__init__(controller, weights_manager, dataset, schedule_cfg)
 
         # configurations
@@ -99,6 +108,9 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
         self.controller_train_begin = controller_train_begin
         self.derive_surrogate_steps = derive_surrogate_steps
         self.derive_samples = derive_samples
+        self.interleave_controller_every = interleave_controller_every
+        self.interleave_report_every = interleave_report_every
+
         # do some checks
         assert derive_queue in {"surrogate", "controller", "mepa"}
         assert len(data_portion) == 3
@@ -145,6 +157,10 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
                          derive_queue)
 
         self.mepa_steps = len(self.mepa_queue)
+        if self.controller_steps is None:
+            # if controller_steps is not explicitly given
+            # assume every epoch consume one pass of the controller queue
+            self.controller_steps = len(self.controller_queue)
         self.derive_steps = len(self.derive_queue)
 
         # states and other help attributes
@@ -157,54 +173,35 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
                                 else [self._criterion, _top1_acc]
         self._eval_kwargs = {} if self._rollout_type == "discrete" else {"detach_arch": False}
 
-    def train(self): #pylint: disable=too-many-statements,too-many-branches,too-many-locals,too-many-nested-blocks
-        assert self.is_setup, "Must call `trainer.setup` method before calling `trainer.train`."
-        for epoch in range(self.last_epoch+1, self.epochs+1):
-            self.epoch = epoch # this is redundant as Component.on_epoch_start also set this
-            surrogate_loss_meter = utils.AverageMeter()
-            surrogate_acc_meter = utils.AverageMeter()
-            valid_loss_meter = utils.AverageMeter()
-            valid_acc_meter = utils.AverageMeter()
-            controller_loss_meter = utils.AverageMeter()
+    def mepa_update(self, steps, finished_m_steps, finished_c_steps):
+        surrogate_loss_meter = utils.AverageMeter()
+        surrogate_acc_meter = utils.AverageMeter()
+        valid_loss_meter = utils.AverageMeter()
+        valid_acc_meter = utils.AverageMeter()
 
-            # schedule values and optimizer learning rates
-            self.on_epoch_start(epoch) # call `on_epoch_start` of sub-components
-            lrs = self._lr_scheduler_step()
-            _lr_schedule_str = "\n\t".join(["{:10}: {:.5f}".format(n, v) for n, v in lrs])
-            self.logger.info("Epoch %3d: LR values:\n\t%s", epoch, _lr_schedule_str)
+        self.controller.set_mode("eval")
 
-            # meta parameter training
-            self.controller.set_mode("eval")
-
-            for i_mepa in range(self.mepa_steps): # mepa stands for meta param
-                print("\rmepa step {}/{}".format(i_mepa, self.mepa_steps), end="")
-                mepa_data = next(self.mepa_queue)
-                all_gradients = defaultdict(float)
-                counts = defaultdict(int)
-                rollouts = self.get_new_candidates(self.mepa_samples)
-                for i_sample in range(self.mepa_samples):
-                    candidate_net = rollouts[i_sample].candidate_net
-                    if self.mepa_surrogate_steps:
-                        _surrogate_optimizer = self.get_surrogate_optimizer()
-                        with candidate_net.begin_virtual(): # surrogate train steps
-                            train_loss, train_acc \
-                                = candidate_net.train_queue(self.surrogate_queue,
-                                                            optimizer=_surrogate_optimizer,
-                                                            criterion=self._criterion,
-                                                            eval_criterions=[_ce_loss,
-                                                                             _top1_acc],
-                                                            steps=self.mepa_surrogate_steps)
-                            # gradients: List(Tuple(parameter name, gradient))
-                            gradients, (loss, acc) = candidate_net.gradient(
-                                mepa_data,
-                                criterion=self._criterion,
-                                eval_criterions=[_ce_loss,
-                                                 _top1_acc],
-                                mode="train"
-                            )
-                        surrogate_loss_meter.update(train_loss)
-                        surrogate_acc_meter.update(train_acc / 100)
-                    else: # ENAS
+        for i_mepa in range(1, steps+1): # mepa stands for meta param
+            print("\rmepa step {}/{} ; controller step {}/{}"\
+                  .format(finished_m_steps+i_mepa, self.mepa_steps,
+                          finished_c_steps, self.controller_steps),
+                  end="")
+            mepa_data = next(self.mepa_queue)
+            all_gradients = defaultdict(float)
+            counts = defaultdict(int)
+            rollouts = self.get_new_candidates(self.mepa_samples)
+            for i_sample in range(self.mepa_samples):
+                candidate_net = rollouts[i_sample].candidate_net
+                if self.mepa_surrogate_steps:
+                    _surrogate_optimizer = self.get_surrogate_optimizer()
+                    with candidate_net.begin_virtual(): # surrogate train steps
+                        train_loss, train_acc \
+                            = candidate_net.train_queue(self.surrogate_queue,
+                                                        optimizer=_surrogate_optimizer,
+                                                        criterion=self._criterion,
+                                                        eval_criterions=[_ce_loss,
+                                                                         _top1_acc],
+                                                        steps=self.mepa_surrogate_steps)
                         # gradients: List(Tuple(parameter name, gradient))
                         gradients, (loss, acc) = candidate_net.gradient(
                             mepa_data,
@@ -213,139 +210,239 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
                                              _top1_acc],
                             mode="train"
                         )
+                    surrogate_loss_meter.update(train_loss)
+                    surrogate_acc_meter.update(train_acc / 100)
+                else: # ENAS
+                    # gradients: List(Tuple(parameter name, gradient))
+                    gradients, (loss, acc) = candidate_net.gradient(
+                        mepa_data,
+                        criterion=self._criterion,
+                        eval_criterions=[_ce_loss,
+                                         _top1_acc],
+                        mode="train"
+                    )
 
-                    valid_loss_meter.update(loss)
-                    valid_acc_meter.update(acc / 100)
+                valid_loss_meter.update(loss)
+                valid_acc_meter.update(acc / 100)
+                for n, g_v in gradients:
+                    all_gradients[n] += g_v
+                    counts[n] += 1
+
+            # average the gradients and update the meta parameters
+            all_gradients = {k: v / counts[k] for k, v in six.iteritems(all_gradients)}
+            self.weights_manager.step(all_gradients.items(), self.mepa_optimizer)
+            del all_gradients
+
+        print("\r", end="")
+
+        return surrogate_loss_meter.avg, surrogate_acc_meter.avg,\
+            valid_loss_meter.avg, valid_acc_meter.avg
+
+    def controller_update(self, steps, finished_m_steps, finished_c_steps):
+        surrogate_loss_meter = utils.AverageMeter()
+        surrogate_acc_meter = utils.AverageMeter()
+        valid_loss_meter = utils.AverageMeter()
+        valid_acc_meter = utils.AverageMeter()
+        controller_loss_meter = utils.AverageMeter()
+        controller_stat_meters = None
+
+        self.controller.set_mode("train")
+        for i_cont in range(1, steps+1):
+            print("\rmepa step {}/{} ; controller step {}/{}"\
+                  .format(finished_m_steps, self.mepa_steps,
+                          finished_c_steps+i_cont, self.controller_steps),
+                  end="")
+            controller_data = next(self.controller_queue)
+            rollouts = self.get_new_candidates(self.controller_samples)
+
+            # gradient accumulator for controller parameters, when it's differentiable
+            if self._rollout_type == "differentiable":
+                all_gradients = defaultdict(float)
+                step_loss = 0.
+
+            for i_sample in range(self.controller_samples):
+                rollout = rollouts[i_sample]
+                candidate_net = rollout.candidate_net
+                _surrogate_optimizer = self.get_surrogate_optimizer()
+                if self.controller_surrogate_steps:
+                    with candidate_net.begin_virtual(): # surrogate train steps
+                        train_loss, train_acc \
+                            = candidate_net.train_queue(self.surrogate_queue,
+                                                        optimizer=_surrogate_optimizer,
+                                                        criterion=self._criterion,
+                                                        eval_criterions=[_ce_loss,
+                                                                         _top1_acc],
+                                                        steps=\
+                                                        self.controller_surrogate_steps)
+                        loss, acc = candidate_net.eval_data(
+                            controller_data,
+                            criterions=self._eval_criterions,
+                            mode="train",
+                            **self._eval_kwargs
+                        )
+                    surrogate_loss_meter.update(train_loss)
+                    surrogate_acc_meter.update(train_acc / 100)
+                else: # ENAS
+                    loss, acc = candidate_net.eval_data(controller_data,
+                                                        criterions=self._eval_criterions,
+                                                        mode="train",
+                                                        **self._eval_kwargs)
+
+                acc = acc / 100
+                valid_loss_meter.update(utils.get_numpy(loss))
+                valid_acc_meter.update(acc)
+                if self._rollout_type == "discrete":
+                    rollout.set_perf(acc)
+                else: # differentiable sampling/rollouts
+                    _loss, gradients = self.controller.gradient(loss)
                     for n, g_v in gradients:
                         all_gradients[n] += g_v
-                        counts[n] += 1
+                    step_loss += _loss
+                    ## this consume too much memory when controller_samples > 1
+                    # rollout.set_perf(loss)
 
-                # average the gradients and update the meta parameters
-                all_gradients = {k: v / counts[k] for k, v in six.iteritems(all_gradients)}
-                self.weights_manager.step(all_gradients.items(), self.mepa_optimizer)
+            if self._rollout_type == "discrete":
+                controller_loss = self.controller.step(rollouts, self.controller_optimizer)
+            else:
+                all_gradients = {n: g/self.controller_samples \
+                                 for n, g in six.iteritems(all_gradients)}
+                controller_loss = step_loss / self.controller_samples
+                self.controller.step_gradient(all_gradients.items(),
+                                              self.controller_optimizer)
 
-            del all_gradients
-            print("\r", end="")
+            controller_loss_meter.update(controller_loss)
+            controller_stats = self.controller.summary(rollouts, log=False)
+            if controller_stat_meters is None:
+                controller_stat_meters = OrderedDict([(n, utils.AverageMeter())\
+                                                      for n in controller_stats])
+            [controller_stat_meters[n].update(v) for n, v in controller_stats.items()]
+
+        print("\r", end="")
+
+        return surrogate_loss_meter.avg, surrogate_acc_meter.avg,\
+            valid_loss_meter.avg, valid_acc_meter.avg, controller_loss_meter.avg,\
+            OrderedDict((n, meter.avg) for n, meter in controller_stat_meters.items())
+
+    def train(self): #pylint: disable=too-many-statements
+        assert self.is_setup, "Must call `trainer.setup` method before calling `trainer.train`."
+
+        if self.interleave_controller_every is not None:
+            inter_steps = self.mepa_steps // self.interleave_controller_every
+            mepa_steps = self.interleave_controller_every
+            controller_steps = self.controller_steps // inter_steps
+        else:
+            inter_steps = 1
+            mepa_steps = self.mepa_steps
+            controller_steps = self.controller_steps
+
+        for epoch in range(self.last_epoch+1, self.epochs+1):
+            m_surrogate_loss_meter = utils.AverageMeter()
+            m_surrogate_acc_meter = utils.AverageMeter()
+            m_valid_loss_meter = utils.AverageMeter()
+            m_valid_acc_meter = utils.AverageMeter()
+
+            c_surrogate_loss_meter = utils.AverageMeter()
+            c_surrogate_acc_meter = utils.AverageMeter()
+            c_valid_loss_meter = utils.AverageMeter()
+            c_valid_acc_meter = utils.AverageMeter()
+            c_loss_meter = utils.AverageMeter()
+            c_stat_meters = None
+
+            self.epoch = epoch # this is redundant as Component.on_epoch_start also set this
+
+            # schedule values and optimizer learning rates
+            self.on_epoch_start(epoch) # call `on_epoch_start` of sub-components
+            lrs = self._lr_scheduler_step()
+            _lr_schedule_str = "\n\t".join(["{:10}: {:.5f}".format(n, v) for n, v in lrs])
+            self.logger.info("Epoch %3d: LR values:\n\t%s", epoch, _lr_schedule_str)
+
+            finished_m_steps = 0
+            finished_c_steps = 0
+            for i_inter in range(1, inter_steps+1): # interleave mepa/controller training
+                # meta parameter training
+                s_loss, s_acc, v_loss, v_acc = self.mepa_update(mepa_steps,
+                                                                finished_m_steps,
+                                                                finished_c_steps)
+                m_surrogate_loss_meter.update(s_loss)
+                m_surrogate_acc_meter.update(s_acc)
+                m_valid_loss_meter.update(v_loss)
+                m_valid_acc_meter.update(v_acc)
+
+                finished_m_steps += mepa_steps
+
+                if epoch >= self.controller_train_begin and \
+                   epoch % self.controller_train_every == 0:
+                    # controller training
+                    s_loss, s_acc, v_loss, v_acc, c_loss, c_stats \
+                        = self.controller_update(controller_steps,
+                                                 finished_m_steps, finished_c_steps)
+                    c_surrogate_loss_meter.update(s_loss)
+                    c_surrogate_acc_meter.update(s_acc)
+                    c_valid_loss_meter.update(v_loss)
+                    c_valid_acc_meter.update(v_acc)
+                    c_loss_meter.update(c_loss)
+
+                    if c_stat_meters is None:
+                        c_stat_meters = OrderedDict([(n, utils.AverageMeter())\
+                                                     for n in c_stats])
+                    [c_stat_meters[n].update(v) for n, v in c_stats.items()]
+
+                    finished_c_steps += controller_steps
+
+                if i_inter % self.interleave_report_every == 0:
+                    # log for every `interleave_report_every` interleaving steps
+                    self.logger.info("(inter step %3d): "
+                                     "mepa (%3d/%3d): %.2f %%; loss: %.3f;  "
+                                     "controller (%3d/%3d): %.2f %%; loss: %.3f;",
+                                     i_inter, finished_m_steps, self.mepa_steps,
+                                     m_valid_acc_meter.avg * 100,
+                                     m_valid_loss_meter.avg,
+                                     finished_c_steps, self.controller_steps,
+                                     c_valid_acc_meter.avg * 100,
+                                     c_valid_loss_meter.avg)
+
+            # log infomations of this epoch
             self.logger.info("Epoch %3d: [mepa update] surrogate train acc: %.2f %% ; loss: %.3f ; "
                              "valid acc: %.2f %% ; valid loss: %.3f",
-                             epoch, surrogate_acc_meter.avg * 100, surrogate_loss_meter.avg,
-                             valid_acc_meter.avg * 100, valid_loss_meter.avg)
+                             epoch, m_surrogate_acc_meter.avg * 100, m_surrogate_loss_meter.avg,
+                             m_valid_acc_meter.avg * 100, m_valid_loss_meter.avg)
+            self.logger.info("Epoch %3d: [controller update] controller loss: %.3f ; "
+                             "surrogate train acc: %.2f %% ; loss: %.3f ; "
+                             "mean accuracy (reward): %.2f %% ; mean cross entropy loss: %.3f",
+                             epoch, c_loss_meter.avg,
+                             c_surrogate_acc_meter.avg * 100, c_surrogate_loss_meter.avg,
+                             c_valid_acc_meter.avg * 100, c_valid_loss_meter.avg)
+            self.logger.info("[controller stats] %s", \
+                             "; ".join(["{}: {:.2f}".format(n, meter.avg) \
+                                        for n, meter in c_stat_meters.items()]))
 
-           # maybe write tensorboard info
+            # maybe write tensorboard info
             if not self.writer.is_none():
-                self.writer.add_scalar("acc/mepa_update/valid", valid_acc_meter.avg, self.epoch)
-                self.writer.add_scalar("loss/mepa_update/valid", valid_loss_meter.avg, self.epoch)
-                if not surrogate_loss_meter.is_empty():
+                self.writer.add_scalar("acc/mepa_update/valid", m_valid_acc_meter.avg, epoch)
+                self.writer.add_scalar("loss/mepa_update/valid", m_valid_loss_meter.avg, epoch)
+                if not m_surrogate_loss_meter.is_empty():
                     self.writer.add_scalar("acc/mepa_update/train_surrogate",
-                                           surrogate_acc_meter.avg,
-                                           self.epoch)
+                                           m_surrogate_acc_meter.avg,
+                                           epoch)
                     self.writer.add_scalar("loss/mepa_update/train_surrogate",
-                                           surrogate_loss_meter.avg,
-                                           self.epoch)
+                                           m_surrogate_loss_meter.avg,
+                                           epoch)
 
-            surrogate_acc_meter.reset()
-            surrogate_loss_meter.reset()
-            valid_acc_meter.reset()
-            valid_loss_meter.reset()
-
-            controller_stat_meters = None
-
-            # controller training
-            if epoch >= self.controller_train_begin and epoch % self.controller_train_every == 0:
-                self.controller.set_mode("train")
-                for i_cont in range(self.controller_steps):
-                    print("\rcontroller step {}/{}".format(i_cont, self.controller_steps), end="")
-                    controller_data = next(self.controller_queue)
-                    rollouts = self.get_new_candidates(self.controller_samples)
-
-                    # gradient accumulator for controller parameters, when it's differentiable
-                    if self._rollout_type == "differentiable":
-                        all_gradients = defaultdict(float)
-                        step_loss = 0.
-
-                    for i_sample in range(self.controller_samples):
-                        rollout = rollouts[i_sample]
-                        candidate_net = rollout.candidate_net
-                        _surrogate_optimizer = self.get_surrogate_optimizer()
-                        if self.controller_surrogate_steps:
-                            with candidate_net.begin_virtual(): # surrogate train steps
-                                train_loss, train_acc \
-                                    = candidate_net.train_queue(self.surrogate_queue,
-                                                                optimizer=_surrogate_optimizer,
-                                                                criterion=self._criterion,
-                                                                eval_criterions=[_ce_loss,
-                                                                                 _top1_acc],
-                                                                steps=\
-                                                                self.controller_surrogate_steps)
-                                loss, acc = candidate_net.eval_data(
-                                    controller_data,
-                                    criterions=self._eval_criterions,
-                                    mode="train",
-                                    **self._eval_kwargs
-                                )
-                            surrogate_loss_meter.update(train_loss)
-                            surrogate_acc_meter.update(train_acc / 100)
-                        else: # ENAS
-                            loss, acc = candidate_net.eval_data(controller_data,
-                                                                criterions=self._eval_criterions,
-                                                                mode="train",
-                                                                **self._eval_kwargs)
-
-                        acc = acc / 100
-                        valid_loss_meter.update(utils.get_numpy(loss))
-                        valid_acc_meter.update(acc)
-                        if self._rollout_type == "discrete":
-                            rollout.set_perf(acc)
-                        else: # differentiable sampling/rollouts
-                            _loss, gradients = self.controller.gradient(loss)
-                            for n, g_v in gradients:
-                                all_gradients[n] += g_v
-                            step_loss += _loss
-                            ## this consume too much memory when controller_samples > 1
-                            # rollout.set_perf(loss)
-
-                    if self._rollout_type == "discrete":
-                        controller_loss = self.controller.step(rollouts, self.controller_optimizer)
-                    else:
-                        all_gradients = {n: g/self.controller_samples \
-                                         for n, g in six.iteritems(all_gradients)}
-                        controller_loss = step_loss / self.controller_samples
-                        self.controller.step_gradient(all_gradients.items(),
-                                                      self.controller_optimizer)
-
-                    controller_loss_meter.update(controller_loss)
-                    controller_stats = self.controller.summary(rollouts, log=False)
-                    if controller_stat_meters is None:
-                        controller_stat_meters = OrderedDict([(n, utils.AverageMeter())\
-                                                              for n in controller_stats])
-                    [controller_stat_meters[n].update(v) for n, v in controller_stats.items()]
-
-                print("\r", end="")
-                self.logger.info("Epoch %3d: [controller update] controller loss: %.3f ; "
-                                 "surrogate train acc: %.2f %% ; loss: %.3f ; "
-                                 "mean accuracy (reward): %.2f %% ; mean cross entropy loss: %.3f",
-                                 epoch, controller_loss_meter.avg,
-                                 surrogate_acc_meter.avg * 100, surrogate_loss_meter.avg,
-                                 valid_acc_meter.avg * 100, valid_loss_meter.avg)
-                self.logger.info("[controller stats] %s", \
-                                 "; ".join(["{}: {:.2f}".format(n, meter.avg) \
-                                            for n, meter in controller_stat_meters.items()]))
-
-                # maybe write tensorboard info
-                if not self.writer.is_none():
-                    self.writer.add_scalar("acc/arch_update/valid",
-                                           valid_acc_meter.avg, self.epoch)
-                    self.writer.add_scalar("loss/arch_update/valid",
-                                           valid_loss_meter.avg, self.epoch)
-                    if not surrogate_loss_meter.is_empty():
-                        self.writer.add_scalar("acc/arch_update/train_surrogate",
-                                               surrogate_acc_meter.avg,
-                                               self.epoch)
-                        self.writer.add_scalar("loss/arch_update/train_surrogate",
-                                               surrogate_loss_meter.avg,
-                                               self.epoch)
-                    self.writer.add_scalar("controller_loss",
-                                           controller_loss_meter.avg, self.epoch)
+            # maybe write tensorboard info
+            if not self.writer.is_none():
+                self.writer.add_scalar("acc/arch_update/valid",
+                                       c_valid_acc_meter.avg, epoch)
+                self.writer.add_scalar("loss/arch_update/valid",
+                                       c_valid_loss_meter.avg, epoch)
+                if not c_surrogate_loss_meter.is_empty():
+                    self.writer.add_scalar("acc/arch_update/train_surrogate",
+                                           c_surrogate_acc_meter.avg,
+                                           epoch)
+                    self.writer.add_scalar("loss/arch_update/train_surrogate",
+                                           c_surrogate_loss_meter.avg,
+                                           epoch)
+                self.writer.add_scalar("controller_loss",
+                                       c_loss_meter.avg, epoch)
 
             # maybe save checkpoints
             self.maybe_save()
