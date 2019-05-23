@@ -139,11 +139,14 @@ class FinalTrainer(Component):
             target = target.to(device)
 
             optimizer.zero_grad()
-            logits, logits_aux = model(inputs)
-            loss = criterion(logits, target)
-            if self.auxiliary_head:
+            if self.auxiliary_head: # assume model return two logits in train mode
+                logits, logits_aux = model(inputs)
+                loss = criterion(logits, target)
                 loss_aux = criterion(logits_aux, target)
                 loss += self.auxiliary_weight * loss_aux
+            else:
+                logits = model(inputs)
+                loss = criterion(logits, target)
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), self.grad_clip)
             optimizer.step()
@@ -171,7 +174,7 @@ class FinalTrainer(Component):
             inputs = inputs.to(device)
             target = target.to(device)
             with torch.no_grad():
-                logits, _ = model(inputs)
+                logits = model(inputs)
                 loss = criterion(logits, target)
 
                 prec1, prec5 = utils.accuracy(logits, target, topk=(1, 5))

@@ -96,6 +96,11 @@ class PGAgent(BaseRLAgent):
         np.save(path, self.baseline)
 
     def load(self, path):
+        # For 2,3 compatability
+        try:
+            FileNotFoundError
+        except NameError:
+            FileNotFoundError = IOError #pylint: disable=redefined-builtin
         try:
             self.baseline = np.load(path)
         except FileNotFoundError:

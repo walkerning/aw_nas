@@ -56,7 +56,7 @@ def compute_returns(rewards, gamma, length=None):
 def get_default_argspec(func):
     if sys.version_info.major == 3:
         # python 3
-        sig = inspect.signature(func)
+        sig = inspect.signature(func) #pylint: disable=no-member
         return [(n, param.default) for n, param in six.iteritems(sig.parameters) \
                 if not param.default is param.empty]
     # python 2
@@ -64,7 +64,7 @@ def get_default_argspec(func):
     return list(reversed(list(zip(reversed(sig.args),
                                   reversed(sig.defaults)))))
 
-def _add_text_prefix(text, prefix):
+def add_text_prefix(text, prefix):
     lines = text.split("\n")
     return "\n".join([prefix + line if line else line for line in lines])
 
@@ -79,7 +79,7 @@ def component_sample_config_str(comp_name, prefix):
 
         # write the default configuration
         config_str = cls.get_default_config_str()
-        all_text += _add_text_prefix(config_str, prefix + "  ")
+        all_text += add_text_prefix(config_str, prefix + "  ")
 
         all_text += prefix + "# ---- End Type {} ----\n".format(type_name)
 

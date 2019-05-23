@@ -5,6 +5,7 @@ try:
 except ImportError:
     from io import StringIO
 
+from collections import OrderedDict
 import six
 import yaml
 
@@ -12,6 +13,13 @@ from aw_nas import utils
 from aw_nas.utils import RegistryMeta
 from aw_nas.utils import logger as _logger
 from aw_nas.utils.vis_utils import WrapWriter
+
+# Make yaml.safe_dump support OrderedDict
+yaml.add_representer(OrderedDict,
+                     lambda dumper, data: dumper.represent_mapping(
+                         'tag:yaml.org,2002:map',
+                         data.items()
+                     ), Dumper=yaml.dumper.SafeDumper)
 
 @six.add_metaclass(RegistryMeta)
 class Component(object):
@@ -60,6 +68,14 @@ class Component(object):
     def get_default_config_str(cls):
         stream = StringIO()
         stream.write("# Schedulable attributes: {}\n".format(", ".join(cls.SCHEDULABLE_ATTRS)))
-        cfg = dict(cls.get_default_config())
+        cfg = OrderedDict(cls.get_default_config())
         yaml.safe_dump(cfg, stream=stream, default_flow_style=False)
+        return stream.getvalue()
+
+    @classmethod
+    def get_current_config_str(cls, cfg):
+        stream = StringIO()
+        whole_cfg = OrderedDict(cls.get_default_config())
+        whole_cfg.update(cfg)
+        yaml.safe_dump(whole_cfg, stream=stream, default_flow_style=False)
         return stream.getvalue()

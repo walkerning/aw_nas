@@ -110,7 +110,10 @@ class GenotypeModel(Component, nn.Module):
                                                    num_classes, **(auxiliary_cfg or {}))
 
         self.global_pooling = nn.AdaptiveAvgPool2d(1)
-        self.dropout = nn.Dropout(p=self.dropout_rate)
+        if self.dropout_rate and self.dropout_rate > 0:
+            self.dropout = nn.Dropout(p=self.dropout_rate)
+        else:
+            self.dropout = ops.Identity
         self.classifier = nn.Linear(num_channels * self._out_multiplier,
                                     self.num_classes)
 
@@ -124,13 +127,13 @@ class GenotypeModel(Component, nn.Module):
             if layer_idx == 2 * self._num_layers // 3:
                 if self.auxiliary_head and self.training:
                     logits_aux = self.auxiliary_net(states[-1])
-                else:
-                    logits_aux = None
 
         out = self.global_pooling(states[-1])
         out = self.dropout(out)
         logits = self.classifier(out.view(out.size(0), -1))
-        return logits, logits_aux
+        if self.auxiliary_head and self.training:
+            return logits, logits_aux
+        return logits
 
     def _is_reduce(self, layer_idx):
         return self._cell_layout[layer_idx] in self._reduce_cgs

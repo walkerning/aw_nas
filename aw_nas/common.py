@@ -9,10 +9,11 @@ import six
 import numpy as np
 
 from aw_nas import Component
-from aw_nas.utils import RegistryMeta
+from aw_nas.utils import RegistryMeta, softmax
 
 def assert_rollout_type(type_name):
-    assert type_name in BaseRollout.all_classes_(), "rollout type {} not registered yet".format(type_name)
+    assert type_name in BaseRollout.all_classes_(), \
+        "rollout type {} not registered yet".format(type_name)
     return type_name
 
 @six.add_metaclass(RegistryMeta)
@@ -99,6 +100,7 @@ class DifferentiableRollout(BaseRollout):
         self.perf = {}
         self._genotype = None # calc when need
         self._discretized_arch = None # calc when need
+        self._edge_probs = None # calc when need
 
     def set_candidate_net(self, c_net):
         self.candidate_net = c_net
@@ -110,6 +112,8 @@ class DifferentiableRollout(BaseRollout):
         self.perf[name] = value
 
     def plot_arch(self, filename, label="", edge_labels=None):
+        if edge_labels is None:
+            edge_labels = self._edge_probs
         return self.search_space.plot_arch(self.genotype_list(),
                                            filename,
                                            label=label,
@@ -121,32 +125,40 @@ class DifferentiableRollout(BaseRollout):
     def parse(self, weights):
         """parse and get the discertized arch"""
         archs = []
-        for cg_weight in weights:
+        edge_probs = []
+        for cg_weight, cg_logits in zip(weights, self.logits):
+            cg_probs = softmax(cg_logits)
             start = 0
             n = self.search_space.num_init_nodes
             arch = [[], []]
+            edge_prob = []
             for _ in range(self.search_space.num_steps):
                 end = start + n
                 w = cg_weight[start:end]
+                probs = cg_probs[start:end]
                 edges = sorted(range(n), key=lambda node_id: -max(w[node_id])) #pylint: disable=cell-var-from-loop
                 edges = edges[:self.search_space.num_node_inputs]
-                arch[0] += edges
-                arch[1] += [np.argmax(w[edge]) for edge in edges]
+                arch[0] += edges # from nodes
+                op_lst = [np.argmax(w[edge]) for edge in edges] # ops
+                edge_prob += ["{:.3f}".format(probs[edge][op_id]) \
+                              for edge, op_id in zip(edges, op_lst)]
+                arch[1] += op_lst
                 n += 1
                 start = end
             archs.append(arch)
-        return archs
+            edge_probs.append(edge_prob)
+        return archs, edge_probs
 
     @property
-    def discretized_arch(self):
+    def discretized_arch_and_prob(self):
         if self._discretized_arch is None:
-            self._discretized_arch = self.parse(self.sampled)
-        return self._discretized_arch
+            self._discretized_arch, self._edge_probs = self.parse(self.sampled)
+        return self._discretized_arch, self._edge_probs
 
     @property
     def genotype(self):
         if self._genotype is None:
-            self._genotype = self.search_space.genotype(self.discretized_arch)
+            self._genotype = self.search_space.genotype(self.discretized_arch_and_prob[0])
         return self._genotype
 
     def __repr__(self):
@@ -366,7 +378,7 @@ class CNNSearchSpace(SearchSpace):
         for i, (op_type, from_, to_) in enumerate(genotype):
             edge_label = op_type
             if edge_labels is not None:
-                edge_label = edge_label + "; " + edge_labels[i]
+                edge_label = edge_label + "; " + str(edge_labels[i])
 
             graph.edge(node_names[from_], node_names[to_],
                        label=edge_label, fillcolor="gray")

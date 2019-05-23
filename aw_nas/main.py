@@ -33,7 +33,12 @@ def _init_component(cfg, registry_name, **addi_args):
         cfg = {}
     addi_args.update(cfg)
     LOGGER.info("Component [%s] type： %s", registry_name, type_)
-    return RegistryMeta.get_class(registry_name, type_)(**addi_args)
+    cls = RegistryMeta.get_class(registry_name, type_)
+    if LOGGER.level < 20: # logging is at debug level
+        whole_cfg_str = cls.get_current_config_str(cfg)
+        LOGGER.debug("%s %s config:\n%s", registry_name, type_,
+                     utils.add_text_prefix(whole_cfg_str, "  "))
+    return cls(**addi_args)
 
 
 def _set_gpu(gpu):
