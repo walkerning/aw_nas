@@ -37,11 +37,11 @@ INSTALL_REQUIRES = [
 ]
 
 EXTRAS_REQUIRE = {
-    "vis": ["tensorboardX"]
+    "vis": ["tensorboardX<=1.6"]
 }
 
 TESTS_REQUIRE = [
-    "pytest==4.5.0",
+    "pytest",
     "pytest-cov",
 ]
 

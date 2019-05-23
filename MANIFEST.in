@@ -1,0 +1,3 @@
+include tests/*.py
+recursive-include scripts *.py *.sh
+recursive-include examples *.py *.yaml
