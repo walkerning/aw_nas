@@ -10,7 +10,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from aw_nas import utils
+from aw_nas import utils, assert_rollout_type
 from aw_nas.common import DifferentiableRollout as DiffRollout
 from aw_nas.controller.base import BaseController
 
@@ -178,4 +178,4 @@ class DiffController(BaseController, nn.Module):
         return OrderedDict(stats)
 
     def rollout_type(self):
-        return "differentiable"
+        return assert_rollout_type("differentiable")

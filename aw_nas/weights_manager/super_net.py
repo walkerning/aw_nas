@@ -10,6 +10,7 @@ import six
 
 import torch
 
+from aw_nas import assert_rollout_type
 from aw_nas.weights_manager.base import CandidateNet
 from aw_nas.weights_manager.shared import SharedNet, SharedCell, SharedOp
 
@@ -215,7 +216,7 @@ class SuperNet(SharedNet):
                                virtual_parameter_only=self.candidate_virtual_parameter_only)
 
     def rollout_type(self):
-        return "discerete"
+        return assert_rollout_type("discrete")
 
 class DiscreteSharedCell(SharedCell):
     def num_out_channel(self):

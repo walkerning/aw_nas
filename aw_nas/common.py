@@ -11,6 +11,10 @@ import numpy as np
 from aw_nas import Component
 from aw_nas.utils import RegistryMeta
 
+def assert_rollout_type(type_name):
+    assert type_name in BaseRollout.all_classes_(), "rollout type {} not registered yet".format(type_name)
+    return type_name
+
 @six.add_metaclass(RegistryMeta)
 class BaseRollout(object):
     """

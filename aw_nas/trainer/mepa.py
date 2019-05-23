@@ -15,7 +15,7 @@ import torch
 from torch import nn, optim
 
 from aw_nas.trainer.base import BaseTrainer
-from aw_nas import utils
+from aw_nas import utils, assert_rollout_type
 from aw_nas.utils.torch_utils import accuracy
 
 __all__ = ["MepaTrainer"]
@@ -94,7 +94,7 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
 
         # configurations
         assert rollout_type in {"discrete", "differentiable"} # supported rollout types
-        self._rollout_type = rollout_type
+        self._rollout_type = assert_rollout_type(rollout_type)
         self.epochs = epochs
         self.batch_size = batch_size
         self.test_every = test_every

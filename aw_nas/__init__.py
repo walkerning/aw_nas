@@ -11,6 +11,7 @@ from .utils import RegistryMeta
 from .base import Component
 
 from .common import (
+    assert_rollout_type,
     SearchSpace,
     Rollout,
     CNNSearchSpace,

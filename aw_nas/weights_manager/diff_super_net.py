@@ -6,6 +6,7 @@ import contextlib
 
 import torch
 
+from aw_nas import assert_rollout_type
 from aw_nas.weights_manager.base import CandidateNet
 from aw_nas.weights_manager.shared import SharedNet, SharedCell, SharedOp
 
@@ -104,7 +105,7 @@ class DiffSuperNet(SharedNet):
                                    virtual_parameter_only=self.candidate_virtual_parameter_only)
 
     def rollout_type(self):
-        return "differentiable"
+        return assert_rollout_type("differentiable")
 
 
 class DiffSharedCell(SharedCell):

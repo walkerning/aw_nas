@@ -9,7 +9,7 @@ import numpy as np
 from torch import nn
 
 from aw_nas import utils
-from aw_nas.common import Rollout
+from aw_nas.common import Rollout, assert_rollout_type
 from aw_nas.controller.base import BaseController
 from aw_nas.controller.rl_networks import BaseRLControllerNet
 from aw_nas.controller.rl_agents import BaseRLAgent
@@ -148,7 +148,7 @@ class RLController(BaseController, nn.Module):
                             zip(_ss.cell_group_names, cg_entros)])
 
     def rollout_type(self):
-        return "discrete"
+        return assert_rollout_type("discrete")
 
     # ---- Override some components functionality: dispatch to controller_networks and agents ----
     def on_epoch_start(self, epoch):
