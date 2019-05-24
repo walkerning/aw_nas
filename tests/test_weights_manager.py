@@ -79,6 +79,7 @@ def test_supernet_candidate_gradient_virtual(test_id, super_net):
         assert len(grads) == len(c_params)
         optimizer.step()
         for n, grad in grads:
+            # this check is not very robust...
             assert (w_prev[n] - (grad + grads_2[n]) * lr - c_params[n]).abs().sum().item() < EPS
 
         # sometimes, some buffer just don't updated... so here coomment out
@@ -121,6 +122,8 @@ def test_diff_supernet_to_arch(diff_super_net):
     cand_net = diff_super_net.assemble_candidate(rollout)
 
     data = (torch.tensor(np.random.rand(2, 3, 28, 28)).float(), torch.tensor([0, 1]).long()) #pylint: disable=not-callable
+
+    # default detach_arch=True, no grad w.r.t the controller param
     logits = cand_net.forward_data(data[0])
     loss = nn.CrossEntropyLoss()(logits, data[1].cuda())
     assert controller.cg_alphas[0].grad is None

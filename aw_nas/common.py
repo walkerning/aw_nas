@@ -113,7 +113,7 @@ class DifferentiableRollout(BaseRollout):
 
     def plot_arch(self, filename, label="", edge_labels=None):
         if edge_labels is None:
-            edge_labels = self._edge_probs
+            edge_labels = self.discretized_arch_and_prob[1]
         return self.search_space.plot_arch(self.genotype_list(),
                                            filename,
                                            label=label,

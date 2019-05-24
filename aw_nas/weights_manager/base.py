@@ -70,7 +70,7 @@ class CandidateNet(nn.Module):
         else:
             raise Exception("Unrecognized mode: {}".format(mode))
 
-    def forward_data(self, inputs, targets=None, mode=None):
+    def forward_data(self, inputs, targets=None, mode=None, **kwargs):
         """Forward the candidate net on the data.
         Args:
         Returns:
@@ -79,20 +79,20 @@ class CandidateNet(nn.Module):
         self._set_mode(mode)
 
         inputs = inputs.to(self.get_device())
-        return self(inputs)
+        return self(inputs, **kwargs)
 
-    def forward_queue(self, queue, steps=1, mode=None):
+    def forward_queue(self, queue, steps=1, mode=None, **kwargs):
         self._set_mode(mode)
 
         outputs = []
         for _ in range(steps):
             data = next(queue)
             data = (data[0].to(self.get_device()), data[1].to(self.get_device()))
-            outputs.append(self.forward_data(*data))
+            outputs.append(self.forward_data(*data, **kwargs))
         return torch.cat(outputs, dim=0)
 
     def gradient(self, data, criterion=nn.CrossEntropyLoss(),
-                 parameters=None, eval_criterions=None, mode="train"):
+                 parameters=None, eval_criterions=None, mode="train", **kwargs):
         """Get the gradient with respect to the candidate net parameters.
 
         Args:
@@ -115,7 +115,7 @@ class CandidateNet(nn.Module):
 
         data = (data[0].to(self.get_device()), data[1].to(self.get_device()))
         _, targets = data
-        outputs = self.forward_data(*data)
+        outputs = self.forward_data(*data, **kwargs)
         loss = criterion(outputs, targets)
         self.zero_grad()
         loss.backward()
@@ -129,7 +129,7 @@ class CandidateNet(nn.Module):
         return grads
 
     def train_queue(self, queue, optimizer, criterion=nn.CrossEntropyLoss(),
-                    eval_criterions=None, steps=1):
+                    eval_criterions=None, steps=1, **kwargs):
         self._set_mode("train")
 
         average_ans = None
@@ -137,7 +137,7 @@ class CandidateNet(nn.Module):
             data = next(queue)
             data = (data[0].to(self.get_device()), data[1].to(self.get_device()))
             _, targets = data
-            outputs = self.forward_data(*data)
+            outputs = self.forward_data(*data, **kwargs)
             loss = criterion(outputs, targets)
             if eval_criterions:
                 ans = [c(outputs, targets) for c in eval_criterions]
@@ -153,7 +153,7 @@ class CandidateNet(nn.Module):
             return [s / steps for s in average_ans]
         return []
 
-    def eval_queue(self, queue, criterions, steps=1, mode="eval"):
+    def eval_queue(self, queue, criterions, steps=1, mode="eval", **kwargs):
         self._set_mode(mode)
 
         average_ans = None
@@ -162,7 +162,7 @@ class CandidateNet(nn.Module):
                 data = next(queue)
                 # print("{}/{}\r".format(i, steps), end="")
                 data = (data[0].to(self.get_device()), data[1].to(self.get_device()))
-                outputs = self.forward_data(data[0])
+                outputs = self.forward_data(data[0], **kwargs)
                 ans = [c(outputs, data[1]) for c in criterions]
                 if average_ans is None:
                     average_ans = ans
@@ -170,7 +170,7 @@ class CandidateNet(nn.Module):
                     average_ans = [s + x for s, x in zip(average_ans, ans)]
         return [s / steps for s in average_ans]
 
-    def eval_data(self, data, criterions, mode="eval"):
+    def eval_data(self, data, criterions, mode="eval", **kwargs):
         """
         Returns:
            results (list of results return by criterions)
@@ -179,5 +179,5 @@ class CandidateNet(nn.Module):
 
         with torch.no_grad():
             data = (data[0].to(self.get_device()), data[1].to(self.get_device()))
-            outputs = self.forward_data(data[0])
+            outputs = self.forward_data(data[0], **kwargs)
             return [c(outputs, data[1]) for c in criterions]

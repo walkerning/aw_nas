@@ -50,17 +50,7 @@ class DiffSubCandidateNet(CandidateNet):
     def named_buffers(self, *args, **kwargs): #pylint: disable=arguments-differ
         return self.super_net.named_buffers(*args, **kwargs)
 
-    # Override CandidateNet's default implementations aseto support detach_arch
-    def forward_data(self, inputs, targets=None, mode=None, detach_arch=True): #pylint: disable=arguments-differ
-        """
-        Override forward_data, support `detach_arch` argument.
-        """
-        self._set_mode(mode)
-
-        inputs = inputs.to(self.get_device())
-        return self(inputs, detach_arch=detach_arch)
-
-    def eval_data(self, data, criterions, mode="eval", detach_arch=True): #pylint: disable=arguments-differ
+    def eval_data(self, data, criterions, mode="eval", **kwargs): #pylint: disable=arguments-differ
         """
         Override eval_data, to enable gradient.
 
@@ -70,7 +60,7 @@ class DiffSubCandidateNet(CandidateNet):
         self._set_mode(mode)
 
         data = (data[0].to(self.get_device()), data[1].to(self.get_device()))
-        outputs = self.forward_data(data[0], detach_arch=detach_arch)
+        outputs = self.forward_data(data[0], **kwargs)
         return [c(outputs, data[1]) for c in criterions]
 
 

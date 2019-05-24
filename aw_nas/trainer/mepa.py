@@ -486,11 +486,15 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
         self.controller.summary(rollouts, log=True, log_prefix="Rollouts Info: ", step=self.epoch)
         return rollouts
 
-    def derive(self, n):
+    def derive(self, n, steps=None):
+        # some scheduled value might be used in test too, e.g., surrogate_lr, gumbel temperature...
+        self.on_epoch_start(self.epoch)
+        derive_steps = steps or self.derive_steps
+
         with self.controller.begin_mode("eval"):
-            rollouts = self.get_new_candidates(n)
+            rollouts = []
             for i_sample in range(n):
-                rollout = rollouts[i_sample]
+                rollout = self.get_new_candidates(1)[0]
                 candidate_net = rollout.candidate_net
                 _surrogate_optimizer = self.get_surrogate_optimizer()
 
@@ -503,14 +507,17 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
                         criterions=[
                             _ce_loss,
                             _top1_acc
-                        ], steps=self.derive_steps,
+                        ], steps=derive_steps,
                         mode="train")
                     # NOTE: if virtual buffers, must use train mode here...
                     # if not virtual buffers(virtual parameter only), can use train/eval mode
                     print("Finish test {}/{}\r".format(i_sample+1, n), end="")
                 # rollout.set_perf(loss, name="loss")
                 # rollout.set_perf(acc, name="acc")
+                del rollout.candidate_net
+                rollout.candidate_net = None
                 rollout.set_perf(acc)
+                rollouts.append(rollout)
         return rollouts
 
     def save(self, path):

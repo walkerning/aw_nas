@@ -42,6 +42,8 @@ def _init_component(cfg, registry_name, **addi_args):
 
 
 def _set_gpu(gpu):
+    if gpu is None:
+        return
     if torch.cuda.is_available():
         torch.cuda.set_device(gpu)
         cudnn.benchmark = True
@@ -245,15 +247,19 @@ def _dump(rollout, dump_mode, of):
               help="the file to write the derived genotypes to")
 @click.option("-n", default=1, type=int,
               help="number of architectures to derive")
+@click.option("--save-plot", default=None, type=str,
+              help="If specified, save the plot of the rollouts to this path")
 @click.option("--test", default=False, type=bool, is_flag=True,
               help="If false, only the controller is loaded and use to sample rollouts; "
               "Otherwise, weights_manager/trainer is also loaded and test these rollouts.")
+@click.option("--steps", default=None, type=int,
+              help="number of batches to eval for each arch, default to be the whole derive queue.")
 @click.option("--gpu", default=0, type=int,
               help="the gpu to run deriving on")
 @click.option("--seed", default=None, type=int,
               help="the random seed to run training")
 @click.option("--dump-mode", default="str", type=click.Choice(["list", "str"]))
-def derive(cfg_file, load, out_file, n, test, gpu, seed, dump_mode):
+def derive(cfg_file, load, out_file, n, save_plot, test, steps, gpu, seed, dump_mode):
     LOGGER.info("CWD: %s", os.getcwd())
     LOGGER.info("CMD: %s", " ".join(sys.argv))
 
@@ -281,12 +287,22 @@ def derive(cfg_file, load, out_file, n, test, gpu, seed, dump_mode):
     search_space = _init_component(cfg, "search_space")
     controller = _init_component(cfg, "controller",
                                  search_space=search_space, device=device)
+
+    # create the directory for saving plots
+    if save_plot is not None:
+        save_plot = utils.makedir(save_plot)
+
     if not test:
         controller_path = os.path.join(load, "controller")
         controller.load(controller_path)
         rollouts = controller.sample(n)
         with open(out_file, "w") as of:
             for i, r in enumerate(rollouts):
+                if save_plot is not None:
+                    r.plot_arch(
+                        filename=os.path.join(save_plot, str(i)),
+                        label="Derive {}".format(i)
+                    )
                 of.write("# ---- Arch {} ----\n".format(i))
                 _dump(r, dump_mode, of)
                 of.write("\n")
@@ -301,12 +317,17 @@ def derive(cfg_file, load, out_file, n, test, gpu, seed, dump_mode):
         LOGGER.info("Loading from disk...")
         trainer.setup(load=load)
         LOGGER.info("Deriving and testing...")
-        rollouts = trainer.derive(n)
+        rollouts = trainer.derive(n, steps)
         accs = [r.get_perf() for r in rollouts]
         idxes = np.argsort(accs)[::-1]
         with open(out_file, "w") as of:
             for i, idx in enumerate(idxes):
                 rollout = rollouts[idx]
+                if save_plot is not None:
+                    rollout.plot_arch(
+                        filename=os.path.join(save_plot, str(i)),
+                        label="Derive {}; Acc {:.3f}".format(i, rollout.get_perf())
+                    )
                 of.write("# ---- Arch {} (Acc {}) ----\n".format(i, rollout.get_perf()))
                 _dump(rollout, dump_mode, of)
                 of.write("\n")
