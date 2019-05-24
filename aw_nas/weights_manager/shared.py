@@ -78,7 +78,7 @@ class SharedNet(BaseWeightsManager, nn.Module):
         if self.dropout_rate and self.dropout_rate > 0:
             self.dropout = nn.Dropout(p=self.dropout_rate)
         else:
-            self.dropout = ops.Identity
+            self.dropout = ops.Identity()
         self.classifier = nn.Linear(prev_num_channel,
                                     self.num_classes)
 

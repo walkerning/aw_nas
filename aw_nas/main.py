@@ -7,6 +7,7 @@ import os
 import sys
 import random
 import shutil
+import functools
 
 import click
 import numpy as np
@@ -19,6 +20,9 @@ from aw_nas import utils
 from aw_nas.utils.vis_utils import WrapWriter
 from aw_nas.utils import RegistryMeta
 from aw_nas.utils import logger as _logger
+
+# patch click.option to show the default values
+click.option = functools.partial(click.option, show_default=True)
 
 LOGGER = _logger.getChild("main")
 

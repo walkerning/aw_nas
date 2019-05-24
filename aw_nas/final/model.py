@@ -113,7 +113,7 @@ class GenotypeModel(Component, nn.Module):
         if self.dropout_rate and self.dropout_rate > 0:
             self.dropout = nn.Dropout(p=self.dropout_rate)
         else:
-            self.dropout = ops.Identity
+            self.dropout = ops.Identity()
         self.classifier = nn.Linear(num_channels * self._out_multiplier,
                                     self.num_classes)
 
