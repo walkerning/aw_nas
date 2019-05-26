@@ -10,7 +10,7 @@ import torch
 from torch import nn
 
 from aw_nas import ops, utils
-from aw_nas.base import Component
+from aw_nas.final.base import FinalModel
 
 class AuxiliaryHead(nn.Module):
     def __init__(self, C_in, num_classes):
@@ -33,8 +33,7 @@ class AuxiliaryHead(nn.Module):
         inputs = self.classifier(inputs.view(inputs.size(0), -1))
         return inputs
 
-class GenotypeModel(Component, nn.Module):
-    REGISTRY = "final_model"
+class CNNGenotypeModel(FinalModel):
     NAME = "cnn_final_model"
 
     SCHEDULABLE_ATTRS = ["dropout_path_rate"]
@@ -44,8 +43,7 @@ class GenotypeModel(Component, nn.Module):
                  dropout_rate=0.1, dropout_path_rate=0.2,
                  auxiliary_head=False, auxiliary_cfg=None,
                  schedule_cfg=None):
-        super(GenotypeModel, self).__init__(schedule_cfg)
-        nn.Module.__init__(self)
+        super(CNNGenotypeModel, self).__init__(schedule_cfg)
 
         self.search_space = search_space
         self.device = device
@@ -94,13 +92,13 @@ class GenotypeModel(Component, nn.Module):
             if stride > 1:
                 num_channels *= stride
             cg_idx = self.search_space.cell_layout[i_layer]
-            cell = GenotypeCell(self.search_space,
-                                self.genotypes[cg_idx],
-                                layer_index=i_layer,
-                                num_channels=num_channels,
-                                prev_num_channels=tuple(prev_num_channels),
-                                stride=stride,
-                                prev_strides=[1] * self._num_init + strides[:i_layer])
+            cell = CNNGenotypeCell(self.search_space,
+                                   self.genotypes[cg_idx],
+                                   layer_index=i_layer,
+                                   num_channels=num_channels,
+                                   prev_num_channels=tuple(prev_num_channels),
+                                   stride=stride,
+                                   prev_strides=[1] * self._num_init + strides[:i_layer])
             prev_num_channels.append(num_channels * self._out_multiplier)
             prev_num_channels = prev_num_channels[1:]
             self.cells.append(cell)
@@ -135,13 +133,16 @@ class GenotypeModel(Component, nn.Module):
             return logits, logits_aux
         return logits
 
+    def supported_data_types(self):
+        return ["image"]
+
     def _is_reduce(self, layer_idx):
         return self._cell_layout[layer_idx] in self._reduce_cgs
 
-class GenotypeCell(nn.Module):
+class CNNGenotypeCell(nn.Module):
     def __init__(self, search_space, genotype, layer_index, num_channels,
                  prev_num_channels, stride, prev_strides):
-        super(GenotypeCell, self).__init__()
+        super(CNNGenotypeCell, self).__init__()
         self.search_space = search_space
         self.genotype = genotype
         self.stride = stride

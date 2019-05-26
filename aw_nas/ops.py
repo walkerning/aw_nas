@@ -1,30 +1,36 @@
 """
 NN operations.
 """
-#pylint: disable=arguments-differ,useless-super-delegation
+#pylint: disable=arguments-differ,useless-super-delegation,invalid-name
 
 import torch
 from torch import nn
 import torch.nn.functional as F
 
 PRIMITVE_FACTORY = {
-    'none' : lambda C, stride, affine: Zero(stride),
-    'avg_pool_3x3' : lambda C, stride, affine: nn.AvgPool2d(3, stride=stride,
+    "none" : lambda C, stride, affine: Zero(stride),
+    "avg_pool_3x3" : lambda C, stride, affine: nn.AvgPool2d(3, stride=stride,
                                                             padding=1, count_include_pad=False),
-    'max_pool_3x3' : lambda C, stride, affine: nn.MaxPool2d(3, stride=stride, padding=1),
-    'skip_connect' : lambda C, stride, affine: Identity() if stride == 1 \
+    "max_pool_3x3" : lambda C, stride, affine: nn.MaxPool2d(3, stride=stride, padding=1),
+    "skip_connect" : lambda C, stride, affine: Identity() if stride == 1 \
       else FactorizedReduce(C, C, stride=stride, affine=affine),
-    'sep_conv_3x3' : lambda C, stride, affine: SepConv(C, C, 3, stride, 1, affine=affine),
-    'sep_conv_5x5' : lambda C, stride, affine: SepConv(C, C, 5, stride, 2, affine=affine),
-    'sep_conv_7x7' : lambda C, stride, affine: SepConv(C, C, 7, stride, 3, affine=affine),
-    'dil_conv_3x3' : lambda C, stride, affine: DilConv(C, C, 3, stride, 2, 2, affine=affine),
-    'dil_conv_5x5' : lambda C, stride, affine: DilConv(C, C, 5, stride, 4, 2, affine=affine),
-    'conv_7x1_1x7' : lambda C, stride, affine: nn.Sequential(
+    "sep_conv_3x3" : lambda C, stride, affine: SepConv(C, C, 3, stride, 1, affine=affine),
+    "sep_conv_5x5" : lambda C, stride, affine: SepConv(C, C, 5, stride, 2, affine=affine),
+    "sep_conv_7x7" : lambda C, stride, affine: SepConv(C, C, 7, stride, 3, affine=affine),
+    "dil_conv_3x3" : lambda C, stride, affine: DilConv(C, C, 3, stride, 2, 2, affine=affine),
+    "dil_conv_5x5" : lambda C, stride, affine: DilConv(C, C, 5, stride, 4, 2, affine=affine),
+    "conv_7x1_1x7" : lambda C, stride, affine: nn.Sequential(
         nn.ReLU(inplace=False),
         nn.Conv2d(C, C, (1, 7), stride=(1, stride), padding=(0, 3), bias=False),
         nn.Conv2d(C, C, (7, 1), stride=(stride, 1), padding=(3, 0), bias=False),
         nn.BatchNorm2d(C, affine=affine)
     ),
+
+    # activations
+    "tanh": lambda **kwargs: nn.Tanh(),
+    "relu": lambda **kwargs: nn.ReLU(),
+    "sigmoid": lambda **kwargs: nn.Sigmoid(),
+    "identity": lambda **kwargs: Identity()
 }
 
 def register_primitive(name, func, override=False):
@@ -132,3 +138,81 @@ class Zero(nn.Module):
         if self.stride == 1:
             return x.mul(0.)
         return x[:, :, ::self.stride, ::self.stride].mul(0.)
+
+# ---- added for rnn ----
+# from https://github.com/carpedm20/ENAS-pytorch
+class EmbeddingDropout(torch.nn.Embedding):
+    """Class for dropping out embeddings by zero'ing out parameters in the
+    embedding matrix.
+    This is equivalent to dropping out particular words, e.g., in the sentence
+    'the quick brown fox jumps over the lazy dog', dropping out 'the' would
+    lead to the sentence '### quick brown fox jumps over ### lazy dog' (in the
+    embedding vector space).
+    See 'A Theoretically Grounded Application of Dropout in Recurrent Neural
+    Networks', (Gal and Ghahramani, 2016).
+    """
+    def __init__(self,
+                 num_embeddings,
+                 embedding_dim,
+                 max_norm=None,
+                 norm_type=2,
+                 scale_grad_by_freq=False,
+                 sparse=False,
+                 dropout=0.1,
+                 scale=None):
+        """Embedding constructor.
+        Args:
+            dropout: Dropout probability.
+            scale: Used to scale parameters of embedding weight matrix that are
+                not dropped out. Note that this is _in addition_ to the
+                `1/(1 - dropout)` scaling.
+        See `torch.nn.Embedding` for remaining arguments.
+        """
+        torch.nn.Embedding.__init__(self,
+                                    num_embeddings=num_embeddings,
+                                    embedding_dim=embedding_dim,
+                                    max_norm=max_norm,
+                                    norm_type=norm_type,
+                                    scale_grad_by_freq=scale_grad_by_freq,
+                                    sparse=sparse)
+        self.dropout = dropout
+        assert 1.0 > dropout >= 0.0, "Dropout must be >= 0.0 and < 1.0"
+        self.scale = scale
+
+    def forward(self, inputs):
+        """Embeds `inputs` with the dropped out embedding weight matrix."""
+        if self.training:
+            dropout = self.dropout
+        else:
+            dropout = 0
+
+        if dropout:
+            mask = self.weight.data.new(self.weight.size(0), 1)
+            mask.bernoulli_(1 - dropout)
+            mask = mask.expand_as(self.weight)
+            mask = mask / (1 - dropout)
+            masked_weight = self.weight * mask
+        else:
+            masked_weight = self.weight
+        if self.scale and self.scale != 1:
+            masked_weight = masked_weight * self.scale
+
+        return F.embedding(inputs,
+                           masked_weight,
+                           max_norm=self.max_norm,
+                           norm_type=self.norm_type,
+                           scale_grad_by_freq=self.scale_grad_by_freq,
+                           sparse=self.sparse)
+
+class LockedDropout(nn.Module):
+    def __init__(self):
+        super(LockedDropout, self).__init__()
+
+    def forward(self, x, dropout=0.5):
+        if not self.training or not dropout:
+            return x
+        # batch_size, num_hidden
+        m = x.data.new(1, x.size(1), x.size(2)).bernoulli_(1 - dropout)
+        mask = m.div_(1 - dropout)
+        mask = mask.expand_as(x)
+        return mask * x

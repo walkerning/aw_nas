@@ -73,8 +73,10 @@ class DiffSuperNet(SharedNet):
                  candidate_virtual_parameter_only=False):
         super(DiffSuperNet, self).__init__(search_space, device,
                                            cell_cls=DiffSharedCell, op_cls=DiffSharedOp,
-                                           num_classes=10, init_channels=16, stem_multiplier=3,
-                                           max_grad_norm=5.0, dropout_rate=0.1)
+                                           num_classes=num_classes, init_channels=init_channels,
+                                           stem_multiplier=stem_multiplier,
+                                           max_grad_norm=max_grad_norm, dropout_rate=dropout_rate)
+
         self.candidate_virtual_parameter_only = candidate_virtual_parameter_only
 
     # ---- APIs ----

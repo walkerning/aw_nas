@@ -20,11 +20,22 @@ from aw_nas.utils.torch_utils import accuracy
 
 __all__ = ["MepaTrainer"]
 
-def _ce_loss(*args, **kwargs):
-    return nn.CrossEntropyLoss()(*args, **kwargs).item()
+def _rnn_tensor_ce_loss(inputs, targets):
+    logits, _, _ = inputs
+    return nn.CrossEntropyLoss()(logits.view(-1, logits.size(-1)), targets.view(-1))
+
+def _ce_loss(inputs, targets):
+    return nn.CrossEntropyLoss()(inputs, targets).item()
+
+def _rnn_ce_loss(inputs, targets):
+    logits, _, _ = inputs
+    return nn.CrossEntropyLoss()(logits.view(-1, logits.size(-1)), targets.view(-1)).item()
 
 def _top1_acc(*args, **kwargs):
-    return float(accuracy(*args, **kwargs)[0])
+    return float(accuracy(*args, **kwargs)[0]) / 100
+
+def _rnn_perp(inputs, targets):
+    return np.exp(_rnn_ce_loss(inputs, targets))
 
 class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
     """
@@ -53,7 +64,8 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
     def __init__(self, #pylint: disable=dangerous-default-value,too-many-arguments,too-many-locals
                  controller, weights_manager, dataset,
                  rollout_type="discrete",
-                 epochs=200, batch_size=64, test_every=10,
+                 epochs=200, batch_size=64,
+                 test_every=10,
                  # optimizers
                  surrogate_optimizer={"type": "SGD", "lr": 0.001},
                  controller_optimizer={
@@ -81,6 +93,8 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
                  derive_surrogate_steps=1, derive_samples=8,
                  mepa_as_surrogate=False,
                  interleave_controller_every=None, interleave_report_every=50,
+                 # only for rnn, sequence modeling
+                 bptt_steps=35, reset_hidden_prob=None, rnn_reward_c=80.,
                  schedule_cfg=None):
         """
         Args:
@@ -95,6 +109,7 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
         # configurations
         assert rollout_type in {"discrete", "differentiable"} # supported rollout types
         self._rollout_type = assert_rollout_type(rollout_type)
+        self._data_type = self.dataset.data_type()
         self.epochs = epochs
         self.batch_size = batch_size
         self.test_every = test_every
@@ -110,6 +125,11 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
         self.derive_samples = derive_samples
         self.interleave_controller_every = interleave_controller_every
         self.interleave_report_every = interleave_report_every
+
+        # rnn specific configurations
+        self.bptt_steps = bptt_steps
+        self.reset_hidden_prob = reset_hidden_prob # reset_hidden_prob not implemented yet
+        self.rnn_reward_c = rnn_reward_c
 
         # do some checks
         assert derive_queue in {"surrogate", "controller", "mepa"}
@@ -140,21 +160,8 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
                                                    mepa_scheduler)
 
         # initialize the data queues
-        queue_cfgs = [{"split": "train", "portion": p,
-                       "batch_size": self.batch_size} for p in data_portion]
-        self.surrogate_queue, self.controller_queue, self.mepa_queue \
-            = self.prepare_data_queues(self.dataset.splits(), queue_cfgs)
-        if mepa_as_surrogate:
-            # use mepa data queue as surrogate data queue
-            self.surrogate_queue = self.mepa_queue
-        self.derive_queue = getattr(self, derive_queue + "_queue")
-        len_surrogate = len(self.surrogate_queue) * self.batch_size \
-                        if self.surrogate_queue else 0
-        self.logger.info("Data sizes: surrogate: %s; controller: %d; mepa: %d; derive: (%s queue)",
-                         str(len_surrogate) if not mepa_as_surrogate else "(mepa queue)",
-                         len(self.controller_queue) * self.batch_size,
-                         len(self.mepa_queue) * self.batch_size,
-                         derive_queue)
+        self._initialize_data_queues_and_hidden(self._data_type, data_portion,
+                                                mepa_as_surrogate, derive_queue)
 
         self.mepa_steps = len(self.mepa_queue)
         if self.controller_steps is None:
@@ -166,12 +173,9 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
         # states and other help attributes
         self.last_epoch = 0
         self.epoch = 1
-        self._criterion = nn.CrossEntropyLoss()
 
         # eval criterions for controller
-        self._eval_criterions = [_ce_loss, _top1_acc] if self._rollout_type == "discrete" \
-                                else [self._criterion, _top1_acc]
-        self._eval_kwargs = {} if self._rollout_type == "discrete" else {"detach_arch": False}
+        self._init_criterions(self._data_type, self._rollout_type)
 
     def mepa_update(self, steps, finished_m_steps, finished_c_steps):
         surrogate_loss_meter = utils.AverageMeter()
@@ -192,38 +196,33 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
             rollouts = self.get_new_candidates(self.mepa_samples)
             for i_sample in range(self.mepa_samples):
                 candidate_net = rollouts[i_sample].candidate_net
-                if self.mepa_surrogate_steps:
-                    _surrogate_optimizer = self.get_surrogate_optimizer()
-                    with candidate_net.begin_virtual(): # surrogate train steps
-                        train_loss, train_acc \
-                            = candidate_net.train_queue(self.surrogate_queue,
-                                                        optimizer=_surrogate_optimizer,
-                                                        criterion=self._criterion,
-                                                        eval_criterions=[_ce_loss,
-                                                                         _top1_acc],
-                                                        steps=self.mepa_surrogate_steps)
-                        # gradients: List(Tuple(parameter name, gradient))
-                        gradients, (loss, acc) = candidate_net.gradient(
-                            mepa_data,
-                            criterion=self._criterion,
-                            eval_criterions=[_ce_loss,
-                                             _top1_acc],
-                            mode="train"
-                        )
-                    surrogate_loss_meter.update(train_loss)
-                    surrogate_acc_meter.update(train_acc / 100)
-                else: # ENAS
+                _surrogate_optimizer = self.get_surrogate_optimizer()
+
+                with self._begin_virtual(candidate_net, self.mepa_surrogate_steps):
+                    # surrogate train steps
+                    train_loss, train_acc = candidate_net.train_queue(
+                        self.surrogate_queue,
+                        optimizer=_surrogate_optimizer,
+                        criterion=self._criterion,
+                        eval_criterions=self._test_criterions,
+                        steps=self.mepa_surrogate_steps,
+                        **self.s_hid_kwargs
+                    )
+
                     # gradients: List(Tuple(parameter name, gradient))
                     gradients, (loss, acc) = candidate_net.gradient(
                         mepa_data,
                         criterion=self._criterion,
-                        eval_criterions=[_ce_loss,
-                                         _top1_acc],
-                        mode="train"
+                        eval_criterions=self._test_criterions,
+                        mode="train",
+                        **self.m_hid_kwargs
                     )
+                if train_loss is not None: # surrogate_steps > 0 (==0 is ENAS)
+                    surrogate_loss_meter.update(train_loss)
+                    surrogate_acc_meter.update(train_acc)
 
                 valid_loss_meter.update(loss)
-                valid_acc_meter.update(acc / 100)
+                valid_acc_meter.update(acc)
                 for n, g_v in gradients:
                     all_gradients[n] += g_v
                     counts[n] += 1
@@ -239,6 +238,7 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
             valid_loss_meter.avg, valid_acc_meter.avg
 
     def controller_update(self, steps, finished_m_steps, finished_c_steps):
+        #pylint: disable=too-many-locals
         surrogate_loss_meter = utils.AverageMeter()
         surrogate_acc_meter = utils.AverageMeter()
         valid_loss_meter = utils.AverageMeter()
@@ -264,35 +264,34 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
                 rollout = rollouts[i_sample]
                 candidate_net = rollout.candidate_net
                 _surrogate_optimizer = self.get_surrogate_optimizer()
-                if self.controller_surrogate_steps:
-                    with candidate_net.begin_virtual(): # surrogate train steps
-                        train_loss, train_acc \
-                            = candidate_net.train_queue(self.surrogate_queue,
-                                                        optimizer=_surrogate_optimizer,
-                                                        criterion=self._criterion,
-                                                        eval_criterions=[_ce_loss,
-                                                                         _top1_acc],
-                                                        steps=\
-                                                        self.controller_surrogate_steps)
-                        loss, acc = candidate_net.eval_data(
-                            controller_data,
-                            criterions=self._eval_criterions,
-                            mode="train",
-                            **self._eval_kwargs
-                        )
-                    surrogate_loss_meter.update(train_loss)
-                    surrogate_acc_meter.update(train_acc / 100)
-                else: # ENAS
-                    loss, acc = candidate_net.eval_data(controller_data,
-                                                        criterions=self._eval_criterions,
-                                                        mode="train",
-                                                        **self._eval_kwargs)
 
-                acc = acc / 100
+                with self._begin_virtual(candidate_net, self.controller_surrogate_steps):
+                    # surrogate train steps
+                    train_loss, train_acc = candidate_net.train_queue(
+                        self.surrogate_queue,
+                        optimizer=_surrogate_optimizer,
+                        criterion=self._criterion,
+                        eval_criterions=self._test_criterions,
+                        steps=self.controller_surrogate_steps,
+                        **self.s_hid_kwargs
+                    )
+
+                    c_eval_kwargs = {k: v for k, v in self._eval_kwargs.items()}
+                    c_eval_kwargs.update(self.c_hid_kwargs)
+                    loss, acc = candidate_net.eval_data(
+                        controller_data,
+                        criterions=self._eval_criterions,
+                        mode="train",
+                        **c_eval_kwargs
+                    )
+                if train_loss is not None: # surrogate_steps > 0 (==0 is ENAS)
+                    surrogate_loss_meter.update(train_loss)
+                    surrogate_acc_meter.update(train_acc)
+
                 valid_loss_meter.update(utils.get_numpy(loss))
                 valid_acc_meter.update(acc)
                 if self._rollout_type == "discrete":
-                    rollout.set_perf(acc)
+                    rollout.set_perf(acc if self._data_type == "image" else self.rnn_reward_c/acc)
                 else: # differentiable sampling/rollouts
                     _loss, gradients = self.controller.gradient(loss)
                     for n, g_v in gradients:
@@ -392,36 +391,39 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
                 if i_inter % self.interleave_report_every == 0:
                     # log for every `interleave_report_every` interleaving steps
                     self.logger.info("(inter step %3d): "
-                                     "mepa (%3d/%3d): %.2f %%; loss: %.3f;  "
-                                     "controller (%3d/%3d): %.2f %%; loss: %.3f;",
+                                     "mepa (%3d/%3d): %s: %.3f; loss: %.3f;  "
+                                     "controller (%3d/%3d): %s: %.3f; loss: %.3f;",
                                      i_inter, finished_m_steps, self.mepa_steps,
-                                     m_valid_acc_meter.avg * 100,
+                                     self._accperp_name, m_valid_acc_meter.avg,
                                      m_valid_loss_meter.avg,
                                      finished_c_steps, self.controller_steps,
-                                     c_valid_acc_meter.avg * 100,
+                                     self._accperp_name, c_valid_acc_meter.avg,
                                      c_valid_loss_meter.avg)
 
             # log infomations of this epoch
-            self.logger.info("Epoch %3d: [mepa update] surrogate train acc: %.2f %% ; loss: %.3f ; "
-                             "valid acc: %.2f %% ; valid loss: %.3f",
-                             epoch, m_surrogate_acc_meter.avg * 100, m_surrogate_loss_meter.avg,
-                             m_valid_acc_meter.avg * 100, m_valid_loss_meter.avg)
+            self.logger.info("Epoch %3d: [mepa update] surrogate train %s: %.3f ; loss: %.3f ; "
+                             "valid %s: %.3f ; valid loss: %.3f",
+                             epoch, self._accperp_name, m_surrogate_acc_meter.avg,
+                             m_surrogate_loss_meter.avg, self._accperp_name,
+                             m_valid_acc_meter.avg, m_valid_loss_meter.avg)
             self.logger.info("Epoch %3d: [controller update] controller loss: %.3f ; "
-                             "surrogate train acc: %.2f %% ; loss: %.3f ; "
-                             "mean accuracy (reward): %.2f %% ; mean cross entropy loss: %.3f",
-                             epoch, c_loss_meter.avg,
-                             c_surrogate_acc_meter.avg * 100, c_surrogate_loss_meter.avg,
-                             c_valid_acc_meter.avg * 100, c_valid_loss_meter.avg)
+                             "surrogate train %s: %.3f ; loss: %.3f ; "
+                             "mean %s (reward): %.3f ; mean cross entropy loss: %.3f",
+                             epoch, c_loss_meter.avg, self._accperp_name,
+                             c_surrogate_acc_meter.avg, c_surrogate_loss_meter.avg,
+                             self._accperp_name,
+                             c_valid_acc_meter.avg, c_valid_loss_meter.avg)
             self.logger.info("[controller stats] %s", \
-                             "; ".join(["{}: {:.2f}".format(n, meter.avg) \
+                             "; ".join(["{}: {:.3f}".format(n, meter.avg) \
                                         for n, meter in c_stat_meters.items()]))
 
             # maybe write tensorboard info
             if not self.writer.is_none():
-                self.writer.add_scalar("acc/mepa_update/valid", m_valid_acc_meter.avg, epoch)
+                self.writer.add_scalar(self._accperp_name+"/mepa_update/valid",
+                                       m_valid_acc_meter.avg, epoch)
                 self.writer.add_scalar("loss/mepa_update/valid", m_valid_loss_meter.avg, epoch)
                 if not m_surrogate_loss_meter.is_empty():
-                    self.writer.add_scalar("acc/mepa_update/train_surrogate",
+                    self.writer.add_scalar(self._accperp_name+"/mepa_update/train_surrogate",
                                            m_surrogate_acc_meter.avg,
                                            epoch)
                     self.writer.add_scalar("loss/mepa_update/train_surrogate",
@@ -430,12 +432,12 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
 
             # maybe write tensorboard info
             if not self.writer.is_none():
-                self.writer.add_scalar("acc/arch_update/valid",
+                self.writer.add_scalar(self._accperp_name+"/arch_update/valid",
                                        c_valid_acc_meter.avg, epoch)
                 self.writer.add_scalar("loss/arch_update/valid",
                                        c_valid_loss_meter.avg, epoch)
                 if not c_surrogate_loss_meter.is_empty():
-                    self.writer.add_scalar("acc/arch_update/train_surrogate",
+                    self.writer.add_scalar(self._accperp_name+"/arch_update/train_surrogate",
                                            c_surrogate_acc_meter.avg,
                                            epoch)
                     self.writer.add_scalar("loss/arch_update/train_surrogate",
@@ -477,9 +479,9 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
 
 
         self.logger.info("TEST Epoch %3d: Among %d sampled archs: "
-                         "BEST (in acc): accuracy %.1f %% (mean: %.1f %%); ",
+                         "BEST (in acc): %s %.3f (mean: %.3f); ",
                          #"loss: %.2f (mean :%.3f)",
-                         self.epoch, self.derive_samples, accs[idx], mean_acc)
+                         self.epoch, self.derive_samples, self._accperp_name, accs[idx], mean_acc)
                          #losses[idx], mean_loss)
         self.logger.info("Saved this arch to %s.\nGenotype: %s",
                          save_path, rollouts[idx].genotype)
@@ -498,17 +500,18 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
                 candidate_net = rollout.candidate_net
                 _surrogate_optimizer = self.get_surrogate_optimizer()
 
-                with candidate_net.begin_virtual(): # surrogate steps
+                with self._begin_virtual(candidate_net, self.controller_surrogate_steps):
+                    # surrogate steps
                     candidate_net.train_queue(self.surrogate_queue, optimizer=_surrogate_optimizer,
                                               criterion=self._criterion,
-                                              steps=self.controller_surrogate_steps)
+                                              steps=self.controller_surrogate_steps,
+                                              **self.s_hid_kwargs)
                     _, acc = candidate_net.eval_queue(
                         self.derive_queue,
-                        criterions=[
-                            _ce_loss,
-                            _top1_acc
-                        ], steps=derive_steps,
-                        mode="train")
+                        criterions=self._test_criterions,
+                        steps=derive_steps,
+                        mode="train",
+                        **self.d_hid_kwargs)
                     # NOTE: if virtual buffers, must use train mode here...
                     # if not virtual buffers(virtual parameter only), can use train/eval mode
                     print("Finish test {}/{}\r".format(i_sample+1, n), end="")
@@ -516,7 +519,7 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
                 # rollout.set_perf(acc, name="acc")
                 del rollout.candidate_net
                 rollout.candidate_net = None
-                rollout.set_perf(acc)
+                rollout.set_perf(acc if self._data_type == "image" else self.rnn_reward_c/acc)
                 rollouts.append(rollout)
         return rollouts
 
@@ -554,6 +557,9 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
     def rollout_type(self):
         return self._rollout_type
 
+    def supported_data_types(self):
+        return ["image", "sequence"]
+
     # ---- helper methods ----
     @staticmethod
     def _init_optimizer(params, cfg):
@@ -580,5 +586,88 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
                 lrs.append((name + " LR", scheduler.get_lr()[0]))
         return lrs
 
+    def _get_hiddens_resetter(self, name):
+        def _func():
+            for state in getattr(self, name + "_hiddens"):
+                state.zero_()
+        _func.__name__ = "{}_hiddens_resetter".format(name)
+        return _func
+
+    def _reset_hidden(self):
+        if self._data_type == "image":
+            return
+        # reset the hidden states
+        [func() for func in self.hiddens_resetter]
+
+    def _init_criterions(self, data_type, rollout_type):
+        if data_type == "image":
+            # the criterion used to train weights_manager
+            self._criterion = nn.CrossEntropyLoss()
+            # sclar_criterion return the scalarized verion of `self._criterion`
+            _scalar_criterion = _ce_loss
+            # the criterion used to update controller
+            # (NOTE: this name might be misleading)
+            _acc_or_perp = _top1_acc
+            self._accperp_name = "acc"
+        else: # data_type == "sequence"
+            self._criterion = _rnn_tensor_ce_loss
+            _scalar_criterion = _rnn_ce_loss
+            # the criterion used to update controller
+            _acc_or_perp = _rnn_perp
+            self._accperp_name = "perp"
+        self._test_criterions = [_scalar_criterion, _acc_or_perp]
+        # for controller update, if `differentiable`, use `self._criterion`, which returns a tensor;
+        #     if `discrete`, use `_top1_acc` or `_rnn_reward`, which returns a scalar
+        self._eval_criterions = self._test_criterions if self._rollout_type == "discrete" \
+                                else [self._criterion, _acc_or_perp]
+        self._eval_kwargs = {} if self._rollout_type == "discrete" else {"detach_arch": False}
+
+    def _initialize_data_queues_and_hidden(self, data_type, data_portion,
+                                           mepa_as_surrogate, derive_queue):
+        if data_type == "image":
+            queue_cfgs = [{"split": "train", "portion": p,
+                           "batch_size": self.batch_size} for p in data_portion]
+            self.s_hid_kwargs = {}
+            self.c_hid_kwargs = {}
+            self.m_hid_kwargs = {}
+        else: # "sequence"
+            # initialize hidden
+            self.surrogate_hiddens = self.weights_manager.init_hidden(self.batch_size)
+            self.controller_hiddens = self.weights_manager.init_hidden(self.batch_size)
+            self.mepa_hiddens = self.weights_manager.init_hidden(self.batch_size)
+            self.hiddens_resetter = [self._get_hiddens_resetter(n)
+                                     for n in ["surrogate", "controller", "mepa"]]
+            queue_cfgs = []
+            for callback, portion in zip(self.hiddens_resetter, data_portion):
+                queue_cfgs.append({"split": "train", "portion": portion,
+                                   "batch_size": self.batch_size,
+                                   "bptt_steps": self.bptt_steps,
+                                   "callback": callback})
+            self.s_hid_kwargs = {"hiddens": self.surrogate_hiddens}
+            self.c_hid_kwargs = {"hiddens": self.controller_hiddens}
+            self.m_hid_kwargs = {"hiddens": self.mepa_hiddens}
+
+        self.surrogate_queue, self.controller_queue, self.mepa_queue \
+            = self.prepare_data_queues(self.dataset.splits(), queue_cfgs,
+                                       data_type=data_type)
+        if mepa_as_surrogate:
+            # use mepa data queue as surrogate data queue
+            self.surrogate_queue = self.mepa_queue
+        self.derive_queue = getattr(self, derive_queue + "_queue")
+        self.d_hid_kwargs = getattr(self, derive_queue[0] + "_hid_kwargs")
+        len_surrogate = len(self.surrogate_queue) * self.batch_size \
+                        if self.surrogate_queue else 0
+        self.logger.info("Data sizes: surrogate: %s; controller: %d; mepa: %d; derive: (%s queue)",
+                         str(len_surrogate) if not mepa_as_surrogate else "(mepa queue)",
+                         len(self.controller_queue) * self.batch_size,
+                         len(self.mepa_queue) * self.batch_size,
+                         derive_queue)
+
     def get_surrogate_optimizer(self, params=None):
         return self.surrogate_optimizer
+
+    @staticmethod
+    def _begin_virtual(candidate_net, surrogate_steps):
+        if surrogate_steps > 0:
+            return candidate_net.begin_virtual()
+        return utils.nullcontext()

@@ -35,6 +35,7 @@ def _init_component(cfg, registry_name, **addi_args):
     cfg = cfg.get(registry_name + "_cfg", None)
     if not cfg:
         cfg = {}
+    # config items will override addi_args items
     addi_args.update(cfg)
     LOGGER.info("Component [%s] type： %s", registry_name, type_)
     cls = RegistryMeta.get_class(registry_name, type_)
@@ -83,6 +84,7 @@ def main():
 def search(cfg_file, gpu, seed, load, save_every, train_dir, vis_dir, develop):
     # check dependency and initialize visualization writer
     if vis_dir:
+        vis_dir = utils.makedir(vis_dir, remove=True)
         try:
             import tensorboardX
         except ImportError:
@@ -97,7 +99,7 @@ def search(cfg_file, gpu, seed, load, save_every, train_dir, vis_dir, develop):
 
     if train_dir:
         # backup config file, and if in `develop` mode, also backup the aw_nas source code
-        train_dir = utils.makedir(train_dir)
+        train_dir = utils.makedir(train_dir, remove=True)
         shutil.copyfile(cfg_file, os.path.join(train_dir, "config.yaml"))
 
         if develop:
@@ -138,8 +140,22 @@ def search(cfg_file, gpu, seed, load, save_every, train_dir, vis_dir, develop):
     # initialize components
     LOGGER.info("Initializing components.")
     search_space = _init_component(cfg, "search_space")
-    weights_manager = _init_component(cfg, "weights_manager",
-                                      search_space=search_space, device=device)
+    whole_dataset = _init_component(cfg, "dataset")
+    _data_type = whole_dataset.data_type()
+    if _data_type == "sequence":
+        # get the num_tokens
+        num_tokens = whole_dataset.vocab_size
+        LOGGER.info("Dataset %s: vocabulary size: %d", whole_dataset.NAME, num_tokens)
+        weights_manager = _init_component(cfg, "weights_manager",
+                                          search_space=search_space,
+                                          device=device,
+                                          num_tokens=num_tokens)
+    else:
+        weights_manager = _init_component(cfg, "weights_manager",
+                                          search_space=search_space, device=device)
+    # check weights_manager support for data type
+    assert _data_type in weights_manager.supported_data_types()
+
     controller = _init_component(cfg, "controller",
                                  search_space=search_space, device=device)
 
@@ -149,13 +165,13 @@ def search(cfg_file, gpu, seed, load, save_every, train_dir, vis_dir, develop):
          "controller/weights_manager should match! ({} VS. {})")\
             .format(weights_manager.rollout_type(), controller.rollout_type())
 
-    whole_dataset = _init_component(cfg, "dataset")
-
     # initialize, setup, run trainer
     LOGGER.info("Initializing trainer and starting the search.")
     trainer = _init_component(cfg, "trainer", weights_manager=weights_manager,
                               controller=controller, dataset=whole_dataset)
 
+    # check trainer support for data type
+    assert _data_type in trainer.supported_data_types()
     # check type of rollout match
     assert trainer.rollout_type() == controller.rollout_type(), \
         ("The type of the rollouts handled by the controller/weights_manager"
@@ -182,7 +198,7 @@ def train(gpus, seed, cfg_file, load, save_every, train_dir):
     import aw_nas.final #pylint: disable=unused-import,unused-variable
     if train_dir:
         # backup config file, and if in `develop` mode, also backup the aw_nas source code
-        train_dir = utils.makedir(train_dir)
+        train_dir = utils.makedir(train_dir, remove=True)
         shutil.copyfile(cfg_file, os.path.join(train_dir, "train_config.yaml"))
 
         # add log file handler
@@ -220,14 +236,30 @@ def train(gpus, seed, cfg_file, load, save_every, train_dir):
     LOGGER.info("Initializing components.")
     search_space = _init_component(cfg, "search_space")
     whole_dataset = _init_component(cfg, "dataset")
-    model = _init_component(cfg, "final_model",
-                            search_space=search_space,
-                            device=device)
+
+    _data_type = whole_dataset.data_type()
+    if _data_type == "sequence":
+        # get the num_tokens
+        num_tokens = whole_dataset.vocab_size
+        LOGGER.info("Dataset %s: vocabulary size: %d", whole_dataset.NAME, num_tokens)
+        model = _init_component(cfg, "final_model",
+                                search_space=search_space,
+                                device=device,
+                                num_tokens=num_tokens)
+    else:
+        model = _init_component(cfg, "final_model",
+                                search_space=search_space,
+                                device=device)
+    # check model support for data type
+    assert _data_type in model.supported_data_types()
+
     trainer = _init_component(cfg, "final_trainer",
                               dataset=whole_dataset,
                               model=model,
                               device=device,
                               gpus=gpu_list)
+    # check trainer support for data type
+    assert _data_type in trainer.supported_data_types()
 
     # start training
     LOGGER.info("Start training.")

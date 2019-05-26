@@ -7,7 +7,7 @@ import torch
 from torch import nn
 
 from aw_nas import utils
-from aw_nas.base import Component
+from aw_nas.final.base import FinalTrainer
 
 def _warmup_update_lr(optimizer, epoch, init_lr, warmup_epochs):
     """
@@ -17,9 +17,9 @@ def _warmup_update_lr(optimizer, epoch, init_lr, warmup_epochs):
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
-class FinalTrainer(Component):
-    REGISTRY = "final_trainer"
+class CNNFinalTrainer(FinalTrainer):
     NAME = "cnn_trainer"
+
     def __init__(self, model, dataset, device, gpus, #pylint: disable=dangerous-default-value
                  epochs=600, batch_size=96,
                  learning_rate=0.025, momentum=0.9,
@@ -32,7 +32,7 @@ class FinalTrainer(Component):
                  grad_clip=5.0,
                  auxiliary_head=False, auxiliary_weight=0.4,
                  schedule_cfg=None):
-        super(FinalTrainer, self).__init__(schedule_cfg)
+        super(CNNFinalTrainer, self).__init__(schedule_cfg)
 
         self.model = model
         self.dataset = dataset
@@ -119,6 +119,9 @@ class FinalTrainer(Component):
                 self.save(path)
             self.on_epoch_end(epoch)
 
+    def supported_data_types(self):
+        return ["image"]
+
     @staticmethod
     def _init_scheduler(optimizer, cfg):
         if cfg:
@@ -190,14 +193,14 @@ class FinalTrainer(Component):
 
 
     def on_epoch_start(self, epoch):
-        super(FinalTrainer, self).on_epoch_start(epoch)
+        super(CNNFinalTrainer, self).on_epoch_start(epoch)
         if isinstance(self.model, nn.DataParallel):
             self.model.module.on_epoch_start(epoch)
         else:
             self.model.on_epoch_start(epoch)
 
     def on_epoch_end(self, epoch):
-        super(FinalTrainer, self).on_epoch_end(epoch)
+        super(CNNFinalTrainer, self).on_epoch_end(epoch)
         if isinstance(self.model, nn.DataParallel):
             self.model.module.on_epoch_end(epoch)
         else:

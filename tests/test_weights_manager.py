@@ -91,7 +91,6 @@ def test_supernet_candidate_gradient_virtual(test_id, super_net):
         assert (w_prev[n] - c_params[n]).abs().sum().item() < EPS
     for n in c_buffers:
         assert (buffer_prev[n] - c_buffers[n]).abs().sum().item() < EPS
-    buffer_prev = {k: v.clone() for k, v in six.iteritems(c_buffers)}
 
 # ---- End test super_net ----
 

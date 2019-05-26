@@ -3,11 +3,32 @@ import numpy as np
 import torch
 from torch.autograd import Variable
 import torch.nn.functional as F
+import torch.utils.data
+
+class SimpleDataset(torch.utils.data.Dataset):
+    def __init__(self, data):
+        self.data = data[0]
+        self.target = data[1]
+
+    def __getitem__(self, index):
+        data, target = self.data[index], self.target[index]
+        return data, target
+
+    def __len__(self):
+        return len(self.data)
+
+def batchify_sentences(data, bsz):
+    data = torch.cat(data, -1)
+    nbatch = data.size(0) // bsz
+    data = data.narrow(0, 0, nbatch * bsz)
+    data = data.view(bsz, -1).t().contiguous()
+    return data[:-1, :], data[1:, :]
 
 class InfIterator(six.Iterator):
-    def __init__(self, iterable):
+    def __init__(self, iterable, callback):
         self.iterable = iterable
         self.iter_ = iter(self.iterable)
+        self.callback = callback
 
     def __len__(self):
         return len(self.iterable)
@@ -16,14 +37,16 @@ class InfIterator(six.Iterator):
         try:
             data = next(self.iter_)
         except StopIteration:
+            if self.callback is not None:
+                self.callback()
             self.iter_ = iter(self.iterable)
             data = next(self.iter_)
         return data
 
     next = __next__
 
-def get_inf_iterator(iterable):
-    return InfIterator(iterable)
+def get_inf_iterator(iterable, callback):
+    return InfIterator(iterable, callback)
 
 def accuracy(outputs, targets, topk=(1,)):
     with torch.no_grad():
@@ -115,3 +138,7 @@ def straight_through(y):
     y_hard.scatter_(1, ind.view(-1, 1), 1)
     y_hard = y_hard.view(*shape)
     return (y_hard - y).detach() + y
+
+def mask2d(batch_size, dim, keep_prob, device):
+    mask = torch.floor(torch.rand(batch_size, dim) + keep_prob) / keep_prob
+    return mask.to(device)

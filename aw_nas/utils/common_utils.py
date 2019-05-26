@@ -3,8 +3,10 @@
 
 import os
 import sys
+import shutil
 import inspect
 import collections
+from contextlib import contextmanager
 import six
 
 import numpy as np
@@ -12,6 +14,10 @@ import scipy
 import scipy.signal
 
 from aw_nas.utils.registry import RegistryMeta
+
+@contextmanager
+def nullcontext():
+    yield
 
 class AverageMeter(object):
     def __init__(self):
@@ -161,7 +167,9 @@ def get_schedule_value(schedule, epoch):
         next_v = max(min(next_v, max_), min_)
     return next_v
 
-def makedir(path):
+def makedir(path, remove=False):
+    if os.path.exists(path) and remove:
+        shutil.rmtree(path)
     if not os.path.isdir(path):
         os.makedirs(path)
     return path

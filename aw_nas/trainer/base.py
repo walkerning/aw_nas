@@ -6,6 +6,7 @@ import abc
 import six
 
 import torch
+import torch.utils.data
 from torch.utils.data.sampler import SubsetRandomSampler
 
 from aw_nas import Component
@@ -67,6 +68,12 @@ class BaseTrainer(Component):
     def rollout_type(self):
         """
         Return the handling rollout type.
+        """
+
+    @abc.abstractmethod
+    def supported_data_types(self):
+        """
+        Return the supported data types. Subset of `image`, `sequence`.
         """
 
     # ---- some helper methods ----
@@ -131,13 +138,15 @@ class BaseTrainer(Component):
             self.weights_manager.setup_writer(writer.get_sub_writer("weights_manager"))
         self.is_setup = True
 
-    def prepare_data_queues(self, splits, queue_cfg_lst):
+    def prepare_data_queues(self, splits, queue_cfg_lst, data_type="image"):
         """
         Further partition the dataset splits, prepare different data queues.
 
         Example::
         @TODO: doc
         """
+        assert data_type in {"image", "sequence"}
+
         dset_splits = splits
         dset_sizes = {n: len(d) for n, d in six.iteritems(dset_splits)}
         used_portions = {n: 0. for n in splits}
@@ -146,6 +155,7 @@ class BaseTrainer(Component):
             batch_size = cfg["batch_size"]
             split = cfg["split"]
             portion = cfg["portion"]
+            callback = cfg.get("callback", None)
 
             if portion == 0:
                 queues.append(None)
@@ -153,16 +163,33 @@ class BaseTrainer(Component):
 
             used_portion = used_portions[split]
             size = dset_sizes[split]
+            if data_type == "image":
+                kwargs = {
+                    "batch_size": batch_size,
+                    "pin_memory": True,
+                    "num_workers": 2,
+                    "sampler": SubsetRandomSampler(list(range(int(size*used_portion),
+                                                              int(size*(used_portion+portion)))))
+                }
+                queue = utils.get_inf_iterator(torch.utils.data.DataLoader(
+                    dset_splits[split], **kwargs), callback)
+            else: # data_type == "sequence"
+                assert "bptt_steps" in cfg
+                bptt_steps = cfg["bptt_steps"]
+                dataset = utils.SimpleDataset(
+                    utils.batchify_sentences(
+                        dset_splits[split][int(size*used_portion):int(size*(used_portion+portion))],
+                        batch_size)
+                )
+                kwargs = {
+                    "batch_size": bptt_steps,
+                    "pin_memory": True,
+                    "num_workers": 2,
+                    "shuffle": False
+                }
+                queue = utils.get_inf_iterator(torch.utils.data.DataLoader(
+                    dataset, **kwargs), callback)
 
-            kwargs = {
-                "batch_size": batch_size,
-                "pin_memory": True,
-                "num_workers": 2,
-                "sampler": SubsetRandomSampler(list(range(int(size*used_portion),
-                                                          int(size*(used_portion+portion)))))
-            }
-            queue = utils.get_inf_iterator(torch.utils.data.DataLoader(
-                dset_splits[split], **kwargs))
             used_portions[split] += portion
             queues.append(queue)
 

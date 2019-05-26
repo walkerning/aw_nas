@@ -4,6 +4,7 @@ Definitions that will be used by multiple components
 
 import abc
 import collections
+import itertools
 import six
 
 import numpy as np
@@ -57,7 +58,7 @@ class Rollout(BaseRollout):
         self.candidate_net = c_net
 
     def get_perf(self, name="perf"):
-        return self.perf[name]
+        return self.perf.get(name, None)
 
     def set_perf(self, value, name="perf"):
         self.perf[name] = value
@@ -86,6 +87,20 @@ class Rollout(BaseRollout):
                                                            cn=self.candidate_net,
                                                            perf=self.perf)
 
+    @classmethod
+    def random_sample(cls, num_cell_groups, num_steps,
+                      num_init_nodes, num_node_inputs, num_primitives):
+        arch = []
+        for _ in range(num_cell_groups):
+            nodes = []
+            ops = []
+            for i_out in range(num_steps):
+                nodes += list(np.random.randint(
+                    0, high=i_out + num_init_nodes, size=num_node_inputs))
+                ops += list(np.random.randint(
+                    0, high=num_primitives, size=num_node_inputs))
+            arch.append((nodes, ops))
+        return arch
 
 class DifferentiableRollout(BaseRollout):
     """Rollout based on differentiable relaxation"""
@@ -313,21 +328,18 @@ class CNNSearchSpace(SearchSpace):
         self.num_init_nodes = num_init_nodes
 
     def random_sample(self):
-        arch = []
-        for _ in range(self.num_cell_groups):
-            nodes = []
-            ops = []
-            for i_out in range(self.num_steps):
-                nodes += list(np.random.randint(
-                    0, high=i_out + self.num_init_nodes, size=2))
-                ops += list(np.random.randint(
-                    0, high=self._num_primitives, size=2))
-            arch.append((nodes, ops))
-        return arch
+        """
+        Random sample a discrete architecture.
+        """
+        return Rollout.random_sample(self.num_cell_groups,
+                                     self.num_steps,
+                                     self.num_init_nodes,
+                                     self.num_node_inputs,
+                                     self._num_primitives)
 
     def genotype(self, arch):
         """
-        Get a human readable description of an architecture.
+        Get a human readable description of an discrete architecture.
         """
 
         assert len(arch) == self.num_cell_groups
@@ -410,9 +422,147 @@ class CNNSearchSpace(SearchSpace):
         raise NotImplementedError()
 
 
-class RNNSearchSpace(object):
-    # @TODO: rnn search space
-    pass
+class RNNSearchSpace(SearchSpace):
+    NAME = "rnn"
+
+    def __init__(self,
+                 # meta arch
+                 num_cell_groups=1,
+                 num_init_nodes=1,
+                 num_layers=1,
+                 # cell arch
+                 num_steps=8, num_node_inputs=1,
+                 loose_end=False,
+                 shared_primitives=(
+                     "tanh",
+                     "relu",
+                     "sigmoid",
+                     "identity")):
+        super(RNNSearchSpace, self).__init__()
+
+        ## inner-cell
+        # number of nodes in every cell
+        self.num_steps = num_steps
+
+        # number of input nodes for every node in the cell
+        self.num_node_inputs = num_node_inputs
+
+        # primitive single-operand operations
+        self.shared_primitives = shared_primitives
+        self._num_primitives = len(self.shared_primitives)
+
+        # whether or not to use loose end
+        self.loose_end = loose_end
+
+        ## overall structure/meta-arch: how to arrange cells
+        self.num_cell_groups = num_cell_groups # this must be 1 for current rnn weights manager
+
+        # init nodes(meta arch: connect from the last `num_init_nodes` cell's output)
+        self.num_init_nodes = num_init_nodes # this must be 1 for current rnn weights manager
+
+        self.num_layers = num_layers
+
+        self.cell_group_names = ["cell"]
+
+        self.genotype_type = collections.namedtuple("RNNGenotype",
+                                                    self.cell_group_names +\
+                                                    [n + "_concat" for n in self.cell_group_names])
+
+    def random_sample(self):
+        """
+        Random sample a discrete architecture.
+        """
+        return Rollout.random_sample(self.num_cell_groups, # =1
+                                     self.num_steps,
+                                     self.num_init_nodes, # =1
+                                     self.num_node_inputs, # =1
+                                     self._num_primitives)
+
+    def genotype(self, arch):
+        """
+        Get a human readable description of an discrete architecture.
+        """
+
+        assert len(arch) == self.num_cell_groups # =1
+
+        genotype_list = []
+        concat_list = []
+        for cg_arch in arch:
+            genotype = []
+            nodes, ops = cg_arch
+            used_end = set()
+            for i_out in range(self.num_steps):
+                for i_in in range(self.num_node_inputs):
+                    idx = i_out * self.num_node_inputs + i_in
+                    from_ = int(nodes[idx])
+                    used_end.add(from_)
+                    genotype.append((self.shared_primitives[ops[idx]],
+                                     from_, int(i_out + self.num_init_nodes)))
+            genotype_list.append(genotype)
+            if self.loose_end:
+                concat = [i for i in range(1, self.num_steps+1) if i not in used_end]
+            else:
+                concat = list(range(1, self.num_steps+1))
+            concat_list.append(concat)
+        kwargs = dict(itertools.chain(
+            zip(self.cell_group_names, genotype_list),
+            zip([n + "_concat" for n in self.cell_group_names], concat_list)
+        ))
+        return self.genotype_type(**kwargs)
+
+    def plot_arch(self, genotypes, filename, label="", edge_labels=None): #pylint: disable=arguments-differ
+        """Plot an architecture to files on disk"""
+        assert len(genotypes) == 2 and self.num_cell_groups == 1, \
+            "Current RNN search space only support one cell group"
+        assert self.num_init_nodes == 1, "Current RNN search space only support one init node"
+
+        # only one cell group now!
+        geno_, concat_ = genotypes
+        geno_, concat_ = geno_[1], concat_[1]
+        edge_labels = edge_labels[0] if edge_labels is not None else None
+        filename = filename + "-" + genotypes[0][0]
+
+        from graphviz import Digraph
+
+        graph = Digraph(
+            format="png",
+            # https://stackoverflow.com/questions/4714262/graphviz-dot-captions
+            body=["label=\"{l}\"".format(l=label),
+                  "labelloc=top", "labeljust=left"],
+            edge_attr=dict(fontsize="20", fontname="times"),
+            node_attr=dict(style="filled", shape="rect",
+                           align="center", fontsize="20",
+                           height="0.5", width="0.5",
+                           penwidth="2", fontname="times"),
+            engine="dot")
+        graph.body.extend(["rankdir=LR"])
+        graph.node("x_{t}", fillcolor="darkseagreen2")
+        graph.node("h_{t-1}", fillcolor="darkseagreen2")
+        graph.node("0", fillcolor="lightblue")
+        graph.edge("x_{t}", "0", fillcolor="gray")
+        graph.edge("h_{t-1}", "0", fillcolor="gray")
+
+        _steps = self.num_steps
+        for i in range(1, 1 + _steps):
+            graph.node(str(i), fillcolor="lightblue")
+
+        for i, (op_type, from_, to_) in enumerate(geno_):
+            edge_label = op_type
+            if edge_labels is not None:
+                edge_label = edge_label + "; " + str(edge_labels[i])
+
+            graph.edge(str(from_), str(to_), label=edge_label, fillcolor="gray")
+
+        graph.node("h_{t}", fillcolor="palegoldenrod")
+
+        for i in concat_:
+            graph.edge(str(i), "h_{t}", fillcolor="gray")
+
+        graph.render(filename, view=False)
+        return [(genotypes[0][0], filename + ".png")]
+
+    def distance(self, arch1, arch2):
+        raise NotImplementedError()
 
 
 def get_search_space(cls, **cfg):

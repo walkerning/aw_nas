@@ -132,6 +132,12 @@ class RLController(BaseController, nn.Module):
         cg_entro_str = ",".join(["{:.2f}".format(n) for n in cg_entros])
         num = len(rollouts)
 
+        rewards = [r.get_perf() for r in rollouts]
+        if rewards[0] is not None:
+            total_reward = np.mean(rewards)
+        else:
+            total_reward = None
+
         if log:
             # maybe log the summary
             self.logger.info("%s%d rollouts: -LOG_PROB: %.2f (%s) ; ENTROPY: %2f (%s)",
@@ -141,11 +147,16 @@ class RLController(BaseController, nn.Module):
             if step is not None and not self.writer.is_none():
                 self.writer.add_scalar("log_prob", total_logprob, step)
                 self.writer.add_scalar("entropy", total_entro, step)
+
+        # return the stats
         _ss = self.search_space
-        return OrderedDict([(n + " LOGPROB", logprob) for n, logprob in \
-                            zip(_ss.cell_group_names, cg_logprobs)] +
-                           [(n + " ENTRO", entro) for n, entro in \
-                            zip(_ss.cell_group_names, cg_entros)])
+        stats = [(n + " LOGPROB", logprob)
+                 for n, logprob in zip(_ss.cell_group_names, cg_logprobs)] +\
+                     [(n + " ENTRO", entro)
+                      for n, entro in zip(_ss.cell_group_names, cg_entros)]
+        if total_reward is not None:
+            stats += [("reward", total_reward)]
+        return OrderedDict(stats)
 
     def rollout_type(self):
         return assert_rollout_type("discrete")

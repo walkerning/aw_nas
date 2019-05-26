@@ -10,22 +10,7 @@ class SharedNet(BaseWeightsManager, nn.Module):
                  cell_cls, op_cls,
                  num_classes=10, init_channels=16, stem_multiplier=3,
                  max_grad_norm=5.0, dropout_rate=0.1,
-                 candidate_member_mask=True, candidate_cache_named_members=False,
-                 candidate_virtual_parameter_only=False):
-        """
-        Args:
-            candidate_member_mask (bool): If true, the candidate network's `named_parameters`
-                or `named_buffers` method will only return parameters/buffers that is active,
-                `begin_virtual` just need to store/restore these active variables.
-                This should be more efficient.
-            candidate_cache_named_members (bool): If true, the candidate network's
-                named parameters/buffers will be cached on the first calculation.
-                It should not cause any logical, however, due to my benchmark, this bring no
-                performance increase. So default disable it.
-            candidate_virtual_parameter_only (bool): If true, the candidate network's
-                `begin_virtual` will only store/restore parameters, not buffers (e.g. running
-                mean/running std in BN layer).
-        """
+                 cell_group_kwargs=None):
         super(SharedNet, self).__init__(search_space, device)
         nn.Module.__init__(self)
 
@@ -61,14 +46,20 @@ class SharedNet(BaseWeightsManager, nn.Module):
         for i_layer, stride in enumerate(strides):
             if stride > 1:
                 num_channels *= stride
-
+            if cell_group_kwargs is not None:
+                # support passing in different kwargs when instantializing
+                # cell class for different cell groups
+                kwargs = cell_group_kwargs[self._cell_layout[i_layer]]
+            else:
+                kwargs = {}
             cell = cell_cls(op_cls,
                             self.search_space,
                             layer_index=i_layer,
                             num_channels=num_channels,
                             prev_num_channels=tuple(prev_num_channels),
                             stride=stride,
-                            prev_strides=[1] * self._num_init + strides[:i_layer])
+                            prev_strides=[1] * self._num_init + strides[:i_layer],
+                            **kwargs)
             prev_num_channel = cell.num_out_channel()
             prev_num_channels.append(prev_num_channel)
             prev_num_channels = prev_num_channels[1:]
@@ -103,6 +94,9 @@ class SharedNet(BaseWeightsManager, nn.Module):
     def load(self, path):
         checkpoint = torch.load(path)
         self.load_state_dict(checkpoint["state_dict"])
+
+    def supported_data_types(self):
+        return ["image"]
 
 
 class SharedCell(nn.Module):

@@ -41,6 +41,10 @@ class BaseWeightsManager(Component):
     def rollout_type(self):
         """Return the accepted rollout-type."""
 
+    @abc.abstractmethod
+    def supported_data_types(self):
+        """Return the supported data types"""
+
 class CandidateNet(nn.Module):
     @contextlib.contextmanager
     def begin_virtual(self):
@@ -130,6 +134,9 @@ class CandidateNet(nn.Module):
 
     def train_queue(self, queue, optimizer, criterion=nn.CrossEntropyLoss(),
                     eval_criterions=None, steps=1, **kwargs):
+        if not steps:
+            return [None] * len(eval_criterions or [])
+
         self._set_mode("train")
 
         average_ans = None

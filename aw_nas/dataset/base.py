@@ -25,3 +25,7 @@ class BaseDataset(Component):
            Dict(str: torch.utils.data.Dataset): A dict from split name to dataset.
         """
         return {}
+
+    @abc.abstractmethod
+    def data_type(self):
+        return None

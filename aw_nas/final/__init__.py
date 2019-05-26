@@ -1,3 +1,3 @@
 #pylint: disable=unused-import
-from .trainer import FinalTrainer
-from .model import GenotypeModel
+from .cnn_trainer import CNNFinalTrainer
+from .cnn_model import CNNGenotypeModel

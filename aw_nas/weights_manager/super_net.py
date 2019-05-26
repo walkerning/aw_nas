@@ -152,8 +152,9 @@ class SuperNet(SharedNet):
         """
         super(SuperNet, self).__init__(search_space, device,
                                        cell_cls=DiscreteSharedCell, op_cls=DiscreteSharedOp,
-                                       num_classes=10, init_channels=16, stem_multiplier=3,
-                                       max_grad_norm=5.0, dropout_rate=0.1)
+                                       num_classes=num_classes, init_channels=init_channels,
+                                       stem_multiplier=stem_multiplier,
+                                       max_grad_norm=max_grad_norm, dropout_rate=dropout_rate)
 
         # candidate net with/without parameter mask
         self.candidate_member_mask = candidate_member_mask
@@ -161,7 +162,9 @@ class SuperNet(SharedNet):
         self.candidate_virtual_parameter_only = candidate_virtual_parameter_only
 
     def forward(self, inputs, genotypes): #pylint: disable=arguments-differ
-        states = [self.stem(inputs) for _ in range(self._num_init)]
+        stemed = self.stem(inputs)
+        states = [stemed] * self._num_init
+
         for cg_idx, cell in zip(self._cell_layout, self.cells):
             genotype = genotypes[cg_idx]
             states.append(cell(states, genotype))
