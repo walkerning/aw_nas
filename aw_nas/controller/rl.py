@@ -158,7 +158,8 @@ class RLController(BaseController, nn.Module):
             stats += [("reward", total_reward)]
         return OrderedDict(stats)
 
-    def rollout_type(self):
+    @classmethod
+    def rollout_type(cls):
         return assert_rollout_type("discrete")
 
     # ---- Override some components functionality: dispatch to controller_networks and agents ----

@@ -57,9 +57,6 @@ class BaseLSTM(BaseRLControllerNet):
         for _ in range(self.num_lstm_layers):
             self.lstm.append(torch.nn.LSTMCell(self.controller_hid, self.controller_hid))
 
-    def sample(self, batch_size=1, prev_hidden=None):
-        raise NotImplementedError()
-
     def reset_parameters(self):
         init_range = 0.1
         for param in self.parameters():

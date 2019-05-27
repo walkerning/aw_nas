@@ -39,5 +39,6 @@ class Cifar10(BaseDataset):
     def splits(self):
         return self.datasets
 
-    def data_type(self):
+    @classmethod
+    def data_type(cls):
         return "image"

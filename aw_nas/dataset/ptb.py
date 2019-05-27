@@ -118,5 +118,6 @@ class PTB(BaseDataset):
     def splits(self):
         return self.datasets
 
-    def data_type(self):
+    @classmethod
+    def data_type(cls):
         return "sequence"

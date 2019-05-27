@@ -1,16 +1,14 @@
 # -*- coding: utf-8 -*-
 
-import abc
-
 from torch import nn
 
-from aw_nas.base import Component
+from aw_nas.base import Component, utils
 
 class FinalTrainer(Component):
     REGISTRY = "final_trainer"
 
-    @abc.abstractmethod
-    def supported_data_types(self):
+    @utils.abstractclassmethod
+    def supported_data_types(cls):
         """Return the supported data types"""
 
 class FinalModel(Component, nn.Module):
@@ -20,6 +18,6 @@ class FinalModel(Component, nn.Module):
         super(FinalModel, self).__init__(schedule_cfg)
         nn.Module.__init__(self)
 
-    @abc.abstractmethod
-    def supported_data_types(self):
+    @utils.abstractclassmethod
+    def supported_data_types(cls):
         """Return the supported data types"""

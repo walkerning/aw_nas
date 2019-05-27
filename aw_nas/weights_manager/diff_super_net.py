@@ -96,7 +96,8 @@ class DiffSuperNet(SharedNet):
         return DiffSubCandidateNet(self, rollout,
                                    virtual_parameter_only=self.candidate_virtual_parameter_only)
 
-    def rollout_type(self):
+    @classmethod
+    def rollout_type(cls):
         return assert_rollout_type("differentiable")
 
 

@@ -3,7 +3,7 @@
 
 import abc
 
-from aw_nas import Component
+from aw_nas import Component, utils
 
 class BaseDataset(Component):
     REGISTRY = "dataset"
@@ -26,6 +26,8 @@ class BaseDataset(Component):
         """
         return {}
 
-    @abc.abstractmethod
-    def data_type(self):
-        return None
+    @utils.abstractclassmethod
+    def data_type(cls):
+        """
+        The data type of this dataset.
+        """

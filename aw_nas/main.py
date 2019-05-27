@@ -16,7 +16,8 @@ import torch
 from torch.backends import cudnn
 import yaml
 
-from aw_nas import utils
+from aw_nas.dataset import AVAIL_DATA_TYPES
+from aw_nas import utils, BaseRollout
 from aw_nas.utils.vis_utils import WrapWriter
 from aw_nas.utils import RegistryMeta
 from aw_nas.utils import logger as _logger
@@ -173,10 +174,10 @@ def search(cfg_file, gpu, seed, load, save_every, train_dir, vis_dir, develop):
     # check trainer support for data type
     assert _data_type in trainer.supported_data_types()
     # check type of rollout match
-    assert trainer.rollout_type() == controller.rollout_type(), \
+    assert controller.rollout_type() in trainer.supported_rollout_types(), \
         ("The type of the rollouts handled by the controller/weights_manager"
-         " and the trainer should match! ({} VS. {})")\
-            .format(controller.rollout_type(), trainer.rollout_type())
+         " is not supported by the trainer! ({} VS. {})")\
+            .format(controller.rollout_type(), trainer.supported_rollout_types())
 
     trainer.setup(load, save_every, train_dir, writer=writer)
     trainer.train()
@@ -370,22 +371,50 @@ def derive(cfg_file, load, out_file, n, save_plot, test, steps, gpu, seed, dump_
 
 @main.command(help="Dump the sample configuration.")
 @click.argument("out_file", required=True, type=str)
-def gen_sample_config(out_file):
+@click.option("-d", "--data-type", default=None, type=click.Choice(AVAIL_DATA_TYPES),
+              help="only dump the configs of the components support this data type")
+@click.option("-r", "--rollout-type", default=None,
+              type=click.Choice(list(BaseRollout.all_classes_().keys())),
+              help="only dump the configs of the components support this rollout type")
+def gen_sample_config(out_file, data_type, rollout_type):
     with open(out_file, "w") as out_f:
         for comp_name in ["search_space", "dataset",
                           "controller", "weights_manager", "trainer"]:
-            out_f.write(utils.component_sample_config_str(comp_name, prefix="# "))
+            filter_funcs = []
+            if data_type is not None:
+                if comp_name == "dataset":
+                    filter_funcs.append(lambda cls: data_type == cls.data_type())
+                elif comp_name in {"weights_manager", "trainer"}:
+                    filter_funcs.append(lambda cls: data_type in cls.supported_data_types())
+            if rollout_type is not None:
+                if comp_name in {"weights_manager", "controller"}:
+                    filter_funcs.append(lambda cls: rollout_type == cls.rollout_type())
+                if comp_name == "trainer":
+                    filter_funcs.append(lambda cls: data_type in cls.supported_data_types())
+
+            out_f.write(utils.component_sample_config_str(comp_name, prefix="# ",
+                                                          filter_funcs=filter_funcs))
             out_f.write("\n")
 
 
 @main.command(help="Dump the sample configuration for final training.")
 @click.argument("out_file", required=True, type=str)
-def gen_final_sample_config(out_file):
+@click.option("-d", "--data-type", default=None, type=click.Choice(AVAIL_DATA_TYPES),
+              help="only dump the configs of the components support this data type")
+def gen_final_sample_config(out_file, data_type):
     import aw_nas.final #pylint: disable=unused-import,unused-variable
     with open(out_file, "w") as out_f:
         for comp_name in ["search_space", "dataset",
                           "final_model", "final_trainer"]:
-            out_f.write(utils.component_sample_config_str(comp_name, prefix="# "))
+            filter_funcs = []
+            if data_type is not None:
+                if comp_name == "dataset":
+                    filter_funcs.append(lambda cls: data_type == cls.data_type())
+                elif comp_name in {"final_model", "final_trainer"}:
+                    filter_funcs.append(lambda cls: data_type in cls.supported_data_types())
+
+            out_f.write(utils.component_sample_config_str(comp_name, prefix="# ",
+                                                          filter_funcs=filter_funcs))
             out_f.write("\n")
 
 

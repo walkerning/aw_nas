@@ -95,6 +95,7 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
                  interleave_controller_every=None, interleave_report_every=50,
                  # only for rnn, sequence modeling
                  bptt_steps=35, reset_hidden_prob=None, rnn_reward_c=80.,
+                 rnn_l2_reg=0.,
                  schedule_cfg=None):
         """
         Args:
@@ -107,7 +108,7 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
         super(MepaTrainer, self).__init__(controller, weights_manager, dataset, schedule_cfg)
 
         # configurations
-        assert rollout_type in {"discrete", "differentiable"} # supported rollout types
+        assert rollout_type in self.supported_rollout_types() # supported rollout types
         self._rollout_type = assert_rollout_type(rollout_type)
         self._data_type = self.dataset.data_type()
         self.epochs = epochs
@@ -130,6 +131,7 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
         self.bptt_steps = bptt_steps
         self.reset_hidden_prob = reset_hidden_prob # reset_hidden_prob not implemented yet
         self.rnn_reward_c = rnn_reward_c
+        self.rnn_l2_reg = rnn_l2_reg
 
         # do some checks
         assert derive_queue in {"surrogate", "controller", "mepa"}
@@ -554,10 +556,12 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
             if scheduler is not None:
                 scheduler.load_state_dict(scheduler_states[compo_name])
 
-    def rollout_type(self):
-        return self._rollout_type
+    @classmethod
+    def supported_rollout_types(cls):
+        return ["discrete", "differentiable"]
 
-    def supported_data_types(self):
+    @classmethod
+    def supported_data_types(cls):
         return ["image", "sequence"]
 
     # ---- helper methods ----

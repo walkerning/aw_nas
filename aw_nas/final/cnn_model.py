@@ -133,7 +133,8 @@ class CNNGenotypeModel(FinalModel):
             return logits, logits_aux
         return logits
 
-    def supported_data_types(self):
+    @classmethod
+    def supported_data_types(cls):
         return ["image"]
 
     def _is_reduce(self, layer_idx):

@@ -119,7 +119,8 @@ class CNNFinalTrainer(FinalTrainer):
                 self.save(path)
             self.on_epoch_end(epoch)
 
-    def supported_data_types(self):
+    @classmethod
+    def supported_data_types(cls):
         return ["image"]
 
     @staticmethod

@@ -4,7 +4,7 @@
 import abc
 import contextlib
 
-from aw_nas import Component
+from aw_nas import Component, utils
 
 class BaseController(Component):
     REGISTRY = "controller"
@@ -63,6 +63,6 @@ class BaseController(Component):
         Load the state of the controller from `path` on disk.
         """
 
-    @abc.abstractmethod
-    def rollout_type(self):
+    @utils.abstractclassmethod
+    def rollout_type(cls):
         """Return the produced rollout-type."""

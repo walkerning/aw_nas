@@ -64,14 +64,14 @@ class BaseTrainer(Component):
         Load the trainer state from disk.
         """
 
-    @abc.abstractmethod
-    def rollout_type(self):
+    @utils.abstractclassmethod
+    def supported_rollout_types(cls):
         """
         Return the handling rollout type.
         """
 
-    @abc.abstractmethod
-    def supported_data_types(self):
+    @utils.abstractclassmethod
+    def supported_data_types(cls):
         """
         Return the supported data types. Subset of `image`, `sequence`.
         """

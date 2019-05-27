@@ -74,10 +74,13 @@ def add_text_prefix(text, prefix):
     lines = text.split("\n")
     return "\n".join([prefix + line if line else line for line in lines])
 
-def component_sample_config_str(comp_name, prefix):
+def component_sample_config_str(comp_name, prefix, filter_funcs=None):
+    filter_funcs = filter_funcs or []
     all_text = prefix + "## ---- Component {} ----\n".format(comp_name)
 
     for type_name, cls in six.iteritems(RegistryMeta.all_classes(comp_name)):
+        if any(not func(cls) for func in filter_funcs):
+            continue
 
         all_text += prefix + "# ---- Type {} ----\n".format(type_name)
         all_text += prefix + "{}_type: {}\n".format(comp_name, type_name)
@@ -177,3 +180,12 @@ def makedir(path, remove=False):
 def softmax(arr):
     e_arr = np.exp(arr - np.max(arr, axis=-1, keepdims=True))
     return e_arr / np.sum(e_arr, axis=-1, keepdims=True)
+
+class abstractclassmethod(classmethod):
+    #pylint: disable=too-few-public-methods,invalid-name
+    # for python2 compatibility
+    __isabstractmethod__ = True
+
+    def __init__(self, a_callable):
+        a_callable.__isabstractmethod__ = True
+        super(abstractclassmethod, self).__init__(a_callable)

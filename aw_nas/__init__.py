@@ -13,7 +13,9 @@ from .base import Component
 from .common import (
     assert_rollout_type,
     SearchSpace,
+    BaseRollout,
     Rollout,
+    DifferentiableRollout,
     CNNSearchSpace,
     RNNSearchSpace,
     get_search_space,

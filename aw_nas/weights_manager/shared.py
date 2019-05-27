@@ -95,7 +95,8 @@ class SharedNet(BaseWeightsManager, nn.Module):
         checkpoint = torch.load(path)
         self.load_state_dict(checkpoint["state_dict"])
 
-    def supported_data_types(self):
+    @classmethod
+    def supported_data_types(cls):
         return ["image"]
 
 

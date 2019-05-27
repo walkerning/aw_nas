@@ -177,5 +177,6 @@ class DiffController(BaseController, nn.Module):
                       zip(_ss.cell_group_names, cg_logprobs)]
         return OrderedDict(stats)
 
-    def rollout_type(self):
+    @classmethod
+    def rollout_type(cls):
         return assert_rollout_type("differentiable")

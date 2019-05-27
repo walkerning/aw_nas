@@ -12,7 +12,7 @@ class RNNSharedNet(BaseWeightsManager, nn.Module):
     def __init__(
             self, search_space, device, cell_cls, op_cls,
             num_tokens, num_emb, num_hid,
-            tie_weight, share_primitive_weights, edge_batch_norm,
+            tie_weight, decoder_bias, share_primitive_weights, edge_batch_norm,
             # training
             max_grad_norm,
             # dropout probs
@@ -37,7 +37,7 @@ class RNNSharedNet(BaseWeightsManager, nn.Module):
 
         # modules
         self.encoder = ops.EmbeddingDropout(num_tokens, num_emb, dropout=dropout_emb)
-        self.decoder = nn.Linear(num_hid, num_tokens)
+        self.decoder = nn.Linear(num_hid, num_tokens, bias=decoder_bias)
         self.lockdrop = ops.LockedDropout()
 
         if tie_weight:
@@ -69,9 +69,11 @@ class RNNSharedNet(BaseWeightsManager, nn.Module):
         checkpoint = torch.load(path)
         self.load_state_dict(checkpoint["state_dict"])
 
-    def supported_data_types(self):
+    @classmethod
+    def supported_data_types(cls):
         return ["sequence"]
 
+    # ---- only rnn weights manager that handle sequence data need this ----
     def init_hidden(self, batch_size):
         """
         Initialize a hidden state. Only rnn that handled sequence data need this.

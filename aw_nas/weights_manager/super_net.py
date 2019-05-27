@@ -218,7 +218,8 @@ class SuperNet(SharedNet):
                                cache_named_members=self.candidate_cache_named_members,
                                virtual_parameter_only=self.candidate_virtual_parameter_only)
 
-    def rollout_type(self):
+    @classmethod
+    def rollout_type(cls):
         return assert_rollout_type("discrete")
 
 class DiscreteSharedCell(SharedCell):
