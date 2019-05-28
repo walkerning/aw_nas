@@ -1,0 +1,135 @@
+## ---- Component search_space ----
+# ---- Type rnn ----
+search_space_type: rnn
+search_space_cfg:
+  # Schedulable attributes: 
+  num_cell_groups: 1
+  num_init_nodes: 1
+  num_layers: 1
+  num_steps: 11
+  num_node_inputs: 1
+  loose_end: true
+  shared_primitives:
+  - tanh
+  - relu
+  - identity
+  - sigmoid
+# ---- End Type rnn ----
+## ---- End Component search_space ----
+
+## ---- Component dataset ----
+# ---- Type ptb ----
+dataset_type: ptb
+dataset_cfg:
+  # Schedulable attributes: 
+  data_dir: ./data/ptb
+  shuffle: true
+# ---- End Type ptb ----
+## ---- End Component dataset ----
+
+## ---- Component controller ----
+# ---- Type rl ----
+controller_type: rl
+controller_cfg:
+  # Schedulable attributes: 
+  mode: eval
+  independent_cell_group: false
+  controller_network_type: anchor_lstm
+  controller_network_cfg:
+    # Schedulable attributes: softmax_temperature
+    num_lstm_layers: 1
+    controller_hid: 100
+    attention_hid: 100
+    softmax_temperature: 5.0
+    tanh_constant: 2.5
+    op_tanh_reduce: 1.0
+    schedule_cfg: null
+  rl_agent_type: pg
+  rl_agent_cfg:
+    # Schedulable attributes: 
+    alpha: 0.999
+    gamma: 1.0
+    entropy_coeff: 0.01
+    max_grad_norm: null
+    batch_update: true
+# ---- End Type rl ----
+## ---- End Component controller ----
+
+## ---- Component weights_manager ----
+# ---- Type rnn_supernet ----
+weights_manager_type: rnn_supernet
+weights_manager_cfg:
+  # Schedulable attributes: 
+  num_emb: 300
+  num_hid: 300
+  tie_weight: true
+  decoder_bias: false
+  share_primitive_weights: false
+  batchnorm_edge: false
+  batchnorm_out: true
+  max_grad_norm: 10.0
+  # dropout_emb/dropout_inp0 is from darts config
+  dropout_emb: 0
+  dropout_inp0: 0.2
+  dropout_inp: 0.75
+  dropout_hid: 0.25
+  dropout_out: 0.75
+  candidate_member_mask: true
+  candidate_cache_named_members: false
+  candidate_virtual_parameter_only: false
+# ---- End Type rnn_supernet ----
+## ---- End Component weights_manager ----
+
+## ---- Component trainer ----
+# ---- Type mepa ----
+trainer_type: mepa
+trainer_cfg:
+  # Schedulable attributes: mepa_surrogate_steps, mepa_samples, controller_steps, controller_surrogate_steps, controller_samples
+  rollout_type: discrete
+  epochs: 100
+  batch_size: 64
+  test_every: 5
+  surrogate_optimizer:
+    lr: 0.25
+    type: SGD
+  controller_optimizer:
+    lr: 0.001
+    type: Adam
+  mepa_optimizer:
+    lr: 0.25
+    momentum: 0.
+    type: SGD
+    weight_decay: 0.0001
+  surrogate_scheduler: null
+  controller_scheduler: null
+  mepa_scheduler:
+    start_epoch: 12
+    every: 1
+    gamma: 0.95
+    eta_min: 0.0005
+    type: ExpDecay
+  mepa_surrogate_steps: 1
+  mepa_samples: 1
+  controller_steps: 100
+  controller_surrogate_steps: 1
+  controller_samples: 4
+  controller_train_every: 1
+  controller_train_begin: 1
+  data_portion:
+  - 0.2
+  - 0.2
+  - 0.6
+  derive_queue: controller
+  derive_surrogate_steps: 1
+  derive_samples: 8
+  mepa_as_surrogate: false
+  interleave_controller_every: null
+  interleave_report_every: 50
+  bptt_steps: 35
+  reset_hidden_prob: null
+  rnn_reward_c: 80.0
+  rnn_act_reg: 3.e-3 # 1.e-7 * 35 * 720 from enas config
+  schedule_cfg: null
+# ---- End Type mepa ----
+## ---- End Component trainer ----
+

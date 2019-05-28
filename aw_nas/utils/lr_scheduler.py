@@ -72,7 +72,30 @@ class CosineWithRestarts(_LRScheduler):  # pylint: disable=protected-access
             self._last_restart = step
         return lrs
 
+class ExpDecay(_LRScheduler):
+    """
+    Args:
+        optimizer (Optimizer): Wrapped optimizer.
+        gamma (float): Multiplicative factor of learning rate decay.
+        every (int): Exp decay every this number of epoch. Default:10.
+        start_epoch (int): The epoch that the exp decay starts. Default: 0.
+        last_epoch (int): The index of last epoch. Default: -1.
+        eta_min (float): Minimum lr. Default: None.
+    """
+
+    def __init__(self, optimizer, gamma, every=1, start_epoch=0, eta_min=None, last_epoch=-1):
+        self.gamma = gamma
+        self.every = every
+        self.start_epoch = start_epoch
+        self.eta_min = eta_min
+        super(ExpDecay, self).__init__(optimizer, last_epoch)
+
+    def get_lr(self):
+        return [max(self.eta_min,
+                    base_lr * self.gamma ** ((self.last_epoch - self.start_epoch) // self.every))
+                for base_lr in self.base_lrs]
+
 def get_scheduler_cls(type_):
-    if type_ == "CosineWithRestarts":
-        return CosineWithRestarts
+    if type_ in {"CosineWithRestarts", "ExpDecay"}:
+        return globals()[type_]
     return getattr(lr_scheduler, type_)

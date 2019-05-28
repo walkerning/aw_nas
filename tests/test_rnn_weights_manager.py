@@ -9,7 +9,7 @@ import pytest
 # ---- Test rnn_super_net ----
 _criterion = nn.CrossEntropyLoss()
 def _rnn_criterion(outputs, targets):
-    logits, _, _ = outputs
+    logits, _, _, _ = outputs
     return _criterion(logits.view(-1, logits.size(-1)), targets.view(-1))
 
 def _rnn_super_sample_cand(net):
@@ -34,10 +34,10 @@ def test_supernet_assemble_nomask(rnn_super_net):
 
 @pytest.mark.parametrize("rnn_super_net", [
     {
-        "edge_batch_norm": True
+        "batchnorm_edge": True
     },
     {
-        "edge_batch_norm": False
+        "batchnorm_edge": False
     }], indirect=["rnn_super_net"])
 def test_supernet_assemble(rnn_super_net):
     net = rnn_super_net
@@ -82,18 +82,19 @@ def test_supernet_forward(rnn_super_net):
                                               size=(time_steps+1, batch_size)))
     data = (data[:-1, :], data[1:, :]) # inputs, targets
 
-    logits, all_outs, next_hiddens = cand_net.forward_data(data[0], mode="eval", hiddens=hiddens)
+    logits, _, outs, next_hiddens = cand_net.forward_data(data[0], mode="eval", hiddens=hiddens)
     assert tuple(logits.shape) == (time_steps, batch_size, _num_tokens)
-    assert tuple(all_outs.shape) == (time_steps, batch_size, _num_hid)
+    assert tuple(outs.shape) == (time_steps, batch_size, _num_hid)
     assert tuple([id(hid) for hid in hiddens]) == hidden_id # the hidden is modified in-place
     assert all((hid == n_hid).all() for hid, n_hid in zip(hiddens, next_hiddens)) # the value is equal to the calculated results
 
-
-@pytest.mark.parametrize("test_id",
-                         range(5))
-def test_supernet_candidate_gradient_virtual(test_id, rnn_super_net):
+@pytest.mark.parametrize("rnn_super_net",
+                         [{"num_tokens": 10, "tie_weight": True},
+                          {"num_tokens": 10, "tie_weight": False}],
+                         indirect=["rnn_super_net"])
+def test_supernet_candidate_gradient_virtual(rnn_super_net):
     lr = 0.1
-    EPS = 1e-4
+    EPS = 1e-6
     time_steps = 5
 
     batch_size = 2
@@ -107,7 +108,7 @@ def test_supernet_candidate_gradient_virtual(test_id, rnn_super_net):
 
     hiddens = rnn_super_net.init_hidden(batch_size)
     # check hiddens not zero after these steps
-    assert all(hid.abs().sum().item() < EPS for hid in hiddens)
+    assert all(hid.abs().mean().item() < EPS for hid in hiddens)
 
     net = rnn_super_net
     cand_net = _rnn_super_sample_cand(net)
@@ -122,20 +123,21 @@ def test_supernet_candidate_gradient_virtual(test_id, rnn_super_net):
         optimizer = torch.optim.SGD(cand_net.parameters(), lr=lr)
         optimizer.step()
         for n, grad in grads:
-            assert (w_prev[n] - grad * lr - c_params[n]).abs().sum().item() < EPS
-        # sometimes, some buffer just don't updated... so here coomment out
-        # for n in buffer_prev:
-        #     # a simple check, make sure buffer is at least updated...
-        #     assert (buffer_prev[n] - c_buffers[n]).abs().sum().item() < EPS
+            assert (w_prev[n] - grad * lr - c_params[n]).abs().mean().item() < EPS
+        for n in buffer_prev:
+            # a simple check, make sure buffer is at least updated.
+            # some buffers such as bn.num_batches_tracked has type torch.int,
+            # do not support mean(), convert to float to check
+            assert (buffer_prev[n] - c_buffers[n]).abs().float().mean().item() > EPS
 
     # check hiddens not zero after these steps
-    assert all(hid.abs().sum().item() > 0.1 for hid in hiddens)
+    assert all(hid.abs().mean().item() > 1e-3 for hid in hiddens)
 
     # check parameters/buffers is back
     for n in c_params:
-        assert (w_prev[n] - c_params[n]).abs().sum().item() < EPS
+        assert (w_prev[n] - c_params[n]).abs().mean().item() < EPS
     for n in c_buffers:
-        assert (buffer_prev[n] - c_buffers[n]).abs().sum().item() < EPS
+        assert (buffer_prev[n] - c_buffers[n]).abs().float().mean().item() < EPS
 
 # ---- End test rnn_super_net ----
 

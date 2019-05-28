@@ -7,6 +7,7 @@ from __future__ import print_function
 from __future__ import division
 
 from collections import defaultdict, OrderedDict
+from functools import partial
 import imageio
 import six
 
@@ -20,22 +21,27 @@ from aw_nas.utils.torch_utils import accuracy
 
 __all__ = ["MepaTrainer"]
 
-def _rnn_tensor_ce_loss(inputs, targets):
-    logits, _, _ = inputs
-    return nn.CrossEntropyLoss()(logits.view(-1, logits.size(-1)), targets.view(-1))
-
 def _ce_loss(inputs, targets):
     return nn.CrossEntropyLoss()(inputs, targets).item()
-
-def _rnn_ce_loss(inputs, targets):
-    logits, _, _ = inputs
-    return nn.CrossEntropyLoss()(logits.view(-1, logits.size(-1)), targets.view(-1)).item()
 
 def _top1_acc(*args, **kwargs):
     return float(accuracy(*args, **kwargs)[0]) / 100
 
+def _rnn_tensor_loss(inputs, targets, act_reg, slow_reg):
+    logits, raw_outs, outs, _ = inputs
+    loss = nn.CrossEntropyLoss()(logits.view(-1, logits.size(-1)), targets.view(-1))
+    if act_reg > 0: # activation L2 reguarlization on dropped outputs
+        loss += act_reg * outs.pow(2).mean()
+    if slow_reg > 0: # slowness regularization
+        loss += slow_reg * (raw_outs[1:] - raw_outs[:-1]).pow(2).mean()
+    return loss
+
+def _rnn_loss(inputs, targets, act_reg, slow_reg):
+    return _rnn_tensor_loss(inputs, targets, act_reg, slow_reg).item()
+
 def _rnn_perp(inputs, targets):
-    return np.exp(_rnn_ce_loss(inputs, targets))
+    return np.exp(_rnn_loss(inputs, targets, 0, 0))
+
 
 class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
     """
@@ -95,7 +101,7 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
                  interleave_controller_every=None, interleave_report_every=50,
                  # only for rnn, sequence modeling
                  bptt_steps=35, reset_hidden_prob=None, rnn_reward_c=80.,
-                 rnn_l2_reg=0.,
+                 rnn_act_reg=0., rnn_slowness_reg=0.,
                  schedule_cfg=None):
         """
         Args:
@@ -131,7 +137,8 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
         self.bptt_steps = bptt_steps
         self.reset_hidden_prob = reset_hidden_prob # reset_hidden_prob not implemented yet
         self.rnn_reward_c = rnn_reward_c
-        self.rnn_l2_reg = rnn_l2_reg
+        self.rnn_act_reg = rnn_act_reg
+        self.rnn_slowness_reg = rnn_slowness_reg
 
         # do some checks
         assert derive_queue in {"surrogate", "controller", "mepa"}
@@ -614,8 +621,10 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
             _acc_or_perp = _top1_acc
             self._accperp_name = "acc"
         else: # data_type == "sequence"
-            self._criterion = _rnn_tensor_ce_loss
-            _scalar_criterion = _rnn_ce_loss
+            self._criterion = partial(_rnn_tensor_loss,
+                                      act_reg=self.rnn_act_reg, slow_reg=self.rnn_slowness_reg)
+            _scalar_criterion = partial(_rnn_loss,
+                                        act_reg=self.rnn_act_reg, slow_reg=self.rnn_slowness_reg)
             # the criterion used to update controller
             _acc_or_perp = _rnn_perp
             self._accperp_name = "perp"

@@ -19,12 +19,12 @@ class RNNSubCandidateNet(SubCandidateNet):
     def forward(self, inputs, hiddens): #pylint: disable=arguments-differ
         # make a copy of the hiddens and forward
         hiddens_copy = [hid.clone() for hid in hiddens]
-        logits, all_outs, next_hiddens \
+        logits, raw_outs, outs, next_hiddens \
             = self.super_net.forward(inputs, self.genotypes, hiddens=hiddens_copy)
         # update hiddens in place
         for hid, n_hid in zip(hiddens, next_hiddens):
             hid.data.copy_(n_hid.data)
-        return logits, all_outs, next_hiddens
+        return logits, raw_outs, outs, next_hiddens
 
 class RNNSuperNet(RNNSharedNet):
     """
@@ -35,24 +35,24 @@ class RNNSuperNet(RNNSharedNet):
     def __init__(
             self, search_space, device,
             num_tokens, num_emb=300, num_hid=300,
-            tie_weight=False, decoder_bias=True,
-            share_primitive_weights=False, edge_batch_norm=False,
+            tie_weight=True, decoder_bias=True,
+            share_primitive_weights=False, batchnorm_edge=False, batchnorm_out=True,
             # training
             max_grad_norm=5.0,
             # dropout probs
-            dropout_emb=0., dropout_inp=0., dropout_hid=0., dropout_out=0.,
+            dropout_emb=0., dropout_inp0=0., dropout_inp=0., dropout_hid=0., dropout_out=0.,
             candidate_member_mask=True, candidate_cache_named_members=False,
             candidate_virtual_parameter_only=False):
-        super(RNNSuperNet, self).__init__(search_space, device,
-                                          cell_cls=RNNDiscreteSharedCell,
-                                          op_cls=RNNDiscreteSharedOp,
-                                          num_tokens=num_tokens, num_emb=num_emb, num_hid=num_hid,
-                                          tie_weight=tie_weight, decoder_bias=decoder_bias,
-                                          share_primitive_weights=share_primitive_weights,
-                                          edge_batch_norm=edge_batch_norm,
-                                          max_grad_norm=max_grad_norm,
-                                          dropout_emb=dropout_emb, dropout_inp=dropout_inp,
-                                          dropout_hid=dropout_hid, dropout_out=dropout_out)
+        super(RNNSuperNet, self).__init__(
+            search_space, device,
+            cell_cls=RNNDiscreteSharedCell, op_cls=RNNDiscreteSharedOp,
+            num_tokens=num_tokens, num_emb=num_emb, num_hid=num_hid,
+            tie_weight=tie_weight, decoder_bias=decoder_bias,
+            share_primitive_weights=share_primitive_weights,
+            batchnorm_edge=batchnorm_edge, batchnorm_out=batchnorm_out,
+            max_grad_norm=max_grad_norm,
+            dropout_emb=dropout_emb, dropout_inp0=dropout_inp0, dropout_inp=dropout_inp,
+            dropout_hid=dropout_hid, dropout_out=dropout_out)
 
         # candidate net with/without parameter mask
         self.candidate_member_mask = candidate_member_mask
@@ -60,13 +60,20 @@ class RNNSuperNet(RNNSharedNet):
         self.candidate_virtual_parameter_only = candidate_virtual_parameter_only
 
     def forward(self, inputs, genotypes, hiddens): #pylint: disable=arguments-differ
+        """
+        Returns:
+            logits: Tensor(bptt_steps, batch_size, num_tokens)
+            raw_outs: Tensor(bptt_steps, batch_size, num_hid)
+            droped_outs: Tensor(bptt_steps, batch_size, num_hid)
+            next_hiddens: List(Tensor(num_hid))[num_layers]
+        """
         batch_size = inputs.size(1)
         time_steps = inputs.size(0)
-        # embedding inputs
+        # embedding the inputs
         emb = self.encoder(inputs)
-        emb = self.lockdrop(emb, self.dropout_emb)
+        emb = self.lockdrop(emb, self.dropout_inp0)
 
-        # dropout masks for inputs/hidden for every layer
+        # variational dropout masks for inputs/hidden for every layer
         if self.training:
             x_masks = [utils.mask2d(batch_size, self.num_emb,
                                     keep_prob=1.-self.dropout_inp, device=inputs.device)
@@ -85,16 +92,17 @@ class RNNSuperNet(RNNSharedNet):
                     layer_inputs = emb[t]
                 else:
                     layer_inputs = next_hiddens[-1]
-                hidden = self.cells[i_layer](layer_inputs, hiddens[i_layer],
-                                             x_masks[i_layer], h_masks[i_layer], genotypes)
-                next_hiddens.append(hidden)
+                next_hidden = self.cells[i_layer](layer_inputs, hiddens[i_layer],
+                                                  x_masks[i_layer], h_masks[i_layer], genotypes)
+                next_hiddens.append(next_hidden)
             # output of this time step
             all_outs.append(next_hiddens[-1])
             # new hiddens
             hiddens = next_hiddens
 
+        raw_outs = torch.stack(all_outs)
         # dropout output
-        droped_outs = self.lockdrop(torch.stack(all_outs), self.dropout_out)
+        droped_outs = self.lockdrop(raw_outs, self.dropout_out)
 
         # decoder to logits
         logits = self.decoder(droped_outs.view(-1, self.num_hid))\
@@ -102,7 +110,7 @@ class RNNSuperNet(RNNSharedNet):
 
         # next hidden states: list of size num_layers, tensors of size (num_hid)
         next_hiddens = [next_hid.detach_() for next_hid in next_hiddens]
-        return logits, droped_outs, next_hiddens
+        return logits, raw_outs, droped_outs, next_hiddens
 
     # ---- APIs ----
     def assemble_candidate(self, rollout):
@@ -118,6 +126,7 @@ class RNNSuperNet(RNNSharedNet):
     def sub_named_members(self, genotypes,
                           prefix="", member="parameters"):
         prefix = prefix + ("." if prefix else "")
+
         # the common modules that will be forwarded by every candidate
         for mod_name, mod in six.iteritems(self._modules):
             if mod_name == "cells":
@@ -143,7 +152,7 @@ class RNNDiscreteSharedCell(RNNSharedCell):
         else:
             xh_prev = torch.cat([x, h], dim=-1)
         xh_prev = self.w_prev(xh_prev)
-        if self.edge_batch_norm:
+        if self.batchnorm_edge:
             xh_prev = self.bn_prev(xh_prev)
 
         c0, h0 = torch.split(xh_prev, self.num_hid, dim=-1)
@@ -175,7 +184,7 @@ class RNNDiscreteSharedCell(RNNSharedCell):
 
         # average the ends
         output = torch.mean(torch.stack([states[i] for i in concat_]), 0)
-        if self.edge_batch_norm:
+        if self.batchnorm_out:
             # batchnorm
             output = self.bn_out(output)
         return output
@@ -183,8 +192,13 @@ class RNNDiscreteSharedCell(RNNSharedCell):
     def sub_named_members(self, genotypes,
                           prefix="", member="parameters"):
         prefix = prefix + ("." if prefix else "")
-        for n, v in getattr(self.w_prev, "named_" + member)(prefix=prefix+"w_prev"):
-            yield n, v
+
+        for mod_name, mod in six.iteritems(self._modules):
+            if mod_name == "edge_mod":
+                continue
+            _func = getattr(mod, "named_" + member)
+            for n, v in _func(prefix=prefix+mod_name):
+                yield n, v
 
         genotype = genotypes[0]
 
@@ -192,7 +206,7 @@ class RNNDiscreteSharedCell(RNNSharedCell):
             edge_share_op = self.edges[from_][to_]
             for n, v in edge_share_op.sub_named_members(
                     op_type,
-                    prefix=prefix + "f_{}_t_{}".format(from_, to_),
+                    prefix=prefix + "edge_mod.f_{}_t_{}".format(from_, to_),
                     member=member):
                 yield n, v
 

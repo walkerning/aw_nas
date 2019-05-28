@@ -75,13 +75,13 @@ class SubCandidateNet(CandidateNet):
                 # use cached members
                 if self._cached_np is None:
                     self._cached_np = []
-                    for n, v in self.active_named_parameters(prefix=""):
+                    for n, v in self.active_named_members(member="parameters", prefix=""):
                         self._cached_np.append((n, v))
-                prefix = prefix + ("/" if prefix else "")
+                prefix = prefix + ("." if prefix else "")
                 for n, v in self._cached_np:
                     yield prefix + n, v
             else:
-                for n, v in self.active_named_parameters(prefix=prefix):
+                for n, v in self.active_named_members(member="parameters", prefix=prefix):
                     yield n, v
         else:
             for n, v in self.super_net.named_parameters(prefix=prefix):
@@ -92,36 +92,35 @@ class SubCandidateNet(CandidateNet):
             if self.cache_named_members:
                 if self._cached_nb is None:
                     self._cached_nb = []
-                    for n, v in self.active_named_buffers(prefix=""):
+                    for n, v in self.active_named_members(member="buffers", prefix=""):
                         self._cached_nb.append((n, v))
-                prefix = prefix + ("/" if prefix else "")
+                prefix = prefix + ("." if prefix else "")
                 for n, v in self._cached_nb:
                     yield prefix + n, v
             else:
-                for n, v in self.active_named_buffers(prefix=prefix):
+                for n, v in self.active_named_members(member="buffers", prefix=prefix):
                     yield n, v
         else:
             for n, v in self.super_net.named_buffers(prefix=prefix):
                 yield n, v
 
-    def active_named_parameters(self, prefix="", recurse=True):
+    def active_named_members(self, member, prefix="", recurse=True):
         """
-        Get the generator of name-parameter pairs active
+        Get the generator of name-member pairs active
         in this candidate network. Always recursive.
         """
+        # memo, there are potential weight sharing, e.g. when `tie_weight` is True in rnn_super_net,
+        # encoder/decoder share weights. If there is no memo, `sub_named_members` will return
+        # 'decoder.weight' and 'encoder.weight', both refering to the same parameter, whereas
+        # `named_parameters` (with memo) will only return 'encoder.weight'. For possible future
+        # weight sharing, use memo to keep the consistency with the builtin `named_parameters`.
+        memo = set()
         for n, v in self.super_net.sub_named_members(self.genotypes,
                                                      prefix=prefix,
-                                                     member="parameters"):
-            yield n, v
-
-    def active_named_buffers(self, prefix="", recurse=True):
-        """
-        Get the generator of name-buffer pairs active
-        in this candidate network.
-        """
-        for n, v in self.super_net.sub_named_members(self.genotypes,
-                                                     prefix=prefix,
-                                                     member="buffers"):
+                                                     member=member):
+            if v in memo:
+                continue
+            memo.add(v)
             yield n, v
 
 

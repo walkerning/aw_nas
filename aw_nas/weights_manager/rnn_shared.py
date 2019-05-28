@@ -12,11 +12,12 @@ class RNNSharedNet(BaseWeightsManager, nn.Module):
     def __init__(
             self, search_space, device, cell_cls, op_cls,
             num_tokens, num_emb, num_hid,
-            tie_weight, decoder_bias, share_primitive_weights, edge_batch_norm,
+            tie_weight, decoder_bias, share_primitive_weights,
+            batchnorm_edge, batchnorm_out,
             # training
             max_grad_norm,
             # dropout probs
-            dropout_emb, dropout_inp, dropout_hid, dropout_out):
+            dropout_emb, dropout_inp0, dropout_inp, dropout_hid, dropout_out):
         super(RNNSharedNet, self).__init__(search_space, device)
         nn.Module.__init__(self)
 
@@ -31,6 +32,7 @@ class RNNSharedNet(BaseWeightsManager, nn.Module):
         # training configs
         self.max_grad_norm = max_grad_norm
         self.dropout_emb = dropout_emb
+        self.dropout_inp0 = dropout_inp0
         self.dropout_inp = dropout_inp
         self.dropout_hid = dropout_hid
         self.dropout_out = dropout_out
@@ -48,7 +50,8 @@ class RNNSharedNet(BaseWeightsManager, nn.Module):
 
         self.cells = nn.ModuleList([cell_cls(search_space, device, op_cls,
                                              num_emb, num_hid, share_w=share_primitive_weights,
-                                             edge_batch_norm=edge_batch_norm)
+                                             batchnorm_edge=batchnorm_edge,
+                                             batchnorm_out=batchnorm_out)
                                     for _ in range(self._num_layers)])
         self.to(self.device)
 
@@ -84,28 +87,33 @@ class RNNSharedNet(BaseWeightsManager, nn.Module):
 
 class RNNSharedCell(nn.Module):
     def __init__(self, search_space, device, op_cls, num_emb, num_hid,
-                 share_w, edge_batch_norm):
+                 share_w, batchnorm_edge, batchnorm_out):
         super(RNNSharedCell, self).__init__()
 
         self.num_emb = num_emb
         self.num_hid = num_hid
-        self.edge_batch_norm = edge_batch_norm
+        self.batchnorm_edge = batchnorm_edge
+        self.batchnorm_out = batchnorm_out
         self._steps = search_space.num_steps
 
         # the first step, convert input x and previous hidden
         self.w_prev = nn.Linear(num_emb + num_hid, 2 * num_hid)
 
-        if self.edge_batch_norm:
+        if self.batchnorm_edge:
+            # the first bn
             self.bn_prev = nn.BatchNorm1d(num_emb + num_hid, affine=True)
+        if self.batchnorm_out:
+            # the out bn
             self.bn_out = nn.BatchNorm1d(num_hid, affine=True)
 
         # initiatiate op on edges
         self.edges = defaultdict(dict)
+        self.edge_mod = torch.nn.Module() # a stub wrapping module of all the edges
         for from_ in range(self._steps):
             for to_ in range(from_+1, self._steps+1):
                 self.edges[from_][to_] = op_cls(num_hid, search_space.shared_primitives,
-                                                share_w=share_w, batch_norm=edge_batch_norm)
-                self.add_module("f_{}_t_{}".format(from_, to_), self.edges[from_][to_])
+                                                share_w=share_w, batch_norm=batchnorm_edge)
+                self.edge_mod.add_module("f_{}_t_{}".format(from_, to_), self.edges[from_][to_])
 
 
 class RNNSharedOp(nn.Module):

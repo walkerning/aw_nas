@@ -205,6 +205,12 @@ class EmbeddingDropout(torch.nn.Embedding):
                            sparse=self.sparse)
 
 class LockedDropout(nn.Module):
+    """
+    Variational dropout: same dropout mask at each time step. Gal and Ghahramani (2015).
+
+    Ref: https://github.com/salesforce/awd-lstm-lm/
+    """
+
     def __init__(self):
         super(LockedDropout, self).__init__()
 
