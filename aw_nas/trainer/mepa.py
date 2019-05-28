@@ -18,6 +18,7 @@ from torch import nn, optim
 from aw_nas.trainer.base import BaseTrainer
 from aw_nas import utils, assert_rollout_type
 from aw_nas.utils.torch_utils import accuracy
+from aw_nas.utils.exception import expect, ConfigException
 
 __all__ = ["MepaTrainer"]
 
@@ -114,7 +115,8 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
         super(MepaTrainer, self).__init__(controller, weights_manager, dataset, schedule_cfg)
 
         # configurations
-        assert rollout_type in self.supported_rollout_types() # supported rollout types
+        expect(rollout_type in self.supported_rollout_types(), "Unknown `rollout_type`",
+               ConfigException) # supported rollout types
         self._rollout_type = assert_rollout_type(rollout_type)
         self._data_type = self.dataset.data_type()
         self.epochs = epochs
@@ -141,16 +143,18 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
         self.rnn_slowness_reg = rnn_slowness_reg
 
         # do some checks
-        assert derive_queue in {"surrogate", "controller", "mepa"}
-        assert len(data_portion) == 3
+        expect(derive_queue in {"surrogate", "controller", "mepa"},
+               "Unknown `derive_queue`", ConfigException)
+        expect(len(data_portion) == 3,
+               "`data_portion` should have length 3.", ConfigException)
         if self.mepa_surrogate_steps == 0 and self.controller_surrogate_steps == 0:
-            assert data_portion[0] == 0, \
-                "Do not waste data, set the first element of `data_portion` to 0 "\
-                "when there are not surrogate steps."
+            expect(data_portion[0] == 0,
+                   "Do not waste data, set the first element of `data_portion` to 0 "
+                   "when there are not surrogate steps.", ConfigException)
         if mepa_as_surrogate:
-            assert data_portion[0] == 0, \
-                "`mepa_as_surrogate` is set true, will use mepa valid data as surrogate data "\
-                "set the first element of `data_portion` to 0."
+            expect(data_portion[0] == 0, 
+                   "`mepa_as_surrogate` is set true, will use mepa valid data as surrogate data "
+                   "set the first element of `data_portion` to 0.", ConfigException)
 
         # initialize the optimizers
         self.surrogate_optimizer = self._init_optimizer(self.weights_manager.parameters(),
@@ -486,11 +490,18 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
                     self.writer.add_image("genotypes/{}".format(cg_n), image, self.epoch,
                                           dataformats="HWC")
 
-
+        if self._data_type == "sequence":
+            # additional information for language modeling perplexity
+            perp_str = "; Perplexity {:.3f} (mean: {:.3f})".format(
+                self.rnn_reward_c/accs[idx],
+                np.mean(self.rnn_reward_c/np.array(accs))
+            )
+        else:
+            perp_str = ""
         self.logger.info("TEST Epoch %3d: Among %d sampled archs: "
-                         "BEST (in acc): %s %.3f (mean: %.3f); ",
+                         "BEST (in reward): %.3f (mean: %.3f)%s",
                          #"loss: %.2f (mean :%.3f)",
-                         self.epoch, self.derive_samples, self._accperp_name, accs[idx], mean_acc)
+                         self.epoch, self.derive_samples, accs[idx], mean_acc, perp_str)
                          #losses[idx], mean_loss)
         self.logger.info("Saved this arch to %s.\nGenotype: %s",
                          save_path, rollouts[idx].genotype)

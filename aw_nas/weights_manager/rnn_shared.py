@@ -7,6 +7,7 @@ from torch import nn
 
 from aw_nas import ops
 from aw_nas.weights_manager.base import BaseWeightsManager
+from aw_nas.utils.exception import expect, ConfigException
 
 class RNNSharedNet(BaseWeightsManager, nn.Module):
     def __init__(
@@ -43,9 +44,9 @@ class RNNSharedNet(BaseWeightsManager, nn.Module):
         self.lockdrop = ops.LockedDropout()
 
         if tie_weight:
-            assert num_hid == num_emb, \
-                "if `tie_weight` is true, `num_hid` must equal `num_emb` ({} VS {})"\
-                    .format(num_hid, num_emb)
+            expect(num_hid == num_emb,
+                   "if `tie_weight` is true, `num_hid` must equal `num_emb` ({} VS {})"\
+                   .format(num_hid, num_emb), ConfigException)
             self.decoder.weight = self.encoder.weight
 
         self.cells = nn.ModuleList([cell_cls(search_space, device, op_cls,

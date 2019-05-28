@@ -11,10 +11,11 @@ import numpy as np
 
 from aw_nas import Component
 from aw_nas.utils import RegistryMeta, softmax
+from aw_nas.utils.exception import expect, ConfigException
 
 def assert_rollout_type(type_name):
-    assert type_name in BaseRollout.all_classes_(), \
-        "rollout type {} not registered yet".format(type_name)
+    expect(type_name in BaseRollout.all_classes_(),
+           "rollout type {} not registered yet".format(type_name))
     return type_name
 
 @six.add_metaclass(RegistryMeta)
@@ -183,9 +184,6 @@ class DifferentiableRollout(BaseRollout):
                                                            cn=self.candidate_net,
                                                            perf=self.perf)
 
-class SearchSpaceException(Exception):
-    pass
-
 
 class SearchSpace(Component):
     REGISTRY = "search_space"
@@ -295,25 +293,26 @@ class CNNSearchSpace(SearchSpace):
         self.num_layers = num_layers
 
         # cell layout
+        expect(self.num_cell_groups == 2 or cell_layout is not None,
+               "`cell_layout` need to be explicitly specified when `num_cell_groups` != 2.",
+               ConfigException)
         if cell_layout is not None:
-            assert len(cell_layout) == self.num_layers
-            assert np.max(cell_layout) == self.num_cell_groups - 1
+            expect(len(cell_layout) == self.num_layers,
+                   "Length of `cell_layout` should equal `num_layers`")
+            expect(np.max(cell_layout) == self.num_cell_groups - 1,
+                   "Max of elements of `cell_layout` should equal `num_cell_groups-1`")
             self.cell_layout = cell_layout
         elif self.num_cell_groups == 2:
             # by default: cell 0: normal cel, cell 1: reduce cell
             self.cell_layout = [0] * self.num_layers
             self.cell_layout[self.num_layers//3] = 1
             self.cell_layout[self.num_layers//3 * 2] = 1
-        else:
-            raise SearchSpaceException("`cell_layout` need to be explicitly "
-                                       "specified when `num_cell_groups` != 2.")
 
+        expect(self.num_cell_groups == 2 or reduce_cell_groups is not None,
+               "`reduce_cell_groups` need to be explicitly specified when `num_cell_groups` !=  2.",
+               ConfigException)
         self.reduce_cell_groups = reduce_cell_groups
         if self.reduce_cell_groups is None:
-            if self.num_cell_groups != 2:
-                raise SearchSpaceException("`reduce_cell_groups` need to be explicitly "
-                                           "specified when `num_cell_groups` !=  2.")
-        else:
             # by default, 2 cell groups, the cell group 1 is the reduce cell group
             self.reduce_cell_groups = (1,)
 
@@ -342,7 +341,7 @@ class CNNSearchSpace(SearchSpace):
         Get a human readable description of an discrete architecture.
         """
 
-        assert len(arch) == self.num_cell_groups
+        expect(len(arch) == self.num_cell_groups)
 
         genotype_list = []
         for cg_arch in arch:
@@ -364,7 +363,7 @@ class CNNSearchSpace(SearchSpace):
         from graphviz import Digraph
 
         if edge_labels is not None:
-            assert len(edge_labels) == len(genotype)
+            expect(len(edge_labels) == len(genotype))
 
         graph = Digraph(
             format="png",
@@ -483,7 +482,7 @@ class RNNSearchSpace(SearchSpace):
         Get a human readable description of an discrete architecture.
         """
 
-        assert len(arch) == self.num_cell_groups # =1
+        expect(len(arch) == self.num_cell_groups) # =1
 
         genotype_list = []
         concat_list = []
@@ -512,9 +511,9 @@ class RNNSearchSpace(SearchSpace):
 
     def plot_arch(self, genotypes, filename, label="", edge_labels=None): #pylint: disable=arguments-differ
         """Plot an architecture to files on disk"""
-        assert len(genotypes) == 2 and self.num_cell_groups == 1, \
-            "Current RNN search space only support one cell group"
-        assert self.num_init_nodes == 1, "Current RNN search space only support one init node"
+        expect(len(genotypes) == 2 and self.num_cell_groups == 1,
+               "Current RNN search space only support one cell group")
+        expect(self.num_init_nodes == 1, "Current RNN search space only support one init node")
 
         # only one cell group now!
         geno_, concat_ = genotypes

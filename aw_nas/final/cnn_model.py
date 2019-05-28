@@ -11,6 +11,7 @@ from torch import nn
 
 from aw_nas import ops, utils
 from aw_nas.final.base import FinalModel
+from aw_nas.utils.exception import expect
 
 class AuxiliaryHead(nn.Module):
     def __init__(self, C_in, num_classes):
@@ -67,10 +68,10 @@ class CNNGenotypeModel(FinalModel):
         self._reduce_cgs = self.search_space.reduce_cell_groups
         self._num_layers = self.search_space.num_layers
         self._out_multiplier = self.search_space.num_steps
-        assert len(self.genotypes) == self.search_space.num_cell_groups,\
-            ("Config genotype cell group number({}) "
-             "does not match search_space cell group number({})")\
-                .format(len(self.genotypes), self.search_space.num_cell_groups)
+        expect(len(self.genotypes) == self.search_space.num_cell_groups,
+               ("Config genotype cell group number({}) "
+                "does not match search_space cell group number({})")\
+               .format(len(self.genotypes), self.search_space.num_cell_groups))
 
         ## initialize sub modules
         c_stem = self.stem_multiplier * self.init_channels

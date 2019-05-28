@@ -7,6 +7,7 @@ from collections import Counter
 import torch
 
 from aw_nas.dataset.base import BaseDataset
+from aw_nas.utils.exception import expect
 
 class Dictionary(object):
     def __init__(self):
@@ -37,7 +38,7 @@ class Corpus(object):
 
     def tokenize(self, path):
         """Tokenizes a text file."""
-        assert os.path.exists(path)
+        expect(os.path.exists(path))
         # Add words to the dictionary
         with open(path, "r", encoding="utf-8") as f:
             tokens = 0
@@ -68,7 +69,7 @@ class SentenceCorpus(object):
 
     def tokenize(self, path):
         """Tokenizes a text file."""
-        assert os.path.exists(path)
+        expect(os.path.exists(path))
         # Add words to the dictionary
         with open(path, "r", encoding="utf-8") as f:
             tokens = 0

@@ -13,6 +13,7 @@ from aw_nas import utils
 from aw_nas.utils import RegistryMeta
 from aw_nas.utils import logger as _logger
 from aw_nas.utils.vis_utils import WrapWriter
+from aw_nas.utils.exception import expect, ConfigException
 
 # Make yaml.safe_dump support OrderedDict
 yaml.add_representer(OrderedDict,
@@ -32,10 +33,10 @@ class Component(object):
         if schedule_cfg is not None:
             self.schedule_cfg = sorted(self.schedule_cfg.items()) # convert to list of tuples
             for name, cfg in self.schedule_cfg:
-                assert name in self.SCHEDULABLE_ATTRS,\
-                    "{} not in the schedulable attributes of {}: {}".format(
-                        name, self.__class__.__name__, self.SCHEDULABLE_ATTRS
-                    )
+                expect(name in self.SCHEDULABLE_ATTRS,
+                       "{} not in the schedulable attributes of {}: {}".format(
+                           name, self.__class__.__name__, self.SCHEDULABLE_ATTRS
+                       ), ConfigException)
                 utils.check_schedule_cfg(cfg)
 
         self.writer = WrapWriter(None) # a none writer
@@ -45,7 +46,7 @@ class Component(object):
         self.writer = writer
 
     def on_epoch_start(self, epoch):
-        assert epoch >= 1, "Epoch should >= 1"
+        expect(epoch >= 1, "Epoch should >= 1")
         self.epoch = epoch
         if self.schedule_cfg:
             new_values = []

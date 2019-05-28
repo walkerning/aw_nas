@@ -21,6 +21,7 @@ from aw_nas import utils, BaseRollout
 from aw_nas.utils.vis_utils import WrapWriter
 from aw_nas.utils import RegistryMeta
 from aw_nas.utils import logger as _logger
+from aw_nas.utils.exception import expect
 
 # patch click.option to show the default values
 click.option = functools.partial(click.option, show_default=True)
@@ -155,16 +156,16 @@ def search(cfg_file, gpu, seed, load, save_every, train_dir, vis_dir, develop):
         weights_manager = _init_component(cfg, "weights_manager",
                                           search_space=search_space, device=device)
     # check weights_manager support for data type
-    assert _data_type in weights_manager.supported_data_types()
+    expect(_data_type in weights_manager.supported_data_types())
 
     controller = _init_component(cfg, "controller",
                                  search_space=search_space, device=device)
 
     # check type of rollout match
-    assert weights_manager.rollout_type() == controller.rollout_type(), \
-        ("The type of the rollouts produced/received by the "
-         "controller/weights_manager should match! ({} VS. {})")\
-            .format(weights_manager.rollout_type(), controller.rollout_type())
+    expect(weights_manager.rollout_type() == controller.rollout_type(),
+           ("The type of the rollouts produced/received by the "
+            "controller/weights_manager should match! ({} VS. {})")\
+           .format(weights_manager.rollout_type(), controller.rollout_type()))
 
     # initialize, setup, run trainer
     LOGGER.info("Initializing trainer and starting the search.")
@@ -172,12 +173,12 @@ def search(cfg_file, gpu, seed, load, save_every, train_dir, vis_dir, develop):
                               controller=controller, dataset=whole_dataset)
 
     # check trainer support for data type
-    assert _data_type in trainer.supported_data_types()
+    expect(_data_type in trainer.supported_data_types())
     # check type of rollout match
-    assert controller.rollout_type() in trainer.supported_rollout_types(), \
-        ("The type of the rollouts handled by the controller/weights_manager"
-         " is not supported by the trainer! ({} VS. {})")\
-            .format(controller.rollout_type(), trainer.supported_rollout_types())
+    expect(controller.rollout_type() in trainer.supported_rollout_types(),
+           ("The type of the rollouts handled by the controller/weights_manager"
+            " is not supported by the trainer! ({} VS. {})")\
+           .format(controller.rollout_type(), trainer.supported_rollout_types()))
 
     trainer.setup(load, save_every, train_dir, writer=writer)
     trainer.train()
@@ -252,7 +253,7 @@ def train(gpus, seed, cfg_file, load, save_every, train_dir):
                                 search_space=search_space,
                                 device=device)
     # check model support for data type
-    assert _data_type in model.supported_data_types()
+    expect(_data_type in model.supported_data_types())
 
     trainer = _init_component(cfg, "final_trainer",
                               dataset=whole_dataset,
@@ -260,7 +261,7 @@ def train(gpus, seed, cfg_file, load, save_every, train_dir):
                               device=device,
                               gpus=gpu_list)
     # check trainer support for data type
-    assert _data_type in trainer.supported_data_types()
+    expect(_data_type in trainer.supported_data_types())
 
     # start training
     LOGGER.info("Start training.")

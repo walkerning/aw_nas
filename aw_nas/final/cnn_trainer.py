@@ -8,6 +8,7 @@ from torch import nn
 
 from aw_nas import utils
 from aw_nas.final.base import FinalTrainer
+from aw_nas.utils.exception import expect
 
 def _warmup_update_lr(optimizer, epoch, init_lr, warmup_epochs):
     """
@@ -87,7 +88,7 @@ class CNNFinalTrainer(FinalTrainer):
         self.report_every = report_every
 
         if self.save_every is not None:
-            assert self.train_dir is not None
+            expect(self.train_dir is not None)
 
     def save(self, path):
         torch.save(self.model.state_dict(), path)

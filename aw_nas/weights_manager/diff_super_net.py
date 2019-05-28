@@ -1,5 +1,5 @@
 """
-Supernet for ifferentiable rollouts.
+Supernet for differentiable rollouts.
 """
 
 import contextlib

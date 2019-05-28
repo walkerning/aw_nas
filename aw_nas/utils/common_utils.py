@@ -14,6 +14,7 @@ import scipy
 import scipy.signal
 
 from aw_nas.utils.registry import RegistryMeta
+from aw_nas.utils.exception import expect, ConfigException
 
 @contextmanager
 def nullcontext():
@@ -102,13 +103,13 @@ def get_cfg_wrapper(cfg, key):
 
 def _assert_keys(dct, mandatory_keys, possible_keys, name):
     if mandatory_keys:
-        assert set(mandatory_keys).issubset(dct.keys()),\
-            "{} schedule cfg must have keys: ({})".format(name, ", ".join(mandatory_keys))
+        expect(set(mandatory_keys).issubset(dct.keys()),
+               "{} schedule cfg must have keys: ({})".format(name, ", ".join(mandatory_keys)))
     if possible_keys:
         addi_keys = set(dct.keys()).difference(possible_keys)
-        assert not addi_keys,\
-            "{} schedule cfg cannot have keys: ({}); all possible keys: ({})"\
-                .format(name, ", ".join(addi_keys), ", ".join(possible_keys))
+        expect(not addi_keys,
+               "{} schedule cfg cannot have keys: ({}); all possible keys: ({})"\
+               .format(name, ", ".join(addi_keys), ", ".join(possible_keys)))
 
 _SUPPORTED_TYPES = {"value", "mul", "add"}
 def check_schedule_cfg(schedule):
@@ -120,24 +121,30 @@ def check_schedule_cfg(schedule):
            add  : [boundary / every], step, start, [optional: min, max]
            value: boundary, value
     """
-    assert "type" in schedule,\
-        "Schedule config must have `type` specified: one in "+", ".join(_SUPPORTED_TYPES)
+    expect("type" in schedule,
+           "Schedule config must have `type` specified: one in "+", ".join(_SUPPORTED_TYPES),
+           ConfigException)
     type_ = schedule["type"]
-    assert type_ in _SUPPORTED_TYPES, "Supported schedule config type: "+", ".join(_SUPPORTED_TYPES)
+    expect(type_ in _SUPPORTED_TYPES,
+           "Supported schedule config type: "+", ".join(_SUPPORTED_TYPES),
+           ConfigException)
 
     if type_ == "value":
         _assert_keys(schedule, ["value", "boundary"], None, "value")
-        assert len(schedule["value"]) == len(schedule["boundary"]),\
-            "value schedule cfg `value` and `boundary` should be of the same length."
-        assert schedule["boundary"][0] == 1,\
-            "value schedule cfg must have `boundary` config start from 1."
+        expect(len(schedule["value"]) == len(schedule["boundary"]),
+               "value schedule cfg `value` and `boundary` should be of the same length.",
+               ConfigException)
+        expect(schedule["boundary"][0] == 1,
+               "value schedule cfg must have `boundary` config start from 1.", ConfigException)
     else: # mul/add
         _assert_keys(schedule, ["step", "start"],
                      ["type", "step", "start", "boundary", "every", "min", "max"], "value")
-        assert "boundary" in schedule or "every" in schedule,\
-            "{} schedule cfg must have one of `boundary` and `every` key existed.".format(type_)
-        assert not ("boundary" in schedule and "every" in schedule),\
-            "{} shcedule cfg cannot have `boundary` and `every` key in the mean time.".format(type_)
+        expect("boundary" in schedule or "every" in schedule,
+               "{} schedule cfg must have one of `boundary` and `every` key existed.".format(type_),
+               ConfigException)
+        expect(not ("boundary" in schedule and "every" in schedule),
+               "{} shcedule cfg cannot have `boundary` and `every` key in the mean time."\
+               .format(type_), ConfigException)
 
 def get_schedule_value(schedule, epoch):
     """

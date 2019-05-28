@@ -27,12 +27,6 @@ class CosineWithRestarts(_LRScheduler):  # pylint: disable=protected-access
                  eta_min=0.,
                  last_epoch=-1,
                  factor=1.):
-        assert t_0 > 0
-        assert eta_min >= 0
-        # if t_max == 1 and factor == 1:
-        #     logger.warning("Cosine annealing scheduler will have no effect on the learning "
-        #                    "rate since T_max = 1 and factor = 1.")
-
         self.t_max = t_0
         self.eta_min = eta_min
         self.factor = factor

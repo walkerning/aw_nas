@@ -11,7 +11,7 @@ from torch.utils.data.sampler import SubsetRandomSampler
 
 from aw_nas import Component
 from aw_nas import utils
-
+from aw_nas.utils.exception import expect
 
 class BaseTrainer(Component):
     REGISTRY = "trainer"
@@ -115,7 +115,7 @@ class BaseTrainer(Component):
             all_components = ("controller", "weights_manager", "trainer")
             load_components = all_components\
                               if load_components is None else load_components
-            assert set(load_components).issubset(all_components)
+            expect(set(load_components).issubset(all_components), "Invalid `load_components`")
 
             if "controller" in load_components:
                 path = os.path.join(load, "controller")
@@ -145,7 +145,7 @@ class BaseTrainer(Component):
         Example::
         @TODO: doc
         """
-        assert data_type in {"image", "sequence"}
+        expect(data_type in {"image", "sequence"})
 
         dset_splits = splits
         dset_sizes = {n: len(d) for n, d in six.iteritems(dset_splits)}
@@ -174,7 +174,7 @@ class BaseTrainer(Component):
                 queue = utils.get_inf_iterator(torch.utils.data.DataLoader(
                     dset_splits[split], **kwargs), callback)
             else: # data_type == "sequence"
-                assert "bptt_steps" in cfg
+                expect("bptt_steps" in cfg)
                 bptt_steps = cfg["bptt_steps"]
                 dataset = utils.SimpleDataset(
                     utils.batchify_sentences(
