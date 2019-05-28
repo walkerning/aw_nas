@@ -78,6 +78,20 @@ class SharedNet(BaseWeightsManager, nn.Module):
     def _is_reduce(self, layer_idx):
         return self._cell_layout[layer_idx] in self._reduce_cgs
 
+    def forward(self, inputs, genotypes, **kwargs): #pylint: disable=arguments-differ
+        stemed = self.stem(inputs)
+        states = [stemed] * self._num_init
+
+        for cg_idx, cell in zip(self._cell_layout, self.cells):
+            genotype = genotypes[cg_idx]
+            states.append(cell(states, genotype, **kwargs))
+            states = states[1:]
+
+        out = self.global_pooling(states[-1])
+        out = self.dropout(out)
+        logits = self.classifier(out.view(out.size(0), -1))
+        return logits
+
     def step(self, gradients, optimizer):
         self.zero_grad() # clear all gradients
         named_params = dict(self.named_parameters())

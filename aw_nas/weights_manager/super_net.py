@@ -160,20 +160,6 @@ class SuperNet(SharedNet):
         self.candidate_cache_named_members = candidate_cache_named_members
         self.candidate_virtual_parameter_only = candidate_virtual_parameter_only
 
-    def forward(self, inputs, genotypes): #pylint: disable=arguments-differ
-        stemed = self.stem(inputs)
-        states = [stemed] * self._num_init
-
-        for cg_idx, cell in zip(self._cell_layout, self.cells):
-            genotype = genotypes[cg_idx]
-            states.append(cell(states, genotype))
-            states = states[1:]
-
-        out = self.global_pooling(states[-1])
-        out = self.dropout(out)
-        logits = self.classifier(out.view(out.size(0), -1))
-        return logits
-
     def sub_named_members(self, genotypes,
                           prefix="", member="parameters"):
         prefix = prefix + ("." if prefix else "")

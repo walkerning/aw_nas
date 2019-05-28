@@ -80,18 +80,6 @@ class DiffSuperNet(SharedNet):
         self.candidate_virtual_parameter_only = candidate_virtual_parameter_only
 
     # ---- APIs ----
-    def forward(self, inputs, archs, detach_arch=True): #pylint: disable=arguments-differ
-        states = [self.stem(inputs) for _ in range(self._num_init)]
-        for cg_idx, cell in zip(self._cell_layout, self.cells):
-            arch = archs[cg_idx]
-            states.append(cell(states, arch, detach_arch=detach_arch))
-            states = states[1:]
-
-        out = self.global_pooling(states[-1])
-        out = self.dropout(out)
-        logits = self.classifier(out.view(out.size(0), -1))
-        return logits
-
     def assemble_candidate(self, rollout):
         return DiffSubCandidateNet(self, rollout,
                                    virtual_parameter_only=self.candidate_virtual_parameter_only)
@@ -127,6 +115,6 @@ class DiffSharedOp(SharedOp):
         for w, op in zip(weights, self.p_ops):
             if detach_arch and w.item() == 0:
                 continue
-            act = op(x).detach() if w.item() == 0 else op(x)
+            act = op(x).detach_() if w.item() == 0 else op(x)
             out_act += w * act
         return out_act

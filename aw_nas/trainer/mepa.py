@@ -114,11 +114,20 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
         """
         super(MepaTrainer, self).__init__(controller, weights_manager, dataset, schedule_cfg)
 
-        # configurations
+        # check rollout type
         expect(rollout_type in self.supported_rollout_types(), "Unknown `rollout_type`",
                ConfigException) # supported rollout types
         self._rollout_type = assert_rollout_type(rollout_type)
+        expect(self._rollout_type == \
+               self.controller.rollout_type() == self.weights_manager.rollout_type(),
+               "the rollout type of trainer/controller/weights_manager must match, "
+               "check the configuration. ({}/{}/{})".format(
+                   self._rollout_type,
+                   self.controller.rollout_type(),
+                   self.weights_manager.rollout_type()), ConfigException)
         self._data_type = self.dataset.data_type()
+
+        # configurations
         self.epochs = epochs
         self.batch_size = batch_size
         self.test_every = test_every
@@ -152,7 +161,7 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
                    "Do not waste data, set the first element of `data_portion` to 0 "
                    "when there are not surrogate steps.", ConfigException)
         if mepa_as_surrogate:
-            expect(data_portion[0] == 0, 
+            expect(data_portion[0] == 0,
                    "`mepa_as_surrogate` is set true, will use mepa valid data as surrogate data "
                    "set the first element of `data_portion` to 0.", ConfigException)
 
@@ -177,10 +186,16 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
                                                 mepa_as_surrogate, derive_queue)
 
         self.mepa_steps = len(self.mepa_queue)
+        expect(self.interleave_controller_every is None or self.controller_steps is None,
+               "`controller_steps` must not be given in interleave mode", ConfigException)
         if self.controller_steps is None:
-            # if controller_steps is not explicitly given
-            # assume every epoch consume one pass of the controller queue
-            self.controller_steps = len(self.controller_queue)
+            if self.interleave_controller_every is None:
+                # if controller_steps is not explicitly given, and not in interleave mode,
+                # assume every epoch consume one pass of the controller queue
+                self.controller_steps = len(self.controller_queue)
+            else:
+                # in interleave mode, `controller_steps=mepa_steps / interleave_controller-every`
+                self.controller_steps = self.mepa_steps // self.interleave_controller_every
         self.derive_steps = len(self.derive_queue)
 
         # states and other help attributes

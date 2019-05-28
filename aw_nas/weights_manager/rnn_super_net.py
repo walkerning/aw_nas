@@ -8,8 +8,7 @@ Discrete shared weights RNN super net.
 import six
 import torch
 
-from aw_nas import utils, assert_rollout_type
-
+from aw_nas import assert_rollout_type
 from aw_nas.weights_manager.rnn_shared import RNNSharedNet, RNNSharedCell, RNNSharedOp
 from aw_nas.weights_manager import SubCandidateNet # candidateNet implementation can be reused
 
@@ -59,59 +58,6 @@ class RNNSuperNet(RNNSharedNet):
         self.candidate_cache_named_members = candidate_cache_named_members
         self.candidate_virtual_parameter_only = candidate_virtual_parameter_only
 
-    def forward(self, inputs, genotypes, hiddens): #pylint: disable=arguments-differ
-        """
-        Returns:
-            logits: Tensor(bptt_steps, batch_size, num_tokens)
-            raw_outs: Tensor(bptt_steps, batch_size, num_hid)
-            droped_outs: Tensor(bptt_steps, batch_size, num_hid)
-            next_hiddens: List(Tensor(num_hid))[num_layers]
-        """
-        batch_size = inputs.size(1)
-        time_steps = inputs.size(0)
-        # embedding the inputs
-        emb = self.encoder(inputs)
-        emb = self.lockdrop(emb, self.dropout_inp0)
-
-        # variational dropout masks for inputs/hidden for every layer
-        if self.training:
-            x_masks = [utils.mask2d(batch_size, self.num_emb,
-                                    keep_prob=1.-self.dropout_inp, device=inputs.device)
-                       for _ in range(self._num_layers)]
-            h_masks = [utils.mask2d(batch_size, self.num_hid,
-                                    keep_prob=1.-self.dropout_hid, device=inputs.device)
-                       for _ in range(self._num_layers)]
-        else:
-            x_masks = h_masks = [None] * self._num_layers
-
-        all_outs = []
-        for t in range(time_steps):
-            next_hiddens = []
-            for i_layer in range(self._num_layers):
-                if i_layer == 0:
-                    layer_inputs = emb[t]
-                else:
-                    layer_inputs = next_hiddens[-1]
-                next_hidden = self.cells[i_layer](layer_inputs, hiddens[i_layer],
-                                                  x_masks[i_layer], h_masks[i_layer], genotypes)
-                next_hiddens.append(next_hidden)
-            # output of this time step
-            all_outs.append(next_hiddens[-1])
-            # new hiddens
-            hiddens = next_hiddens
-
-        raw_outs = torch.stack(all_outs)
-        # dropout output
-        droped_outs = self.lockdrop(raw_outs, self.dropout_out)
-
-        # decoder to logits
-        logits = self.decoder(droped_outs.view(-1, self.num_hid))\
-                     .view(-1, batch_size, self.num_tokens)
-
-        # next hidden states: list of size num_layers, tensors of size (num_hid)
-        next_hiddens = [next_hid.detach_() for next_hid in next_hiddens]
-        return logits, raw_outs, droped_outs, next_hiddens
-
     # ---- APIs ----
     def assemble_candidate(self, rollout):
         return RNNSubCandidateNet(self, rollout,
@@ -146,21 +92,6 @@ class RNNSuperNet(RNNSharedNet):
 
 
 class RNNDiscreteSharedCell(RNNSharedCell):
-    def _compute_init_state(self, x, h, x_mask, h_mask):
-        if self.training:
-            xh_prev = torch.cat([x * x_mask, h * h_mask], dim=-1)
-        else:
-            xh_prev = torch.cat([x, h], dim=-1)
-        xh_prev = self.w_prev(xh_prev)
-        if self.batchnorm_edge:
-            xh_prev = self.bn_prev(xh_prev)
-
-        c0, h0 = torch.split(xh_prev, self.num_hid, dim=-1)
-        c0 = c0.sigmoid()
-        h0 = h0.tanh()
-        s0 = h + c0 * (h0 - h)
-        return s0
-
     def forward(self, inputs, hidden, x_mask, h_mask, genotypes): #pylint: disable=arguments-differ
         """
         Cell forward, forward for one timestep.
