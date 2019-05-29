@@ -27,20 +27,23 @@ class DiffController(BaseController, nn.Module):
     ]
 
     def __init__(self, search_space, device,
+                 use_prob=False,
                  gumbel_hard=False, gumbel_temperature=1.0,
                  entropy_coeff=0.01, max_grad_norm=None,
                  schedule_cfg=None):
         """
         Args:
+            use_prob (bool): If true, use the probability directly instead of relaxed sampling.
+                If false, use gumbel sampling. Default: false.
             gumbel_hard (bool): If true, the soft relaxed vector calculated by gumbel softmax
                 in the forward pass will be argmax to a one-hot vector. The gradients are straightly
                 passed through argmax operation. This will cause discrepancy of the forward and
-                backward pass, but allow the samples to be sparse.
+                backward pass, but allow the samples to be sparse. Also applied to `use_prob==True`.
             gumbel_temperature (float): The temperature of gumbel softmax. As the temperature gets
                 smaller, when used with `gumbel_hard==True`, the discrepancy of the forward/backward
                 pass gets smaller; When used with `gumbel_hard==False`, the samples become more
                 sparse(smaller bias), but the variance of the gradient estimation using samples
-                becoming larger.
+                becoming larger. Also applied to `use_prob==True`
         """
         super(DiffController, self).__init__(search_space, schedule_cfg=schedule_cfg)
         nn.Module.__init__(self)
@@ -48,6 +51,7 @@ class DiffController(BaseController, nn.Module):
         self.device = device
 
         # sampling
+        self.use_prob = use_prob
         self.gumbel_hard = gumbel_hard
         self.gumbel_temperature = gumbel_temperature
 
@@ -81,7 +85,10 @@ class DiffController(BaseController, nn.Module):
             sampled_list = []
             logits_list = []
             for alpha in self.cg_alphas:
-                sampled, _ = utils.gumbel_softmax(alpha, self.gumbel_temperature, hard=False)
+                if self.use_prob:
+                    sampled = F.softmax(alpha / self.gumbel_temperature, dim=-1)
+                else:
+                    sampled, _ = utils.gumbel_softmax(alpha, self.gumbel_temperature, hard=False)
                 if self.gumbel_hard:
                     arch = utils.straight_through(sampled)
                 else:

@@ -5,6 +5,10 @@ import pytest
 
 
 # ---- Test super_net ----
+def _cnn_data(device="cuda"):
+    return (torch.rand(2, 3, 28, 28, dtype=torch.float, device=device),
+            torch.tensor([0, 1]).long().to(device))
+
 def _supernet_sample_cand(net):
     from aw_nas.common import Rollout
     ss = net.search_space
@@ -50,7 +54,7 @@ def test_supernet_forward(super_net):
     # test forward
     cand_net = _supernet_sample_cand(super_net)
 
-    data = (torch.tensor(np.random.rand(1, 3, 28, 28)).float(), torch.tensor([0]).long()) #pylint: disable=not-callable
+    data = _cnn_data()
 
     logits = cand_net.forward_data(data[0], mode="eval")
     assert logits.shape[-1] == 10
@@ -60,7 +64,7 @@ def test_supernet_forward(super_net):
 def test_supernet_candidate_gradient_virtual(test_id, super_net):
     lr = 0.1
     EPS = 1e-5
-    data = (torch.tensor(np.random.rand(1, 3, 28, 28)).float(), torch.tensor([0]).long()) #pylint: disable=not-callable
+    data = _cnn_data()
     net = super_net
     cand_net = _supernet_sample_cand(net)
     c_params = dict(cand_net.named_parameters())
@@ -80,7 +84,7 @@ def test_supernet_candidate_gradient_virtual(test_id, super_net):
         optimizer.step()
         for n, grad in grads:
             # this check is not very robust...
-            assert (w_prev[n] - (grad + grads_2[n]) * lr - c_params[n]).abs().sum().item() < EPS
+            assert (w_prev[n] - (grad + grads_2[n]) * lr - c_params[n]).abs().mean().item() < EPS
 
         # sometimes, some buffer just don't updated... so here coomment out
         # for n in buffer_prev:
@@ -88,9 +92,9 @@ def test_supernet_candidate_gradient_virtual(test_id, super_net):
         #     assert (buffer_prev[n] - c_buffers[n]).abs().sum().item() < EPS
 
     for n in c_params:
-        assert (w_prev[n] - c_params[n]).abs().sum().item() < EPS
+        assert (w_prev[n] - c_params[n]).abs().mean().item() < EPS
     for n in c_buffers:
-        assert (buffer_prev[n] - c_buffers[n]).abs().sum().item() < EPS
+        assert (buffer_prev[n] - c_buffers[n]).abs().float().mean().item() < EPS
 
 # ---- End test super_net ----
 
@@ -105,7 +109,7 @@ def test_diff_supernet_forward(diff_super_net):
     rollout = controller.sample(1)[0]
     cand_net = diff_super_net.assemble_candidate(rollout)
 
-    data = (torch.tensor(np.random.rand(2, 3, 28, 28)).float(), torch.tensor([0, 1]).long()) #pylint: disable=not-callable
+    data = _cnn_data()
     logits = cand_net.forward_data(data[0])
     assert tuple(logits.shape) == (2, 10)
 
@@ -120,7 +124,7 @@ def test_diff_supernet_to_arch(diff_super_net):
     rollout = controller.sample(1)[0]
     cand_net = diff_super_net.assemble_candidate(rollout)
 
-    data = (torch.tensor(np.random.rand(2, 3, 28, 28)).float(), torch.tensor([0, 1]).long()) #pylint: disable=not-callable
+    data = _cnn_data() #pylint: disable=not-callable
 
     # default detach_arch=True, no grad w.r.t the controller param
     logits = cand_net.forward_data(data[0])

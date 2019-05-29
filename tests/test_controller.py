@@ -1,3 +1,4 @@
+
 from aw_nas.common import get_search_space
 import pytest
 
@@ -49,9 +50,6 @@ def test_controller_network(case):
 
 # --- test controller differentiable ----
 def test_diff_controller():
-    import torch
-    import numpy as np
-
     from aw_nas.controller import DiffController
 
     search_space = get_search_space(cls="cnn")
@@ -60,4 +58,19 @@ def test_diff_controller():
 
     assert controller.cg_alphas[0].shape == (14, len(search_space.shared_primitives))
     rollouts = controller.sample(3)
+    assert isinstance(rollouts[0].genotype, search_space.genotype_type)
+
+def test_diff_controller_use_prob():
+    from aw_nas import utils
+    import numpy as np
+    from aw_nas.controller import DiffController
+
+    search_space = get_search_space(cls="cnn")
+    device = "cuda"
+    controller = DiffController(search_space, device, use_prob=True)
+
+    assert controller.cg_alphas[0].shape == (14, len(search_space.shared_primitives))
+    rollouts = controller.sample(3)
+    assert np.abs((utils.get_numpy(rollouts[0].sampled[0]) - utils.softmax(rollouts[0].logits[0])))\
+             .mean() < 1e-6
     assert isinstance(rollouts[0].genotype, search_space.genotype_type)
