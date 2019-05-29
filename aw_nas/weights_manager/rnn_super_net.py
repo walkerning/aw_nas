@@ -5,10 +5,11 @@ Discrete shared weights RNN super net.
 
 #pylint: disable=invalid-name
 
+import itertools
 import six
 import torch
 
-from aw_nas import assert_rollout_type
+from aw_nas import assert_rollout_type, utils
 from aw_nas.weights_manager.rnn_shared import RNNSharedNet, RNNSharedCell, RNNSharedOp
 from aw_nas.weights_manager import SubCandidateNet # candidateNet implementation can be reused
 
@@ -35,7 +36,8 @@ class RNNSuperNet(RNNSharedNet):
             self, search_space, device,
             num_tokens, num_emb=300, num_hid=300,
             tie_weight=True, decoder_bias=True,
-            share_primitive_weights=False, batchnorm_edge=False, batchnorm_out=True,
+            share_primitive_weights=False, share_from_weights=False,
+            batchnorm_edge=False, batchnorm_out=True,
             # training
             max_grad_norm=5.0,
             # dropout probs
@@ -47,7 +49,7 @@ class RNNSuperNet(RNNSharedNet):
             cell_cls=RNNDiscreteSharedCell, op_cls=RNNDiscreteSharedOp,
             num_tokens=num_tokens, num_emb=num_emb, num_hid=num_hid,
             tie_weight=tie_weight, decoder_bias=decoder_bias,
-            share_primitive_weights=share_primitive_weights,
+            share_primitive_weights=share_primitive_weights, share_from_weights=share_from_weights,
             batchnorm_edge=batchnorm_edge, batchnorm_out=batchnorm_out,
             max_grad_norm=max_grad_norm,
             dropout_emb=dropout_emb, dropout_inp0=dropout_inp0, dropout_inp=dropout_inp,
@@ -100,13 +102,21 @@ class RNNDiscreteSharedCell(RNNSharedCell):
 
         s0 = self._compute_init_state(inputs, hidden, x_mask, h_mask)
         states = {0: s0}
+        chs = {}
 
         for op_type, from_, to_ in genotype:
             s_prev = states[from_]
             if self.training:
                 s_prev = s_prev * h_mask
 
-            out = self.edges[from_][to_](s_prev, op_type)
+            if self.share_from_w:
+                if to_ in chs:
+                    ch = chs[to_]
+                else:
+                    ch = chs[to_] = s_prev.view(-1, self.num_hid).mm(self.step_weights[to_-1])
+            else:
+                ch = s_prev
+            out = self.edges[from_][to_](ch, op_type, s_prev)
 
             if to_ in states:
                 states[to_] = states[to_] + out
@@ -143,12 +153,9 @@ class RNNDiscreteSharedCell(RNNSharedCell):
 
 
 class RNNDiscreteSharedOp(RNNSharedOp):
-    def forward(self, s_prev, op_type): #pylint: disable=arguments-differ
+    def forward(self, inputs, op_type, s_prev): #pylint: disable=arguments-differ
         op_ind = self.primitives.index(op_type)
-        if self.share_w:
-            ch = self.W(s_prev)
-        else:
-            ch = self.Ws[op_ind](s_prev)
+        ch = (self.W if self.share_w else self.Ws[op_ind])(inputs)
         if self.batch_norm:
             ch = self.bn(ch)
         c, h = torch.split(ch, self.num_hid, dim=-1)
@@ -159,15 +166,15 @@ class RNNDiscreteSharedOp(RNNSharedOp):
 
     def sub_named_members(self, op_type,
                           prefix="", member="parameters"):
-        prefix = prefix + ("." if prefix else "")
         # the common modules that will be forwarded by every candidate
-        for mod_name, mod in six.iteritems(self._modules):
-            if mod_name in {"Ws", "p_ops"}:
-                continue
-            _func = getattr(mod, "named_" + member)
-            for n, v in _func(prefix=prefix+mod_name):
-                yield n, v
+        return itertools.chain(utils.submodule_named_members(
+            self, member, prefix + ("." if prefix else ""),
+            not_include=("Ws", "p_ops")
+        ), self._sub_named_members(op_type, prefix, member))
 
+    def _sub_named_members(self, op_type,
+                           prefix="", member="parameters"):
+        prefix = prefix + ("." if prefix else "")
         op_ind = self.primitives.index(op_type)
         if not self.share_w:
             for n, v in getattr(self.Ws[op_ind], "named_" + member)(prefix="{}Ws.{}"\

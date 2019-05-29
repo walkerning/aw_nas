@@ -142,3 +142,11 @@ def straight_through(y):
 def mask2d(batch_size, dim, keep_prob, device):
     mask = torch.floor(torch.rand(batch_size, dim) + keep_prob) / keep_prob
     return mask.to(device)
+
+def submodule_named_members(module, member, prefix, not_include=tuple()):
+    for mod_name, mod in six.iteritems(module._modules): #pylint: disable=protected-access
+        if mod_name in not_include:
+            continue
+        _func = getattr(mod, "named_" + member)
+        for n, v in _func(prefix=prefix+mod_name):
+            yield n, v

@@ -11,6 +11,8 @@ from aw_nas.weights_manager.diff_super_net import DiffSubCandidateNet
 from aw_nas.weights_manager.rnn_shared import RNNSharedNet, RNNSharedCell, RNNSharedOp
 from aw_nas.utils.exception import expect, ConfigException
 
+__all__ = ["RNNDiffSubCandidateNet", "RNNDiffSuperNet"]
+
 class RNNDiffSubCandidateNet(DiffSubCandidateNet):
     def forward(self, inputs, hiddens, detach_arch=True): #pylint: disable=arguments-differ
         arch = [a.detach() for a in self.arch] if detach_arch else self.arch
@@ -34,7 +36,8 @@ class RNNDiffSuperNet(RNNSharedNet):
             self, search_space, device,
             num_tokens, num_emb=300, num_hid=300,
             tie_weight=True, decoder_bias=True,
-            share_primitive_weights=False, batchnorm_edge=False, batchnorm_out=True,
+            share_primitive_weights=False, share_from_weights=False,
+            batchnorm_edge=False, batchnorm_out=True,
             # training
             max_grad_norm=5.0,
             # dropout probs
@@ -48,7 +51,7 @@ class RNNDiffSuperNet(RNNSharedNet):
             cell_cls=RNNDiffSharedCell, op_cls=RNNDiffSharedOp,
             num_tokens=num_tokens, num_emb=num_emb, num_hid=num_hid,
             tie_weight=tie_weight, decoder_bias=decoder_bias,
-            share_primitive_weights=share_primitive_weights,
+            share_primitive_weights=share_primitive_weights, share_from_weights=share_from_weights,
             batchnorm_edge=batchnorm_edge, batchnorm_out=batchnorm_out,
             max_grad_norm=max_grad_norm,
             dropout_emb=dropout_emb, dropout_inp0=dropout_inp0, dropout_inp=dropout_inp,
@@ -80,9 +83,16 @@ class RNNDiffSharedCell(RNNSharedCell):
             to_ = i + self._num_init
             if self.training:
                 inp_states = states * h_mask.unsqueeze(0)
-            act_lst = [self.edges[from_][to_](inp, arch[offset+from_],
+            else:
+                inp_states = states
+            if self.share_from_w:
+                ch = inp_states.view(-1, self.num_hid).mm(self.step_weights[i])\
+                                                      .view(to_, -1, 2*self.num_hid)
+            else:
+                ch = inp_states
+            act_lst = [self.edges[from_][to_](inp, arch[offset+from_], s_prev,
                                               detach_arch=detach_arch)
-                       for from_, inp in enumerate(inp_states)]
+                       for from_, (inp, s_prev) in enumerate(zip(ch, inp_states))]
             new_state = sum(act_lst)
             offset += len(states)
             states = torch.cat([states, new_state.unsqueeze(0)], dim=0)
@@ -96,12 +106,12 @@ class RNNDiffSharedCell(RNNSharedCell):
 
 
 class RNNDiffSharedOp(RNNSharedOp):
-    def forward(self, s_prev, weights, detach_arch): #pylint: disable=arguments-differ
+    def forward(self, inputs, weights, s_prev, detach_arch): #pylint: disable=arguments-differ
         s_update = 0.
         for op_ind, (w, op) in enumerate(zip(weights, self.p_ops)):
             if detach_arch and w.item() == 0:
                 continue
-            ch = (self.W if self.share_w else self.Ws[op_ind])(s_prev)
+            ch = (self.W if self.share_w else self.Ws[op_ind])(inputs)
             if self.batch_norm:
                 ch = self.bn(ch)
             c, h = torch.split(ch, self.num_hid, dim=-1)

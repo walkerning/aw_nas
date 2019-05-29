@@ -12,6 +12,12 @@ def _rnn_criterion(outputs, targets):
     logits, _, _, _ = outputs
     return _criterion(logits.view(-1, logits.size(-1)), targets.view(-1))
 
+def _rnn_data(time_steps, batch_size, num_tokens):
+    data = torch.LongTensor(np.random.randint(0, high=num_tokens, #pylint: disable=no-member
+                                              size=(time_steps+1, batch_size)))
+    data = (data[:-1, :], data[1:, :]) # inputs, targets
+    return data
+
 def _rnn_super_sample_cand(net):
     from aw_nas.common import Rollout
     ss = net.search_space
@@ -26,7 +32,7 @@ def _rnn_super_sample_cand(net):
 
 @pytest.mark.parametrize("rnn_super_net", [
     {"candidate_member_mask": False}], indirect=["rnn_super_net"])
-def test_supernet_assemble_nomask(rnn_super_net):
+def test_rnn_supernet_assemble_nomask(rnn_super_net):
     net = rnn_super_net
     cand_net = _rnn_super_sample_cand(net)
     assert set(dict(cand_net.named_parameters()).keys()) == set(dict(net.named_parameters()).keys())
@@ -38,8 +44,13 @@ def test_supernet_assemble_nomask(rnn_super_net):
     },
     {
         "batchnorm_edge": False
+    },
+    {
+        "num_tokens": 10, "batchnorm_edge": False, "batchnorm_out": True,
+        "tie_weight": True, "share_from_weights": True,
+        "share_primitive_weights": True
     }], indirect=["rnn_super_net"])
-def test_supernet_assemble(rnn_super_net):
+def test_rnn_supernet_assemble(rnn_super_net):
     net = rnn_super_net
     cand_net = _rnn_super_sample_cand(net)
 
@@ -51,8 +62,9 @@ def test_supernet_assemble(rnn_super_net):
 
     s_names = set(dict(net.named_parameters()).keys())
     c_names = set(dict(cand_net.named_parameters()).keys())
-    assert len(s_names) > len(c_names)
+    assert len(s_names) >= len(c_names)
     assert len(s_names.intersection(c_names)) == len(c_names)
+
 
     s_b_names = set(dict(net.named_buffers()).keys())
     c_b_names = set(dict(cand_net.named_buffers()).keys())
@@ -62,7 +74,7 @@ def test_supernet_assemble(rnn_super_net):
 
 @pytest.mark.parametrize("rnn_super_net", [{"num_tokens": 10}],
                          indirect=["rnn_super_net"])
-def test_supernet_forward(rnn_super_net):
+def test_rnn_supernet_forward(rnn_super_net):
     # test forward
     cand_net = _rnn_super_sample_cand(rnn_super_net)
 
@@ -77,10 +89,7 @@ def test_supernet_forward(rnn_super_net):
 
     assert tuple(hiddens[0].shape) == (batch_size, _num_hid)
     assert len(hiddens) == _num_layers
-
-    data = torch.LongTensor(np.random.randint(0, high=_num_tokens, #pylint: disable=no-member
-                                              size=(time_steps+1, batch_size)))
-    data = (data[:-1, :], data[1:, :]) # inputs, targets
+    data = _rnn_data(time_steps, batch_size, _num_tokens)
 
     logits, _, outs, next_hiddens = cand_net.forward_data(data[0], mode="eval", hiddens=hiddens)
     assert tuple(logits.shape) == (time_steps, batch_size, _num_tokens)
@@ -89,10 +98,15 @@ def test_supernet_forward(rnn_super_net):
     assert all((hid == n_hid).all() for hid, n_hid in zip(hiddens, next_hiddens)) # the value is equal to the calculated results
 
 @pytest.mark.parametrize("rnn_super_net",
-                         [{"num_tokens": 10, "tie_weight": True},
-                          {"num_tokens": 10, "tie_weight": False}],
+                         [
+                             {"num_tokens": 10, "tie_weight": True},
+                             {"num_tokens": 10, "tie_weight": False},
+                             {"num_tokens": 10, "batchnorm_edge": False, "batchnorm_out": True,
+                              "tie_weight": True, "share_from_weights": True,
+                              "share_primitive_weights": True}
+                         ],
                          indirect=["rnn_super_net"])
-def test_supernet_candidate_gradient_virtual(rnn_super_net):
+def test_rnn_supernet_candidate_gradient_virtual(rnn_super_net):
     lr = 0.1
     EPS = 1e-6
     time_steps = 5
@@ -100,11 +114,6 @@ def test_supernet_candidate_gradient_virtual(rnn_super_net):
     batch_size = 2
     _num_tokens = rnn_super_net.num_tokens
     _num_hid = rnn_super_net.num_hid
-    _num_layers = rnn_super_net._num_layers
-
-    data = torch.LongTensor(np.random.randint(0, high=_num_tokens, #pylint: disable=no-member
-                                              size=(time_steps+1, batch_size)))
-    data = (data[:-1, :], data[1:, :]) # inputs, targets
 
     hiddens = rnn_super_net.init_hidden(batch_size)
     # check hiddens not zero after these steps
@@ -117,6 +126,9 @@ def test_supernet_candidate_gradient_virtual(rnn_super_net):
     # test `gradient`, `begin_virtual`
     w_prev = {k: v.clone() for k, v in six.iteritems(c_params)}
     buffer_prev = {k: v.clone() for k, v in six.iteritems(c_buffers)}
+
+    data = _rnn_data(time_steps, batch_size, _num_tokens)
+
     with cand_net.begin_virtual():
         grads = cand_net.gradient(data, mode="train", hiddens=hiddens, criterion=_rnn_criterion)
         assert len(grads) == len(c_params)
@@ -141,44 +153,63 @@ def test_supernet_candidate_gradient_virtual(rnn_super_net):
 
 # ---- End test rnn_super_net ----
 
-# # ---- Test diff_rnn_super_net ----
-# def test_diff_supernet_forward(diff_rnn_super_net):
-#     from aw_nas.common import get_search_space
-#     from aw_nas.controller import DiffController
+# ---- Test rnn_diff_super_net ----
+def test_rnn_diff_supernet_forward(rnn_diff_super_net):
+    from aw_nas.common import get_search_space
+    from aw_nas.controller import DiffController
 
-#     search_space = get_search_space(cls="rnn")
-#     device = "cuda"
-#     controller = DiffController(search_space, device)
-#     rollout = controller.sample(1)[0]
-#     cand_net = diff_rnn_super_net.assemble_candidate(rollout)
+    time_steps = 5
+    batch_size = 2
+    _num_tokens = rnn_diff_super_net.num_tokens
+    _num_hid = rnn_diff_super_net.num_hid
+    _num_layers = rnn_diff_super_net._num_layers
+    search_space = rnn_diff_super_net.search_space
+    device = "cuda"
+    controller = DiffController(search_space, device)
+    rollout = controller.sample(1)[0]
+    cand_net = rnn_diff_super_net.assemble_candidate(rollout)
 
-#     data = (torch.tensor(np.random.rand(2, 3, 28, 28)).float(), torch.tensor([0, 1]).long()) #pylint: disable=not-callable
-#     logits = cand_net.forward_data(data[0])
-#     assert tuple(logits.shape) == (2, 10)
+    # init hiddens
+    hiddens = rnn_diff_super_net.init_hidden(batch_size)
+    hidden_id = tuple([id(hid) for hid in hiddens])
 
-# def test_diff_supernet_to_arch(diff_rnn_super_net):
-#     from torch import nn
-#     from aw_nas.common import get_search_space
-#     from aw_nas.controller import DiffController
+    data = _rnn_data(time_steps, batch_size, _num_tokens)
 
-#     search_space = get_search_space(cls="rnn")
-#     device = "cuda"
-#     controller = DiffController(search_space, device)
-#     rollout = controller.sample(1)[0]
-#     cand_net = diff_rnn_super_net.assemble_candidate(rollout)
+    logits, _, outs, next_hiddens = cand_net.forward_data(data[0], mode="eval", hiddens=hiddens)
+    assert tuple(logits.shape) == (time_steps, batch_size, _num_tokens)
+    assert tuple(outs.shape) == (time_steps, batch_size, _num_hid)
+    assert len(next_hiddens) == _num_layers
+    assert tuple([id(hid) for hid in hiddens]) == hidden_id # the hidden is modified in-place
+    assert all((hid == n_hid).all() for hid, n_hid in zip(hiddens, next_hiddens)) # the value is equal to the calculated results
 
-#     data = (torch.tensor(np.random.rand(2, 3, 28, 28)).float(), torch.tensor([0, 1]).long()) #pylint: disable=not-callable
+def test_rnn_diff_supernet_to_arch(rnn_diff_super_net):
+    from torch import nn
+    from aw_nas.common import get_search_space
+    from aw_nas.controller import DiffController
 
-#     # default detach_arch=True, no grad w.r.t the controller param
-#     logits = cand_net.forward_data(data[0])
-#     loss = nn.CrossEntropyLoss()(logits, data[1].cuda())
-#     assert controller.cg_alphas[0].grad is None
-#     loss.backward()
-#     assert controller.cg_alphas[0].grad is None
+    search_space = rnn_diff_super_net.search_space
+    device = "cuda"
+    controller = DiffController(search_space, device)
+    rollout = controller.sample(1)[0]
+    cand_net = rnn_diff_super_net.assemble_candidate(rollout)
 
-#     logits = cand_net.forward_data(data[0], detach_arch=False)
-#     loss = nn.CrossEntropyLoss()(logits, data[1].cuda())
-#     assert controller.cg_alphas[0].grad is None
-#     loss.backward()
-#     assert controller.cg_alphas[0].grad is not None
-# # ---- End test diff_rnn_super_net ----
+    time_steps = 5
+    batch_size = 2
+    _num_tokens = rnn_diff_super_net.num_tokens
+    data = _rnn_data(time_steps, batch_size, _num_tokens)
+
+    hiddens = rnn_diff_super_net.init_hidden(batch_size)
+
+    # default detach_arch=True, no grad w.r.t the controller param
+    results = cand_net.forward_data(data[0], hiddens=hiddens)
+    loss = _rnn_criterion(results, data[1].cuda())
+    assert controller.cg_alphas[0].grad is None
+    loss.backward()
+    assert controller.cg_alphas[0].grad is None
+
+    results = cand_net.forward_data(data[0], hiddens=hiddens, detach_arch=False)
+    loss = _rnn_criterion(results, data[1].cuda())
+    assert controller.cg_alphas[0].grad is None
+    loss.backward()
+    assert controller.cg_alphas[0].grad is not None
+# ---- End test rnn_diff_super_net ----

@@ -9,11 +9,14 @@ from torch import nn
 from aw_nas import ops, utils
 from aw_nas.weights_manager.base import BaseWeightsManager
 
+INIT_RANGE = 0.1
+
 class RNNSharedNet(BaseWeightsManager, nn.Module):
     def __init__(
             self, search_space, device, cell_cls, op_cls,
             num_tokens, num_emb, num_hid,
-            tie_weight, decoder_bias, share_primitive_weights,
+            tie_weight, decoder_bias,
+            share_primitive_weights, share_from_weights,
             batchnorm_edge, batchnorm_out,
             # training
             max_grad_norm,
@@ -51,10 +54,12 @@ class RNNSharedNet(BaseWeightsManager, nn.Module):
         self.cells = nn.ModuleList([cell_cls(
             search_space, device, op_cls,
             num_emb, num_emb if i_layer == self._num_layers-1 and self.tie_weight else num_hid,
-            share_w=share_primitive_weights,
+            share_primitive_w=share_primitive_weights,
+            share_from_w=share_from_weights,
             batchnorm_edge=batchnorm_edge, batchnorm_out=batchnorm_out
         ) for i_layer in range(self._num_layers)])
 
+        self._init_weights()
         self.to(self.device)
 
     def forward(self, inputs, genotypes, hiddens, **kwargs): #pylint: disable=arguments-differ
@@ -140,16 +145,22 @@ class RNNSharedNet(BaseWeightsManager, nn.Module):
         return [torch.zeros(batch_size, self.num_hid).to(self.device)
                 for _ in range(self._num_layers)]
 
+    def _init_weights(self):
+        self.encoder.weight.data.uniform_(-INIT_RANGE, INIT_RANGE)
+        if self.decoder.bias is not None:
+            self.decoder.bias.data.fill_(0)
+        self.decoder.weight.data.uniform_(-INIT_RANGE, INIT_RANGE)
 
 class RNNSharedCell(nn.Module):
     def __init__(self, search_space, device, op_cls, num_emb, num_hid,
-                 share_w, batchnorm_edge, batchnorm_out):
+                 share_primitive_w, share_from_w, batchnorm_edge, batchnorm_out):
         super(RNNSharedCell, self).__init__()
 
         self.num_emb = num_emb
         self.num_hid = num_hid
         self.batchnorm_edge = batchnorm_edge
         self.batchnorm_out = batchnorm_out
+        self.share_from_w = share_from_w
         self._steps = search_space.num_steps
         self._num_init = search_space.num_init_nodes
 
@@ -163,13 +174,25 @@ class RNNSharedCell(nn.Module):
             # the out bn
             self.bn_out = nn.BatchNorm1d(num_hid, affine=True)
 
+        if share_from_w:
+            self.step_weights = nn.ParameterList([
+                torch.nn.Parameter(torch.Tensor(num_hid, 2*num_hid)\
+                                   .uniform_(-INIT_RANGE, INIT_RANGE))
+                for _ in range(self._steps)])
+
         # initiatiate op on edges
         self.edges = defaultdict(dict)
         self.edge_mod = torch.nn.Module() # a stub wrapping module of all the edges
         for from_ in range(self._steps):
             for to_ in range(from_+1, self._steps+1):
-                self.edges[from_][to_] = op_cls(num_hid, search_space.shared_primitives,
-                                                share_w=share_w, batch_norm=batchnorm_edge)
+                if share_from_w:
+                    self.edges[from_][to_] = op_cls(num_hid, search_space.shared_primitives,
+                                                    share_w=True, batch_norm=batchnorm_edge,
+                                                    need_w=False)
+                else:
+                    self.edges[from_][to_] = op_cls(num_hid, search_space.shared_primitives,
+                                                    share_w=share_primitive_w,
+                                                    batch_norm=batchnorm_edge)
                 self.edge_mod.add_module("f_{}_t_{}".format(from_, to_), self.edges[from_][to_])
 
     def _compute_init_state(self, x, h, x_mask, h_mask):
@@ -188,7 +211,7 @@ class RNNSharedCell(nn.Module):
         return s0
 
 class RNNSharedOp(nn.Module):
-    def __init__(self, num_hid, primitives, share_w, batch_norm, **kwargs):
+    def __init__(self, num_hid, primitives, share_w, batch_norm, need_w=True, **kwargs):
         #pylint: disable=invalid-name
         super(RNNSharedOp, self).__init__()
         self.num_hid = num_hid
@@ -196,12 +219,16 @@ class RNNSharedOp(nn.Module):
         self.p_ops = nn.ModuleList()
         self.share_w = share_w
         self.batch_norm = batch_norm
-
-        if share_w: # share weights between different activation function
-            self.W = nn.Linear(num_hid, 2 * num_hid, bias=False)
+        if need_w:
+            if share_w: # share weights between different activation function
+                self.W = nn.Linear(num_hid, 2 * num_hid, bias=False)
+            else:
+                self.Ws = nn.ModuleList([nn.Linear(num_hid, 2 * num_hid, bias=False)
+                                         for _ in range(len(self.primitives))])
         else:
-            self.Ws = nn.ModuleList([nn.Linear(num_hid, 2 * num_hid, bias=False)
-                                     for _ in range(len(self.primitives))])
+            # make W an identity module
+            self.share_w = True
+            self.W = ops.Identity()
 
         if batch_norm:
             self.bn = nn.BatchNorm1d(2 * num_hid, affine=True)

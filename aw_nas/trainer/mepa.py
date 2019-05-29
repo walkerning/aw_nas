@@ -608,7 +608,7 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
 
     @staticmethod
     def _init_scheduler(optimizer, cfg):
-        if cfg:
+        if cfg and optimizer is not None:
             cfg = {k:v for k, v in six.iteritems(cfg)}
             sch_cls = utils.get_scheduler_cls(cfg.pop("type"))
             return sch_cls(optimizer, **cfg)

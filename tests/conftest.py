@@ -44,12 +44,13 @@ def rnn_super_net(request):
     net = RNNSuperNet(search_space, device, num_tokens, **cfg)
     return net
 
-# @pytest.fixture
-# def diff_super_net(request):
-#     cfg = getattr(request, "param", {})
-#     from aw_nas.common import get_search_space
-#     from aw_nas.weights_manager import RNNDiffSuperNet
-#     search_space = get_search_space(cls="rnn")
-#     device = "cuda"
-#     net = RNNDiffSuperNet(search_space, device, **cfg)
-#     return net
+@pytest.fixture
+def rnn_diff_super_net(request):
+    cfg = getattr(request, "param", {})
+    num_tokens = cfg.pop("num_tokens", 10)
+    from aw_nas.common import get_search_space
+    from aw_nas.weights_manager import RNNDiffSuperNet
+    search_space = get_search_space(cls="rnn")
+    device = "cuda"
+    net = RNNDiffSuperNet(search_space, device, num_tokens, **cfg)
+    return net
