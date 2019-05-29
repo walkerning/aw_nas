@@ -116,11 +116,19 @@ class DiffController(BaseController, nn.Module):
             return self.entropy_coeff * sum(-(torch.log(prob) * prob).sum() for prob in probs)
         return 0.
 
-    def gradient(self, loss):
-        self.zero_grad()
+    def gradient(self, loss, return_grads=True, zero_grads=True):
+        if zero_grads:
+            self.zero_grad()
         _loss = loss + self._entropy_loss()
         _loss.backward()
-        return utils.get_numpy(_loss), [(k, v.grad.clone()) for k, v in self.named_parameters()]
+        if return_grads:
+            return utils.get_numpy(_loss), [(k, v.grad.clone()) for k, v in self.named_parameters()]
+        return utils.get_numpy(_loss)
+
+    def step_current_gradient(self, optimizer):
+        if self.max_grad_norm is not None:
+            torch.nn.utils.clip_grad_norm_(self.parameters(), self.max_grad_norm)
+        optimizer.step()
 
     def step_gradient(self, gradients, optimizer):
         self.zero_grad()

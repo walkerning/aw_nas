@@ -17,11 +17,13 @@ class SimpleDataset(torch.utils.data.Dataset):
     def __len__(self):
         return len(self.data)
 
-def batchify_sentences(data, bsz):
+def batchify_sentences(data, bsz, device="cuda"):
     data = torch.cat(data, -1)
     nbatch = data.size(0) // bsz
     data = data.narrow(0, 0, nbatch * bsz)
     data = data.view(bsz, -1).t().contiguous()
+    if "cuda" in device:
+        data = data.cuda()
     return data[:-1, :], data[1:, :]
 
 class InfIterator(six.Iterator):
@@ -98,6 +100,9 @@ def get_numpy(arr):
         arr = np.array(arr)
     return arr
 
+def count_parameters(model):
+    return np.sum(p.nelement() for p in model.parameters())
+
 def count_parameters_in_MB(model): #pylint: disable=invalid-name
     return np.sum(np.prod(v.size()) for name, v in model.named_parameters() \
                   if "auxiliary" not in name)/1e6
@@ -105,7 +110,7 @@ def count_parameters_in_MB(model): #pylint: disable=invalid-name
 def drop_path(x, drop_prob):
     if drop_prob > 0.:
         keep_prob = 1. - drop_prob
-        mask = torch.FloatTensor(x.size(0), 1, 1, 1).bernoulli_(keep_prob).to(x.device)
+        mask = x.new(x.size(0), 1, 1, 1).bernoulli_(keep_prob)
         x.div_(keep_prob)
         x.mul_(mask)
     return x
@@ -140,8 +145,8 @@ def straight_through(y):
     return (y_hard - y).detach() + y
 
 def mask2d(batch_size, dim, keep_prob, device):
-    mask = torch.floor(torch.rand(batch_size, dim) + keep_prob) / keep_prob
-    return mask.to(device)
+    mask = torch.floor(torch.rand(batch_size, dim, device=device) + keep_prob) / keep_prob
+    return mask
 
 def submodule_named_members(module, member, prefix, not_include=tuple()):
     for mod_name, mod in six.iteritems(module._modules): #pylint: disable=protected-access
@@ -150,3 +155,6 @@ def submodule_named_members(module, member, prefix, not_include=tuple()):
         _func = getattr(mod, "named_" + member)
         for n, v in _func(prefix=prefix+mod_name):
             yield n, v
+
+def to_device(datas, device):
+    return [data.to(device) for data in datas]

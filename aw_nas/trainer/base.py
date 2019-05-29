@@ -183,8 +183,8 @@ class BaseTrainer(Component):
                 )
                 kwargs = {
                     "batch_size": bptt_steps,
-                    "pin_memory": True,
-                    "num_workers": 2,
+                    "pin_memory": False,
+                    "num_workers": 0,
                     "shuffle": False
                 }
                 queue = utils.get_inf_iterator(torch.utils.data.DataLoader(

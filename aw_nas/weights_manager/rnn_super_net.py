@@ -37,6 +37,7 @@ class RNNSuperNet(RNNSharedNet):
             num_tokens, num_emb=300, num_hid=300,
             tie_weight=True, decoder_bias=True,
             share_primitive_weights=False, share_from_weights=False,
+            batchnorm_step=False,
             batchnorm_edge=False, batchnorm_out=True,
             # training
             max_grad_norm=5.0,
@@ -50,6 +51,7 @@ class RNNSuperNet(RNNSharedNet):
             num_tokens=num_tokens, num_emb=num_emb, num_hid=num_hid,
             tie_weight=tie_weight, decoder_bias=decoder_bias,
             share_primitive_weights=share_primitive_weights, share_from_weights=share_from_weights,
+            batchnorm_step=batchnorm_step,
             batchnorm_edge=batchnorm_edge, batchnorm_out=batchnorm_out,
             max_grad_norm=max_grad_norm,
             dropout_emb=dropout_emb, dropout_inp0=dropout_inp0, dropout_inp=dropout_inp,
@@ -101,27 +103,27 @@ class RNNDiscreteSharedCell(RNNSharedCell):
         genotype, concat_ = genotypes
 
         s0 = self._compute_init_state(inputs, hidden, x_mask, h_mask)
+        if self.batchnorm_step:
+            s0 = self.bn_steps[0](s0)
+
         states = {0: s0}
-        chs = {}
 
         for op_type, from_, to_ in genotype:
             s_prev = states[from_]
+            s_inputs = s_prev
             if self.training:
-                s_prev = s_prev * h_mask
+                s_inputs = s_prev * h_mask
 
-            if self.share_from_w:
-                if to_ in chs:
-                    ch = chs[to_]
-                else:
-                    ch = chs[to_] = s_prev.view(-1, self.num_hid).mm(self.step_weights[to_-1])
-            else:
-                ch = s_prev
-            out = self.edges[from_][to_](ch, op_type, s_prev)
+            out = self.edges[from_][to_](s_inputs, op_type, s_prev)
 
             if to_ in states:
                 states[to_] = states[to_] + out
             else:
                 states[to_] = out
+
+        if self.batchnorm_step:
+            for to_ in range(1, self._steps+1):
+                states[to_] = self.bn_steps[to_](states[to_])
 
         # average the ends
         output = torch.mean(torch.stack([states[i] for i in concat_]), 0)

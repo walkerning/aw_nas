@@ -171,6 +171,13 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
                                                         surrogate_optimizer)
         self.controller_optimizer = self._init_optimizer(self.controller.parameters(),
                                                          controller_optimizer)
+        # FIXME
+        # if self._rollout_type == "differentiable":
+        #     if self.controller_samples != 1 and
+        #    and self.controller_surrogate_steps == 0:
+        #     # FIXME: ugly fix... i think i should split mepa_rnn.py into another class maybe...
+        #     # the logic here is getting tedious and subtle...
+        #     self.controller_optimizer.param_groups[0]["lr"] /= self.controller_samples
         self.mepa_optimizer = self._init_optimizer(self.weights_manager.parameters(),
                                                    mepa_optimizer)
 
@@ -241,11 +248,14 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
                     )
 
                     # gradients: List(Tuple(parameter name, gradient))
+                    require_grads = self.mepa_surrogate_steps > 0
                     gradients, (loss, acc) = candidate_net.gradient(
                         mepa_data,
                         criterion=self._criterion,
                         eval_criterions=self._test_criterions,
                         mode="train",
+                        return_grads=require_grads,
+                        zero_grads=require_grads,
                         **self.m_hid_kwargs
                     )
                 if train_loss is not None: # surrogate_steps > 0 (==0 is ENAS)
@@ -255,14 +265,17 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
                 valid_loss_meter.update(loss)
                 valid_acc_meter.update(acc)
 
-                for n, g_v in gradients:
-                    all_gradients[n] += g_v
-                    counts[n] += 1
+                if self.mepa_surrogate_steps > 0:
+                    for n, g_v in gradients:
+                        all_gradients[n] += g_v
+                        counts[n] += 1
 
             # average the gradients and update the meta parameters
-            all_gradients = {k: v / counts[k] for k, v in six.iteritems(all_gradients)}
-            self.weights_manager.step(all_gradients.items(), self.mepa_optimizer)
-
+            if self.mepa_surrogate_steps > 0:
+                all_gradients = {k: v / counts[k] for k, v in six.iteritems(all_gradients)}
+                self.weights_manager.step(all_gradients.items(), self.mepa_optimizer)
+            else:
+                self.weights_manager.step_current_gradients(self.mepa_optimizer)
         del all_gradients
 
         print("\r", end="")
@@ -324,11 +337,16 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
                         rollout.set_perf(acc if self._data_type == "image" \
                                          else self.rnn_reward_c/acc)
                     else: # differentiable sampling/rollouts
-                        # need keep track of the gradients
-                        _loss, gradients = self.controller.gradient(loss)
-                        for n, g_v in gradients:
-                            all_gradients[n] += g_v
-                        step_loss += _loss
+                        if self.controller_surrogate_steps > 0:
+                            # need keep track of the gradients
+                            _loss, gradients = self.controller.gradient(loss)
+                            for n, g_v in gradients:
+                                all_gradients[n] += g_v
+                            step_loss += _loss
+                        else:
+                            _loss = self.controller.gradient(loss, return_grads=False,
+                                                             zero_grads=False)
+                            step_loss += _loss
                         ## this consume too much memory when controller_samples > 1
                         # rollout.set_perf(loss)
 
@@ -348,9 +366,13 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
                     all_gradients = {n: g/self.controller_samples \
                                      for n, g in six.iteritems(all_gradients)}
                 controller_loss = step_loss / self.controller_samples
-                # update using the keeped gradients
-                self.controller.step_gradient(all_gradients.items(),
-                                              self.controller_optimizer)
+                if self.controller_surrogate_steps > 0:
+                    # update using the keeped gradients
+                    self.controller.step_gradient(all_gradients.items(),
+                                                  self.controller_optimizer)
+                else:
+                    # just update using the accumulated gradients
+                    self.controller.step_current_gradient(self.controller_optimizer)
 
             controller_loss_meter.update(controller_loss)
             controller_stats = self.controller.summary(rollouts, log=False)

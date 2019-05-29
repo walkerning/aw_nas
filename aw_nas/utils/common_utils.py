@@ -3,6 +3,7 @@
 
 import os
 import sys
+import time
 import shutil
 import inspect
 import collections
@@ -15,6 +16,7 @@ import scipy.signal
 
 from aw_nas.utils.registry import RegistryMeta
 from aw_nas.utils.exception import expect, ConfigException
+from aw_nas.utils.log import logger as _logger
 
 @contextmanager
 def nullcontext():
@@ -196,3 +198,17 @@ class abstractclassmethod(classmethod):
     def __init__(self, a_callable):
         a_callable.__isabstractmethod__ = True
         super(abstractclassmethod, self).__init__(a_callable)
+
+class Ticker(object):
+    def __init__(self, name):
+        self.name = name
+        self.cur_time = None
+        self.tick()
+        self.logger = _logger.getChild("ticker_{}".format(name))
+
+    def tick(self, message=""):
+        cur_time = time.time()
+        if self.cur_time is not None:
+            elapsed = cur_time - self.cur_time
+            self.logger.debug("Ticker %s: %s: %.3f s", self.name, message, elapsed)
+        self.cur_time = cur_time

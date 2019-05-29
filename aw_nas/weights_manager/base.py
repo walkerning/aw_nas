@@ -82,7 +82,6 @@ class CandidateNet(nn.Module):
         """
         self._set_mode(mode)
 
-        inputs = inputs.to(self.get_device())
         return self(inputs, **kwargs)
 
     def forward_queue(self, queue, steps=1, mode=None, **kwargs):
@@ -96,7 +95,8 @@ class CandidateNet(nn.Module):
         return torch.cat(outputs, dim=0)
 
     def gradient(self, data, criterion=nn.CrossEntropyLoss(),
-                 parameters=None, eval_criterions=None, mode="train", **kwargs):
+                 parameters=None, eval_criterions=None, mode="train",
+                 zero_grads=True, return_grads=True, **kwargs):
         """Get the gradient with respect to the candidate net parameters.
 
         Args:
@@ -107,25 +107,30 @@ class CandidateNet(nn.Module):
         """
         self._set_mode(mode)
 
-        active_parameters = dict(self.named_parameters())
-        if parameters is not None:
-            _parameters = dict(parameters)
-            _addi = set(_parameters.keys()).difference(active_parameters)
-            assert not _addi,\
-                "Cannot get gradient of parameters that are not active in this candidate net: {}"\
-                    .format(", ".join(_addi))
-        else:
-            _parameters = active_parameters
+        if return_grads:
+            active_parameters = dict(self.named_parameters())
+            if parameters is not None:
+                _parameters = dict(parameters)
+                _addi = set(_parameters.keys()).difference(active_parameters)
+                assert not _addi,\
+                    ("Cannot get gradient of parameters that are not active "
+                     "in this candidate net: {}")\
+                        .format(", ".join(_addi))
+            else:
+                _parameters = active_parameters
 
-        data = (data[0].to(self.get_device()), data[1].to(self.get_device()))
         _, targets = data
         outputs = self.forward_data(*data, **kwargs)
         loss = criterion(outputs, targets)
-        self.zero_grad()
+        if zero_grads:
+            self.zero_grad()
         loss.backward()
 
-        grads = [(k, v.grad.clone()) for k, v in six.iteritems(_parameters)\
-                 if v.grad is not None]
+        if not return_grads:
+            grads = None
+        else:
+            grads = [(k, v.grad.clone()) for k, v in six.iteritems(_parameters)\
+                     if v.grad is not None]
 
         if eval_criterions:
             eval_res = [c(outputs, targets) for c in eval_criterions]
@@ -185,6 +190,5 @@ class CandidateNet(nn.Module):
         self._set_mode(mode)
 
         with torch.no_grad():
-            data = (data[0].to(self.get_device()), data[1].to(self.get_device()))
             outputs = self.forward_data(data[0], **kwargs)
             return [c(outputs, data[1]) for c in criterions]

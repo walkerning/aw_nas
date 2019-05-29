@@ -99,7 +99,8 @@ class BaseLSTM(BaseRLControllerNet):
 
     def _get_default_hidden(self, batch_size):
         hxs = [utils.get_variable(torch.zeros(batch_size,
-                                              self.controller_hid),
+                                              self.controller_hid,
+                                              device=self.device),
                                   self.device, requires_grad=False)
                for _ in range(self.num_lstm_layers)]
         cxs = [v.clone() for v in hxs]
@@ -201,12 +202,12 @@ class AnchorControlNet(BaseLSTM):
         log_probs = []
         prev_nodes = []
         prev_ops = []
-        anchors = torch.zeros((0, batch_size, self.controller_hid)).to(self.device)
+        anchors = torch.zeros(0, batch_size, self.controller_hid, device=self.device)
         anchors_w_1 = []
         prev_layers = []
 
         # initialise anchors for the init nodes
-        inputs = self.g_emb(torch.LongTensor([0] * batch_size).to(self.device))
+        inputs = self.g_emb(torch.zeros(batch_size, dtype=torch.long, device=self.device))
         if prev_hidden is None:
             hidden = self.static_hidden[batch_size]
         else:
@@ -267,8 +268,7 @@ class AnchorControlNet(BaseLSTM):
             anchors = torch.cat([anchors, ], dim=0)
             anchors_w_1.append(self.anchor_attn(next_h[-1]))
             hidden = (next_h, next_c)
-            inputs = self.g_emb(torch.LongTensor([0] * batch_size)\
-                                .to(self.device))
+            inputs = self.g_emb(torch.zeros(batch_size, dtype=torch.long, device=self.device))
 
         # stack prev_nodes / prev_ops of all steps, and tranpose to (batch_size, steps)
         prev_nodes = list(np.stack(prev_nodes).transpose())
@@ -426,4 +426,5 @@ class EmbedControlNet(BaseLSTM):
 
     def _get_default_inputs(self, batch_size):
         return utils.get_variable(
-            torch.zeros(batch_size, self.controller_hid), self.device, requires_grad=False)
+            torch.zeros(batch_size, self.controller_hid, device=self.device),
+            self.device, requires_grad=False)

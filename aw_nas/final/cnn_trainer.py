@@ -49,7 +49,9 @@ class CNNFinalTrainer(FinalTrainer):
         if len(gpus) >= 2:
             self.model = torch.nn.DataParallel(self.model, gpus).to(device)
 
-        self.logger.info("param size = %f MB", utils.count_parameters_in_MB(self.model))
+        self.logger.info("param size = %f MB (%d elements)",
+                         utils.count_parameters_in_MB(self.model),
+                         utils.count_parameters(self.model))
 
         self._criterion = nn.CrossEntropyLoss().to(self.device)
 
