@@ -18,9 +18,32 @@ from aw_nas.utils.registry import RegistryMeta
 from aw_nas.utils.exception import expect, ConfigException
 from aw_nas.utils.log import logger as _logger
 
+
+## --- misc helpers ---
 @contextmanager
 def nullcontext():
     yield
+
+def makedir(path, remove=False):
+    if os.path.exists(path) and remove:
+        shutil.rmtree(path)
+    if not os.path.isdir(path):
+        os.makedirs(path)
+    return path
+
+class Ticker(object):
+    def __init__(self, name):
+        self.name = name
+        self.cur_time = None
+        self.tick()
+        self.logger = _logger.getChild("ticker_{}".format(name))
+
+    def tick(self, message=""):
+        cur_time = time.time()
+        if self.cur_time is not None:
+            elapsed = cur_time - self.cur_time
+            self.logger.debug("Ticker %s: %s: %.3f s", self.name, message, elapsed)
+        self.cur_time = cur_time
 
 class AverageMeter(object):
     def __init__(self):
@@ -46,13 +69,8 @@ class keydefaultdict(collections.defaultdict): #pylint: disable=invalid-name
         ret = self[key] = self.default_factory(key) #pylint: disable=not-callable
         return ret
 
-class attr_dict_wrapper(object): #pylint: disable=invalid-name
-    def __init__(self, dct):
-        self.dct = dct
 
-    def __getattr__(self, name):
-        return self.dct[name]
-
+## --- math utils ---
 def compute_returns(rewards, gamma, length=None):
     if not isinstance(rewards, collections.Sequence):
         assert length is not None
@@ -61,6 +79,21 @@ def compute_returns(rewards, gamma, length=None):
     else:
         _rewards = rewards
     return scipy.signal.lfilter([1], [1, -gamma], _rewards[::-1], axis=0)[::-1]
+
+def softmax(arr):
+    e_arr = np.exp(arr - np.max(arr, axis=-1, keepdims=True))
+    return e_arr / np.sum(e_arr, axis=-1, keepdims=True)
+
+
+## --- Python 2/3 compatibility utils ---
+class abstractclassmethod(classmethod):
+    #pylint: disable=too-few-public-methods,invalid-name
+    # for python2 compatibility
+    __isabstractmethod__ = True
+
+    def __init__(self, a_callable):
+        a_callable.__isabstractmethod__ = True
+        super(abstractclassmethod, self).__init__(a_callable)
 
 def get_default_argspec(func):
     if sys.version_info.major == 3:
@@ -73,6 +106,8 @@ def get_default_argspec(func):
     return list(reversed(list(zip(reversed(sig.args),
                                   reversed(sig.defaults)))))
 
+
+## --- text utils ---
 def add_text_prefix(text, prefix):
     lines = text.split("\n")
     return "\n".join([prefix + line if line else line for line in lines])
@@ -98,11 +133,8 @@ def component_sample_config_str(comp_name, prefix, filter_funcs=None):
     all_text += prefix + "## ---- End Component {} ----\n".format(comp_name)
     return all_text
 
-def get_cfg_wrapper(cfg, key):
-    if isinstance(cfg, dict):
-        return cfg
-    return {key: cfg}
 
+# --- schedule utils ---
 def _assert_keys(dct, mandatory_keys, possible_keys, name):
     if mandatory_keys:
         expect(set(mandatory_keys).issubset(dct.keys()),
@@ -183,37 +215,3 @@ def get_schedule_value(schedule, epoch):
             next_v = schedule["start"] + schedule["step"] * ind
         next_v = max(min(next_v, max_), min_)
     return next_v
-
-def makedir(path, remove=False):
-    if os.path.exists(path) and remove:
-        shutil.rmtree(path)
-    if not os.path.isdir(path):
-        os.makedirs(path)
-    return path
-
-def softmax(arr):
-    e_arr = np.exp(arr - np.max(arr, axis=-1, keepdims=True))
-    return e_arr / np.sum(e_arr, axis=-1, keepdims=True)
-
-class abstractclassmethod(classmethod):
-    #pylint: disable=too-few-public-methods,invalid-name
-    # for python2 compatibility
-    __isabstractmethod__ = True
-
-    def __init__(self, a_callable):
-        a_callable.__isabstractmethod__ = True
-        super(abstractclassmethod, self).__init__(a_callable)
-
-class Ticker(object):
-    def __init__(self, name):
-        self.name = name
-        self.cur_time = None
-        self.tick()
-        self.logger = _logger.getChild("ticker_{}".format(name))
-
-    def tick(self, message=""):
-        cur_time = time.time()
-        if self.cur_time is not None:
-            elapsed = cur_time - self.cur_time
-            self.logger.debug("Ticker %s: %s: %.3f s", self.name, message, elapsed)
-        self.cur_time = cur_time

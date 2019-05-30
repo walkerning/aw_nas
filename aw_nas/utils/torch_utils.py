@@ -5,51 +5,8 @@ from torch.autograd import Variable
 import torch.nn.functional as F
 import torch.utils.data
 
-class SimpleDataset(torch.utils.data.Dataset):
-    def __init__(self, data):
-        self.data = data[0]
-        self.target = data[1]
 
-    def __getitem__(self, index):
-        data, target = self.data[index], self.target[index]
-        return data, target
-
-    def __len__(self):
-        return len(self.data)
-
-def batchify_sentences(data, bsz, device="cuda"):
-    data = torch.cat(data, -1)
-    nbatch = data.size(0) // bsz
-    data = data.narrow(0, 0, nbatch * bsz)
-    data = data.view(bsz, -1).t().contiguous()
-    if "cuda" in device:
-        data = data.cuda()
-    return data[:-1, :], data[1:, :]
-
-class InfIterator(six.Iterator):
-    def __init__(self, iterable, callback):
-        self.iterable = iterable
-        self.iter_ = iter(self.iterable)
-        self.callback = callback
-
-    def __len__(self):
-        return len(self.iterable)
-
-    def __next__(self):
-        try:
-            data = next(self.iter_)
-        except StopIteration:
-            if self.callback is not None:
-                self.callback()
-            self.iter_ = iter(self.iterable)
-            data = next(self.iter_)
-        return data
-
-    next = __next__
-
-def get_inf_iterator(iterable, callback):
-    return InfIterator(iterable, callback)
-
+## --- model/training utils ---
 def accuracy(outputs, targets, topk=(1,)):
     with torch.no_grad():
         maxk = max(topk)
@@ -64,44 +21,6 @@ def accuracy(outputs, targets, topk=(1,)):
             correct_k = correct[:k].view(-1).float().sum(0)
             res.append(correct_k.mul_(100.0 / batch_size))
         return res
-
-class Cutout(object):
-    """
-    Cutout randomized rectangle of size (length, length)
-    """
-    def __init__(self, length):
-        self.length = length
-
-    def __call__(self, image):
-        h, w = image.shape[1:]
-        mask = np.ones((h, w), np.float32)
-        y = np.random.randint(h)
-        x = np.random.randint(h)
-        y_1 = np.clip(y - self.length // 2, 0, h)
-        y_2 = np.clip(y + self.length // 2, 0, h)
-        x_1 = np.clip(x - self.length // 2, 0, w)
-        x_2 = np.clip(x + self.length // 2, 0, w)
-        mask[y_1:y_2, x_1:x_2] = 0.
-        mask = torch.from_numpy(mask)
-        mask = mask.expand_as(image)
-        image *= mask
-        return image
-
-def get_variable(inputs, device, **kwargs):
-    if isinstance(inputs, (list, np.ndarray)):
-        inputs = torch.Tensor(inputs)
-    out = Variable(inputs.to(device), **kwargs)
-    return out
-
-def get_numpy(arr):
-    if isinstance(arr, (torch.Tensor, Variable)):
-        arr = arr.detach().cpu().numpy()
-    else:
-        arr = np.array(arr)
-    return arr
-
-def count_parameters(model):
-    return np.sum(p.nelement() for name, p in model.named_parameters() if "auxiliary" not in name)
 
 def drop_path(x, drop_prob):
     if drop_prob > 0.:
@@ -151,6 +70,93 @@ def submodule_named_members(module, member, prefix, not_include=tuple()):
         _func = getattr(mod, "named_" + member)
         for n, v in _func(prefix=prefix+mod_name):
             yield n, v
+
+
+## --- dataset ---
+class SimpleDataset(torch.utils.data.Dataset):
+    def __init__(self, data):
+        self.data = data[0]
+        self.target = data[1]
+
+    def __getitem__(self, index):
+        data, target = self.data[index], self.target[index]
+        return data, target
+
+    def __len__(self):
+        return len(self.data)
+
+def batchify_sentences(data, bsz, device="cuda"):
+    data = torch.cat(data, -1)
+    nbatch = data.size(0) // bsz
+    data = data.narrow(0, 0, nbatch * bsz)
+    data = data.view(bsz, -1).t().contiguous()
+    if "cuda" in device:
+        data = data.cuda()
+    return data[:-1, :], data[1:, :]
+
+class InfIterator(six.Iterator):
+    def __init__(self, iterable, callback):
+        self.iterable = iterable
+        self.iter_ = iter(self.iterable)
+        self.callback = callback
+
+    def __len__(self):
+        return len(self.iterable)
+
+    def __next__(self):
+        try:
+            data = next(self.iter_)
+        except StopIteration:
+            if self.callback is not None:
+                self.callback()
+            self.iter_ = iter(self.iterable)
+            data = next(self.iter_)
+        return data
+
+    next = __next__
+
+def get_inf_iterator(iterable, callback):
+    return InfIterator(iterable, callback)
+
+class Cutout(object):
+    """
+    Cutout randomized rectangle of size (length, length)
+    """
+    def __init__(self, length):
+        self.length = length
+
+    def __call__(self, image):
+        h, w = image.shape[1:]
+        mask = np.ones((h, w), np.float32)
+        y = np.random.randint(h)
+        x = np.random.randint(h)
+        y_1 = np.clip(y - self.length // 2, 0, h)
+        y_2 = np.clip(y + self.length // 2, 0, h)
+        x_1 = np.clip(x - self.length // 2, 0, w)
+        x_2 = np.clip(x + self.length // 2, 0, w)
+        mask[y_1:y_2, x_1:x_2] = 0.
+        mask = torch.from_numpy(mask)
+        mask = mask.expand_as(image)
+        image *= mask
+        return image
+
+
+## --- misc helpers ---
+def get_variable(inputs, device, **kwargs):
+    if isinstance(inputs, (list, np.ndarray)):
+        inputs = torch.Tensor(inputs)
+    out = Variable(inputs.to(device), **kwargs)
+    return out
+
+def get_numpy(arr):
+    if isinstance(arr, (torch.Tensor, Variable)):
+        arr = arr.detach().cpu().numpy()
+    else:
+        arr = np.array(arr)
+    return arr
+
+def count_parameters(model):
+    return np.sum(p.nelement() for name, p in model.named_parameters() if "auxiliary" not in name)
 
 def to_device(datas, device):
     return [data.to(device) for data in datas]

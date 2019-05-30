@@ -6,7 +6,7 @@ from torch import nn
 
 from aw_nas import ops
 from aw_nas.utils.exception import expect, ConfigException
-from aw_nas.weights_manager.rnn_shared import RNNSharedNet
+from aw_nas.weights_manager.rnn_shared import RNNSharedNet, INIT_RANGE
 
 class RNNGenotypeModel(RNNSharedNet):
     REGISTRY = "final_model"
@@ -79,6 +79,7 @@ class RNNGenotypeCell(nn.Module):
 
         # the first step, convert input x and previous hidden
         self.w_prev = nn.Linear(num_emb + num_hid, 2 * num_hid)
+        self.w_prev.weight.data.uniform_(-INIT_RANGE, INIT_RANGE)
 
         if self.batchnorm_edge:
             # batchnorm on each edge/connection
@@ -104,7 +105,7 @@ class RNNGenotypeCell(nn.Module):
             self.step_weights = nn.ModuleList([
                 nn.Linear(num_hid, 2*num_hid, bias=False)
                 for _ in range(self._steps)])
-            [mod.weight.data.uniform_(-0.1, 0.1) for mod in self.step_weights]
+            [mod.weight.data.uniform_(-INIT_RANGE, INIT_RANGE) for mod in self.step_weights]
 
         # initiatiate op on edges
         self.Ws = nn.ModuleList()
@@ -116,7 +117,7 @@ class RNNGenotypeCell(nn.Module):
             self.ops.append(op)
             if not self.share_from_w:
                 W = nn.Linear(self.num_hid, 2 * self.num_hid, bias=False)
-                W.weight.data.uniform_(-0.1, 0.1)
+                W.weight.data.uniform_(-INIT_RANGE, INIT_RANGE)
                 self.Ws.append(W)
 
     def forward(self, inputs, hidden, x_mask, h_mask, genotypes): #pylint: disable=arguments-differ

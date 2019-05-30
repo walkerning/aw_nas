@@ -92,6 +92,7 @@ class RNNDiffSharedFromCell(nn.Module):
 
         # the first step, convert input x and previous hidden
         self.w_prev = nn.Linear(num_emb + num_hid, 2 * num_hid)
+        self.w_prev.weight.data.uniform_(-INIT_RANGE, INIT_RANGE)
 
         if self.batchnorm_step:
             # batchnorm after every step (just as in darts's implementation)
@@ -110,6 +111,7 @@ class RNNDiffSharedFromCell(nn.Module):
             nn.Parameter(torch.Tensor(num_hid, 2*num_hid)\
                          .uniform_(-INIT_RANGE, INIT_RANGE))
             for _ in range(self._steps)])
+        [mod.weight.data.uniform_(-INIT_RANGE, INIT_RANGE) for mod in self.step_weights]
 
         self.p_ops = nn.ModuleList()
         for primitive in self._primitives:

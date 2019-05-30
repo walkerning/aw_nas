@@ -176,6 +176,7 @@ class RNNSharedCell(nn.Module):
 
         # the first step, convert input x and previous hidden
         self.w_prev = nn.Linear(num_emb + num_hid, 2 * num_hid)
+        self.w_prev.weight.data.uniform_(-INIT_RANGE, INIT_RANGE)
 
         if self.batchnorm_edge:
             # the first bn
@@ -234,9 +235,11 @@ class RNNSharedOp(nn.Module):
         if shared_module is None:
             if share_w: # share weights between different activation function
                 self.W = nn.Linear(num_hid, 2 * num_hid, bias=False)
+                self.W.weight.data.uniform_(-INIT_RANGE, INIT_RANGE)
             else:
                 self.Ws = nn.ModuleList([nn.Linear(num_hid, 2 * num_hid, bias=False)
                                          for _ in range(len(self.primitives))])
+                [mod.weight.data.uniform_(-INIT_RANGE, INIT_RANGE) for mod in self.Ws]
         else:
             self.W = shared_module
             self.share_w = True
