@@ -21,7 +21,9 @@ class RNNSharedNet(BaseWeightsManager, nn.Module):
             # training
             max_grad_norm,
             # dropout probs
-            dropout_emb, dropout_inp0, dropout_inp, dropout_hid, dropout_out):
+            dropout_emb, dropout_inp0, dropout_inp, dropout_hid, dropout_out,
+            # kwargs that will be passed to cell init
+            **kwargs):
         super(RNNSharedNet, self).__init__(search_space, device)
         nn.Module.__init__(self)
 
@@ -57,7 +59,8 @@ class RNNSharedNet(BaseWeightsManager, nn.Module):
             share_primitive_w=share_primitive_weights,
             share_from_weights=share_from_weights,
             batchnorm_step=batchnorm_step,
-            batchnorm_edge=batchnorm_edge, batchnorm_out=batchnorm_out
+            batchnorm_edge=batchnorm_edge, batchnorm_out=batchnorm_out,
+            **kwargs
         ) for i_layer in range(self._num_layers)])
 
         self._init_weights()
@@ -191,13 +194,13 @@ class RNNSharedCell(nn.Module):
                 for _ in range(self._steps)])
             [mod.weight.data.uniform_(-INIT_RANGE, INIT_RANGE) for mod in self.step_weights]
 
-
         # initiatiate op on edges
         self.edges = defaultdict(dict)
         self.edge_mod = torch.nn.Module() # a stub wrapping module of all the edges
         for from_ in range(self._steps):
             for to_ in range(from_+1, self._steps+1):
-                self.edges[from_][to_] = op_cls(num_hid, search_space.shared_primitives,
+                self.edges[from_][to_] = op_cls(self.num_hid,
+                                                search_space.shared_primitives,
                                                 share_w=share_primitive_w,
                                                 shared_module=self.step_weights[to_-1] \
                                                 if self.share_from_w else None,

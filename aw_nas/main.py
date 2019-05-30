@@ -345,9 +345,19 @@ def derive(cfg_file, load, out_file, n, save_plot, test, steps, gpu, seed, dump_
                 _dump(r, dump_mode, of)
                 of.write("\n")
     else:
-        weights_manager = _init_component(cfg, "weights_manager",
-                                          search_space=search_space, device=device)
         whole_dataset = _init_component(cfg, "dataset")
+        _data_type = whole_dataset.data_type()
+        if _data_type == "sequence":
+            # get the num_tokens
+            num_tokens = whole_dataset.vocab_size
+            LOGGER.info("Dataset %s: vocabulary size: %d", whole_dataset.NAME, num_tokens)
+            weights_manager = _init_component(cfg, "weights_manager",
+                                              search_space=search_space,
+                                              device=device,
+                                              num_tokens=num_tokens)
+        else:
+            weights_manager = _init_component(cfg, "weights_manager",
+                                              search_space=search_space, device=device)
 
         # initialize, setup, run trainer
         trainer = _init_component(cfg, "trainer", weights_manager=weights_manager,

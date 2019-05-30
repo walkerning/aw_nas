@@ -108,12 +108,19 @@ class RNNDiscreteSharedCell(RNNSharedCell):
 
         states = {0: s0}
 
-        for op_type, from_, to_ in genotype:
+        len_genotype = len(genotype)
+
+        for i, (op_type, from_, to_) in enumerate(genotype):
             s_prev = states[from_]
             s_inputs = s_prev
             if self.training:
                 s_inputs = s_prev * h_mask
 
+            # In discrete supernet, as for now, `num_node_inputs==1`;
+            # so, no matter `share_from_w` or not, the number of calculation is the same.
+            # if `share_from_w==True and num_node_inputs>1`, for efficiency, should group genotype
+            # connections by `to_`, and merge `from_` states before multiply by step weights.
+            # HOLD for now. Will be implemented if `num_node_inputs>1` is considered in the future.
             out = self.edges[from_][to_](s_inputs, op_type, s_prev)
 
             if to_ in states:
@@ -121,9 +128,10 @@ class RNNDiscreteSharedCell(RNNSharedCell):
             else:
                 states[to_] = out
 
-        if self.batchnorm_step:
-            for to_ in range(1, self._steps+1):
+            to_finish = i == len_genotype-1 or genotype[i+1][2] != to_
+            if self.batchnorm_step and to_finish:
                 states[to_] = self.bn_steps[to_](states[to_])
+
 
         # average the ends
         output = torch.mean(torch.stack([states[i] for i in concat_]), 0)

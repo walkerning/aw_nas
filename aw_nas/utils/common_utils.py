@@ -119,8 +119,8 @@ def check_schedule_cfg(schedule):
     Check the sanity of the schedule configuration.
     Currently supported type: mul, add, value.
 
-    Rules: mul  : [boundary / every], step, start, [optional: min, max]
-           add  : [boundary / every], step, start, [optional: min, max]
+    Rules: mul  : [boundary / every], step, start, [optional: min, max, start_epoch]
+           add  : [boundary / every], step, start, [optional: min, max, start_epoch]
            value: boundary, value
     """
     expect("type" in schedule,
@@ -140,7 +140,8 @@ def check_schedule_cfg(schedule):
                "value schedule cfg must have `boundary` config start from 1.", ConfigException)
     else: # mul/add
         _assert_keys(schedule, ["step", "start"],
-                     ["type", "step", "start", "boundary", "every", "min", "max"], "value")
+                     ["type", "step", "start", "boundary",
+                      "every", "min", "max", "start_epoch"], "mul/add")
         expect("boundary" in schedule or "every" in schedule,
                "{} schedule cfg must have one of `boundary` and `every` key existed.".format(type_),
                ConfigException)
@@ -164,6 +165,10 @@ def get_schedule_value(schedule, epoch):
     else:
         min_ = schedule.get("min", -np.inf)
         max_ = schedule.get("max", np.inf)
+        start_epoch = schedule.get("start_epoch", 0)
+        epoch = epoch - start_epoch
+        if epoch <= 0:
+            return schedule["start"]
         if "every" in schedule:
             ind = (epoch - 1) // schedule["every"]
         else: # "boundary" in schedule

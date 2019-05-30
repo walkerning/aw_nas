@@ -113,6 +113,8 @@ class PTB(BaseDataset):
 
         self.datasets = {
             "train": train_val,
+            "ori_train": self.corpus.train,
+            "ori_valid": self.corpus.valid,
             "test": self.corpus.test
         }
 

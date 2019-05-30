@@ -101,11 +101,7 @@ def get_numpy(arr):
     return arr
 
 def count_parameters(model):
-    return np.sum(p.nelement() for p in model.parameters())
-
-def count_parameters_in_MB(model): #pylint: disable=invalid-name
-    return np.sum(np.prod(v.size()) for name, v in model.named_parameters() \
-                  if "auxiliary" not in name)/1e6
+    return np.sum(p.nelement() for name, p in model.named_parameters() if "auxiliary" not in name)
 
 def drop_path(x, drop_prob):
     if drop_prob > 0.:

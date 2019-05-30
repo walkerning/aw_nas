@@ -36,22 +36,21 @@ class CNNFinalTrainer(FinalTrainer):
         super(CNNFinalTrainer, self).__init__(schedule_cfg)
 
         self.model = model
+        self.parallel_model = None
         self.dataset = dataset
         self.device = device
+
         self.epochs = epochs
         self.warmup_epochs = warmup_epochs
         self.learning_rate = learning_rate
         self.grad_clip = grad_clip
-
         self.auxiliary_head = auxiliary_head
         self.auxiliary_weight = auxiliary_weight
 
-        if len(gpus) >= 2:
-            self.model = torch.nn.DataParallel(self.model, gpus).to(device)
+        self.gpus = gpus
 
-        self.logger.info("param size = %f MB (%d elements)",
-                         utils.count_parameters_in_MB(self.model),
-                         utils.count_parameters(self.model))
+        self.logger.info("param size = %f M",
+                         utils.count_parameters(self.model)/1.e6)
 
         self._criterion = nn.CrossEntropyLoss().to(self.device)
 
@@ -81,23 +80,30 @@ class CNNFinalTrainer(FinalTrainer):
         self.save_every = None
         self.report_every = None
         self.train_dir = None
+        self._is_setup = False
 
     def setup(self, load=None, save_every=None, train_dir=None, report_every=50):
         if load is not None:
             self.load(load)
+        else:
+            self._parallelize()
+
         self.save_every = save_every
         self.train_dir = train_dir
         self.report_every = report_every
 
-        if self.save_every is not None:
-            expect(self.train_dir is not None)
+        expect(self.save_every is None or self.train_dir is not None,
+               "when `save_every` is not None, make sure `train_dir` is not None")
+
+        self._is_setup = True
 
     def save(self, path):
-        torch.save(self.model.state_dict(), path)
+        torch.save(self.model, path)
         self.logger.info("Saved checkpoint to %s", path)
 
     def load(self, path):
-        self.model.load_state_dict(torch.load(path))
+        self.model = torch.load(path).to(self.device)
+        self._parallelize()
         self.logger.info("Loaded checkpoint from %s", path)
 
     def train(self):
@@ -109,11 +115,12 @@ class CNNFinalTrainer(FinalTrainer):
                 self.scheduler.step()
             self.logger.info('epoch %d lr %e', epoch, self.scheduler.get_lr()[0])
 
-            train_acc, train_obj = self.train_epoch(self.train_queue, self.model, self._criterion,
-                                                    self.optimizer, self.device, epoch)
+            train_acc, train_obj = self.train_epoch(self.train_queue, self.parallel_model,
+                                                    self._criterion, self.optimizer,
+                                                    self.device, epoch)
             self.logger.info('train_acc %f ; train_obj %f', train_acc, train_obj)
 
-            valid_acc, valid_obj = self.infer_epoch(self.valid_queue, self.model,
+            valid_acc, valid_obj = self.infer_epoch(self.valid_queue, self.parallel_model,
                                                     self._criterion, self.device)
             self.logger.info('valid_acc %f ; valid_obj %f', valid_acc, valid_obj)
 
@@ -126,6 +133,12 @@ class CNNFinalTrainer(FinalTrainer):
     def supported_data_types(cls):
         return ["image"]
 
+    def _parallelize(self):
+        if len(self.gpus) >= 2:
+            self.parallel_model = torch.nn.DataParallel(self.model, self.gpus).to(self.device)
+        else:
+            self.parallel_model = self.model
+
     @staticmethod
     def _init_scheduler(optimizer, cfg):
         if cfg:
@@ -136,6 +149,7 @@ class CNNFinalTrainer(FinalTrainer):
 
 
     def train_epoch(self, train_queue, model, criterion, optimizer, device, epoch):
+        expect(self._is_setup, "trainer.setup should be called first")
         objs = utils.AverageMeter()
         top1 = utils.AverageMeter()
         top5 = utils.AverageMeter()
@@ -172,6 +186,7 @@ class CNNFinalTrainer(FinalTrainer):
 
 
     def infer_epoch(self, valid_queue, model, criterion, device):
+        expect(self._is_setup, "trainer.setup should be called first")
         objs = utils.AverageMeter()
         top1 = utils.AverageMeter()
         top5 = utils.AverageMeter()
@@ -198,14 +213,8 @@ class CNNFinalTrainer(FinalTrainer):
 
     def on_epoch_start(self, epoch):
         super(CNNFinalTrainer, self).on_epoch_start(epoch)
-        if isinstance(self.model, nn.DataParallel):
-            self.model.module.on_epoch_start(epoch)
-        else:
-            self.model.on_epoch_start(epoch)
+        self.model.on_epoch_start(epoch)
 
     def on_epoch_end(self, epoch):
         super(CNNFinalTrainer, self).on_epoch_end(epoch)
-        if isinstance(self.model, nn.DataParallel):
-            self.model.module.on_epoch_end(epoch)
-        else:
-            self.model.on_epoch_end(epoch)
+        self.model.on_epoch_end(epoch)

@@ -190,6 +190,20 @@ class SearchSpace(Component):
 
     def __init__(self):
         super(SearchSpace, self).__init__(schedule_cfg=None)
+        self.genotype_type = None
+        self.genotype_type_name = None
+        self.cell_group_names = None
+
+    # namedtuple defined not at the module top level is unpicklable
+    # remove it from the states
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        del state["genotype_type"]
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self.genotype_type = collections.namedtuple(self.genotype_type_name, self.cell_group_names)
 
     @abc.abstractmethod
     def random_sample(self):
@@ -320,7 +334,8 @@ class CNNSearchSpace(SearchSpace):
             "reduce" if i in self.reduce_cell_groups else "normal", i)\
                                  for i in range(self.num_cell_groups)]
 
-        self.genotype_type = collections.namedtuple("CNNGenotype",
+        self.genotype_type_name = "CNNGenotype"
+        self.genotype_type = collections.namedtuple(self.genotype_type_name,
                                                     self.cell_group_names)
 
         # init nodes(meta arch: connect from the last `num_init_nodes` cell's output)
@@ -339,6 +354,11 @@ class CNNSearchSpace(SearchSpace):
     def genotype(self, arch):
         """
         Get a human readable description of an discrete architecture.
+
+        ..note:
+            Due to the implementation of weights_manager, genotype must be ordered in the way
+            that `to_node` monotonously increase, this is guaranteed due to the implicit
+            assumption of the controller's sampling order.
         """
 
         expect(len(arch) == self.num_cell_groups)
@@ -463,7 +483,8 @@ class RNNSearchSpace(SearchSpace):
 
         self.cell_group_names = ["cell"]
 
-        self.genotype_type = collections.namedtuple("RNNGenotype",
+        self.genotype_type_name = "RNNGenotype"
+        self.genotype_type = collections.namedtuple(self.genotype_type_name,
                                                     self.cell_group_names +\
                                                     [n + "_concat" for n in self.cell_group_names])
 
