@@ -93,6 +93,14 @@ class BaseTrainer(Component):
         self.controller.on_epoch_end(epoch)
         self.weights_manager.on_epoch_end(epoch)
 
+    def final_save(self):
+        if self.train_dir:
+            # final saving
+            dir_ = utils.makedir(os.path.join(self.train_dir, "final"))
+            torch.save(self.controller, os.path.join(dir_, "controller.pt"))
+            torch.save(self.weights_manager, os.path.join(dir_, "weights_manager.pt"))
+            self.logger.info("Final Saving: Dump controller/weights_manager to directory %s", dir_)
+
     def maybe_save(self):
         if self.save_every is not None and self.train_dir and self.epoch % self.save_every == 0:
             self.controller.save(self._save_path("controller"))

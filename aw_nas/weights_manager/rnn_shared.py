@@ -72,7 +72,7 @@ class RNNSharedNet(BaseWeightsManager, nn.Module):
             logits: Tensor(bptt_steps, batch_size, num_tokens)
             raw_outs: Tensor(bptt_steps, batch_size, num_hid)
             droped_outs: Tensor(bptt_steps, batch_size, num_hid)
-            next_hiddens: List(Tensor(num_hid))[num_layers]
+            next_hiddens: Tensor(num_layers, batch_size, num_hid)
         """
         batch_size = inputs.size(1)
         time_steps = inputs.size(0)
@@ -117,7 +117,7 @@ class RNNSharedNet(BaseWeightsManager, nn.Module):
                      .view(-1, batch_size, self.num_tokens)
 
         # next hidden states: list of size num_layers, tensors of size (num_hid)
-        next_hiddens = [next_hid.detach_() for next_hid in next_hiddens]
+        next_hiddens = torch.stack([next_hid.detach_() for next_hid in next_hiddens])
         return logits, raw_outs, droped_outs, next_hiddens
 
     def step_current_gradients(self, optimizer):
@@ -150,8 +150,8 @@ class RNNSharedNet(BaseWeightsManager, nn.Module):
         """
         Initialize a hidden state. Only rnn that handled sequence data need this.
         """
-        return [torch.zeros(batch_size, self.num_hid, device=self.device)
-                for _ in range(self._num_layers)]
+        return torch.stack([torch.zeros(batch_size, self.num_hid, device=self.device)
+                            for _ in range(self._num_layers)])
 
     def _init_weights(self):
         self.encoder.weight.data.uniform_(-INIT_RANGE, INIT_RANGE)

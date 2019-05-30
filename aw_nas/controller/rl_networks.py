@@ -55,7 +55,7 @@ class BaseLSTM(BaseRLControllerNet):
 
         self.lstm = nn.ModuleList()
         for _ in range(self.num_lstm_layers):
-            self.lstm.append(torch.nn.LSTMCell(self.controller_hid, self.controller_hid))
+            self.lstm.append(nn.LSTMCell(self.controller_hid, self.controller_hid))
 
     def reset_parameters(self):
         init_range = 0.1
@@ -316,14 +316,15 @@ class EmbedControlNet(BaseLSTM):
         self.op_emb = nn.Embedding(self._num_primitives, self.controller_hid)
         _n_node_input = self.search_space.num_init_nodes +\
                         self.search_space.num_steps - 1
-        self.node_emb = torch.nn.Embedding(_n_node_input, self.controller_hid)
+        self.node_emb = nn.Embedding(_n_node_input, self.controller_hid)
 
         ## Attention mapping
         # used for embedding attention mapping
         self.emb_attn = nn.Linear(self.controller_hid, self.attention_hid, bias=False)
         # used for (current node) hidden state attention mapping
         self.hid_attn = nn.Linear(self.controller_hid, self.attention_hid, bias=False)
-        self.query_index = torch.LongTensor(range(0, _n_node_input)).to(self.device)
+        query_index = torch.LongTensor(range(0, _n_node_input))
+        self.register_buffer("query_index", query_index)
 
         ## Mapping before softmax
         self.w_node_soft = nn.Linear(self.attention_hid, 1, bias=False)

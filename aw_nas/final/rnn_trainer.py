@@ -94,7 +94,11 @@ class RNNFinalTrainer(FinalTrainer):
 
     def load(self, path):
         del self.parallel_model
-        self.model = torch.load(os.path.join(path, "model.pt")).to(self.device)
+        # load using cpu
+        self.model = torch.load(os.path.join(path, "model.pt"), map_location=torch.device("cpu"))
+        # to device
+        self.model.to(self.device)
+        # maybe parallelize
         self._parallelize()
 
         checkpoint = torch.load(os.path.join(path, "optimizer.pt"))
@@ -109,10 +113,10 @@ class RNNFinalTrainer(FinalTrainer):
             self.epoch = epoch
             self.on_epoch_start(epoch)
             self._scheduler_step()
-            self.logger.info('epoch %d lr %e', epoch, self.optimizer.param_groups[0]["lr"])
+            self.logger.info("epoch %d lr %e", epoch, self.optimizer.param_groups[0]["lr"])
 
             train_obj, train_loss = self.train_epoch(*self.train_data, bptt_steps=self.bptt_steps)
-            self.logger.info('train: perp %.3f; bpc %.3f ; loss %.3f ; loss with reg %.3f',
+            self.logger.info("train: perp %.3f; bpc %.3f ; loss %.3f ; loss with reg %.3f",
                              np.exp(train_obj), train_obj / np.log(2), train_obj, train_loss)
 
             self._eval_maybe_save()
@@ -123,21 +127,21 @@ class RNNFinalTrainer(FinalTrainer):
             self.on_epoch_end(epoch)
 
     def _eval_maybe_save(self):
-        if 't0' in self.optimizer.param_groups[0]:
+        if "t0" in self.optimizer.param_groups[0]:
             # Averaged SGD
             backup = {}
             for prm in self.model.parameters():
                 backup[prm] = prm.data.clone()
-                prm.data = self.optimizer.state[prm]['ax'].clone()
+                prm.data = self.optimizer.state[prm]["ax"].clone()
 
             valid_obj = self.evaluate_epoch(*self.val_data, bptt_steps=self.bptt_steps)
-            self.logger.info('Epoch %3d: valid(averaged): perp %.3f ; bpc %.3f ; loss %.3f',
-                             self.epoch, np.exp(valid_obj), valid_obj/np.log(2), valid_obj)
+            self.logger.info("valid(averaged): perp %.3f ; bpc %.3f ; loss %.3f",
+                             np.exp(valid_obj), valid_obj/np.log(2), valid_obj)
 
             if self.best_valid_obj is None or valid_obj < self.best_valid_obj:
                 path = os.path.join(self.train_dir, "best")
                 self.save(path)
-                self.logger.info('Epoch %3d: Saving Averaged model to %s', self.epoch, path)
+                self.logger.info("Epoch %3d: Saving Averaged model to %s", self.epoch, path)
                 self.best_valid_obj = valid_obj
 
             for prm in self.model.parameters():
@@ -145,13 +149,13 @@ class RNNFinalTrainer(FinalTrainer):
         else:
             # SGD
             valid_obj = self.evaluate_epoch(*self.val_data, bptt_steps=self.bptt_steps)
-            self.logger.info('Epoch %3d: valid: perp %.3f ; bpc %.3f ; loss %.3f',
-                             self.epoch, np.exp(valid_obj), valid_obj/np.log(2), valid_obj)
+            self.logger.info("valid: perp %.3f ; bpc %.3f ; loss %.3f",
+                             np.exp(valid_obj), valid_obj/np.log(2), valid_obj)
 
             if self.best_valid_obj is None or valid_obj < self.best_valid_obj:
                 path = os.path.join(self.train_dir, "best")
                 self.save(path)
-                self.logger.info('Epoch %3d: Saving model to %s', self.epoch, path)
+                self.logger.info("Epoch %3d: Saving model to %s", self.epoch, path)
                 self.best_valid_obj = valid_obj
 
             window_objs = self.valid_objs[:-self.valid_decay_window]
@@ -160,6 +164,8 @@ class RNNFinalTrainer(FinalTrainer):
                 # for `self.valid_decay_window` epochs
                 cur_lr = self.optimizer.param_groups[0]["lr"]
                 # initialize the ASGD optimizer
+                self.logger.info("Begin using ASGD optimizer! "
+                                 "All the models saved later will be weights-averaged models")
                 self.optimizer = torch.optim.ASGD(self.model.parameters(), lr=cur_lr,
                                                   t0=0, lambd=0., weight_decay=self.weight_decay)
                 self.scheduler = self._init_scheduler(self.optimizer, self.optimizer_scheduler_cfg)
@@ -188,6 +194,7 @@ class RNNFinalTrainer(FinalTrainer):
         self.model.train()
         objs = utils.AverageMeter()
         losses = utils.AverageMeter()
+
         hiddens = self.model.init_hidden(batch_size)
 
         if self.random_bptt:
@@ -248,7 +255,8 @@ class RNNFinalTrainer(FinalTrainer):
 
     def _parallelize(self):
         if len(self.gpus) >= 2:
-            self.parallel_model = torch.nn.DataParallel(self.model, self.gpus).to(self.device)
+            # dim=1 for batchsize, as dim=0 is time-step
+            self.parallel_model = torch.nn.DataParallel(self.model, self.gpus, dim=1).cuda()
         else:
             self.parallel_model = self.model
 

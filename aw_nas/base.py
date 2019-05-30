@@ -42,6 +42,17 @@ class Component(object):
         self.writer = WrapWriter(None) # a none writer
         self.epoch = 0
 
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        del state["writer"]
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        # just set self.writer to be a none writer
+        # not reset to the original logdir, this is reasonable
+        self.writer = WrapWriter(None)
+
     def setup_writer(self, writer):
         self.writer = writer
 

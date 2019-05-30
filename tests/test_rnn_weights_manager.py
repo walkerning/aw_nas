@@ -85,17 +85,14 @@ def test_rnn_supernet_forward(rnn_super_net):
     _num_layers = rnn_super_net._num_layers
 
     hiddens = rnn_super_net.init_hidden(batch_size)
-    hidden_id = tuple([id(hid) for hid in hiddens])
 
-    assert tuple(hiddens[0].shape) == (batch_size, _num_hid)
-    assert len(hiddens) == _num_layers
+    assert tuple(hiddens.shape) == (_num_layers, batch_size, _num_hid)
     data = _rnn_data(time_steps, batch_size, _num_tokens)
 
     logits, _, outs, next_hiddens = cand_net.forward_data(data[0], mode="eval", hiddens=hiddens)
     assert tuple(logits.shape) == (time_steps, batch_size, _num_tokens)
     assert tuple(outs.shape) == (time_steps, batch_size, _num_hid)
-    assert tuple([id(hid) for hid in hiddens]) == hidden_id # the hidden is modified in-place
-    assert all((hid == n_hid).all() for hid, n_hid in zip(hiddens, next_hiddens)) # the value is equal to the calculated results
+    assert (hiddens == next_hiddens).all()
 
 @pytest.mark.parametrize("rnn_super_net",
                          [
@@ -136,9 +133,7 @@ def test_rnn_supernet_candidate_gradient_virtual(rnn_super_net):
         optimizer = torch.optim.SGD(cand_net.parameters(), lr=lr)
         optimizer.step()
         for n, grad in grads:
-            if (w_prev[n] - grad * lr - c_params[n]).abs().mean().item() > EPS:
-                import pdb
-                pdb.set_trace()
+            assert (w_prev[n] - grad * lr - c_params[n]).abs().mean().item() < EPS
         for n in buffer_prev:
             # a simple check, make sure buffer is at least updated.
             # some buffers such as bn.num_batches_tracked has type torch.int,
@@ -174,7 +169,6 @@ def test_rnn_diff_supernet_forward(rnn_diff_super_net):
 
     # init hiddens
     hiddens = rnn_diff_super_net.init_hidden(batch_size)
-    hidden_id = tuple([id(hid) for hid in hiddens])
 
     data = _rnn_data(time_steps, batch_size, _num_tokens)
 
@@ -182,8 +176,8 @@ def test_rnn_diff_supernet_forward(rnn_diff_super_net):
     assert tuple(logits.shape) == (time_steps, batch_size, _num_tokens)
     assert tuple(outs.shape) == (time_steps, batch_size, _num_hid)
     assert len(next_hiddens) == _num_layers
-    assert tuple([id(hid) for hid in hiddens]) == hidden_id # the hidden is modified in-place
-    assert all((hid == n_hid).all() for hid, n_hid in zip(hiddens, next_hiddens)) # the value is equal to the calculated results
+    # the value is equal to the calculated results, the hidden is modified in-place
+    assert (hiddens == next_hiddens).all()
 
 def test_rnn_diff_supernet_to_arch(rnn_diff_super_net):
     from torch import nn

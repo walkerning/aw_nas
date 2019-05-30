@@ -29,6 +29,10 @@ class BaseController(Component):
         """Set the mode of the controller"""
 
     @abc.abstractmethod
+    def set_device(self, device):
+        """Set the device, do neccesary copy"""
+
+    @abc.abstractmethod
     def sample(self, n):
         """Sample a architecture rollout, which can be used to assemble an architecture.
 

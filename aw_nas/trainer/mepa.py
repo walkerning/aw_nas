@@ -187,8 +187,11 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
                                                 mepa_as_surrogate, derive_queue)
 
         self.mepa_steps = len(self.mepa_queue)
-        expect(self.interleave_controller_every is None or self.controller_steps is None,
-               "`controller_steps` must not be given in interleave mode", ConfigException)
+        expect(self.interleave_controller_every is None or (
+            self.controller_steps is None or self.controller_steps == \
+            self.mepa_steps // self.interleave_controller_every),
+               "`controller_steps` must not be given or must match with "
+               "`mepa_steps/interleave_controller_every`in interleave mode", ConfigException)
         if self.controller_steps is None:
             if self.interleave_controller_every is None:
                 # if controller_steps is not explicitly given, and not in interleave mode,
@@ -499,6 +502,8 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
 
             self.on_epoch_end(epoch) # call `on_epoch_end` of sub-components
 
+        self.final_save()
+
     def test(self):
         """
         Derive and test, plot the best arch among the arch samples.
@@ -641,8 +646,7 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
 
     def _get_hiddens_resetter(self, name):
         def _func():
-            for state in getattr(self, name + "_hiddens"):
-                state.zero_()
+            getattr(self, name + "_hiddens").zero_()
         _func.__name__ = "{}_hiddens_resetter".format(name)
         return _func
 

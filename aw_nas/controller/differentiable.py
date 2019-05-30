@@ -75,6 +75,10 @@ class DiffController(BaseController, nn.Module):
         else:
             raise Exception("Unrecognized mode: {}".format(mode))
 
+    def set_device(self, device):
+        self.device = device
+        self.to(device)
+
     def forward(self, n=1): #pylint: disable=arguments-differ
         return self.sample(n=n)
 

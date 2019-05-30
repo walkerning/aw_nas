@@ -64,10 +64,18 @@ class RLController(BaseController, nn.Module):
         else:
             raise Exception("Unrecognized mode: {}".format(mode))
 
+    def set_device(self, device):
+        self.device = device
+        self.to(device)
+        for c_net in self.controllers:
+            c_net.device = device
+            c_net.to(device)
+
     def forward(self, n=1): #pylint: disable=arguments-differ
         return self.sample(n=n)
 
     def sample(self, n=1):
+        assert n > 0
         arch_lst = []
         log_probs_lst = []
         entropies_lst = []

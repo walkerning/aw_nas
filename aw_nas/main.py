@@ -125,7 +125,7 @@ def search(cfg_file, gpu, seed, load, save_every, train_dir, vis_dir, develop):
 
     # set gpu
     _set_gpu(gpu)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:{}".format(gpu) if torch.cuda.is_available() else "cpu")
 
     # set seed
     if seed is not None:
@@ -220,7 +220,7 @@ def train(gpus, seed, cfg_file, load, save_every, train_dir):
         device = "cpu"
     else:
         _set_gpu(gpu_list[0])
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = torch.device("cuda:{}".format(gpu_list[0]) if torch.cuda.is_available() else "cpu")
 
     # set seed
     if seed is not None:
@@ -277,6 +277,59 @@ def _dump(rollout, dump_mode, of):
     else:
         raise Exception("Unexpected dump_mode: {}".format(dump_mode))
 
+@main.command(help="Sample architectures, by directly pickle loading controller from path")
+@click.option("--load", required=True, type=str,
+              help="the file to load controller")
+@click.option("-o", "--out-file", required=True, type=str,
+              help="the file to write the derived genotypes to")
+@click.option("-n", default=1, type=int,
+              help="number of architectures to derive")
+@click.option("--save-plot", default=None, type=str,
+              help="If specified, save the plot of the rollouts to this path")
+@click.option("--gpu", default=0, type=int,
+              help="the gpu to run deriving on")
+@click.option("--seed", default=None, type=int,
+              help="the random seed to run training")
+@click.option("--dump-mode", default="str", type=click.Choice(["list", "str"]))
+def sample(load, out_file, n, save_plot, gpu, seed, dump_mode):
+    LOGGER.info("CWD: %s", os.getcwd())
+    LOGGER.info("CMD: %s", " ".join(sys.argv))
+
+    setproctitle.setproctitle("awnas-sample load: {}; cwd: {}".format(load, os.getcwd()))
+
+    # set gpu
+    _set_gpu(gpu)
+    device = torch.device("cuda:{}".format(gpu) if torch.cuda.is_available() else "cpu")
+
+    # set seed
+    if seed is not None:
+        LOGGER.info("Setting random seed: %d.", seed)
+        np.random.seed(seed)
+        random.seed(seed)
+        torch.manual_seed(seed)
+
+    # create the directory for saving plots
+    if save_plot is not None:
+        save_plot = utils.makedir(save_plot)
+
+    controller_path = os.path.join(load)
+    # load the model on cpu
+    controller = torch.load(controller_path, map_location=torch.device("cpu"))
+    # then set the device
+    controller.set_device(device)
+
+    rollouts = controller.sample(n)
+    with open(out_file, "w") as of:
+        for i, r in enumerate(rollouts):
+            if save_plot is not None:
+                r.plot_arch(
+                    filename=os.path.join(save_plot, str(i)),
+                    label="Derive {}".format(i)
+                )
+            of.write("# ---- Arch {} ----\n".format(i))
+            _dump(r, dump_mode, of)
+            of.write("\n")
+
 @main.command(help="Derive architectures.")
 @click.argument("cfg_file", required=True, type=str)
 @click.option("--load", required=True, type=str,
@@ -306,7 +359,7 @@ def derive(cfg_file, load, out_file, n, save_plot, test, steps, gpu, seed, dump_
 
     # set gpu
     _set_gpu(gpu)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:{}".format(gpu) if torch.cuda.is_available() else "cpu")
 
     # set seed
     if seed is not None:
@@ -374,9 +427,9 @@ def derive(cfg_file, load, out_file, n, save_plot, test, steps, gpu, seed, dump_
                 if save_plot is not None:
                     rollout.plot_arch(
                         filename=os.path.join(save_plot, str(i)),
-                        label="Derive {}; Acc {:.3f}".format(i, rollout.get_perf())
+                        label="Derive {}; Reward {:.3f}".format(i, rollout.get_perf())
                     )
-                of.write("# ---- Arch {} (Acc {}) ----\n".format(i, rollout.get_perf()))
+                of.write("# ---- Arch {} (Reward {}) ----\n".format(i, rollout.get_perf()))
                 _dump(rollout, dump_mode, of)
                 of.write("\n")
 

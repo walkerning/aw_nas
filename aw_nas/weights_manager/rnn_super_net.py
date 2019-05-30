@@ -18,12 +18,11 @@ __all__ = ["RNNSubCandidateNet", "RNNSuperNet"]
 class RNNSubCandidateNet(SubCandidateNet):
     def forward(self, inputs, hiddens): #pylint: disable=arguments-differ
         # make a copy of the hiddens and forward
-        hiddens_copy = [hid.clone() for hid in hiddens]
+        hiddens_copy = hiddens.clone()
         logits, raw_outs, outs, next_hiddens \
             = self.super_net.forward(inputs, self.genotypes, hiddens=hiddens_copy)
         # update hiddens in place
-        for hid, n_hid in zip(hiddens, next_hiddens):
-            hid.data.copy_(n_hid.data)
+        hiddens.data.copy_(next_hiddens.data)
         return logits, raw_outs, outs, next_hiddens
 
 class RNNSuperNet(RNNSharedNet):
