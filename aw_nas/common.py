@@ -320,7 +320,7 @@ class CNNSearchSpace(SearchSpace):
             # by default: cell 0: normal cel, cell 1: reduce cell
             self.cell_layout = [0] * self.num_layers
             self.cell_layout[self.num_layers//3] = 1
-            self.cell_layout[self.num_layers//3 * 2] = 1
+            self.cell_layout[(2 * self.num_layers)//3] = 1
 
         expect(self.num_cell_groups == 2 or reduce_cell_groups is not None,
                "`reduce_cell_groups` need to be explicitly specified when `num_cell_groups` !=  2.",

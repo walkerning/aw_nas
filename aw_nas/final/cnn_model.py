@@ -104,7 +104,7 @@ class CNNGenotypeModel(FinalModel):
             prev_num_channels = prev_num_channels[1:]
             self.cells.append(cell)
 
-            if i_layer == 2 * self._num_layers // 3 and self.auxiliary_head:
+            if i_layer == (2 * self._num_layers) // 3 and self.auxiliary_head:
                 self.auxiliary_net = AuxiliaryHead(prev_num_channels[-1],
                                                    num_classes, **(auxiliary_cfg or {}))
 
@@ -166,14 +166,14 @@ class CNNGenotypeCell(nn.Module):
                 preprocess = ops.FactorizedReduce(C_in=prev_c,
                                                   C_out=num_channels,
                                                   stride=prev_s,
-                                                  affine=False)
+                                                  affine=True)
             else: # prev_c == _steps * num_channels or inputs
                 preprocess = ops.ReLUConvBN(C_in=prev_c,
                                             C_out=num_channels,
                                             kernel_size=1,
                                             stride=1,
                                             padding=0,
-                                            affine=False)
+                                            affine=True)
             self.preprocess_ops.append(preprocess)
         assert len(self.preprocess_ops) == self._num_init
 
