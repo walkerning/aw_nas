@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 import os
 
 import numpy as np
@@ -56,9 +58,9 @@ class RNNFinalTrainer(FinalTrainer):
                                          weight_decay=weight_decay)
         self.scheduler = self._init_scheduler(self.optimizer, optimizer_scheduler)
 
+        # states of the trainer
         self.last_epoch = 0
         self.epoch = 0
-
         self.report_every = None
         self.save_every = None
         self.train_dir = None
@@ -94,19 +96,48 @@ class RNNFinalTrainer(FinalTrainer):
 
     def load(self, path):
         del self.parallel_model
+        # load the model
+        m_path = os.path.join(path, "model.pt") if os.path.isdir(path) else path
         # load using cpu
-        self.model = torch.load(os.path.join(path, "model.pt"), map_location=torch.device("cpu"))
+        self.model = torch.load(m_path, map_location=torch.device("cpu"))
         # to device
         self.model.to(self.device)
         # maybe parallelize
         self._parallelize()
+        log_strs = ["model from {}".format(m_path)]
 
-        checkpoint = torch.load(os.path.join(path, "optimizer.pt"))
-        self.last_epoch = self.epoch = checkpoint["epoch"]
-        self.optimizer.load_state_dict(checkpoint["optimizer"])
+        # init/load the optimizer
+        o_path = os.path.join(path, "optimizer.pt") if os.path.isdir(path) else None
+        if o_path and os.path.exists(o_path):
+            # init according to the type of the saved optimizer, and then load
+            checkpoint = torch.load(o_path)
+            optimizer_state = checkpoint["optimizer"]
+            if "t0" in optimizer_state["param_groups"][0]:
+                # ASGD
+                self.optimizer = torch.optim.ASGD(self.model.parameters(), lr=self.learning_rate,
+                                                  t0=0, lambd=0., weight_decay=self.weight_decay)
+            else:
+                # SGD
+                self.optimizer = torch.optim.SGD(self.model.parameters(), lr=self.learning_rate,
+                                                 weight_decay=self.weight_decay)
+            self.optimizer.load_state_dict(optimizer_state)
+            self.last_epoch = self.epoch = checkpoint["epoch"]
+            log_strs.append("optimizer from {}".format(o_path))
+        else:
+            # just init a SGD optimizer
+            self.optimizer = torch.optim.SGD(self.model.parameters(), lr=self.learning_rate,
+                                             weight_decay=self.weight_decay)
+
+        # init/load the scheduler
+        self.scheduler = self._init_scheduler(self.optimizer, self.optimizer_scheduler_cfg)
         if self.scheduler is not None:
-            self.scheduler.load_state_dict(torch.load(os.path.join(path, "scheduler.pt")))
-        self.logger.info("Loaded checkpoint from %s", path)
+            s_path = os.path.join(path, "scheduler.pt") if os.path.isdir(path) else None
+            if s_path and os.path.exists(s_path):
+                self.scheduler.load_state_dict(torch.load(s_path))
+                log_strs.append("scheduler from {}".format(s_path))
+
+        self.logger.info("Loaded checkpoint from %s: %s", path, ", ".join(log_strs))
+        self.logger.info("Last epoch: %d", self.last_epoch)
 
     def train(self):
         for epoch in range(self.last_epoch+1, self.epochs+1):
@@ -159,7 +190,7 @@ class RNNFinalTrainer(FinalTrainer):
                 self.best_valid_obj = valid_obj
 
             window_objs = self.valid_objs[:-self.valid_decay_window]
-            if window_objs and valid_obj > min(window_objs):
+            if len(window_objs) >= self.valid_decay_window and valid_obj > min(window_objs):
                 # check whether the valid performance does not decrease
                 # for `self.valid_decay_window` epochs
                 cur_lr = self.optimizer.param_groups[0]["lr"]

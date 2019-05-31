@@ -47,6 +47,13 @@ class CNNFinalTrainer(FinalTrainer):
         self.auxiliary_head = auxiliary_head
         self.auxiliary_weight = auxiliary_weight
 
+        # for optimizer
+        self.weight_decay = weight_decay
+        self.no_bias_decay = no_bias_decay
+        self.learning_rate = learning_rate
+        self.momentum = momentum
+        self.optimizer_scheduler_cfg = optimizer_scheduler
+
         self.gpus = gpus
 
         self.logger.info("param size = %f M",
@@ -54,20 +61,6 @@ class CNNFinalTrainer(FinalTrainer):
 
         self._criterion = nn.CrossEntropyLoss().to(self.device)
 
-        group_weight = []
-        group_bias = []
-        for name, param in model.named_parameters():
-            if 'bias' in name:
-                group_bias.append(param)
-            else:
-                group_weight.append(param)
-        assert len(list(model.parameters())) == len(group_weight) + len(group_bias)
-        self.optimizer = torch.optim.SGD([{'params': group_weight},
-                                          {'params': group_bias,
-                                           'weight_decay': 0 if no_bias_decay else weight_decay}],
-                                         lr=learning_rate,
-                                         momentum=momentum,
-                                         weight_decay=weight_decay)
         _splits = self.dataset.splits()
 
         self.train_queue = torch.utils.data.DataLoader(
@@ -75,8 +68,12 @@ class CNNFinalTrainer(FinalTrainer):
         self.valid_queue = torch.utils.data.DataLoader(
             _splits["test"], batch_size=batch_size, shuffle=False, pin_memory=True, num_workers=2)
 
-        self.scheduler = self._init_scheduler(self.optimizer, optimizer_scheduler)
+        self.optimizer = self._init_optimizer()
+        self.scheduler = self._init_scheduler(self.optimizer, self.optimizer_scheduler_cfg)
 
+        # states of the trainer
+        self.last_epoch = 0
+        self.epoch = 0
         self.save_every = None
         self.report_every = None
         self.train_dir = None
@@ -98,16 +95,49 @@ class CNNFinalTrainer(FinalTrainer):
         self._is_setup = True
 
     def save(self, path):
-        torch.save(self.model, path)
+        path = utils.makedir(path)
+        # save the model directly instead of the state_dict,
+        # so that it can be loaded and run directly, without specificy configuration
+        torch.save(self.model, os.path.join(path, "model.pt"))
+        torch.save({
+            "epoch": self.epoch,
+            "optimizer":self.optimizer.state_dict()
+        }, os.path.join(path, "optimizer.pt"))
+        if self.scheduler is not None:
+            torch.save(self.scheduler.state_dict(), os.path.join(path, "scheduler.pt"))
         self.logger.info("Saved checkpoint to %s", path)
 
     def load(self, path):
-        self.model = torch.load(path).to(self.device)
+        # load the model
+        m_path = os.path.join(path, "model.pt") if os.path.isdir(path) else path
+        self.model = torch.load(m_path, map_location=torch.device("cpu"))
+        self.model.to(self.device)
         self._parallelize()
-        self.logger.info("Loaded checkpoint from %s", path)
+        log_strs = ["model from {}".format(m_path)]
+
+        # init/load the optimzier
+        self.optimizer = self._init_optimizer()
+        o_path = os.path.join(path, "optimizer.pt") if os.path.isdir(path) else None
+        if o_path and os.path.exists(o_path):
+            checkpoint = torch.load(o_path)
+            self.optimizer.load_state_dict(checkpoint["optimizer"])
+            log_strs.append("optimizer from {}".format(o_path))
+            self.last_epoch = checkpoint["epoch"]
+
+        # init/load the scheduler
+        self.scheduler = self._init_scheduler(self.optimizer, self.optimizer_scheduler_cfg)
+        if self.scheduler is not None:
+            s_path = os.path.join(path, "scheduler.pt") if os.path.isdir(path) else None
+            if s_path and os.path.exists(s_path):
+                self.scheduler.load_state_dict(torch.load(s_path))
+                log_strs.append("scheduler from {}".format(s_path))
+
+        self.logger.info("Loaded checkpoint from %s: %s", path, ", ".join(log_strs))
+        self.logger.info("Last epoch: %d", self.last_epoch)
 
     def train(self):
-        for epoch in range(1, self.epochs+1):
+        for epoch in range(self.last_epoch+1, self.epochs+1):
+            self.epoch = epoch
             self.on_epoch_start(epoch)
             if epoch < self.warmup_epochs:
                 _warmup_update_lr(self.optimizer, epoch, self.learning_rate, self.warmup_epochs)
@@ -125,7 +155,7 @@ class CNNFinalTrainer(FinalTrainer):
             self.logger.info('valid_acc %f ; valid_obj %f', valid_acc, valid_obj)
 
             if self.save_every and epoch % self.save_every == 0:
-                path = os.path.join(self.train_dir, str(epoch) + ".pt")
+                path = os.path.join(self.train_dir, str(epoch))
                 self.save(path)
             self.on_epoch_end(epoch)
 
@@ -138,6 +168,24 @@ class CNNFinalTrainer(FinalTrainer):
             self.parallel_model = torch.nn.DataParallel(self.model, self.gpus).to(self.device)
         else:
             self.parallel_model = self.model
+
+    def _init_optimizer(self):
+        group_weight = []
+        group_bias = []
+        for name, param in self.model.named_parameters():
+            if 'bias' in name:
+                group_bias.append(param)
+            else:
+                group_weight.append(param)
+        assert len(list(self.model.parameters())) == len(group_weight) + len(group_bias)
+        optimizer = torch.optim.SGD(
+            [{'params': group_weight},
+             {'params': group_bias,
+              'weight_decay': 0 if self.no_bias_decay else self.weight_decay}],
+            lr=self.learning_rate,
+            momentum=self.momentum,
+            weight_decay=self.weight_decay)
+        return optimizer
 
     @staticmethod
     def _init_scheduler(optimizer, cfg):

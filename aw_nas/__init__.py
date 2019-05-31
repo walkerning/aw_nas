@@ -28,3 +28,5 @@ from .trainer import *
 from .controller import *
 
 from .weights_manager import *
+
+from . import final

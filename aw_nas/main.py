@@ -197,7 +197,6 @@ def search(cfg_file, gpu, seed, load, save_every, train_dir, vis_dir, develop):
 @click.option("--train-dir", default=None, type=str,
               help="the directory to save checkpoints")
 def train(gpus, seed, cfg_file, load, save_every, train_dir):
-    import aw_nas.final #pylint: disable=unused-import,unused-variable
     if train_dir:
         # backup config file, and if in `develop` mode, also backup the aw_nas source code
         train_dir = utils.makedir(train_dir, remove=True)
@@ -466,7 +465,6 @@ def gen_sample_config(out_file, data_type, rollout_type):
 @click.option("-d", "--data-type", default=None, type=click.Choice(AVAIL_DATA_TYPES),
               help="only dump the configs of the components support this data type")
 def gen_final_sample_config(out_file, data_type):
-    import aw_nas.final #pylint: disable=unused-import,unused-variable
     with open(out_file, "w") as out_f:
         for comp_name in ["search_space", "dataset",
                           "final_model", "final_trainer"]:

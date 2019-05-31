@@ -94,6 +94,18 @@ class BaseTrainer(Component):
         self.weights_manager.on_epoch_end(epoch)
 
     def final_save(self):
+        """
+        Pickle dump the weights_manager and controller directly,
+        instead of the state dict.
+
+        The dumped checkpoint can be loaded directly using `model = torch.load(checkpoint)`,
+        without instantiate the correct class with correct configuration first.
+        This checkpoint is convenient for test/usage.
+
+        Visualization writer is not kept after save/load, so take care when these checkpoints
+        are used in the middle of training process that has visualization writer. Better using
+        the checkpoints dumped by `maybe_save` when finetuning.
+        """
         if self.train_dir:
             # final saving
             dir_ = utils.makedir(os.path.join(self.train_dir, "final"))

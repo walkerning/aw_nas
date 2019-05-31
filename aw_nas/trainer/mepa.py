@@ -502,6 +502,8 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
 
             self.on_epoch_end(epoch) # call `on_epoch_end` of sub-components
 
+        # `final_save` pickle dump the weights_manager and controller directly,
+        # instead of the state dict
         self.final_save()
 
     def test(self):
