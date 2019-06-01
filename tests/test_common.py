@@ -12,8 +12,7 @@ def test_search_space(case, tmp_path):
     from aw_nas.common import get_search_space, Rollout
 
     ss = get_search_space(**case)
-    arch = ss.random_sample()
-    rollout = Rollout(arch, info={}, search_space=ss)
+    rollout = ss.random_sample()
     mock_edge_label = np.random.rand(ss.num_cell_groups,
                                      ss.num_steps*ss.num_node_inputs)
     mock_edge_label = np.vectorize("{:.3f}".format)(mock_edge_label)

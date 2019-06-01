@@ -46,6 +46,8 @@ class RNNGenotypeModel(RNNSharedNet):
             dropout_hid=dropout_hid, dropout_out=dropout_out,
             genotypes=self.genotypes) # this genotypes will be used for construction/forward
 
+        self.logger.info("Genotype: %s", self.genotypes)
+
     def forward(self, inputs, hiddens): #pylint: disable=arguments-differ
         # this genotypes will not be used
         return RNNSharedNet.forward(self, inputs, self.genotypes, hiddens)
@@ -113,6 +115,7 @@ class RNNGenotypeCell(nn.Module):
         genotype_, _ = self.genotypes
 
         for op_type, _, _ in genotype_:
+            # edge weights
             op = ops.get_op(op_type)()
             self.ops.append(op)
             if not self.share_from_w:

@@ -89,8 +89,11 @@ class Rollout(BaseRollout):
                                                            perf=self.perf)
 
     @classmethod
-    def random_sample(cls, num_cell_groups, num_steps,
-                      num_init_nodes, num_node_inputs, num_primitives):
+    def random_sample_arch(cls, num_cell_groups, num_steps,
+                           num_init_nodes, num_node_inputs, num_primitives):
+        """
+        random sample
+        """
         arch = []
         for _ in range(num_cell_groups):
             nodes = []
@@ -345,11 +348,12 @@ class CNNSearchSpace(SearchSpace):
         """
         Random sample a discrete architecture.
         """
-        return Rollout.random_sample(self.num_cell_groups,
-                                     self.num_steps,
-                                     self.num_init_nodes,
-                                     self.num_node_inputs,
-                                     self._num_primitives)
+        return Rollout(Rollout.random_sample_arch(self.num_cell_groups,
+                                                  self.num_steps,
+                                                  self.num_init_nodes,
+                                                  self.num_node_inputs,
+                                                  self._num_primitives),
+                       info={}, search_space=self)
 
     def genotype(self, arch):
         """
@@ -492,11 +496,12 @@ class RNNSearchSpace(SearchSpace):
         """
         Random sample a discrete architecture.
         """
-        return Rollout.random_sample(self.num_cell_groups, # =1
-                                     self.num_steps,
-                                     self.num_init_nodes, # =1
-                                     self.num_node_inputs, # =1
-                                     self._num_primitives)
+        return Rollout(Rollout.random_sample_arch(self.num_cell_groups, # =1
+                                                  self.num_steps,
+                                                  self.num_init_nodes, # =1
+                                                  self.num_node_inputs, # =1
+                                                  self._num_primitives),
+                       info={}, search_space=self)
 
     def genotype(self, arch):
         """

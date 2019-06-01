@@ -22,11 +22,10 @@ def _rnn_super_sample_cand(net):
     from aw_nas.common import Rollout
     ss = net.search_space
 
-    arch = ss.random_sample()
+    rollout = ss.random_sample()
     # arch = [([0, 0, 2, 2, 0, 2, 4, 4], [0, 6, 7, 6, 1, 1, 5, 7]),
     # ([1, 1, 0, 0, 1, 2, 2, 2], [7, 2, 2, 1, 7, 4, 3, 7])]
 
-    rollout = Rollout(arch, info={}, search_space=ss)
     cand_net = net.assemble_candidate(rollout)
     return cand_net
 

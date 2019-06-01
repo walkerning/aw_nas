@@ -243,7 +243,7 @@ class RNNFinalTrainer(FinalTrainer):
             i = 0
             while i < data.size(0):
                 mean_ = bptt_steps if np.random.random() < 0.95 else bptt_steps / 2
-                seq_len = min(max(5, int(np.random.normal(mean_, 5))), bptt_steps + 10)
+                seq_len = min(max(5, int(np.random.normal(mean_, 5))), bptt_steps + 20)
                 seq_lens.append(seq_len)
                 i += seq_len
             seq_lens[-1] -= i - data.size(0)

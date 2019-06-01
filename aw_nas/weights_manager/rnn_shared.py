@@ -9,7 +9,8 @@ from torch import nn
 from aw_nas import ops, utils
 from aw_nas.weights_manager.base import BaseWeightsManager
 
-INIT_RANGE = 0.1
+# INIT_RANGE = 0.1
+INIT_RANGE = 0.04
 
 class RNNSharedNet(BaseWeightsManager, nn.Module):
     def __init__(
