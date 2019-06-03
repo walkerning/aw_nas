@@ -156,7 +156,7 @@ def get_numpy(arr):
     return arr
 
 def count_parameters(model):
-    return np.sum(p.nelement() for name, p in model.named_parameters() if "auxiliary" not in name)
+    return sum(p.nelement() for name, p in model.named_parameters() if "auxiliary" not in name)
 
 def to_device(datas, device):
     return [data.to(device) for data in datas]

@@ -591,8 +591,13 @@ class RNNSearchSpace(SearchSpace):
 
 
 def get_search_space(cls, **cfg):
-    if cls == "cnn":
-        return CNNSearchSpace(**cfg)
-    if cls == "rnn":
-        return RNNSearchSpace(**cfg)
-    return None
+    return SearchSpace.get_class_(cls)(**cfg)
+
+
+def plot_genotype(genotype, dest, cls, label="", edge_labels=None, **search_space_cfg):
+    ss = get_search_space(cls, **search_space_cfg)
+    if isinstance(genotype, str):
+        genotype = eval("ss.genotype_type({})".format(genotype)) # pylint: disable=eval-used
+        genotype = list(genotype._asdict().items())
+    expect(isinstance(genotype, (list, tuple)))
+    return ss.plot_arch(genotype, dest, label, edge_labels)

@@ -159,6 +159,8 @@ class CNNFinalTrainer(FinalTrainer):
                 self.save(path)
             self.on_epoch_end(epoch)
 
+        self.save(os.path.join(self.train_dir, "final"))
+
     def evaluate_split(self, split):
         assert split in {"train", "test"}
         if split == "test":

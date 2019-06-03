@@ -92,6 +92,10 @@ class SharedNet(BaseWeightsManager, nn.Module):
         logits = self.classifier(out.view(out.size(0), -1))
         return logits
 
+    def step_current_gradients(self, optimizer):
+        torch.nn.utils.clip_grad_norm_(self.parameters(), self.max_grad_norm)
+        optimizer.step()
+
     def step(self, gradients, optimizer):
         self.zero_grad() # clear all gradients
         named_params = dict(self.named_parameters())

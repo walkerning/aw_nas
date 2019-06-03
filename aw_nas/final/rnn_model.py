@@ -80,7 +80,7 @@ class RNNGenotypeCell(nn.Module):
         self._num_init = search_space.num_init_nodes
 
         # the first step, convert input x and previous hidden
-        self.w_prev = nn.Linear(num_emb + num_hid, 2 * num_hid)
+        self.w_prev = nn.Linear(num_emb + num_hid, 2 * num_hid, bias=False)
         self.w_prev.weight.data.uniform_(-INIT_RANGE, INIT_RANGE)
 
         if self.batchnorm_edge:

@@ -134,7 +134,7 @@ def component_sample_config_str(comp_name, prefix, filter_funcs=None):
     return all_text
 
 
-# --- schedule utils ---
+## --- schedule utils ---
 def _assert_keys(dct, mandatory_keys, possible_keys, name):
     if mandatory_keys:
         expect(set(mandatory_keys).issubset(dct.keys()),

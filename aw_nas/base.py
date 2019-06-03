@@ -28,7 +28,7 @@ class Component(object):
     SCHEDULABLE_ATTRS = []
 
     def __init__(self, schedule_cfg):
-        self.logger = _logger.getChild(self.__class__.__name__)
+        self._logger = None
         self.schedule_cfg = schedule_cfg
         if schedule_cfg is not None:
             self.schedule_cfg = sorted(self.schedule_cfg.items()) # convert to list of tuples
@@ -41,6 +41,12 @@ class Component(object):
 
         self.writer = WrapWriter(None) # a none writer
         self.epoch = 0
+
+    @property
+    def logger(self):
+        if self._logger is None:
+            self._logger = _logger.getChild(self.__class__.__name__)
+        return self._logger
 
     def __getstate__(self):
         state = self.__dict__.copy()

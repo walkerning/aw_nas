@@ -171,8 +171,26 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
                                                         surrogate_optimizer)
         self.controller_optimizer = self._init_optimizer(self.controller.parameters(),
                                                          controller_optimizer)
+        self.controller_step_current = False
+        if self._rollout_type == "differentiable":
+            if self.controller_surrogate_steps == 0:
+                # Will call `step_current_gradients` of controller
+                self.logger.info("As controller are optimized using differentiable relaxation, "
+                                 "and `controller_surrogate_steps==0`(ENAS), to speed up, "
+                                 "will accumulate controller gradients in-place and call "
+                                 "`controller.step_current_gradients`.")
+                self.controller_step_current = True
+
         self.mepa_optimizer = self._init_optimizer(self.weights_manager.parameters(),
                                                    mepa_optimizer)
+        if self.mepa_surrogate_steps == 0 and self.mepa_samples == 1:
+            # Will call `step_current_gradients` of weights manager
+            self.logger.info("As `mepa_surrogate_steps==0`(ENAS) and `mepa_sample==1`, "
+                             "to speed up, will accumulate mepa gradients in-place and call "
+                             "`super_net.step_current_gradients`.")
+            self.mepa_step_current = True
+        else:
+            self.mepa_step_current = False
 
         # initialize the learning rate scheduler for optimizers
         self.surrogate_scheduler = self._init_scheduler(self.surrogate_optimizer,
@@ -227,6 +245,7 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
 
             all_gradients = defaultdict(float)
             counts = defaultdict(int)
+
             for _ in range(self.mepa_samples):
                 rollout = self.get_new_candidates(1)[0]
                 candidate_net = rollout.candidate_net
@@ -244,11 +263,13 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
                     )
 
                     # gradients: List(Tuple(parameter name, gradient))
+                    return_grads = not self.mepa_step_current
                     gradients, (loss, acc) = candidate_net.gradient(
                         mepa_data,
                         criterion=self._criterion,
                         eval_criterions=self._test_criterions,
                         mode="train",
+                        return_grads=return_grads,
                         **self.m_hid_kwargs
                     )
                 if train_loss is not None: # surrogate_steps > 0 (==0 is ENAS)
@@ -258,13 +279,18 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
                 valid_loss_meter.update(loss)
                 valid_acc_meter.update(acc)
 
-                for n, g_v in gradients:
-                    all_gradients[n] += g_v
-                    counts[n] += 1
+                if not self.mepa_step_current:
+                    for n, g_v in gradients:
+                        all_gradients[n] += g_v
+                        counts[n] += 1
 
             # average the gradients and update the meta parameters
-            all_gradients = {k: v / counts[k] for k, v in six.iteritems(all_gradients)}
-            self.weights_manager.step(all_gradients.items(), self.mepa_optimizer)
+            if not self.mepa_step_current:
+                all_gradients = {k: v / counts[k] for k, v in six.iteritems(all_gradients)}
+                self.weights_manager.step(all_gradients.items(), self.mepa_optimizer)
+            else:
+                # call step_current_gradients; mepa_sample == 1
+                self.weights_manager.step_current_gradients(self.mepa_optimizer)
 
         del all_gradients
 
@@ -298,6 +324,10 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
                 all_gradients = defaultdict(float)
                 step_loss = 0.
 
+            if self.controller_step_current:
+                # no surrogate steps, call step_current_gradietns zero grad here.
+                self.controller.zero_grads()
+
             for i_sample in range(self.controller_samples):
                 rollout = rollouts[i_sample]
                 candidate_net = rollout.candidate_net
@@ -327,11 +357,16 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
                         rollout.set_perf(acc if self._data_type == "image" \
                                          else self.rnn_reward_c/acc)
                     else: # differentiable sampling/rollouts
-                        # need keep track of the gradients
-                        _loss, gradients = self.controller.gradient(loss)
-                        for n, g_v in gradients:
-                            all_gradients[n] += g_v
-                        step_loss += _loss
+                        if self.controller_surrogate_steps > 0:
+                            # need keep track of the gradients
+                            _loss, gradients = self.controller.gradient(loss)
+                            for n, g_v in gradients:
+                                all_gradients[n] += g_v
+                            step_loss += _loss
+                        else: # self.controller_step_current == True
+                            _loss = self.controller.gradient(loss, return_grads=False,
+                                                             zero_grads=False)
+                            step_loss += _loss
                         ## this consume too much memory when controller_samples > 1
                         # rollout.set_perf(loss)
 
@@ -346,14 +381,26 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
 
             if self._rollout_type == "discrete":
                 controller_loss = self.controller.step(rollouts, self.controller_optimizer)
-            else:
+            else: # differntiable rollout (controller is optimized using differentiable relaxation)
                 if self.controller_samples != 1:
                     all_gradients = {n: g/self.controller_samples \
                                      for n, g in six.iteritems(all_gradients)}
                 controller_loss = step_loss / self.controller_samples
-                # update using the keeped gradients
-                self.controller.step_gradient(all_gradients.items(),
-                                              self.controller_optimizer)
+                if self.controller_surrogate_steps > 0:
+                    # update using the keeped gradients
+                    self.controller.step_gradient(all_gradients.items(),
+                                                  self.controller_optimizer)
+                else:
+                    # adjust lr and call step_current_gradients
+                    # (update using the accumulated gradients)
+                    if self.controller_samples != 1:
+                        # adjust the lr to keep the effective learning rate unchanged
+                        lr_bak = self.controller_optimizer.param_groups[0]["lr"]
+                        self.controller_optimizer.param_groups[0]["lr"] \
+                            = lr_bak / self.controller_samples
+                    self.controller.step_current_gradient(self.controller_optimizer)
+                    if self.controller_samples != 1:
+                        self.controller_optimizer.param_groups[0]["lr"] = lr_bak
 
             controller_loss_meter.update(controller_loss)
             controller_stats = self.controller.summary(rollouts, log=False)

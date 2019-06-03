@@ -158,6 +158,8 @@ class RNNFinalTrainer(FinalTrainer):
                 self.save(path)
             self.on_epoch_end(epoch)
 
+        self.save(os.path.join(self.train_dir, "final"))
+
     def _eval_maybe_save(self):
         if "t0" in self.optimizer.param_groups[0]:
             # Averaged SGD

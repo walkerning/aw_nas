@@ -349,6 +349,7 @@ good-names=i,
 	   of,
            Run,
 	   EPS,
+	   ss,
            _
 
 # Include a hint for the correct naming format with invalid-name
