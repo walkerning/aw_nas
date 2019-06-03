@@ -29,6 +29,7 @@ class RNNFinalTrainer(FinalTrainer):
         self.parallel_model = None
         self.dataset = dataset
         self.device = device
+        self.gpus = gpus
 
         self.epochs = epochs
         self.learning_rate = learning_rate
@@ -45,18 +46,14 @@ class RNNFinalTrainer(FinalTrainer):
         _splits = self.dataset.splits()
 
         self.train_data = utils.batchify_sentences(_splits["ori_train"], batch_size)
-        self.val_data = utils.batchify_sentences(_splits["ori_valid"], eval_batch_size)
-        self.test_data = utils.batchify_sentences(_splits["test"], 1)
-
-        self.gpus = gpus
-
-        self.logger.info("param size = %f M",
-                         utils.count_parameters(self.model)/1.e6)
+        self.valid_data = utils.batchify_sentences(_splits["ori_valid"], eval_batch_size)
+        self.test_data = utils.batchify_sentences(_splits["test"], eval_batch_size)
 
         self._criterion = nn.CrossEntropyLoss().to(self.device)
-        self.optimizer = torch.optim.SGD(self.model.parameters(), lr=learning_rate,
-                                         weight_decay=weight_decay)
-        self.scheduler = self._init_scheduler(self.optimizer, optimizer_scheduler)
+        if self.model is not None:
+            self.optimizer = torch.optim.SGD(self.model.parameters(), lr=learning_rate,
+                                             weight_decay=weight_decay)
+            self.scheduler = self._init_scheduler(self.optimizer, optimizer_scheduler)
 
         # states of the trainer
         self.last_epoch = 0
@@ -72,6 +69,8 @@ class RNNFinalTrainer(FinalTrainer):
         if load is not None:
             self.load(load)
         else:
+            self.logger.info("param size = %f M",
+                             utils.count_parameters(self.model)/1.e6)
             self._parallelize()
 
         self.save_every = save_every
@@ -130,12 +129,14 @@ class RNNFinalTrainer(FinalTrainer):
 
         # init/load the scheduler
         self.scheduler = self._init_scheduler(self.optimizer, self.optimizer_scheduler_cfg)
-        if self.scheduler is not None:
+        if self.optimizer_scheduler_cfg is not None:
             s_path = os.path.join(path, "scheduler.pt") if os.path.isdir(path) else None
             if s_path and os.path.exists(s_path):
                 self.scheduler.load_state_dict(torch.load(s_path))
                 log_strs.append("scheduler from {}".format(s_path))
 
+        self.logger.info("param size = %f M",
+                         utils.count_parameters(self.model)/1.e6)
         self.logger.info("Loaded checkpoint from %s: %s", path, ", ".join(log_strs))
         self.logger.info("Last epoch: %d", self.last_epoch)
 
@@ -165,7 +166,7 @@ class RNNFinalTrainer(FinalTrainer):
                 backup[prm] = prm.data.clone()
                 prm.data = self.optimizer.state[prm]["ax"].clone()
 
-            valid_obj = self.evaluate_epoch(*self.val_data, bptt_steps=self.bptt_steps)
+            valid_obj = self.evaluate_epoch(*self.valid_data, bptt_steps=self.bptt_steps)
             self.logger.info("valid(averaged): perp %.3f ; bpc %.3f ; loss %.3f",
                              np.exp(valid_obj), valid_obj/np.log(2), valid_obj)
 
@@ -179,7 +180,7 @@ class RNNFinalTrainer(FinalTrainer):
                 prm.data = backup[prm].clone()
         else:
             # SGD
-            valid_obj = self.evaluate_epoch(*self.val_data, bptt_steps=self.bptt_steps)
+            valid_obj = self.evaluate_epoch(*self.valid_data, bptt_steps=self.bptt_steps)
             self.logger.info("valid: perp %.3f ; bpc %.3f ; loss %.3f",
                              np.exp(valid_obj), valid_obj/np.log(2), valid_obj)
 
@@ -202,6 +203,14 @@ class RNNFinalTrainer(FinalTrainer):
                 self.scheduler = self._init_scheduler(self.optimizer, self.optimizer_scheduler_cfg)
 
             self.valid_objs.append(valid_obj)
+
+    def evaluate_split(self, split):
+        assert split in {"train", "valid", "test"}
+        data = getattr(self, split+"_data")
+        obj = self.evaluate_epoch(*data, self.bptt_steps)
+        self.logger.info("eval on split %s: perp %.3f ; bpc %.3f ; loss %.3f",
+                         split, np.exp(obj), obj/np.log(2), obj)
+        return obj
 
     def evaluate_epoch(self, data, targets, bptt_steps):
         expect(self._is_setup, "trainer.setup should be called first")
@@ -285,11 +294,12 @@ class RNNFinalTrainer(FinalTrainer):
         return objs.avg, losses.avg
 
     def _parallelize(self):
-        if len(self.gpus) >= 2:
-            # dim=1 for batchsize, as dim=0 is time-step
-            self.parallel_model = torch.nn.DataParallel(self.model, self.gpus, dim=1).cuda()
-        else:
-            self.parallel_model = self.model
+        if self.model:
+            if len(self.gpus) >= 2:
+                # dim=1 for batchsize, as dim=0 is time-step
+                self.parallel_model = torch.nn.DataParallel(self.model, self.gpus, dim=1).cuda()
+            else:
+                self.parallel_model = self.model
 
     @classmethod
     def supported_data_types(cls):

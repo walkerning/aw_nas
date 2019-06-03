@@ -39,6 +39,7 @@ class CNNFinalTrainer(FinalTrainer):
         self.parallel_model = None
         self.dataset = dataset
         self.device = device
+        self.gpus = gpus
 
         self.epochs = epochs
         self.warmup_epochs = warmup_epochs
@@ -53,11 +54,6 @@ class CNNFinalTrainer(FinalTrainer):
         self.learning_rate = learning_rate
         self.momentum = momentum
         self.optimizer_scheduler_cfg = optimizer_scheduler
-
-        self.gpus = gpus
-
-        self.logger.info("param size = %f M",
-                         utils.count_parameters(self.model)/1.e6)
 
         self._criterion = nn.CrossEntropyLoss().to(self.device)
 
@@ -83,6 +79,8 @@ class CNNFinalTrainer(FinalTrainer):
         if load is not None:
             self.load(load)
         else:
+            self.logger.info("param size = %f M",
+                             utils.count_parameters(self.model)/1.e6)
             self._parallelize()
 
         self.save_every = save_every
@@ -132,6 +130,8 @@ class CNNFinalTrainer(FinalTrainer):
                 self.scheduler.load_state_dict(torch.load(s_path))
                 log_strs.append("scheduler from {}".format(s_path))
 
+        self.logger.info("param size = %f M",
+                         utils.count_parameters(self.model)/1.e6)
         self.logger.info("Loaded checkpoint from %s: %s", path, ", ".join(log_strs))
         self.logger.info("Last epoch: %d", self.last_epoch)
 
@@ -158,6 +158,17 @@ class CNNFinalTrainer(FinalTrainer):
                 path = os.path.join(self.train_dir, str(epoch))
                 self.save(path)
             self.on_epoch_end(epoch)
+
+    def evaluate_split(self, split):
+        assert split in {"train", "test"}
+        if split == "test":
+            queue = self.valid_queue
+        else:
+            queue = self.train_queue
+        acc, obj = self.infer_epoch(queue, self.parallel_model,
+                                    self._criterion, self.device)
+        self.logger.info('acc %f ; obj %f', acc, obj)
+        return acc, obj
 
     @classmethod
     def supported_data_types(cls):

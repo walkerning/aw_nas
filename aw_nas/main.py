@@ -268,6 +268,62 @@ def train(gpus, seed, cfg_file, load, save_every, train_dir):
     trainer.train()
 
 
+@main.command(help="Eval a final-trained model.")
+@click.argument("cfg_file", required=True, type=str)
+@click.option("--load", required=True, type=str,
+              help="the directory to load checkpoint")
+@click.option("--split", "-s", multiple=True, type=str,
+              help="evaluate on these dataset splits")
+@click.option("--gpus", default="0", type=str,
+              help="the gpus to run training on, split by single comma")
+@click.option("--seed", default=None, type=int,
+              help="the random seed to run training")
+def eval(cfg_file, load, split, gpus, seed): #pylint: disable=redefined-builtin
+    setproctitle.setproctitle("awnas-eval config: {}; load: {}; cwd: {}"\
+                              .format(cfg_file, load, os.getcwd()))
+
+    # set gpu
+    gpu_list = [int(g) for g in gpus.split(",")]
+    if not gpu_list:
+        _set_gpu(None)
+        device = "cpu"
+    else:
+        _set_gpu(gpu_list[0])
+        device = torch.device("cuda:{}".format(gpu_list[0]) if torch.cuda.is_available() else "cpu")
+
+    # set seed
+    if seed is not None:
+        LOGGER.info("Setting random seed: %d.", seed)
+        np.random.seed(seed)
+        random.seed(seed)
+        torch.manual_seed(seed)
+
+    # load components config
+    LOGGER.info("Loading configuration files.")
+    with open(cfg_file, "r") as f:
+        cfg = yaml.safe_load(f)
+
+    # initialize components
+    LOGGER.info("Initializing components.")
+    whole_dataset = _init_component(cfg, "dataset")
+
+    trainer = _init_component(cfg, "final_trainer",
+                              dataset=whole_dataset,
+                              model=None,
+                              device=device,
+                              gpus=gpu_list)
+
+    # check trainer support for data type
+    _data_type = whole_dataset.data_type()
+    expect(_data_type in trainer.supported_data_types())
+
+    # start training
+    LOGGER.info("Start eval.")
+    trainer.setup(load)
+    for split_name in split:
+        trainer.evaluate_split(split_name)
+
+
 def _dump(rollout, dump_mode, of):
     if dump_mode == "list":
         yaml.safe_dump([list(rollout.genotype._asdict().values())], of)
