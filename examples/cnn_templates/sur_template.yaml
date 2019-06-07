@@ -1,0 +1,54 @@
+dataset_cfg:
+  cutout: 16
+  data_dir: ./data
+dataset_type: cifar10
+final_model_cfg:
+  auxiliary_cfg: null
+  auxiliary_head: false
+  dropout_path_rate: 0.2
+  dropout_rate: 0.1
+  # genotypes:
+  init_channels: 20
+  num_classes: 10
+  schedule_cfg:
+    dropout_path_rate:
+      every: 1
+      start: 0
+      step: 0.004
+      type: add
+  stem_multiplier: 3
+final_model_type: cnn_final_model
+final_trainer_cfg:
+  batch_size: 96
+  epochs: 50
+  grad_clip: 5.0
+  learning_rate: 0.05
+  momentum: 0.9
+  no_bias_decay: false
+  optimizer_scheduler:
+    T_max: 50
+    eta_min: 0.001
+    type: CosineAnnealingLR
+  schedule_cfg: null
+  warmup_epochs: 0
+  weight_decay: 0.0003
+final_trainer_type: cnn_trainer
+search_space_cfg:
+  cell_layout: null
+  num_cell_groups: 2
+  num_init_nodes: 2
+  num_layers: 20
+  num_node_inputs: 2
+  num_steps: 4
+  reduce_cell_groups:
+  - 1
+  shared_primitives:
+  - none
+  - max_pool_3x3
+  - avg_pool_3x3
+  - skip_connect
+  - sep_conv_3x3
+  - sep_conv_5x5
+  - dil_conv_3x3
+  - dil_conv_5x5
+search_space_type: cnn

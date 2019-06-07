@@ -73,15 +73,13 @@ def call_train(cfg, gpu, seed, train_dir, save_every):
                                   train_dir=train_dir, save_str=save_str),
                           shell=True)
 
-def make_surrogate_cfgs(result_dir):
-    out_fname = os.path.join(search_dir, "derive.yaml")
-    fname = os.path.join(result_dir, "train_surrogate.template")
-    with open(fname, "r") as f:
+def make_surrogate_cfgs(derive_out_file, template_file, sur_dir):
+    with open(template_file, "r") as f:
         cfg_template = yaml.load(f)
-    with open(out_fname, "r") as f:
+    with open(derive_out_file, "r") as f:
         genotypes_list = yaml.load(f)
     for ind, genotypes in enumerate(genotypes_list):
-        sur_fname = os.path.join(result_dir, "train_surrogate", "{}.yaml".format(ind))
+        sur_fname = os.path.join(sur_dir, "{}.yaml".format(ind))
         genotypes = _get_genotype_substr(genotypes)
         cfg_template["final_model_cfg"]["genotypes"] = genotypes
         with open(sur_fname, "w") as of:
@@ -131,15 +129,17 @@ args.train_final_cfg = os.path.abspath(args.train_final_cfg)
 
 gpu = args.gpu
 exp_name = args.exp_name
+
+# result dirs
 result_dir = os.path.join(args.base_dir, exp_name)
+search_dir = os.path.join(result_dir, "search")
+sur_dir = os.path.join(result_dir, "train_surrogate")
+final_dir = os.path.join(result_dir, "train_final")
 
 if not os.path.exists(result_dir):
     os.makedirs(os.path.join(result_dir))
-    search_dir = os.path.join(result_dir, "train")
     os.makedirs(search_dir)
-    sur_dir = os.path.join(result_dir, "train_surrogate")
     os.makedirs(sur_dir)
-    final_dir = os.path.join(result_dir, "train_final")
     os.makedirs(final_dir)
 
 search_cfg = os.path.join(result_dir, "search.yaml")
@@ -149,19 +149,18 @@ shutil.copy(args.search_cfg, search_cfg)
 shutil.copy(args.train_surrogate_cfg, train_surrogate_template)
 shutil.copy(args.train_final_cfg, train_final_template)
 
-# search
-search_train_dir = os.path.join(result_dir, "search")
-vis_dir = os.path.join(result_dir, "vis")
-call_search(search_cfg, gpu, args.search_seed, search_train_dir, vis_dir)
+# # search
+# vis_dir = os.path.join(result_dir, "vis")
+# call_search(search_cfg, gpu, args.search_seed, search_dir, vis_dir)
 
 # derive
-max_epoch = max([int(n) for n in os.listdir(search_train_dir) if n.isdigit()])
-final_checkpoint = os.path.join(search_train_dir, str(max_epoch))
+max_epoch = max([int(n) for n in os.listdir(search_dir) if n.isdigit()])
+final_checkpoint = os.path.join(search_dir, str(max_epoch))
 derive_out_file = os.path.join(search_dir, "derive.yaml")
 call_derive(search_cfg, gpu, args.derive_seed, final_checkpoint, derive_out_file, DERIVE_N)
 
 # make surrogate cfgs
-make_surrogate_cfgs(result_dir)
+make_surrogate_cfgs(derive_out_file, train_surrogate_template, sur_dir)
 
 # train surrogate
 for index in range(DERIVE_N):
@@ -172,12 +171,16 @@ for index in range(DERIVE_N):
 # choose best
 sur_perfs = get_sur_perfs(sur_dir)
 best_ind = np.argmax(sur_perfs)
-with open(os.path.join(search_dir, "derive.yaml"), "r") as f:
+with open(derive_out_file, "r") as f:
     genotypes_list = yaml.load(f)
 best_geno = _get_genotype_substr(genotypes_list[best_ind])
+with open(os.path.join(sur_dir, "sur_res.txt"), "w") as of:
+    of.write("\n".join(["{} {}".format(ind, perf)
+                        for ind, perf in
+                        sorted(list(enumerate(sur_perfs)), key=lambda item: -item[1])]))
 
 # dump configuration of final train
-with open(os.path.join(result_dir, "train_final.template"), "r") as f:
+with open(train_final_template, "r") as f:
     base_cfg = yaml.load(f)
 base_cfg["final_model_cfg"]["genotypes"] = best_geno
 train_final_cfg = os.path.join(final_dir, "train.yaml")
