@@ -56,16 +56,16 @@ def _get_perf(log, type_="cnn"):
     if type_ == "cnn":
         out = subprocess.check_output("grep -Eo 'valid_acc [0-9.]+' {}".format(log) + \
                                       " | tail -n 1 | awk '{print $NF}'", shell=True)
-        print("get perf %s: %f" %(log, out))
         acc = float(out)
+        print("get perf %s: %f" %(log, acc))
         return acc
     raise NotImplementedError("unknown type: {}".format(type_))
 
 def make_surrogate_cfgs(derive_out_file, template_file, sur_dir):
     with open(template_file, "r") as f:
-        cfg_template = yaml.load(f)
+        cfg_template = yaml.safe_load(f)
     with open(derive_out_file, "r") as f:
-        genotypes_list = yaml.load(f)
+        genotypes_list = yaml.safe_load(f)
     for ind, genotypes in enumerate(genotypes_list):
         sur_fname = os.path.join(sur_dir, "{}.yaml".format(ind))
         genotypes = _get_genotype_substr(genotypes)
@@ -173,14 +173,18 @@ def call_train(cfg, seed, train_dir, save_every, killer):
 
     return os.path.join(train_dir, "train.log")
 
+STAGES = ["search", "derive", "train_surrogate", "train_final"]
 
 ## --- main ---
 parser = argparse.ArgumentParser()
-parser.add_argument("--redis-addr", required=True, type=str, help="the redis server address of ray head")
+parser.add_argument("--redis-addr", required=True, type=str,
+                    help="the redis server address of ray head")
 parser.add_argument("--exp-name", required=True, type=str)
-parser.add_argument("--type", default="cnn", choices=["cnn", "rnn"], type=str, help="(default: %(default)s)")
+parser.add_argument("--type", default="cnn", choices=["cnn", "rnn"], type=str,
+                    help="(default: %(default)s)")
 parser.add_argument("--base-dir", default=os.path.abspath(os.path.expanduser("~/awnas_results")),
-                    type=str, help="results will be saved to `base_dir`/`exp_name` (default: %(default)s)")
+                    type=str,
+                    help="results will be saved to `base_dir`/`exp_name` (default: %(default)s)")
 
 parser.add_argument("--seed", default=None, type=int, help="the default seeds of all tasks, "
                     "if not specified explicitly.")
@@ -199,6 +203,12 @@ parser.add_argument("--train-final-cfg", type=str,
                     help="train final config file (default: %(default)s)",
                     default="./examples/cnn_templates/final_template.yaml")
 parser.add_argument("--train-final-seed", default=None, type=int)
+parser.add_argument("--start-stage", default="search", type=str,
+                    choices=STAGES, help="Start from an intermediage stage, "
+                    "by default start from the very beggining: search")
+parser.add_argument("--start-surrogate-index", default=0, type=int,
+                    help="When START_STAGE == `train_surrogate', "
+                    "can specificy start train from which surrogate cfg")
 
 cmd_args = parser.parse_args()
 ray.init(redis_address=cmd_args.redis_addr) # connect to ray head
@@ -206,6 +216,8 @@ killer = Killer.remote() # create the killer actor
 killed = 0 # killed flag for current client process
 
 def check_killed():
+    # check killed in the client process
+    # cannot be used in remote fnction, which is serialized, unserialized, called in remote workers
     if killed:
         exit(1)
 
@@ -230,6 +242,7 @@ if cmd_args.seed is not None:
     cmd_args.train_surrogate_seed = cmd_args.train_surrogate_seed if cmd_args.train_surrogate_seed is not None else cmd_args.seed
     cmd_args.search_seed = cmd_args.search_seed if cmd_args.search_seed is not None else cmd_args.seed
     cmd_args.derive_seed = cmd_args.derive_seed if cmd_args.derive_seed is not None else cmd_args.seed
+
 # result dirs
 result_dir = os.path.join(cmd_args.base_dir, exp_name)
 search_dir = os.path.join(result_dir, "search")
@@ -245,47 +258,66 @@ if not os.path.exists(result_dir):
 search_cfg = os.path.join(result_dir, "search.yaml")
 train_surrogate_template = os.path.join(result_dir, "train_surrogate.template")
 train_final_template = os.path.join(result_dir, "train_final.template")
-shutil.copy(cmd_args.search_cfg, search_cfg)
-shutil.copy(cmd_args.train_surrogate_cfg, train_surrogate_template)
-shutil.copy(cmd_args.train_final_cfg, train_final_template)
 
+# intermediate output files
+# they will be repoped with the exactly the same values for dependency specification,
+# if the pipeline aborts at some stages, can directly use these to start from middle
+derive_out_file = os.path.join(search_dir, "derive.yaml")
+sur_train_logs = [os.path.join(sur_dir, str(index), "train.log") for index in range(DERIVE_N)]
+
+# start stage
+start_stage = STAGES.index(cmd_args.start_stage)
+print("Start the NAS pipeline from stage: {}".format(cmd_args.start_stage))
+
+if start_stage == 0: # begin from search stage
+    shutil.copy(cmd_args.search_cfg, search_cfg)
+    shutil.copy(cmd_args.train_surrogate_cfg, train_surrogate_template)
+    shutil.copy(cmd_args.train_final_cfg, train_final_template)
+if cmd_args.start_stage != "train_surrogate":
+    assert cmd_args.start_surrogate_index == 0, \
+        "Can only specificy STRAT_SURROGATE_INDEX when START_STAGE"\
+        " == `train_surrogate' ({})".format(cmd_args.start_stage)
 try:
-    # search
-    vis_dir = os.path.join(result_dir, "vis")
-    final_checkpoint = call_search.remote(search_cfg, cmd_args.search_seed, search_dir, vis_dir, killer)
-
-    check_killed()
-
-    # derive
-    derive_out_file = os.path.join(search_dir, "derive.yaml")
-    derive_out_file = call_derive.remote(search_cfg, cmd_args.derive_seed, final_checkpoint,
-                                         derive_out_file, DERIVE_N)
-    derive_out_file = ray.get(derive_out_file)
-
-    check_killed()
-
-    # make surrogate cfgs
-    make_surrogate_cfgs(derive_out_file, train_surrogate_template, sur_dir)
+    if start_stage <= 0: # search
+        # search
+        vis_dir = os.path.join(result_dir, "vis")
+        final_checkpoint = call_search.remote(search_cfg, cmd_args.search_seed, search_dir, vis_dir, killer)
     
-    check_killed()
+        check_killed()
 
-    # train surrogate
-    sur_train_logs = []
-    for index in range(DERIVE_N):
-        sur_fname = os.path.join(sur_dir, "{}.yaml".format(index))
-        train_sur_dir = os.path.join(sur_dir, str(index))
-        sur_train_logs.append(call_train.remote(sur_fname, cmd_args.train_surrogate_seed,
-                                                train_sur_dir, save_every=None, killer=killer))
-    
-    sur_train_logs = ray.get(sur_train_logs)
+    if start_stage <= 1: # derive
+        # derive
+        derive_out_file = call_derive.remote(search_cfg, cmd_args.derive_seed,
+                                             final_checkpoint, derive_out_file, DERIVE_N)
+        derive_out_file = ray.get(derive_out_file)
 
-    check_killed()
-    
+        check_killed()
+
+    if start_stage <= 2: # train_surrogate
+        # make surrogate cfgs
+        make_surrogate_cfgs(derive_out_file, train_surrogate_template, sur_dir)
+        
+        check_killed()
+
+        # train surrogate
+        runned_sur_train_logs = []
+        for index in range(cmd_args.start_surrogate_index, DERIVE_N):
+            sur_fname = os.path.join(sur_dir, "{}.yaml".format(index))
+            train_sur_dir = os.path.join(sur_dir, str(index))
+            runned_sur_train_logs.append(call_train.remote(sur_fname, cmd_args.train_surrogate_seed,
+                                                           train_sur_dir, save_every=None, killer=killer))
+
+        runned_sur_train_logs = ray.get(runned_sur_train_logs)
+        sur_train_logs = sur_train_logs[:cmd_args.start_surrogate_index] + runned_sur_train_logs
+
+        check_killed()
+
+    # if start_stage <= 3: # always true
     # choose best
     sur_perfs = [_get_perf(log, type_=cmd_args.type) for log in sur_train_logs]
     best_ind = np.argmax(sur_perfs)
     with open(derive_out_file, "r") as f:
-        genotypes_list = yaml.load(f)
+        genotypes_list = yaml.safe_load(f)
     best_geno = _get_genotype_substr(genotypes_list[best_ind])
     with open(os.path.join(sur_dir, "sur_res.txt"), "w") as of:
         of.write("\n".join(["{} {}".format(ind, perf)
@@ -296,7 +328,7 @@ try:
 
     # dump configuration of final train
     with open(train_final_template, "r") as f:
-        base_cfg = yaml.load(f)
+        base_cfg = yaml.safe_load(f)
     base_cfg["final_model_cfg"]["genotypes"] = best_geno
     train_final_cfg = os.path.join(final_dir, "train.yaml")
     with open(train_final_cfg, "w") as of:
