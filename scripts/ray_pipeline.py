@@ -35,7 +35,7 @@ import numpy as np
 import ray
 import psutil
 
-DERIVE_N = 10
+# DERIVE_N = 10
 
 class KillSignal(ray.experimental.signal.Signal):
     pass
@@ -74,15 +74,15 @@ def make_surrogate_cfgs(derive_out_file, template_file, sur_dir):
             yaml.safe_dump(cfg_template, of)
 
 @ray.remote(num_gpus=1, max_calls=1)
-def call_search(cfg, seed, train_dir, vis_dir, killer):
+def call_search(cfg, seed, train_dir, vis_dir, data_dir, killer):
     if seed is None:
         seed = random.randint(1, 999999)
     gpu = _get_gpus(ray.get_gpu_ids())
     print("train seed: %s" % str(seed))
-    cmd = ("CUDA_VISIBLE_DEVICES={gpu} awnas search {cfg} --gpu 0 --seed {seed} --save-every 20 "
+    cmd = ("CUDA_VISIBLE_DEVICES={gpu} AWNAS_DATA={data_dir} awnas search {cfg} --gpu 0 --seed {seed} --save-every 20 "
            "--train-dir {train_dir} --vis-dir {vis_dir} >/dev/null")\
         .format(cfg=cfg, gpu=gpu, seed=seed,
-                train_dir=train_dir, vis_dir=vis_dir)
+                train_dir=train_dir, vis_dir=vis_dir, data_dir=data_dir)
     print(cmd)
     print("check {} for log".format(os.path.join(train_dir, "search.log")))
 
@@ -112,28 +112,57 @@ def call_search(cfg, seed, train_dir, vis_dir, killer):
     final_checkpoint = os.path.join(train_dir, str(max_epoch))
     return final_checkpoint
 
+def random_derive(cfg, seed, out_file, n):
+    with open(cfg, "r") as cfg_f:
+        cfg_dct = yaml.safe_load(cfg_f)
+    from aw_nas.common import get_search_space
+    ss = get_search_space(cfg_dct["search_space_type"], **cfg_dct["search_space_cfg"])
+    with open(out_file, "w") as of:
+        for i in range(n):
+            rollout = ss.random_sample()
+            yaml.safe_dump([str(rollout.genotype)], of)
+    return out_file
+
 # derive
 @ray.remote(num_gpus=1, max_calls=1)
-def call_derive(cfg, seed, load, out_file, n):
+def call_derive(cfg, seed, load, out_file, data_dir, n, killer):
     if seed is None:
         seed = random.randint(1, 999999)
     gpu = _get_gpus(ray.get_gpu_ids())
-    print("train seed: %s" % str(seed))
-    print(("CUDA_VISIBLE_DEVICES={gpu} awnas derive {cfg} --load {load} --gpu 0 --seed {seed}"
+    print("derive seed: %s" % str(seed))
+    cmd = ("CUDA_VISIBLE_DEVICES={gpu} AWNAS_DATA={data_dir} awnas derive {cfg} --load {load} --gpu 0 --seed {seed}"
            " --test -n {n} -o {out_file}")\
-          .format(cfg=cfg, load=load, gpu=gpu, seed=seed,
-                  out_file=out_file, n=n))
+        .format(cfg=cfg, load=load, gpu=gpu, seed=seed,
+                out_file=out_file, data_dir=data_dir, n=n)
+    print(cmd)
+    
+    proc = subprocess.Popen(cmd, shell=True)
+    print("derive shell process pid: {}".format(proc.pid))
 
-    subprocess.check_call(("CUDA_VISIBLE_DEVICES={gpu} awnas derive {cfg} --load {load} --gpu 0 --seed {seed}"
-                           " --test -n {n} -o {out_file}")\
-                          .format(cfg=cfg, load=load, gpu=gpu, seed=seed,
-                                  out_file=out_file, n=n),
-                          shell=True)
+    # wait for proc finish or killed
+    while 1:
+        try:
+            exit_status = proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            sigs = ray.experimental.signal.receive([killer], timeout=1)
+            if sigs: # kill the process and its childrens
+                print("call_derive: receive kill signal from killer, kill the working processes")
+                process = psutil.Process(proc.pid)
+                for c_proc in process.children(recursive=True):
+                    c_proc.kill()
+                process.kill()
+                exit_status = 1
+                break
+        else:
+            break
+    if exit_status != 0:
+        raise subprocess.CalledProcessError(exit_status, cmd)
+
     return out_file
 
 # train
 @ray.remote(num_gpus=1, max_calls=1)
-def call_train(cfg, seed, train_dir, save_every, killer):
+def call_train(cfg, seed, train_dir, data_dir, save_every, killer):
     if seed is None:
         seed = random.randint(1, 999999)
     print("train seed: %s" % str(seed))
@@ -141,10 +170,10 @@ def call_train(cfg, seed, train_dir, save_every, killer):
     gpu = _get_gpus(gpus)
     save_str = "" if save_every is None else "--save-every {}".format(save_every)
 
-    cmd = ("CUDA_VISIBLE_DEVICES={gpu} awnas train {cfg} --gpus {range_gpu} --seed {seed} {save_str} "
-           "--train-dir {train_dir} >/dev/null")\
+    cmd = ("CUDA_VISIBLE_DEVICES={gpu} AWNAS_DATA={data_dir} awnas train {cfg} --gpus {range_gpu}"
+           " --seed {seed} {save_str} --train-dir {train_dir} >/dev/null")\
         .format(cfg=cfg, gpu=gpu, seed=seed,
-                train_dir=train_dir, save_str=save_str,
+                train_dir=train_dir, data_dir=data_dir, save_str=save_str,
                 range_gpu=",".join(map(str, range(len(gpus)))))
     print(cmd)
     print("check {} for log".format(os.path.join(train_dir, "train.log")))
@@ -203,12 +232,23 @@ parser.add_argument("--train-final-cfg", type=str,
                     help="train final config file (default: %(default)s)",
                     default="./examples/cnn_templates/final_template.yaml")
 parser.add_argument("--train-final-seed", default=None, type=int)
+parser.add_argument("--random-derive", default=False, action="store_true",
+                    help="random derive architecture from search space, if true, "
+                    "will not run search stage")
 parser.add_argument("--start-stage", default="search", type=str,
                     choices=STAGES, help="Start from an intermediage stage, "
                     "by default start from the very beggining: search")
+parser.add_argument("--end-stage", default="train_final", type=str,
+                    choices=STAGES, help="End when after this stage, "
+                    "by default end after: train_final")
 parser.add_argument("--start-surrogate-index", default=0, type=int,
                     help="When START_STAGE == `train_surrogate', "
                     "can specificy start train from which surrogate cfg")
+parser.add_argument("--derive-n", default=10, type=int,
+                    help="Number of dervied arch after search.")
+parser.add_argument("--data", type=str, default=os.path.expanduser("~/awnas_data"),
+                    help="the data base dir(exclude the dataset name), "
+                    "will set `AWNAS_DATA` environment variable accordingly. (default: %(default)s)")
 
 cmd_args = parser.parse_args()
 ray.init(redis_address=cmd_args.redis_addr) # connect to ray head
@@ -235,6 +275,7 @@ cmd_args.train_surrogate_cfg = os.path.abspath(cmd_args.train_surrogate_cfg)
 cmd_args.train_final_cfg = os.path.abspath(cmd_args.train_final_cfg)
 
 exp_name = cmd_args.exp_name
+DERIVE_N = cmd_args.derive_n
 
 # seed
 if cmd_args.seed is not None:
@@ -262,17 +303,29 @@ train_final_template = os.path.join(result_dir, "train_final.template")
 # intermediate output files
 # they will be repoped with the exactly the same values for dependency specification,
 # if the pipeline aborts at some stages, can directly use these to start from middle
+exist_search_ckpts = [int(n) for n in os.listdir(search_dir) if n.isdigit()]
+if exist_search_ckpts:
+    max_epoch = max(exist_search_ckpts)
+    final_checkpoint = os.path.join(search_dir, str(max_epoch))
+else:
+    final_checkpoint = None
 derive_out_file = os.path.join(search_dir, "derive.yaml")
 sur_train_logs = [os.path.join(sur_dir, str(index), "train.log") for index in range(DERIVE_N)]
 
-# start stage
+# start/end stage
 start_stage = STAGES.index(cmd_args.start_stage)
+if cmd_args.random_derive:
+    start_stage = max(start_stage, 1)
+    cmd_args.start_stage = STAGES[start_stage]
+    print("random_derive is True, will not run search stage")
+end_stage = STAGES.index(cmd_args.end_stage)
+assert start_stage <= end_stage, "--start-stage must be before --end-stage"
 print("Start the NAS pipeline from stage: {}".format(cmd_args.start_stage))
+print("End the NAS pipeline after stage: {}".format(cmd_args.end_stage))
 
-if start_stage == 0: # begin from search stage
-    shutil.copy(cmd_args.search_cfg, search_cfg)
-    shutil.copy(cmd_args.train_surrogate_cfg, train_surrogate_template)
-    shutil.copy(cmd_args.train_final_cfg, train_final_template)
+shutil.copy(cmd_args.search_cfg, search_cfg)
+shutil.copy(cmd_args.train_surrogate_cfg, train_surrogate_template)
+shutil.copy(cmd_args.train_final_cfg, train_final_template)
 if cmd_args.start_stage != "train_surrogate":
     assert cmd_args.start_surrogate_index == 0, \
         "Can only specificy STRAT_SURROGATE_INDEX when START_STAGE"\
@@ -281,17 +334,27 @@ try:
     if start_stage <= 0: # search
         # search
         vis_dir = os.path.join(result_dir, "vis")
-        final_checkpoint = call_search.remote(search_cfg, cmd_args.search_seed, search_dir, vis_dir, killer)
+        final_checkpoint = call_search.remote(search_cfg, cmd_args.search_seed, search_dir,
+                                              vis_dir, cmd_args.data, killer)
     
         check_killed()
+    if end_stage <= 0: # search
+        sys.exit(0)
 
     if start_stage <= 1: # derive
         # derive
-        derive_out_file = call_derive.remote(search_cfg, cmd_args.derive_seed,
-                                             final_checkpoint, derive_out_file, DERIVE_N)
-        derive_out_file = ray.get(derive_out_file)
+        if cmd_args.random_derive:
+            derive_out_file = random_derive(search_cfg, cmd_args.derive_seed,
+                                            derive_out_file, DERIVE_N)
+        else:
+            derive_out_file = call_derive.remote(search_cfg, cmd_args.derive_seed,
+                                                 final_checkpoint, derive_out_file,
+                                                 cmd_args.data, DERIVE_N, killer)
+            derive_out_file = ray.get(derive_out_file)
 
         check_killed()
+    if end_stage <= 1: # derive
+        sys.exit(0)
 
     if start_stage <= 2: # train_surrogate
         # make surrogate cfgs
@@ -305,17 +368,21 @@ try:
             sur_fname = os.path.join(sur_dir, "{}.yaml".format(index))
             train_sur_dir = os.path.join(sur_dir, str(index))
             runned_sur_train_logs.append(call_train.remote(sur_fname, cmd_args.train_surrogate_seed,
-                                                           train_sur_dir, save_every=None, killer=killer))
+                                                           train_sur_dir, cmd_args.data,
+                                                           save_every=None, killer=killer))
 
         runned_sur_train_logs = ray.get(runned_sur_train_logs)
         sur_train_logs = sur_train_logs[:cmd_args.start_surrogate_index] + runned_sur_train_logs
 
         check_killed()
+    if end_stage <= 2: # train_surrogate
+        sys.exit(0)
 
     # if start_stage <= 3: # always true
     # choose best
     sur_perfs = [_get_perf(log, type_=cmd_args.type) for log in sur_train_logs]
     best_ind = np.argmax(sur_perfs)
+    print("best surrogate performances: {}; ({})".format(sur_perfs[best_ind], sur_perfs))
     with open(derive_out_file, "r") as f:
         genotypes_list = yaml.safe_load(f)
     best_geno = _get_genotype_substr(genotypes_list[best_ind])
@@ -340,8 +407,10 @@ try:
     total_epochs = base_cfg["final_trainer_cfg"]["epochs"]
     train_final_dir = os.path.join(final_dir, "train")
     final_log = ray.get(call_train.remote(train_final_cfg, cmd_args.train_final_seed,
-                                          train_final_dir, save_every=total_epochs // 4, killer=killer))
+                                          train_final_dir, cmd_args.data,
+                                          save_every=total_epochs // 4, killer=killer))
     final_valid_perf = _get_perf(final_log, type_=cmd_args.type)
+    # if end_stage <= 3: # always true
 except ray.exceptions.RayTaskError as e:
     print("EXIT! Exception when executing task: ", e)
     sys.exit(1)

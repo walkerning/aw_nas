@@ -75,7 +75,7 @@ labels = [fill(l, 20) if l else "--" for l in labels]
 num_train_objs = len(train_obj_names)
 num_valid_objs = len(valid_obj_names)
 num_cols = max(num_train_objs, num_valid_objs)
-fig = plt.figure(figsize=(2*num_cols, 5))
+fig = plt.figure(figsize=(2*(num_cols+1), 5))
 gs = gridspec.GridSpec(nrows=2, ncols=(num_cols+1), width_ratios=[3]*num_cols + [2])
 
 # valid

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Base class definition of Dataset"""
 
+import os
 import abc
 
 from aw_nas import Component, utils
@@ -8,7 +9,7 @@ from aw_nas import Component, utils
 class BaseDataset(Component):
     REGISTRY = "dataset"
 
-    def __init__(self, data_dir="./data"):
+    def __init__(self, relative_dir=None):
         """
         Args:
             data_dir (str): The directory to store the datasets,
@@ -16,7 +17,10 @@ class BaseDataset(Component):
         """
         super(BaseDataset, self).__init__(schedule_cfg=None)
 
-        self.data_dir = data_dir
+        base_dir = os.environ.get("AWNAS_DATA", os.path.expanduser("~/awnas_data"))
+        if relative_dir is None:
+            relative_dir = self.NAME #pylint: disable=no-member
+        self.data_dir = os.path.join(base_dir, relative_dir)
 
     @abc.abstractmethod
     def splits(self):

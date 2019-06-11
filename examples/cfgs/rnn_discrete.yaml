@@ -23,7 +23,6 @@ search_space_cfg:
 dataset_type: ptb
 dataset_cfg:
   # Schedulable attributes: 
-  data_dir: ./data/ptb
   shuffle: true
 # ---- End Type ptb ----
 ## ---- End Component dataset ----

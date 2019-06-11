@@ -33,7 +33,6 @@
 # dataset_cfg:
 #   # Schedulable attributes: 
 #   cutout: null
-#   data_dir: ./data
 # # ---- End Type cifar10 ----
 # ## ---- End Component dataset ----
 

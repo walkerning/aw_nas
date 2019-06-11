@@ -1,6 +1,5 @@
 dataset_cfg:
   cutout: 16
-  data_dir: ./data
 dataset_type: cifar10
 final_model_cfg:
   auxiliary_cfg: null

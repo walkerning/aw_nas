@@ -7,8 +7,8 @@ from aw_nas.dataset.base import BaseDataset
 class Cifar10(BaseDataset):
     NAME = "cifar10"
 
-    def __init__(self, data_dir="./data", cutout=None):
-        super(Cifar10, self).__init__(data_dir)
+    def __init__(self, cutout=None):
+        super(Cifar10, self).__init__()
         self.cutout = cutout
 
         cifar_mean = [0.49139968, 0.48215827, 0.44653124]
