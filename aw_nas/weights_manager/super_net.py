@@ -134,7 +134,7 @@ class SuperNet(SharedNet):
                  num_classes=10, init_channels=16, stem_multiplier=3,
                  max_grad_norm=5.0, dropout_rate=0.1,
                  candidate_member_mask=True, candidate_cache_named_members=False,
-                 candidate_virtual_parameter_only=True):
+                 candidate_virtual_parameter_only=False):
         """
         Args:
             candidate_member_mask (bool): If true, the candidate network's `named_parameters`

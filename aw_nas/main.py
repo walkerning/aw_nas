@@ -20,6 +20,7 @@ import yaml
 
 from aw_nas.dataset import AVAIL_DATA_TYPES
 from aw_nas import utils, BaseRollout
+from aw_nas.common import rollout_from_genotype_str
 from aw_nas.utils.vis_utils import WrapWriter
 from aw_nas.utils import RegistryMeta
 from aw_nas.utils import logger as _logger
@@ -347,7 +348,7 @@ def eval_arch(cfg_file, arch_file, load, gpu, seed, save_plot, steps):
 
     # evaluate these rollouts using evaluator
     LOGGER.info("Eval...")
-    rollouts = [eval("search_space.genotype_type({})".format(geno)) for geno in genotypes] # pylint:disable=eval-used
+    rollouts = [rollout_from_genotype_str(geno, search_space) for geno in genotypes]
     num_r = len(rollouts)
     for i, r in enumerate(rollouts):
         evaluator.evaluate_rollouts([r], is_training=False,

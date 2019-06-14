@@ -69,7 +69,7 @@ class DiffSuperNet(SharedNet):
     def __init__(self, search_space, device, rollout_type="differentiable",
                  num_classes=10, init_channels=16, stem_multiplier=3,
                  max_grad_norm=5.0, dropout_rate=0.1,
-                 candidate_virtual_parameter_only=True):
+                 candidate_virtual_parameter_only=False):
         super(DiffSuperNet, self).__init__(search_space, device, rollout_type,
                                            cell_cls=DiffSharedCell, op_cls=DiffSharedOp,
                                            num_classes=num_classes, init_channels=init_channels,
