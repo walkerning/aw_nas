@@ -54,3 +54,16 @@ def test_plot_genotype_util(genotype, cls, tmp_path):
     dest = os.path.join(str(tmp_path), cls)
     plot_genotype(genotype, dest, cls)
     print(dest)
+
+@pytest.mark.parametrize("case", [
+    {"cls": "cnn"},
+    {"cls": "rnn"},
+    {"cls": "rnn", "loose_end": True},
+])
+def test_rollout_from_genotype_str(case):
+    from aw_nas.common import get_search_space, Rollout, rollout_from_genotype_str
+
+    ss = get_search_space(**case)
+    rollout = ss.random_sample()
+    rec_rollout = rollout_from_genotype_str(str(rollout.genotype), ss)
+    assert (np.array(rec_rollout.arch) == np.array(rollout.arch)).all()

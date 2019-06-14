@@ -593,16 +593,17 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
         self.controller.summary(rollouts, log=True, log_prefix="Rollouts Info: ", step=self.epoch)
         return rollouts
 
-    def derive(self, n, steps=None):
+    def derive(self, n, steps=None, rollouts=None):
         # some scheduled value might be used in test too, e.g., surrogate_lr, gumbel temperature...
         self.on_epoch_start(self.epoch)
         derive_steps = steps or self.derive_steps
 
         with self.controller.begin_mode("eval"):
-            rollouts = []
+            if rollouts is None:
+                rollouts = self.controller.sample(n)
             for i_sample in range(n):
-                rollout = self.get_new_candidates(1)[0]
-                candidate_net = rollout.candidate_net
+                rollout = rollouts[i_sample]
+                candidate_net = self.weights_manager.assemble_candidate(rollout)
                 _surrogate_optimizer = self.get_surrogate_optimizer()
 
                 with self._begin_virtual(candidate_net, self.controller_surrogate_steps):
@@ -622,10 +623,9 @@ class MepaTrainer(BaseTrainer): #pylint: disable=too-many-instance-attributes
                     print("Finish test {}/{}\r".format(i_sample+1, n), end="")
                 # rollout.set_perf(loss, name="loss")
                 # rollout.set_perf(acc, name="acc")
-                del rollout.candidate_net
-                rollout.candidate_net = None
+                # del rollout.candidate_net
+                # rollout.candidate_net = None
                 rollout.set_perf(acc if self._data_type == "image" else self.rnn_reward_c/acc)
-                rollouts.append(rollout)
         return rollouts
 
     def save(self, path):

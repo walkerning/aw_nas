@@ -217,6 +217,10 @@ class SearchSpace(Component):
         pass
 
     @abc.abstractmethod
+    def rollout_from_genotype(self, genotype):
+        pass
+
+    @abc.abstractmethod
     def plot_arch(self, genotypes, filename, label, **kwargs):
         pass
 
@@ -380,6 +384,20 @@ class CNNSearchSpace(SearchSpace):
         return self.genotype_type(**dict(zip(self.cell_group_names,
                                              genotype_list)))
 
+    def rollout_from_genotype(self, genotype):
+        genotype_list = list(genotype._asdict().values())
+        arch = []
+        for cell_geno in genotype_list:
+            nodes, ops = [], []
+            for i_out in range(self.num_steps):
+                for i_in in range(self.num_node_inputs):
+                    conn = cell_geno[i_out * self.num_node_inputs + i_in]
+                    ops.append(self.shared_primitives.index(conn[0]))
+                    nodes.append(conn[1])
+            cg_arch = [nodes, ops]
+            arch.append(cg_arch)
+        return Rollout(arch, {}, self)
+
     def plot_cell(self, genotype, filename,
                   label="", edge_labels=None):
         """Plot a cell to `filename` on disk."""
@@ -535,6 +553,22 @@ class RNNSearchSpace(SearchSpace):
         ))
         return self.genotype_type(**kwargs)
 
+    def rollout_from_genotype(self, genotype):
+        genotype_list = list(genotype._asdict().values())
+        assert len(genotype_list) == 2 * self.num_cell_groups
+        arch = []
+        for i in range(self.num_cell_groups):
+            cell_geno = genotype_list[2*i]
+            nodes, ops = [], []
+            for i_out in range(self.num_steps):
+                for i_in in range(self.num_node_inputs):
+                    conn = cell_geno[i_out * self.num_node_inputs + i_in]
+                    ops.append(self.shared_primitives.index(conn[0]))
+                    nodes.append(conn[1])
+            cg_arch = [nodes, ops]
+            arch.append(cg_arch)
+        return Rollout(arch, {}, self)
+
     def plot_arch(self, genotypes, filename, label="", edge_labels=None): #pylint: disable=arguments-differ
         """Plot an architecture to files on disk"""
         expect(len(genotypes) == 2 and self.num_cell_groups == 1,
@@ -593,11 +627,23 @@ class RNNSearchSpace(SearchSpace):
 def get_search_space(cls, **cfg):
     return SearchSpace.get_class_(cls)(**cfg)
 
+def genotype_from_str(genotype_str, search_space):
+    #pylint: disable=eval-used,bare-except
+    try:
+        return eval("search_space.genotype_type({})".format(genotype_str))
+    except:
+        import re
+        genotype_str = re.search(r".+?Genotype\((.+)\)", genotype_str).group(1)
+        return eval("search_space.genotype_type({})".format(genotype_str))
+
+def rollout_from_genotype_str(genotype_str, search_space):
+    return search_space.rollout_from_genotype(genotype_from_str(genotype_str, search_space))
 
 def plot_genotype(genotype, dest, cls, label="", edge_labels=None, **search_space_cfg):
     ss = get_search_space(cls, **search_space_cfg)
     if isinstance(genotype, str):
-        genotype = eval("ss.genotype_type({})".format(genotype)) # pylint: disable=eval-used
+        genotype = genotype_from_str(genotype, ss)
+        # eval("ss.genotype_type({})".format(genotype)) # pylint: disable=eval-used
         genotype = list(genotype._asdict().items())
     expect(isinstance(genotype, (list, tuple)))
     return ss.plot_arch(genotype, dest, label, edge_labels)

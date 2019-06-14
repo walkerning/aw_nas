@@ -17,6 +17,7 @@ from torch.backends import cudnn
 import yaml
 
 from aw_nas.dataset import AVAIL_DATA_TYPES
+from aw_nas.common import rollout_from_genotype_str
 from aw_nas import utils, BaseRollout
 from aw_nas.utils.vis_utils import WrapWriter
 from aw_nas.utils import RegistryMeta
@@ -384,6 +385,82 @@ def sample(load, out_file, n, save_plot, gpu, seed, dump_mode):
             of.write("# ---- Arch {} ----\n".format(i))
             _dump(r, dump_mode, of)
             of.write("\n")
+
+@main.command(help="Eval architecture from file.")
+@click.argument("cfg_file", required=True, type=str)
+@click.argument("arch_file", required=True, type=str)
+@click.option("--load", required=True, type=str,
+              help="the directory to load checkpoint")
+@click.option("--gpu", default=0, type=int,
+              help="the gpu to run training on")
+@click.option("--seed", default=None, type=int,
+              help="the random seed to run training")
+@click.option("--save-plot", default=None, type=str,
+              help="If specified, save the plot of the rollouts to this path")
+@click.option("--steps", default=None, type=int,
+              help="number of batches to eval for each arch, default to be the whole derive queue.")
+def eval_arch(cfg_file, arch_file, load, gpu, seed, save_plot, steps):
+    setproctitle.setproctitle("awnas-eval-arch config: {}; arch_file: {}; load: {}; cwd: {}"\
+                              .format(cfg_file, arch_file, load, os.getcwd()))
+
+    # set gpu
+    _set_gpu(gpu)
+    device = torch.device("cuda:{}".format(gpu) if torch.cuda.is_available() else "cpu")
+
+    # set seed
+    if seed is not None:
+        LOGGER.info("Setting random seed: %d.", seed)
+        np.random.seed(seed)
+        random.seed(seed)
+        torch.manual_seed(seed)
+
+    # load components config
+    LOGGER.info("Loading configuration files.")
+    with open(cfg_file, "r") as f:
+        cfg = yaml.safe_load(f)
+
+    # load genotypes
+    LOGGER.info("Loading archs from file: %s", arch_file)
+    with open(arch_file, "r") as f:
+        genotypes = yaml.safe_load(f)
+    assert isinstance(genotypes, (list, tuple))
+
+    # initialize components
+    LOGGER.info("Initializing components.")
+    search_space = _init_component(cfg, "search_space")
+    controller = _init_component(cfg, "controller",
+                                 search_space=search_space, device=device)
+
+    # create the directory for saving plots
+    if save_plot is not None:
+        save_plot = utils.makedir(save_plot)
+
+    whole_dataset = _init_component(cfg, "dataset")
+    _data_type = whole_dataset.data_type()
+    if _data_type == "sequence":
+        # get the num_tokens
+        num_tokens = whole_dataset.vocab_size
+        LOGGER.info("Dataset %s: vocabulary size: %d", whole_dataset.NAME, num_tokens)
+        weights_manager = _init_component(cfg, "weights_manager",
+                                          search_space=search_space,
+                                          device=device,
+                                          num_tokens=num_tokens)
+    else:
+        weights_manager = _init_component(cfg, "weights_manager",
+                                          search_space=search_space, device=device)
+
+    # initialize, setup, run trainer
+    trainer = _init_component(cfg, "trainer", weights_manager=weights_manager,
+                              controller=controller, dataset=whole_dataset)
+    LOGGER.info("Loading from disk...")
+    trainer.setup(load=load)
+
+    # evaluate these rollouts using evaluator
+    LOGGER.info("Eval...")
+    rollouts = [rollout_from_genotype_str(geno, search_space) for geno in genotypes]
+    rollouts = trainer.derive(len(rollouts), rollouts=rollouts, steps=steps)
+    for i, r in enumerate(rollouts):
+        LOGGER.info("Arch %3d: %.3f", i, r.get_perf())
 
 @main.command(help="Derive architectures.")
 @click.argument("cfg_file", required=True, type=str)
