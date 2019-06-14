@@ -1,6 +1,11 @@
 """
+For now, Python 3 is required for subprocess.Popen.wait with timeout and catching
+TimeoutExpired exception.
+
+TODO: Should change to avoid subprocess call. Should import aw_nas and call main directly.
+
 Example:
-Start the ray head on 4 gpus:
+Start the ray head on 4 gpus: 0, 2, 3, 4
 `CUDA_VISIBLE_DEVICES=0,2,3,4 ray start --head --num-cpus 10 --num-gpus 4 --object-store-memory 10000000`
 
 Then, for every search-derive-sur-final flow, run:
@@ -291,9 +296,12 @@ sur_dir = os.path.join(result_dir, "train_surrogate")
 final_dir = os.path.join(result_dir, "train_final")
 
 if not os.path.exists(result_dir):
-    os.makedirs(os.path.join(result_dir))
+    os.makedirs(result_dir)
+if not os.path.exists(search_dir):
     os.makedirs(search_dir)
+if not os.path.exists(sur_dir):
     os.makedirs(sur_dir)
+if not os.path.exists(final_dir):
     os.makedirs(final_dir)
 
 search_cfg = os.path.join(result_dir, "search.yaml")

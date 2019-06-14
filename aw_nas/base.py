@@ -51,6 +51,8 @@ class Component(object):
     def __getstate__(self):
         state = self.__dict__.copy()
         del state["writer"]
+        if "_logger" in state:
+            del state["_logger"]
         return state
 
     def __setstate__(self, state):
@@ -58,6 +60,8 @@ class Component(object):
         # just set self.writer to be a none writer
         # not reset to the original logdir, this is reasonable
         self.writer = WrapWriter(None)
+        # set self._logger to None
+        self._logger = None
 
     def setup_writer(self, writer):
         self.writer = writer
@@ -80,7 +84,7 @@ class Component(object):
 
     @classmethod
     def get_default_config(cls):
-        return utils.get_default_argspec(cls)
+        return utils.get_default_argspec(cls.__init__)
 
     @classmethod
     def get_default_config_str(cls):
