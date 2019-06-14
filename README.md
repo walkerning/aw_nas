@@ -20,6 +20,8 @@ The interface between these components are somehow well-defined. TODO (what is R
 
 `pip install -r requirements.txt`
 
+Make sure graphiz is installed, e.g. on Ubuntu, you can run `sudo apt-get install graphviz`.
+
 ## Usage
 
 After installation, you can run `awnas --help` to see what sub-commands are available.
