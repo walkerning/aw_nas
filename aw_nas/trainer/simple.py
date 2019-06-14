@@ -13,7 +13,7 @@ import imageio
 import numpy as np
 import torch
 
-from aw_nas import utils, assert_rollout_type
+from aw_nas import utils
 from aw_nas.trainer.base import BaseTrainer
 from aw_nas.utils.exception import expect, ConfigException
 
@@ -21,7 +21,7 @@ __all__ = ["SimpleTrainer"]
 
 class SimpleTrainer(BaseTrainer):
     """
-    A NAS searcher.
+    A simple NAS searcher.
 
     Schedulable Attributes:
         mepa_surrogate_steps:
@@ -69,18 +69,14 @@ class SimpleTrainer(BaseTrainer):
                 `interleave_controller_every` steps. If None, do not interleave, which means
                 controller will only be updated after one epoch of mepa update.
         """
-        super(SimpleTrainer, self).__init__(controller, evaluator, schedule_cfg)
+        super(SimpleTrainer, self).__init__(controller, evaluator, rollout_type, schedule_cfg)
 
-        expect(rollout_type in self.supported_rollout_types(),
-               "Unsupported `rollout_type`: {}".format(rollout_type),
-               ConfigException) # supported rollout types
-        self._rollout_type = assert_rollout_type(rollout_type)
-        expect(self._rollout_type == self.controller.rollout_type() == \
-               self.evaluator.current_rollout_type(),
+        expect(self.rollout_type == self.controller.rollout_type == \
+               self.evaluator.rollout_type,
                "the rollout type of trainer/controller/evaluator must match, "
                "check the configuration. ({}/{}/{})".format(
-                   self._rollout_type, self.controller.rollout_type(),
-                   self.evaluator.current_rollout_type()), ConfigException)
+                   self.rollout_type, self.controller.rollout_type,
+                   self.evaluator.rollout_type), ConfigException)
 
         # configurations
         self.epochs = epochs
@@ -172,7 +168,7 @@ class SimpleTrainer(BaseTrainer):
                   end="")
 
             rollouts = self.controller.sample(self.controller_samples)
-            if self._rollout_type == "differentiable":
+            if self.rollout_type == "differentiable":
                 self.controller.zero_grad()
 
             step_loss = {"_": 0.}
@@ -182,7 +178,7 @@ class SimpleTrainer(BaseTrainer):
                                                             step_loss=step_loss))
             self.evaluator.update_rollouts(rollouts)
 
-            if self._rollout_type == "discrete":
+            if self.rollout_type == "discrete":
                 controller_loss = self.controller.step(rollouts, self.controller_optimizer)
             else: # differntiable rollout (controller is optimized using differentiable relaxation)
                 # adjust lr and call step_current_gradients
@@ -212,7 +208,7 @@ class SimpleTrainer(BaseTrainer):
         return controller_loss, rollout_stat_meters.avgs(), controller_stat_meters.avgs()
 
     def _backward_rollout_to_controller(self, rollout, step_loss):
-        if self._rollout_type == "differentiable":
+        if self.rollout_type == "differentiable":
             # backward
             _loss = self.controller.gradient(rollout.get_perf(name="reward"),
                                              return_grads=False,

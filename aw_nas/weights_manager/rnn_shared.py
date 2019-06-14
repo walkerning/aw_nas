@@ -14,7 +14,7 @@ INIT_RANGE = 0.04
 
 class RNNSharedNet(BaseWeightsManager, nn.Module):
     def __init__(
-            self, search_space, device, cell_cls, op_cls,
+            self, search_space, device, rollout_type, cell_cls, op_cls,
             num_tokens, num_emb, num_hid,
             tie_weight, decoder_bias,
             share_primitive_weights, share_from_weights,
@@ -25,7 +25,7 @@ class RNNSharedNet(BaseWeightsManager, nn.Module):
             dropout_emb, dropout_inp0, dropout_inp, dropout_hid, dropout_out,
             # kwargs that will be passed to cell init
             **kwargs):
-        super(RNNSharedNet, self).__init__(search_space, device)
+        super(RNNSharedNet, self).__init__(search_space, device, rollout_type)
         nn.Module.__init__(self)
 
         # model configs

@@ -17,11 +17,10 @@ from aw_nas.controller.rl_agents import BaseRLAgent
 class RLController(BaseController, nn.Module):
     NAME = "rl"
 
-    def __init__(self, search_space, device,
-                 mode="eval",
+    def __init__(self, search_space, device, rollout_type="discrete",
+                 mode="eval", independent_cell_group=False,
                  controller_network_type="anchor_lstm", controller_network_cfg=None,
-                 rl_agent_type="pg", rl_agent_cfg=None,
-                 independent_cell_group=False):
+                 rl_agent_type="pg", rl_agent_cfg=None):
         """
         Args:
             search_space (aw_nas.SearchSpace): The controller will sample arch seeds
@@ -35,7 +34,7 @@ class RLController(BaseController, nn.Module):
             If `independent_cell_group` is set to true, do not merge anything across
             the graph of different cell groups.
         """
-        super(RLController, self).__init__(search_space, mode)
+        super(RLController, self).__init__(search_space, rollout_type, mode)
         nn.Module.__init__(self)
 
         self.device = device
@@ -167,8 +166,8 @@ class RLController(BaseController, nn.Module):
         return OrderedDict(stats)
 
     @classmethod
-    def rollout_type(cls):
-        return assert_rollout_type("discrete")
+    def supported_rollout_types(cls):
+        return [assert_rollout_type("discrete")]
 
     # ---- Override some components functionality: dispatch to controller_networks and agents ----
     def on_epoch_start(self, epoch):

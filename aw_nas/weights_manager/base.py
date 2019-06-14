@@ -9,15 +9,20 @@ import torch
 from torch import nn
 
 from aw_nas import Component, utils
+from aw_nas.utils.exception import expect, ConfigException
 
 class BaseWeightsManager(Component):
     REGISTRY = "weights_manager"
 
-    def __init__(self, search_space, device, schedule_cfg=None):
+    def __init__(self, search_space, device, rollout_type, schedule_cfg=None):
         super(BaseWeightsManager, self).__init__(schedule_cfg)
 
         self.search_space = search_space
         self.device = device
+        expect(rollout_type in self.supported_rollout_types(),
+               "Unsupported `rollout_type`: {}".format(rollout_type),
+               ConfigException) # supported rollout types
+        self.rollout_type = rollout_type
 
     @abc.abstractmethod
     def assemble_candidate(self, rollout):
@@ -38,7 +43,7 @@ class BaseWeightsManager(Component):
         """Load the state of the weights_manager from `path` on disk."""
 
     @utils.abstractclassmethod
-    def rollout_type(cls):
+    def supported_rollout_types(cls):
         """Return the accepted rollout-type."""
 
     @utils.abstractclassmethod

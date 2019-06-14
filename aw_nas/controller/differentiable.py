@@ -26,9 +26,8 @@ class DiffController(BaseController, nn.Module):
         "entropy_coeff"
     ]
 
-    def __init__(self, search_space, device,
-                 use_prob=False,
-                 gumbel_hard=False, gumbel_temperature=1.0,
+    def __init__(self, search_space, device, rollout_type="differentiable",
+                 use_prob=False, gumbel_hard=False, gumbel_temperature=1.0,
                  entropy_coeff=0.01, max_grad_norm=None,
                  schedule_cfg=None):
         """
@@ -45,7 +44,7 @@ class DiffController(BaseController, nn.Module):
                 sparse(smaller bias), but the variance of the gradient estimation using samples
                 becoming larger. Also applied to `use_prob==True`
         """
-        super(DiffController, self).__init__(search_space, schedule_cfg=schedule_cfg)
+        super(DiffController, self).__init__(search_space, rollout_type, schedule_cfg=schedule_cfg)
         nn.Module.__init__(self)
 
         self.device = device
@@ -197,5 +196,5 @@ class DiffController(BaseController, nn.Module):
         return OrderedDict(stats)
 
     @classmethod
-    def rollout_type(cls):
-        return assert_rollout_type("differentiable")
+    def supported_rollout_types(cls):
+        return [assert_rollout_type("differentiable")]

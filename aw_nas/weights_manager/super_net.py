@@ -130,7 +130,7 @@ class SuperNet(SharedNet):
     """
     NAME = "supernet"
 
-    def __init__(self, search_space, device,
+    def __init__(self, search_space, device, rollout_type="discrete",
                  num_classes=10, init_channels=16, stem_multiplier=3,
                  max_grad_norm=5.0, dropout_rate=0.1,
                  candidate_member_mask=True, candidate_cache_named_members=False,
@@ -149,7 +149,7 @@ class SuperNet(SharedNet):
                 `begin_virtual` will only store/restore parameters, not buffers (e.g. running
                 mean/running std in BN layer).
         """
-        super(SuperNet, self).__init__(search_space, device,
+        super(SuperNet, self).__init__(search_space, device, rollout_type,
                                        cell_cls=DiscreteSharedCell, op_cls=DiscreteSharedOp,
                                        num_classes=num_classes, init_channels=init_channels,
                                        stem_multiplier=stem_multiplier,
@@ -204,8 +204,8 @@ class SuperNet(SharedNet):
                                virtual_parameter_only=self.candidate_virtual_parameter_only)
 
     @classmethod
-    def rollout_type(cls):
-        return assert_rollout_type("discrete")
+    def supported_rollout_types(cls):
+        return [assert_rollout_type("discrete")]
 
 class DiscreteSharedCell(SharedCell):
     def num_out_channel(self):

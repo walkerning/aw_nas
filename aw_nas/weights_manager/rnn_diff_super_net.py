@@ -35,8 +35,8 @@ class RNNDiffSuperNet(RNNSharedNet):
     NAME = "rnn_diff_supernet"
 
     def __init__(
-            self, search_space, device,
-            num_tokens, num_emb=300, num_hid=300,
+            self, search_space, device, num_tokens,
+            rollout_type="differentiable", num_emb=300, num_hid=300,
             tie_weight=True, decoder_bias=True,
             share_primitive_weights=False, share_from_weights=False,
             batchnorm_step=False,
@@ -55,7 +55,7 @@ class RNNDiffSuperNet(RNNSharedNet):
         else:
             cell_cls = RNNDiffSharedCell
         super(RNNDiffSuperNet, self).__init__(
-            search_space, device,
+            search_space, device, rollout_type,
             cell_cls=cell_cls, op_cls=RNNDiffSharedOp,
             num_tokens=num_tokens, num_emb=num_emb, num_hid=num_hid,
             tie_weight=tie_weight, decoder_bias=decoder_bias,
@@ -74,8 +74,8 @@ class RNNDiffSuperNet(RNNSharedNet):
                                       virtual_parameter_only=self.candidate_virtual_parameter_only)
 
     @classmethod
-    def rollout_type(cls):
-        return assert_rollout_type("differentiable")
+    def supported_rollout_types(cls):
+        return [assert_rollout_type("differentiable")]
 
 class RNNDiffSharedFromCell(nn.Module):
     def __init__(self, search_space, device, op_cls, num_emb, num_hid,

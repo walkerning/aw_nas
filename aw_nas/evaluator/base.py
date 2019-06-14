@@ -3,16 +3,21 @@
 import abc
 
 from aw_nas import Component, utils
+from aw_nas.utils.exception import expect, ConfigException
 
 class BaseEvaluator(Component):
     REGISTRY = "evaluator"
 
-    def __init__(self, dataset, weights_manager, objective, schedule_cfg=None):
+    def __init__(self, dataset, weights_manager, objective, rollout_type, schedule_cfg=None):
         super(BaseEvaluator, self).__init__(schedule_cfg)
 
         self.dataset = dataset
         self.weights_manager = weights_manager
         self.objective = objective
+        expect(rollout_type in self.supported_rollout_types(),
+               "Unsupported `rollout_type`: {}".format(rollout_type),
+               ConfigException) # supported rollout types
+        self.rollout_type = rollout_type
 
     @utils.abstractclassmethod
     def supported_data_types(cls):
@@ -24,12 +29,6 @@ class BaseEvaluator(Component):
     def supported_rollout_types(cls):
         """
         Return the supported rollout types.
-        """
-
-    @abc.abstractmethod
-    def current_rollout_type(self):
-        """
-        Return the current used rollout type.
         """
 
     def suggested_controller_steps_per_epoch(self): #pylint: disable=invalid-name,no-self-use

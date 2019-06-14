@@ -28,6 +28,24 @@ from aw_nas.utils.exception import expect
 # patch click.option to show the default values
 click.option = functools.partial(click.option, show_default=True)
 
+# subclass `click.Group` to list commands in order
+class _OrderedCommandGroup(click.Group):
+    def __init__(self, *args, **kwargs):
+        self.cmd_names = []
+        super(_OrderedCommandGroup, self).__init__(*args, **kwargs)
+
+    def list_commands(self, ctx):
+        """reorder the list of commands when listing the help"""
+        commands = super(_OrderedCommandGroup, self).list_commands(ctx)
+        return sorted(commands, key=self.cmd_names.index)
+
+    def command(self, *args, **kwargs):
+        def decorator(func):
+            cmd = super(_OrderedCommandGroup, self).command(*args, **kwargs)(func)
+            self.cmd_names.append(cmd.name)
+            return cmd
+        return decorator
+
 LOGGER = _logger.getChild("main")
 
 def _onlycopy_py(src, names):
@@ -41,11 +59,13 @@ def _init_components_from_cfg(cfg, device, evaluator_only=False, controller_only
     Order:
     `search_space`, `controller`, `dataset`, `weights_manager`, `objective`, `evaluator`, `trainer`
     """
+    rollout_type = cfg["rollout_type"]
     if not from_controller:
         search_space = _init_component(cfg, "search_space")
         if not evaluator_only:
             controller = _init_component(cfg, "controller",
-                                         search_space=search_space, device=device)
+                                         search_space=search_space, device=device,
+                                         rollout_type=rollout_type)
             if controller_only:
                 return search_space, controller
     else: # continue components initialization from controller stage
@@ -63,10 +83,12 @@ def _init_components_from_cfg(cfg, device, evaluator_only=False, controller_only
         weights_manager = _init_component(cfg, "weights_manager",
                                           search_space=search_space,
                                           device=device,
+                                          rollout_type=rollout_type,
                                           num_tokens=num_tokens)
     else:
         weights_manager = _init_component(cfg, "weights_manager",
-                                          search_space=search_space, device=device)
+                                          search_space=search_space, device=device,
+                                          rollout_type=rollout_type)
     expect(_data_type in weights_manager.supported_data_types())
 
     # objective
@@ -74,31 +96,19 @@ def _init_components_from_cfg(cfg, device, evaluator_only=False, controller_only
 
     # evaluator
     evaluator = _init_component(cfg, "evaluator", dataset=whole_dataset,
-                                weights_manager=weights_manager, objective=objective)
+                                weights_manager=weights_manager, objective=objective,
+                                rollout_type=rollout_type)
     expect(_data_type in evaluator.supported_data_types())
 
     if evaluator_only:
         return search_space, whole_dataset, weights_manager, objective, evaluator
 
-    # check type of rollout match between `evaluator` and `controller`
-    expect(weights_manager.rollout_type() == controller.rollout_type(),
-           ("The type of the rollouts produced/received by the "
-            "controller/weights_manager should match! ({} VS. {})")\
-           .format(weights_manager.rollout_type(), controller.rollout_type()))
-    expect(controller.rollout_type() in evaluator.supported_rollout_types(),
-           ("The type of the rollout handled by controller/weights_manager"
-            " is not supported by the evaluator! ({} VS. {})")\
-           .format(controller.rollout_type(), evaluator.supported_rollout_types()))
-
     # trainer
     LOGGER.info("Initializing trainer and starting the search.")
-    trainer = _init_component(cfg, "trainer", evaluator=evaluator, controller=controller)
+    trainer = _init_component(cfg, "trainer",
+                              evaluator=evaluator, controller=controller,
+                              rollout_type=rollout_type)
 
-    # check type of rollout match
-    expect(controller.rollout_type() in trainer.supported_rollout_types(),
-           ("The type of the rollout handled by controller/weights_manager"
-            " is not supported by the trainer! ({} VS. {})")\
-           .format(controller.rollout_type(), trainer.supported_rollout_types()))
     return search_space, whole_dataset, weights_manager, objective, evaluator, controller, trainer
 
 def _init_component(cfg, registry_name, **addi_args):
@@ -128,7 +138,8 @@ def _set_gpu(gpu):
         LOGGER.warn('No GPU available, use CPU!!')
 
 
-@click.group(help="The awnas NAS framework command line interface. "
+@click.group(cls=_OrderedCommandGroup,
+             help="The awnas NAS framework command line interface. "
              "Use `AWNAS_LOG_LEVEL` environment variable to modify the log level.")
 def main():
     pass
@@ -230,7 +241,7 @@ def _dump(rollout, dump_mode, of):
     else:
         raise Exception("Unexpected dump_mode: {}".format(dump_mode))
 
-@main.command(help="Sample architectures, by directly pickle loading controller from path")
+@main.command(help="Sample architectures, pickle loading controller directly.")
 @click.option("--load", required=True, type=str,
               help="the file to load controller")
 @click.option("-o", "--out-file", required=True, type=str,
@@ -283,7 +294,7 @@ def sample(load, out_file, n, save_plot, gpu, seed, dump_mode):
             _dump(r, dump_mode, of)
             of.write("\n")
 
-@main.command(help="Eval architecture from file")
+@main.command(help="Eval architecture from file.")
 @click.argument("cfg_file", required=True, type=str)
 @click.argument("arch_file", required=True, type=str)
 @click.option("--load", required=True, type=str,
@@ -590,6 +601,7 @@ def test(cfg_file, load, split, gpus, seed): #pylint: disable=redefined-builtin
               help="only dump the configs of the components support this rollout type")
 def gen_sample_config(out_file, data_type, rollout_type):
     with open(out_file, "w") as out_f:
+        out_f.write("# rollout_type: {}\n".format(rollout_type if rollout_type else ""))
         for comp_name in ["search_space", "dataset", "controller", "evaluator",
                           "weights_manager", "objective", "trainer"]:
             filter_funcs = []
@@ -599,9 +611,7 @@ def gen_sample_config(out_file, data_type, rollout_type):
                 elif comp_name in {"evaluator", "weights_manager", "objective"}:
                     filter_funcs.append(lambda cls: data_type in cls.supported_data_types())
             if rollout_type is not None:
-                if comp_name in {"weights_manager", "controller"}:
-                    filter_funcs.append(lambda cls: rollout_type == cls.rollout_type())
-                if comp_name in {"evaluator", "trainer"}:
+                if comp_name in {"controller", "weights_manager", "evaluator", "trainer"}:
                     filter_funcs.append(lambda cls: rollout_type in cls.supported_rollout_types())
 
             out_f.write(utils.component_sample_config_str(comp_name, prefix="# ",

@@ -5,14 +5,19 @@ import abc
 import contextlib
 
 from aw_nas import Component, utils
+from aw_nas.utils.exception import expect, ConfigException
 
 class BaseController(Component):
     REGISTRY = "controller"
 
-    def __init__(self, search_space, mode="eval", schedule_cfg=None):
+    def __init__(self, search_space, rollout_type, mode="eval", schedule_cfg=None):
         super(BaseController, self).__init__(schedule_cfg)
 
         self.search_space = search_space
+        expect(rollout_type in self.supported_rollout_types(),
+               "Unsupported `rollout_type`: {}".format(rollout_type),
+               ConfigException) # supported rollout types
+        self.rollout_type = rollout_type
         self.mode = mode
 
     @contextlib.contextmanager
@@ -68,5 +73,5 @@ class BaseController(Component):
         """
 
     @utils.abstractclassmethod
-    def rollout_type(cls):
+    def supported_rollout_types(cls):
         """Return the produced rollout-type."""

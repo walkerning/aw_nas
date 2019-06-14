@@ -53,7 +53,7 @@ class RNNGenotypeModel(RNNSharedNet):
         return RNNSharedNet.forward(self, inputs, self.genotypes, hiddens)
 
     @classmethod
-    def rollout_type(cls):
+    def supported_rollout_types(cls):
         # this will not be called
         assert 0, "should not be called"
 

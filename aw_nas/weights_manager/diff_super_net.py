@@ -66,11 +66,11 @@ class DiffSubCandidateNet(CandidateNet):
 class DiffSuperNet(SharedNet):
     NAME = "diff_supernet"
 
-    def __init__(self, search_space, device,
+    def __init__(self, search_space, device, rollout_type="differentiable",
                  num_classes=10, init_channels=16, stem_multiplier=3,
                  max_grad_norm=5.0, dropout_rate=0.1,
                  candidate_virtual_parameter_only=True):
-        super(DiffSuperNet, self).__init__(search_space, device,
+        super(DiffSuperNet, self).__init__(search_space, device, rollout_type,
                                            cell_cls=DiffSharedCell, op_cls=DiffSharedOp,
                                            num_classes=num_classes, init_channels=init_channels,
                                            stem_multiplier=stem_multiplier,
@@ -84,8 +84,8 @@ class DiffSuperNet(SharedNet):
                                    virtual_parameter_only=self.candidate_virtual_parameter_only)
 
     @classmethod
-    def rollout_type(cls):
-        return assert_rollout_type("differentiable")
+    def supported_rollout_types(cls):
+        return [assert_rollout_type("differentiable")]
 
 
 class DiffSharedCell(SharedCell):

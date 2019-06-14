@@ -7,7 +7,7 @@ import numpy as np
 import torch
 import six
 
-from aw_nas import utils, assert_rollout_type
+from aw_nas import utils
 from aw_nas.evaluator.base import BaseEvaluator
 from aw_nas.utils.exception import expect, ConfigException
 
@@ -44,8 +44,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
 
     def __init__( #pylint: disable=dangerous-default-value
             self, dataset, weights_manager, objective, rollout_type="discrete",
-            batch_size=128,
-            controller_surrogate_steps=1, mepa_surrogate_steps=1,
+            batch_size=128, controller_surrogate_steps=1, mepa_surrogate_steps=1,
             mepa_optimizer={
                 "type": "SGD",
                 "lr": 0.01,
@@ -67,18 +66,14 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
             bptt_steps=35,
             schedule_cfg=None):
         super(MepaEvaluator, self).__init__(dataset, weights_manager,
-                                            objective, schedule_cfg)
+                                            objective, rollout_type, schedule_cfg)
 
         # check rollout type
-        expect(rollout_type in self.supported_rollout_types(),
-               "Unsupported `rollout_type`: {}".format(rollout_type),
-               ConfigException) # supported rollout types
-        self._rollout_type = assert_rollout_type(rollout_type)
-        expect(self._rollout_type == self.weights_manager.rollout_type(),
+        expect(self.rollout_type == self.weights_manager.rollout_type,
                "the rollout type of evaluator/weights_manager must match, "
                "check the configuration. ({}/{})".format(
-                   self._rollout_type,
-                   self.weights_manager.rollout_type()), ConfigException)
+                   self.rollout_type,
+                   self.weights_manager.rollout_type), ConfigException)
 
         self._data_type = self.dataset.data_type()
         self._device = self.weights_manager.device
@@ -132,7 +127,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
         self._init_data_queues_and_hidden(self._data_type, data_portion, mepa_as_surrogate)
 
         # initialize reward criterions used by `get_rollout_reward`
-        self._init_criterions(self._rollout_type)
+        self._init_criterions(self.rollout_type)
 
         # for report surrogate loss
         self.epoch_average_meters = defaultdict(utils.AverageMeter)
@@ -148,9 +143,6 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
     @classmethod
     def supported_rollout_types(cls):
         return ["discrete", "differentiable"]
-
-    def current_rollout_type(self):
-        return self._rollout_type
 
     def suggested_controller_steps_per_epoch(self):
         return len(self.controller_queue)
@@ -305,7 +297,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
         lr_str = ""
         if self.mepa_scheduler is not None:
             self.mepa_scheduler.step(epoch-1)
-            lr_str += "mepa LR: {:.5f};".format(self.mepa_scheduler.get_lr()[0])
+            lr_str += "mepa LR: {:.5f}; ".format(self.mepa_scheduler.get_lr()[0])
         if self.surrogate_scheduler is not None:
             self.surrogate_scheduler.step(epoch-1)
             lr_str += "surrogate LR: {:.5f};".format(self.surrogate_scheduler.get_lr()[0])

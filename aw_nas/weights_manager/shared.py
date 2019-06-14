@@ -6,12 +6,12 @@ from aw_nas import ops
 from aw_nas.weights_manager.base import BaseWeightsManager
 
 class SharedNet(BaseWeightsManager, nn.Module):
-    def __init__(self, search_space, device,
+    def __init__(self, search_space, device, rollout_type,
                  cell_cls, op_cls,
                  num_classes=10, init_channels=16, stem_multiplier=3,
                  max_grad_norm=5.0, dropout_rate=0.1,
                  cell_group_kwargs=None):
-        super(SharedNet, self).__init__(search_space, device)
+        super(SharedNet, self).__init__(search_space, device, rollout_type)
         nn.Module.__init__(self)
 
         self.num_classes = num_classes

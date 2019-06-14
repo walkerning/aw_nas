@@ -32,8 +32,9 @@ class RNNSuperNet(RNNSharedNet):
     NAME = "rnn_supernet"
 
     def __init__(
-            self, search_space, device,
-            num_tokens, num_emb=300, num_hid=300,
+            self, search_space, device, num_tokens,
+            rollout_type="discrete",
+            num_emb=300, num_hid=300,
             tie_weight=True, decoder_bias=True,
             share_primitive_weights=False, share_from_weights=False,
             batchnorm_step=False,
@@ -45,7 +46,7 @@ class RNNSuperNet(RNNSharedNet):
             candidate_member_mask=True, candidate_cache_named_members=False,
             candidate_virtual_parameter_only=True):
         super(RNNSuperNet, self).__init__(
-            search_space, device,
+            search_space, device, rollout_type,
             cell_cls=RNNDiscreteSharedCell, op_cls=RNNDiscreteSharedOp,
             num_tokens=num_tokens, num_emb=num_emb, num_hid=num_hid,
             tie_weight=tie_weight, decoder_bias=decoder_bias,
@@ -69,8 +70,8 @@ class RNNSuperNet(RNNSharedNet):
                                   virtual_parameter_only=self.candidate_virtual_parameter_only)
 
     @classmethod
-    def rollout_type(cls):
-        return assert_rollout_type("discrete")
+    def supported_rollout_types(cls):
+        return [assert_rollout_type("discrete")]
 
     def sub_named_members(self, genotypes,
                           prefix="", member="parameters"):

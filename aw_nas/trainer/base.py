@@ -10,17 +10,21 @@ import torch.utils.data
 
 from aw_nas import Component
 from aw_nas import utils
-from aw_nas.utils.exception import expect
+from aw_nas.utils.exception import expect, ConfigException
 
 
 class BaseTrainer(Component):
     REGISTRY = "trainer"
 
-    def __init__(self, controller, evaluator, schedule_cfg=None):
+    def __init__(self, controller, evaluator, rollout_type, schedule_cfg=None):
         super(BaseTrainer, self).__init__(schedule_cfg)
 
         self.controller = controller
         self.evaluator = evaluator
+        expect(rollout_type in self.supported_rollout_types(),
+               "Unsupported `rollout_type`: {}".format(rollout_type),
+               ConfigException) # supported rollout types
+        self.rollout_type = rollout_type
 
         self.is_setup = False
         self.epoch = 1
@@ -31,7 +35,7 @@ class BaseTrainer(Component):
     # ---- virtual APIs to be implemented in subclasses ----
     @utils.abstractclassmethod
     def supported_rollout_types(cls):
-        return ["discrete", "differentiable"]
+        pass
 
     @abc.abstractmethod
     def train(self):
