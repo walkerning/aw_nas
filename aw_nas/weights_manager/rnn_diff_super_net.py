@@ -45,7 +45,7 @@ class RNNDiffSuperNet(RNNSharedNet):
             max_grad_norm=5.0,
             # dropout probs
             dropout_emb=0., dropout_inp0=0., dropout_inp=0., dropout_hid=0., dropout_out=0.,
-            candidate_virtual_parameter_only=False):
+            candidate_virtual_parameter_only=True):
         expect(not search_space.loose_end,
                "Differentiable NAS searching do not support loose-ended search_space",
                ConfigException)

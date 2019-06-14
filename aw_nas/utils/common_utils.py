@@ -7,6 +7,7 @@ import time
 import shutil
 import inspect
 import collections
+from collections import OrderedDict
 from contextlib import contextmanager
 import six
 
@@ -44,6 +45,28 @@ class Ticker(object):
             elapsed = cur_time - self.cur_time
             self.logger.debug("Ticker %s: %s: %.3f s", self.name, message, elapsed)
         self.cur_time = cur_time
+
+class OrderedStats(object):
+    def __init__(self):
+        self.stat_meters = None
+
+    def __nonzero__(self):
+        return self.stat_meters is not None
+
+    __bool__ = __nonzero__
+
+    def update(self, stats):
+        if self.stat_meters is None:
+            self.stat_meters = OrderedDict([(n, AverageMeter()) for n in stats])
+        [self.stat_meters[n].update(v) for n, v in stats.items()]
+
+    def avgs(self):
+        if self.stat_meters is None:
+            return None
+        return OrderedDict((n, meter.avg) for n, meter in self.stat_meters.items())
+
+    def items(self):
+        return self.stat_meters.items() if self.stat_meters is not None else None
 
 class AverageMeter(object):
     def __init__(self):

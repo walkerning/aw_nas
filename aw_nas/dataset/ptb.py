@@ -96,7 +96,7 @@ class SentenceCorpus(object):
 class PTB(BaseDataset):
     NAME = "ptb"
 
-    def __init__(self, shuffle=True):
+    def __init__(self, shuffle=False):
         super(PTB, self).__init__()
 
         self.corpus = SentenceCorpus(self.data_dir)

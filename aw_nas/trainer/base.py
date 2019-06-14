@@ -3,32 +3,36 @@
 
 import os
 import abc
-import six
+import pickle
 
 import torch
 import torch.utils.data
-from torch.utils.data.sampler import SubsetRandomSampler
 
 from aw_nas import Component
 from aw_nas import utils
 from aw_nas.utils.exception import expect
 
+
 class BaseTrainer(Component):
     REGISTRY = "trainer"
 
-    def __init__(self, controller, weights_manager, dataset, schedule_cfg=None):
+    def __init__(self, controller, evaluator, schedule_cfg=None):
         super(BaseTrainer, self).__init__(schedule_cfg)
 
         self.controller = controller
-        self.weights_manager = weights_manager
-        self.dataset = dataset
+        self.evaluator = evaluator
 
         self.is_setup = False
         self.epoch = 1
         self.save_every = None
         self.train_dir = None
+        self.interleave_report_every = None
 
     # ---- virtual APIs to be implemented in subclasses ----
+    @utils.abstractclassmethod
+    def supported_rollout_types(cls):
+        return ["discrete", "differentiable"]
+
     @abc.abstractmethod
     def train(self):
         """
@@ -64,18 +68,6 @@ class BaseTrainer(Component):
         Load the trainer state from disk.
         """
 
-    @utils.abstractclassmethod
-    def supported_rollout_types(cls):
-        """
-        Return the handling rollout type.
-        """
-
-    @utils.abstractclassmethod
-    def supported_data_types(cls):
-        """
-        Return the supported data types. Subset of `image`, `sequence`.
-        """
-
     # ---- some helper methods ----
     def on_epoch_start(self, epoch):
         """
@@ -83,7 +75,7 @@ class BaseTrainer(Component):
         """
         super(BaseTrainer, self).on_epoch_start(epoch)
         self.controller.on_epoch_start(epoch)
-        self.weights_manager.on_epoch_start(epoch)
+        self.evaluator.on_epoch_start(epoch)
 
     def on_epoch_end(self, epoch):
         """
@@ -91,12 +83,13 @@ class BaseTrainer(Component):
         """
         super(BaseTrainer, self).on_epoch_end(epoch)
         self.controller.on_epoch_end(epoch)
-        self.weights_manager.on_epoch_end(epoch)
+        self.evaluator.on_epoch_end(epoch)
 
     def final_save(self):
         """
-        Pickle dump the weights_manager and controller directly,
-        instead of the state dict.
+        Pickle dump the controller/evaluator directly. Usually, evaluator use dataset,
+        it will failed to be pickled if no handling is specified using `__getsate__`,
+        in that case, will fallback to call `evaluator.save`.
 
         The dumped checkpoint can be loaded directly using `model = torch.load(checkpoint)`,
         without instantiate the correct class with correct configuration first.
@@ -110,13 +103,18 @@ class BaseTrainer(Component):
             # final saving
             dir_ = utils.makedir(os.path.join(self.train_dir, "final"))
             torch.save(self.controller, os.path.join(dir_, "controller.pt"))
-            torch.save(self.weights_manager, os.path.join(dir_, "weights_manager.pt"))
-            self.logger.info("Final Saving: Dump controller/weights_manager to directory %s", dir_)
+            try:
+                torch.save(self.evaluator, os.path.join(dir_, "evaluator.pt"))
+            except pickle.PicklingError as e:
+                self.logger.warn("Final saving: torch.save(evaluator) fail, fallback to call "
+                                 "`evaluator.save`: %s", e)
+                self.evaluator.save(os.path.join(dir_, "evaluator.pt"))
+            self.logger.info("Final Saving: Dump controller to directory %s", dir_)
 
     def maybe_save(self):
         if self.save_every is not None and self.train_dir and self.epoch % self.save_every == 0:
             self.controller.save(self._save_path("controller"))
-            self.weights_manager.save(self._save_path("weights_manager"))
+            self.evaluator.save(self._save_path("evaluator"))
             self.save(self._save_path("trainer"))
             self.logger.info("Epoch %3d: Save all checkpoints to directory %s",
                              self.epoch, self._save_path())
@@ -127,12 +125,13 @@ class BaseTrainer(Component):
         dir_ = utils.makedir(os.path.join(self.train_dir, str(self.epoch)))
         return os.path.join(dir_, name)
 
-    def setup(self, load=None, save_every=None, train_dir=None, writer=None, load_components=None):
+    def setup(self, load=None, save_every=None, train_dir=None, writer=None, load_components=None,
+              interleave_report_every=None):
         """
         Setup the scaffold: saving/loading/visualization settings.
         """
         if load is not None:
-            all_components = ("controller", "weights_manager", "trainer")
+            all_components = ("controller", "evaluator", "trainer")
             load_components = all_components\
                               if load_components is None else load_components
             expect(set(load_components).issubset(all_components), "Invalid `load_components`")
@@ -141,10 +140,10 @@ class BaseTrainer(Component):
                 path = os.path.join(load, "controller")
                 self.logger.info("Load controller from %s", path)
                 self.controller.load(path)
-            if "weights_manager" in load_components:
-                path = os.path.join(load, "weights_manager")
-                self.logger.info("Load weights_manager from %s", path)
-                self.weights_manager.load(path)
+            if "evaluator" in load_components:
+                path = os.path.join(load, "evaluator")
+                self.logger.info("Load evaluator from %s", path)
+                self.evaluator.load(path)
             if "trainer" in load_components:
                 path = os.path.join(load, "trainer")
                 self.logger.info("Load trainer from %s", path)
@@ -155,83 +154,6 @@ class BaseTrainer(Component):
         if writer is not None:
             self.setup_writer(writer.get_sub_writer("trainer"))
             self.controller.setup_writer(writer.get_sub_writer("controller"))
-            self.weights_manager.setup_writer(writer.get_sub_writer("weights_manager"))
+            self.evaluator.setup_writer(writer.get_sub_writer("evaluator"))
+        self.interleave_report_every = interleave_report_every
         self.is_setup = True
-
-    def prepare_data_queues(self, splits, queue_cfg_lst, data_type="image"):
-        """
-        Further partition the dataset splits, prepare different data queues.
-
-        Example::
-        @TODO: doc
-        """
-        expect(data_type in {"image", "sequence"})
-
-        dset_splits = splits
-        dset_sizes = {n: len(d) for n, d in six.iteritems(dset_splits)}
-        used_portions = {n: 0. for n in splits}
-        queues = []
-        for cfg in queue_cfg_lst: # all the queues interleave sub-dataset
-            batch_size = cfg["batch_size"]
-            split = cfg["split"]
-            portion = cfg["portion"]
-            callback = cfg.get("callback", None)
-
-            if portion == 0:
-                queues.append(None)
-                continue
-
-            used_portion = used_portions[split]
-            size = dset_sizes[split]
-            if data_type == "image":
-                kwargs = {
-                    "batch_size": batch_size,
-                    "pin_memory": True,
-                    "num_workers": 2,
-                    "sampler": SubsetRandomSampler(list(range(int(size*used_portion),
-                                                              int(size*(used_portion+portion)))))
-                }
-                queue = utils.get_inf_iterator(torch.utils.data.DataLoader(
-                    dset_splits[split], **kwargs), callback)
-            else: # data_type == "sequence"
-                expect("bptt_steps" in cfg)
-                bptt_steps = cfg["bptt_steps"]
-                dataset = utils.SimpleDataset(
-                    utils.batchify_sentences(
-                        dset_splits[split][int(size*used_portion):int(size*(used_portion+portion))],
-                        batch_size)
-                )
-                kwargs = {
-                    "batch_size": bptt_steps,
-                    "pin_memory": False,
-                    "num_workers": 0,
-                    "shuffle": False
-                }
-                queue = utils.get_inf_iterator(torch.utils.data.DataLoader(
-                    dataset, **kwargs), callback)
-
-            used_portions[split] += portion
-            queues.append(queue)
-
-        for n, portion in used_portions.items():
-            if portion != 1.:
-                self.logger.warn("Dataset split %s is not fully used (%.2f %%)! "
-                                 "Check the `data_queues` section of the configuration.",
-                                 n, portion*100)
-        return queues
-
-    def get_new_candidates(self, n):
-        """
-        Get new candidate networks by calling controller and weights_manager.
-
-        Args:
-            n (int): Number of candidate networks to get.
-
-        Returns:
-            List(aw_nas.Rollout): Rollouts with candidate nets generated.
-        """
-        rollouts = self.controller.sample(n)
-        for r in rollouts:
-            candidate_net = self.weights_manager.assemble_candidate(r)
-            r.candidate_net = candidate_net
-        return rollouts

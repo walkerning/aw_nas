@@ -1,9 +1,13 @@
 import six
 import numpy as np
 import torch
+from torch import optim
 from torch.autograd import Variable
 import torch.nn.functional as F
 import torch.utils.data
+
+from aw_nas.utils.exception import expect
+from aw_nas.utils.lr_scheduler import get_scheduler_cls
 
 
 ## --- model/training utils ---
@@ -95,10 +99,13 @@ def batchify_sentences(data, bsz, device="cuda"):
     return data[:-1, :], data[1:, :]
 
 class InfIterator(six.Iterator):
-    def __init__(self, iterable, callback):
+    def __init__(self, iterable, callbacks=()):
         self.iterable = iterable
         self.iter_ = iter(self.iterable)
-        self.callback = callback
+        self.callbacks = list(callbacks)
+
+    def __getattr__(self, name):
+        return getattr(self.iterable, name)
 
     def __len__(self):
         return len(self.iterable)
@@ -107,16 +114,78 @@ class InfIterator(six.Iterator):
         try:
             data = next(self.iter_)
         except StopIteration:
-            if self.callback is not None:
-                self.callback()
+            if self.callbacks:
+                [callback() for callback in self.callbacks if callback is not None]
             self.iter_ = iter(self.iterable)
             data = next(self.iter_)
         return data
 
+    def add_callback(self, callback):
+        assert callable(callback)
+        self.callbacks.append(callback)
+
     next = __next__
 
 def get_inf_iterator(iterable, callback):
-    return InfIterator(iterable, callback)
+    return InfIterator(iterable, [callback])
+
+def prepare_data_queues(splits, queue_cfg_lst, data_type="image"):
+    """
+    Further partition the dataset splits, prepare different data queues.
+
+    Example::
+    @TODO: doc
+    """
+    expect(data_type in {"image", "sequence"})
+
+    dset_splits = splits
+    dset_sizes = {n: len(d) for n, d in six.iteritems(dset_splits)}
+    used_portions = {n: 0. for n in splits}
+    queues = []
+    for cfg in queue_cfg_lst: # all the queues interleave sub-dataset
+        batch_size = cfg["batch_size"]
+        split = cfg["split"]
+        portion = cfg["portion"]
+        callback = cfg.get("callback", None)
+
+        if portion == 0:
+            queues.append(None)
+            continue
+
+        used_portion = used_portions[split]
+        size = dset_sizes[split]
+        if data_type == "image":
+            kwargs = {
+                "batch_size": batch_size,
+                "pin_memory": True,
+                "num_workers": 2,
+                "sampler": torch.utils.data.SubsetRandomSampler(
+                    list(range(int(size*used_portion),
+                               int(size*(used_portion+portion)))))
+            }
+            queue = get_inf_iterator(torch.utils.data.DataLoader(
+                dset_splits[split], **kwargs), callback)
+        else: # data_type == "sequence"
+            expect("bptt_steps" in cfg)
+            bptt_steps = cfg["bptt_steps"]
+            dataset = SimpleDataset(
+                batchify_sentences(
+                    dset_splits[split][int(size*used_portion):int(size*(used_portion+portion))],
+                    batch_size)
+            )
+            kwargs = {
+                "batch_size": bptt_steps,
+                "pin_memory": False,
+                "num_workers": 0,
+                "shuffle": False
+            }
+            queue = get_inf_iterator(torch.utils.data.DataLoader(
+                dataset, **kwargs), callback)
+
+        used_portions[split] += portion
+        queues.append(queue)
+
+    return queues
 
 class Cutout(object):
     """
@@ -139,6 +208,22 @@ class Cutout(object):
         mask = mask.expand_as(image)
         image *= mask
         return image
+
+
+## --- init from configs ---
+def init_optimizer(params, cfg):
+    if cfg:
+        cfg = {k:v for k, v in six.iteritems(cfg)}
+        opt_cls = getattr(optim, cfg.pop("type"))
+        return opt_cls(params, **cfg)
+    return None
+
+def init_scheduler(optimizer, cfg):
+    if cfg and optimizer is not None:
+        cfg = {k:v for k, v in six.iteritems(cfg)}
+        sch_cls = get_scheduler_cls(cfg.pop("type"))
+        return sch_cls(optimizer, **cfg)
+    return None
 
 
 ## --- misc helpers ---

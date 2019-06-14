@@ -209,7 +209,7 @@ class RNNFinalTrainer(FinalTrainer):
     def evaluate_split(self, split):
         assert split in {"train", "valid", "test"}
         data = getattr(self, split+"_data")
-        obj = self.evaluate_epoch(*data, self.bptt_steps)
+        obj = self.evaluate_epoch(data[0], data[1], self.bptt_steps)
         self.logger.info("eval on split %s: perp %.3f ; bpc %.3f ; loss %.3f",
                          split, np.exp(obj), obj/np.log(2), obj)
         return obj

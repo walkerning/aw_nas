@@ -43,7 +43,7 @@ class RNNSuperNet(RNNSharedNet):
             # dropout probs
             dropout_emb=0., dropout_inp0=0., dropout_inp=0., dropout_hid=0., dropout_out=0.,
             candidate_member_mask=True, candidate_cache_named_members=False,
-            candidate_virtual_parameter_only=False):
+            candidate_virtual_parameter_only=True):
         super(RNNSuperNet, self).__init__(
             search_space, device,
             cell_cls=RNNDiscreteSharedCell, op_cls=RNNDiscreteSharedOp,

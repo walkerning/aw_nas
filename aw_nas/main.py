@@ -3,6 +3,8 @@
 The main entrypoint of aw_nas.
 """
 
+from __future__ import print_function
+
 import os
 import sys
 import random
@@ -32,6 +34,73 @@ def _onlycopy_py(src, names):
     return [name for name in names if not \
             (name == "VERSION" or name.endswith(".py") or os.path.isdir(os.path.join(src, name)))]
 
+def _init_components_from_cfg(cfg, device, evaluator_only=False, controller_only=False,
+                              from_controller=False, search_space=None, controller=None):
+    """
+    Initialize components using configuration.
+    Order:
+    `search_space`, `controller`, `dataset`, `weights_manager`, `objective`, `evaluator`, `trainer`
+    """
+    if not from_controller:
+        search_space = _init_component(cfg, "search_space")
+        if not evaluator_only:
+            controller = _init_component(cfg, "controller",
+                                         search_space=search_space, device=device)
+            if controller_only:
+                return search_space, controller
+    else: # continue components initialization from controller stage
+        assert search_space is not None and controller is not None
+
+    # dataset
+    whole_dataset = _init_component(cfg, "dataset")
+    _data_type = whole_dataset.data_type()
+
+    # weights manager
+    if _data_type == "sequence":
+        # get the num_tokens
+        num_tokens = whole_dataset.vocab_size
+        LOGGER.info("Dataset %s: vocabulary size: %d", whole_dataset.NAME, num_tokens)
+        weights_manager = _init_component(cfg, "weights_manager",
+                                          search_space=search_space,
+                                          device=device,
+                                          num_tokens=num_tokens)
+    else:
+        weights_manager = _init_component(cfg, "weights_manager",
+                                          search_space=search_space, device=device)
+    expect(_data_type in weights_manager.supported_data_types())
+
+    # objective
+    objective = _init_component(cfg, "objective")
+
+    # evaluator
+    evaluator = _init_component(cfg, "evaluator", dataset=whole_dataset,
+                                weights_manager=weights_manager, objective=objective)
+    expect(_data_type in evaluator.supported_data_types())
+
+    if evaluator_only:
+        return search_space, whole_dataset, weights_manager, objective, evaluator
+
+    # check type of rollout match between `evaluator` and `controller`
+    expect(weights_manager.rollout_type() == controller.rollout_type(),
+           ("The type of the rollouts produced/received by the "
+            "controller/weights_manager should match! ({} VS. {})")\
+           .format(weights_manager.rollout_type(), controller.rollout_type()))
+    expect(controller.rollout_type() in evaluator.supported_rollout_types(),
+           ("The type of the rollout handled by controller/weights_manager"
+            " is not supported by the evaluator! ({} VS. {})")\
+           .format(controller.rollout_type(), evaluator.supported_rollout_types()))
+
+    # trainer
+    LOGGER.info("Initializing trainer and starting the search.")
+    trainer = _init_component(cfg, "trainer", evaluator=evaluator, controller=controller)
+
+    # check type of rollout match
+    expect(controller.rollout_type() in trainer.supported_rollout_types(),
+           ("The type of the rollout handled by controller/weights_manager"
+            " is not supported by the trainer! ({} VS. {})")\
+           .format(controller.rollout_type(), trainer.supported_rollout_types()))
+    return search_space, whole_dataset, weights_manager, objective, evaluator, controller, trainer
+
 def _init_component(cfg, registry_name, **addi_args):
     type_ = cfg[registry_name + "_type"]
     cfg = cfg.get(registry_name + "_cfg", None)
@@ -46,7 +115,6 @@ def _init_component(cfg, registry_name, **addi_args):
         LOGGER.debug("%s %s config:\n%s", registry_name, type_,
                      utils.add_text_prefix(whole_cfg_str, "  "))
     return cls(**addi_args)
-
 
 def _set_gpu(gpu):
     if gpu is None:
@@ -66,6 +134,7 @@ def main():
     pass
 
 
+# ---- Search, Sample, Derive using trainer ----
 @main.command(help="Searching for architecture.")
 @click.argument("cfg_file", required=True, type=str)
 @click.option("--gpu", default=0, type=int,
@@ -76,6 +145,9 @@ def main():
               help="the directory to load checkpoint")
 @click.option("--save-every", default=None, type=int,
               help="the number of epochs to save checkpoint every")
+@click.option("--interleave-report-every", default=50, type=int,
+              help="the number of interleave steps to report every, "
+              "only work in interleave training mode")
 @click.option("--train-dir", default=None, type=str,
               help="the directory to save checkpoints")
 @click.option("--vis-dir", default=None, type=str,
@@ -83,7 +155,8 @@ def main():
               "need `tensorboard` extra, `pip install aw_nas[tensorboard]`")
 @click.option("--develop", default=False, type=bool, is_flag=True,
               help="in develop mode, will copy the `aw_nas` source files into train_dir for backup")
-def search(cfg_file, gpu, seed, load, save_every, train_dir, vis_dir, develop):
+def search(cfg_file, gpu, seed, load, save_every, interleave_report_every,
+           train_dir, vis_dir, develop):
     # check dependency and initialize visualization writer
     if vis_dir:
         vis_dir = utils.makedir(vis_dir, remove=True)
@@ -141,49 +214,232 @@ def search(cfg_file, gpu, seed, load, save_every, train_dir, vis_dir, develop):
 
     # initialize components
     LOGGER.info("Initializing components.")
-    search_space = _init_component(cfg, "search_space")
-    whole_dataset = _init_component(cfg, "dataset")
-    _data_type = whole_dataset.data_type()
-    if _data_type == "sequence":
-        # get the num_tokens
-        num_tokens = whole_dataset.vocab_size
-        LOGGER.info("Dataset %s: vocabulary size: %d", whole_dataset.NAME, num_tokens)
-        weights_manager = _init_component(cfg, "weights_manager",
-                                          search_space=search_space,
-                                          device=device,
-                                          num_tokens=num_tokens)
-    else:
-        weights_manager = _init_component(cfg, "weights_manager",
-                                          search_space=search_space, device=device)
-    # check weights_manager support for data type
-    expect(_data_type in weights_manager.supported_data_types())
+    trainer = _init_components_from_cfg(cfg, device)[-1]
 
-    controller = _init_component(cfg, "controller",
-                                 search_space=search_space, device=device)
-
-    # check type of rollout match
-    expect(weights_manager.rollout_type() == controller.rollout_type(),
-           ("The type of the rollouts produced/received by the "
-            "controller/weights_manager should match! ({} VS. {})")\
-           .format(weights_manager.rollout_type(), controller.rollout_type()))
-
-    # initialize, setup, run trainer
-    LOGGER.info("Initializing trainer and starting the search.")
-    trainer = _init_component(cfg, "trainer", weights_manager=weights_manager,
-                              controller=controller, dataset=whole_dataset)
-
-    # check trainer support for data type
-    expect(_data_type in trainer.supported_data_types())
-    # check type of rollout match
-    expect(controller.rollout_type() in trainer.supported_rollout_types(),
-           ("The type of the rollouts handled by the controller/weights_manager"
-            " is not supported by the trainer! ({} VS. {})")\
-           .format(controller.rollout_type(), trainer.supported_rollout_types()))
-
-    trainer.setup(load, save_every, train_dir, writer=writer)
+    # setup trainer and train
+    trainer.setup(load, save_every, train_dir, writer=writer,
+                  interleave_report_every=interleave_report_every)
     trainer.train()
 
 
+def _dump(rollout, dump_mode, of):
+    if dump_mode == "list":
+        yaml.safe_dump([list(rollout.genotype._asdict().values())], of)
+    elif dump_mode == "str":
+        yaml.safe_dump([str(rollout.genotype)], of)
+    else:
+        raise Exception("Unexpected dump_mode: {}".format(dump_mode))
+
+@main.command(help="Sample architectures, by directly pickle loading controller from path")
+@click.option("--load", required=True, type=str,
+              help="the file to load controller")
+@click.option("-o", "--out-file", required=True, type=str,
+              help="the file to write the derived genotypes to")
+@click.option("-n", default=1, type=int,
+              help="number of architectures to derive")
+@click.option("--save-plot", default=None, type=str,
+              help="If specified, save the plot of the rollouts to this path")
+@click.option("--gpu", default=0, type=int,
+              help="the gpu to run deriving on")
+@click.option("--seed", default=None, type=int,
+              help="the random seed to run training")
+@click.option("--dump-mode", default="str", type=click.Choice(["list", "str"]))
+def sample(load, out_file, n, save_plot, gpu, seed, dump_mode):
+    LOGGER.info("CWD: %s", os.getcwd())
+    LOGGER.info("CMD: %s", " ".join(sys.argv))
+
+    setproctitle.setproctitle("awnas-sample load: {}; cwd: {}".format(load, os.getcwd()))
+
+    # set gpu
+    _set_gpu(gpu)
+    device = torch.device("cuda:{}".format(gpu) if torch.cuda.is_available() else "cpu")
+
+    # set seed
+    if seed is not None:
+        LOGGER.info("Setting random seed: %d.", seed)
+        np.random.seed(seed)
+        random.seed(seed)
+        torch.manual_seed(seed)
+
+    # create the directory for saving plots
+    if save_plot is not None:
+        save_plot = utils.makedir(save_plot)
+
+    controller_path = os.path.join(load)
+    # load the model on cpu
+    controller = torch.load(controller_path, map_location=torch.device("cpu"))
+    # then set the device
+    controller.set_device(device)
+
+    rollouts = controller.sample(n)
+    with open(out_file, "w") as of:
+        for i, r in enumerate(rollouts):
+            if save_plot is not None:
+                r.plot_arch(
+                    filename=os.path.join(save_plot, str(i)),
+                    label="Derive {}".format(i)
+                )
+            of.write("# ---- Arch {} ----\n".format(i))
+            _dump(r, dump_mode, of)
+            of.write("\n")
+
+@main.command(help="Eval architecture from file")
+@click.argument("cfg_file", required=True, type=str)
+@click.argument("arch_file", required=True, type=str)
+@click.option("--load", required=True, type=str,
+              help="the directory to load checkpoint")
+@click.option("--gpu", default=0, type=int,
+              help="the gpu to run training on")
+@click.option("--seed", default=None, type=int,
+              help="the random seed to run training")
+@click.option("--save-plot", default=None, type=str,
+              help="If specified, save the plot of the rollouts to this path")
+@click.option("--steps", default=None, type=int,
+              help="number of batches to eval for each arch, default to be the whole derive queue.")
+def eval_arch(cfg_file, arch_file, load, gpu, seed, save_plot, steps):
+    setproctitle.setproctitle("awnas-eval-arch config: {}; arch_file: {}; load: {}; cwd: {}"\
+                              .format(cfg_file, arch_file, load, os.getcwd()))
+
+    # set gpu
+    _set_gpu(gpu)
+    device = torch.device("cuda:{}".format(gpu) if torch.cuda.is_available() else "cpu")
+
+    # set seed
+    if seed is not None:
+        LOGGER.info("Setting random seed: %d.", seed)
+        np.random.seed(seed)
+        random.seed(seed)
+        torch.manual_seed(seed)
+
+    # load components config
+    LOGGER.info("Loading configuration files.")
+    with open(cfg_file, "r") as f:
+        cfg = yaml.safe_load(f)
+
+    # load genotypes
+    LOGGER.info("Loading archs from file: %s", arch_file)
+    with open(arch_file, "r") as f:
+        genotypes = yaml.safe_load(f)
+    assert isinstance(genotypes, (list, tuple))
+
+    # initialize and load evaluator
+    res = _init_components_from_cfg(cfg, device, evaluator_only=True)
+    search_space = res[0] #pylint: disable=unused-variable
+    evaluator = res[-1]
+    path = os.path.join(load, "evaluator")
+    LOGGER.info("Loading evalutor from %s", path)
+    evaluator.load(path)
+
+    # create the directory for saving plots
+    if save_plot is not None:
+        save_plot = utils.makedir(save_plot)
+
+    # evaluate these rollouts using evaluator
+    LOGGER.info("Eval...")
+    rollouts = [eval("search_space.genotype_type({})".format(geno)) for geno in genotypes] # pylint:disable=eval-used
+    num_r = len(rollouts)
+    for i, r in enumerate(rollouts):
+        evaluator.evaluate_rollouts([r], is_training=False,
+                                    eval_batches=steps)[0]
+        if save_plot is not None:
+            r.plot_arch(
+                filename=os.path.join(save_plot, str(i)),
+                label="Derive {}; Reward {:.3f}".format(i, r.get_perf(name="reward"))
+            )
+        print("Finish test {}/{}\r".format(i+1, num_r), end="")
+    for i, r in enumerate(rollouts):
+        LOGGER.info("Arch %3d: %s", i, "; ".join(["{}: {:.3f}".format(n, v) for n, v in r.perf]))
+
+
+@main.command(help="Derive architectures.")
+@click.argument("cfg_file", required=True, type=str)
+@click.option("--load", required=True, type=str,
+              help="the directory to load checkpoint")
+@click.option("-o", "--out-file", required=True, type=str,
+              help="the file to write the derived genotypes to")
+@click.option("-n", default=1, type=int,
+              help="number of architectures to derive")
+@click.option("--save-plot", default=None, type=str,
+              help="If specified, save the plot of the rollouts to this path")
+@click.option("--test", default=False, type=bool, is_flag=True,
+              help="If false, only the controller is loaded and use to sample rollouts; "
+              "Otherwise, weights_manager/trainer is also loaded and test these rollouts.")
+@click.option("--steps", default=None, type=int,
+              help="number of batches to eval for each arch, default to be the whole derive queue.")
+@click.option("--gpu", default=0, type=int,
+              help="the gpu to run deriving on")
+@click.option("--seed", default=None, type=int,
+              help="the random seed to run training")
+@click.option("--dump-mode", default="str", type=click.Choice(["list", "str"]))
+def derive(cfg_file, load, out_file, n, save_plot, test, steps, gpu, seed, dump_mode):
+    LOGGER.info("CWD: %s", os.getcwd())
+    LOGGER.info("CMD: %s", " ".join(sys.argv))
+
+    setproctitle.setproctitle("awnas-derive config: {}; load: {}; cwd: {}"\
+                              .format(cfg_file, load, os.getcwd()))
+
+    # set gpu
+    _set_gpu(gpu)
+    device = torch.device("cuda:{}".format(gpu) if torch.cuda.is_available() else "cpu")
+
+    # set seed
+    if seed is not None:
+        LOGGER.info("Setting random seed: %d.", seed)
+        np.random.seed(seed)
+        random.seed(seed)
+        torch.manual_seed(seed)
+
+    # load components config
+    LOGGER.info("Loading configuration files.")
+    with open(cfg_file, "r") as f:
+        cfg = yaml.safe_load(f)
+
+    # initialize components
+    LOGGER.info("Initializing components.")
+    search_space, controller = _init_components_from_cfg(cfg, device, controller_only=True)
+
+    # create the directory for saving plots
+    if save_plot is not None:
+        save_plot = utils.makedir(save_plot)
+
+    if not test:
+        controller_path = os.path.join(load, "controller")
+        controller.load(controller_path)
+        rollouts = controller.sample(n)
+        with open(out_file, "w") as of:
+            for i, r in enumerate(rollouts):
+                if save_plot is not None:
+                    r.plot_arch(
+                        filename=os.path.join(save_plot, str(i)),
+                        label="Derive {}".format(i)
+                    )
+                of.write("# ---- Arch {} ----\n".format(i))
+                _dump(r, dump_mode, of)
+                of.write("\n")
+    else:
+        trainer = _init_components_from_cfg(cfg, device, from_controller=True,
+                                            search_space=search_space, controller=controller)[-1]
+
+        LOGGER.info("Loading from disk...")
+        trainer.setup(load=load)
+        LOGGER.info("Deriving and testing...")
+        rollouts = trainer.derive(n, steps)
+        accs = [r.get_perf() for r in rollouts]
+        idxes = np.argsort(accs)[::-1]
+        with open(out_file, "w") as of:
+            for i, idx in enumerate(idxes):
+                rollout = rollouts[idx]
+                if save_plot is not None:
+                    rollout.plot_arch(
+                        filename=os.path.join(save_plot, str(i)),
+                        label="Derive {}; Reward {:.3f}".format(i, rollout.get_perf())
+                    )
+                of.write("# ---- Arch {} (Reward {}) ----\n".format(i, rollout.get_perf()))
+                _dump(rollout, dump_mode, of)
+                of.write("\n")
+
+
+# ---- Train, Test using final_trainer ----
 @main.command(help="Train an architecture.")
 @click.argument("cfg_file", required=True, type=str)
 @click.option("--gpus", default="0", type=str,
@@ -268,7 +524,7 @@ def train(gpus, seed, cfg_file, load, save_every, train_dir):
     trainer.train()
 
 
-@main.command(help="Eval a final-trained model.")
+@main.command(help="Test a final-trained model.")
 @click.argument("cfg_file", required=True, type=str)
 @click.option("--load", required=True, type=str,
               help="the directory to load checkpoint")
@@ -278,8 +534,8 @@ def train(gpus, seed, cfg_file, load, save_every, train_dir):
               help="the gpus to run training on, split by single comma")
 @click.option("--seed", default=None, type=int,
               help="the random seed to run training")
-def eval(cfg_file, load, split, gpus, seed): #pylint: disable=redefined-builtin
-    setproctitle.setproctitle("awnas-eval config: {}; load: {}; cwd: {}"\
+def test(cfg_file, load, split, gpus, seed): #pylint: disable=redefined-builtin
+    setproctitle.setproctitle("awnas-test config: {}; load: {}; cwd: {}"\
                               .format(cfg_file, load, os.getcwd()))
 
     # set gpu
@@ -324,170 +580,7 @@ def eval(cfg_file, load, split, gpus, seed): #pylint: disable=redefined-builtin
         trainer.evaluate_split(split_name)
 
 
-def _dump(rollout, dump_mode, of):
-    if dump_mode == "list":
-        yaml.safe_dump([list(rollout.genotype._asdict().values())], of)
-    elif dump_mode == "str":
-        yaml.safe_dump([str(rollout.genotype)], of)
-    else:
-        raise Exception("Unexpected dump_mode: {}".format(dump_mode))
-
-@main.command(help="Sample architectures, by directly pickle loading controller from path")
-@click.option("--load", required=True, type=str,
-              help="the file to load controller")
-@click.option("-o", "--out-file", required=True, type=str,
-              help="the file to write the derived genotypes to")
-@click.option("-n", default=1, type=int,
-              help="number of architectures to derive")
-@click.option("--save-plot", default=None, type=str,
-              help="If specified, save the plot of the rollouts to this path")
-@click.option("--gpu", default=0, type=int,
-              help="the gpu to run deriving on")
-@click.option("--seed", default=None, type=int,
-              help="the random seed to run training")
-@click.option("--dump-mode", default="str", type=click.Choice(["list", "str"]))
-def sample(load, out_file, n, save_plot, gpu, seed, dump_mode):
-    LOGGER.info("CWD: %s", os.getcwd())
-    LOGGER.info("CMD: %s", " ".join(sys.argv))
-
-    setproctitle.setproctitle("awnas-sample load: {}; cwd: {}".format(load, os.getcwd()))
-
-    # set gpu
-    _set_gpu(gpu)
-    device = torch.device("cuda:{}".format(gpu) if torch.cuda.is_available() else "cpu")
-
-    # set seed
-    if seed is not None:
-        LOGGER.info("Setting random seed: %d.", seed)
-        np.random.seed(seed)
-        random.seed(seed)
-        torch.manual_seed(seed)
-
-    # create the directory for saving plots
-    if save_plot is not None:
-        save_plot = utils.makedir(save_plot)
-
-    controller_path = os.path.join(load)
-    # load the model on cpu
-    controller = torch.load(controller_path, map_location=torch.device("cpu"))
-    # then set the device
-    controller.set_device(device)
-
-    rollouts = controller.sample(n)
-    with open(out_file, "w") as of:
-        for i, r in enumerate(rollouts):
-            if save_plot is not None:
-                r.plot_arch(
-                    filename=os.path.join(save_plot, str(i)),
-                    label="Derive {}".format(i)
-                )
-            of.write("# ---- Arch {} ----\n".format(i))
-            _dump(r, dump_mode, of)
-            of.write("\n")
-
-@main.command(help="Derive architectures.")
-@click.argument("cfg_file", required=True, type=str)
-@click.option("--load", required=True, type=str,
-              help="the directory to load checkpoint")
-@click.option("-o", "--out-file", required=True, type=str,
-              help="the file to write the derived genotypes to")
-@click.option("-n", default=1, type=int,
-              help="number of architectures to derive")
-@click.option("--save-plot", default=None, type=str,
-              help="If specified, save the plot of the rollouts to this path")
-@click.option("--test", default=False, type=bool, is_flag=True,
-              help="If false, only the controller is loaded and use to sample rollouts; "
-              "Otherwise, weights_manager/trainer is also loaded and test these rollouts.")
-@click.option("--steps", default=None, type=int,
-              help="number of batches to eval for each arch, default to be the whole derive queue.")
-@click.option("--gpu", default=0, type=int,
-              help="the gpu to run deriving on")
-@click.option("--seed", default=None, type=int,
-              help="the random seed to run training")
-@click.option("--dump-mode", default="str", type=click.Choice(["list", "str"]))
-def derive(cfg_file, load, out_file, n, save_plot, test, steps, gpu, seed, dump_mode):
-    LOGGER.info("CWD: %s", os.getcwd())
-    LOGGER.info("CMD: %s", " ".join(sys.argv))
-
-    setproctitle.setproctitle("awnas-derive config: {}; load: {}; cwd: {}"\
-                              .format(cfg_file, load, os.getcwd()))
-
-    # set gpu
-    _set_gpu(gpu)
-    device = torch.device("cuda:{}".format(gpu) if torch.cuda.is_available() else "cpu")
-
-    # set seed
-    if seed is not None:
-        LOGGER.info("Setting random seed: %d.", seed)
-        np.random.seed(seed)
-        random.seed(seed)
-        torch.manual_seed(seed)
-
-    # load components config
-    LOGGER.info("Loading configuration files.")
-    with open(cfg_file, "r") as f:
-        cfg = yaml.safe_load(f)
-
-    # initialize components
-    LOGGER.info("Initializing components.")
-    search_space = _init_component(cfg, "search_space")
-    controller = _init_component(cfg, "controller",
-                                 search_space=search_space, device=device)
-
-    # create the directory for saving plots
-    if save_plot is not None:
-        save_plot = utils.makedir(save_plot)
-
-    if not test:
-        controller_path = os.path.join(load, "controller")
-        controller.load(controller_path)
-        rollouts = controller.sample(n)
-        with open(out_file, "w") as of:
-            for i, r in enumerate(rollouts):
-                if save_plot is not None:
-                    r.plot_arch(
-                        filename=os.path.join(save_plot, str(i)),
-                        label="Derive {}".format(i)
-                    )
-                of.write("# ---- Arch {} ----\n".format(i))
-                _dump(r, dump_mode, of)
-                of.write("\n")
-    else:
-        whole_dataset = _init_component(cfg, "dataset")
-        _data_type = whole_dataset.data_type()
-        if _data_type == "sequence":
-            # get the num_tokens
-            num_tokens = whole_dataset.vocab_size
-            LOGGER.info("Dataset %s: vocabulary size: %d", whole_dataset.NAME, num_tokens)
-            weights_manager = _init_component(cfg, "weights_manager",
-                                              search_space=search_space,
-                                              device=device,
-                                              num_tokens=num_tokens)
-        else:
-            weights_manager = _init_component(cfg, "weights_manager",
-                                              search_space=search_space, device=device)
-
-        # initialize, setup, run trainer
-        trainer = _init_component(cfg, "trainer", weights_manager=weights_manager,
-                                  controller=controller, dataset=whole_dataset)
-        LOGGER.info("Loading from disk...")
-        trainer.setup(load=load)
-        LOGGER.info("Deriving and testing...")
-        rollouts = trainer.derive(n, steps)
-        accs = [r.get_perf() for r in rollouts]
-        idxes = np.argsort(accs)[::-1]
-        with open(out_file, "w") as of:
-            for i, idx in enumerate(idxes):
-                rollout = rollouts[idx]
-                if save_plot is not None:
-                    rollout.plot_arch(
-                        filename=os.path.join(save_plot, str(i)),
-                        label="Derive {}; Reward {:.3f}".format(i, rollout.get_perf())
-                    )
-                of.write("# ---- Arch {} (Reward {}) ----\n".format(i, rollout.get_perf()))
-                _dump(rollout, dump_mode, of)
-                of.write("\n")
-
+# ---- Utility for generating sample configuration file ----
 @main.command(help="Dump the sample configuration.")
 @click.argument("out_file", required=True, type=str)
 @click.option("-d", "--data-type", default=None, type=click.Choice(AVAIL_DATA_TYPES),
@@ -497,19 +590,19 @@ def derive(cfg_file, load, out_file, n, save_plot, test, steps, gpu, seed, dump_
               help="only dump the configs of the components support this rollout type")
 def gen_sample_config(out_file, data_type, rollout_type):
     with open(out_file, "w") as out_f:
-        for comp_name in ["search_space", "dataset",
-                          "controller", "weights_manager", "trainer"]:
+        for comp_name in ["search_space", "dataset", "controller", "evaluator",
+                          "weights_manager", "objective", "trainer"]:
             filter_funcs = []
             if data_type is not None:
                 if comp_name == "dataset":
                     filter_funcs.append(lambda cls: data_type == cls.data_type())
-                elif comp_name in {"weights_manager", "trainer"}:
+                elif comp_name in {"evaluator", "weights_manager", "objective"}:
                     filter_funcs.append(lambda cls: data_type in cls.supported_data_types())
             if rollout_type is not None:
                 if comp_name in {"weights_manager", "controller"}:
                     filter_funcs.append(lambda cls: rollout_type == cls.rollout_type())
-                if comp_name == "trainer":
-                    filter_funcs.append(lambda cls: data_type in cls.supported_data_types())
+                if comp_name in {"evaluator", "trainer"}:
+                    filter_funcs.append(lambda cls: rollout_type in cls.supported_rollout_types())
 
             out_f.write(utils.component_sample_config_str(comp_name, prefix="# ",
                                                           filter_funcs=filter_funcs))
@@ -522,8 +615,7 @@ def gen_sample_config(out_file, data_type, rollout_type):
               help="only dump the configs of the components support this data type")
 def gen_final_sample_config(out_file, data_type):
     with open(out_file, "w") as out_f:
-        for comp_name in ["search_space", "dataset",
-                          "final_model", "final_trainer"]:
+        for comp_name in ["search_space", "dataset", "final_model", "final_trainer"]:
             filter_funcs = []
             if data_type is not None:
                 if comp_name == "dataset":

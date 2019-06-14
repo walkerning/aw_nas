@@ -23,7 +23,7 @@ class SubCandidateNet(CandidateNet):
     """
 
     def __init__(self, super_net, rollout, member_mask, cache_named_members=False,
-                 virtual_parameter_only=False):
+                 virtual_parameter_only=True):
         super(SubCandidateNet, self).__init__()
         self.super_net = super_net
         self._device = self.super_net.device
@@ -134,7 +134,7 @@ class SuperNet(SharedNet):
                  num_classes=10, init_channels=16, stem_multiplier=3,
                  max_grad_norm=5.0, dropout_rate=0.1,
                  candidate_member_mask=True, candidate_cache_named_members=False,
-                 candidate_virtual_parameter_only=False):
+                 candidate_virtual_parameter_only=True):
         """
         Args:
             candidate_member_mask (bool): If true, the candidate network's `named_parameters`

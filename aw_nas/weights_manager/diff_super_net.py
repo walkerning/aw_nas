@@ -13,7 +13,7 @@ from aw_nas.weights_manager.shared import SharedNet, SharedCell, SharedOp
 __all__ = ["DiffSubCandidateNet", "DiffSuperNet"]
 
 class DiffSubCandidateNet(CandidateNet):
-    def __init__(self, super_net, rollout, virtual_parameter_only=False):
+    def __init__(self, super_net, rollout, virtual_parameter_only=True):
         super(DiffSubCandidateNet, self).__init__()
         self.super_net = super_net
         self._device = super_net.device
@@ -69,7 +69,7 @@ class DiffSuperNet(SharedNet):
     def __init__(self, search_space, device,
                  num_classes=10, init_channels=16, stem_multiplier=3,
                  max_grad_norm=5.0, dropout_rate=0.1,
-                 candidate_virtual_parameter_only=False):
+                 candidate_virtual_parameter_only=True):
         super(DiffSuperNet, self).__init__(search_space, device,
                                            cell_cls=DiffSharedCell, op_cls=DiffSharedOp,
                                            num_classes=num_classes, init_channels=init_channels,

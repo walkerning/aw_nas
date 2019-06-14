@@ -27,6 +27,10 @@ from .trainer import *
 
 from .controller import *
 
+from .evaluator import *
+
 from .weights_manager import *
+
+from .objective import *
 
 from . import final

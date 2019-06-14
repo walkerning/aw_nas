@@ -25,6 +25,9 @@ class BaseRollout(object):
     """
     REGISTRY = "rollout"
 
+    def __init__(self):
+        self.perf = collections.OrderedDict()
+
     @abc.abstractmethod
     def set_candidate_net(self, c_net):
         pass
@@ -33,36 +36,32 @@ class BaseRollout(object):
     def plot_arch(self, filename, label="", edge_labels=None):
         pass
 
-    @abc.abstractmethod
-    def set_perf(self, value, name="perf"):
-        pass
+    def get_perf(self, name="reward"):
+        return self.perf.get(name, None)
 
-    @abc.abstractmethod
-    def get_perf(self, name="perf"):
-        pass
+    def set_perf(self, value, name="reward"):
+        self.perf[name] = value
 
+    def set_perfs(self, perfs):
+        for n, v in perfs.items():
+            self.set_perf(v, name=n)
 
 class Rollout(BaseRollout):
     """Discrete rollout"""
     NAME = "discrete"
 
     def __init__(self, arch, info, search_space, candidate_net=None):
+        super(Rollout, self).__init__()
+
         self.arch = arch
         self.info = info
         self.search_space = search_space
         self.candidate_net = candidate_net
 
-        self.perf = {}
         self._genotype = None # calc when need
 
     def set_candidate_net(self, c_net):
         self.candidate_net = c_net
-
-    def get_perf(self, name="perf"):
-        return self.perf.get(name, None)
-
-    def set_perf(self, value, name="perf"):
-        self.perf[name] = value
 
     def plot_arch(self, filename, label="", edge_labels=None):
         return self.search_space.plot_arch(self.genotype_list(),
@@ -110,25 +109,20 @@ class DifferentiableRollout(BaseRollout):
     """Rollout based on differentiable relaxation"""
     NAME = "differentiable"
     def __init__(self, arch, sampled, logits, search_space, candidate_net=None):
+        super(DifferentiableRollout, self).__init__()
+
         self.arch = arch
         self.sampled = sampled # softmax-relaxed sample
         self.logits = logits
         self.search_space = search_space
         self.candidate_net = candidate_net
 
-        self.perf = {}
         self._genotype = None # calc when need
         self._discretized_arch = None # calc when need
         self._edge_probs = None # calc when need
 
     def set_candidate_net(self, c_net):
         self.candidate_net = c_net
-
-    def get_perf(self, name="perf"):
-        return self.perf[name]
-
-    def set_perf(self, value, name="perf"):
-        self.perf[name] = value
 
     def plot_arch(self, filename, label="", edge_labels=None):
         if edge_labels is None:
@@ -592,7 +586,6 @@ class RNNSearchSpace(SearchSpace):
 
 def get_search_space(cls, **cfg):
     return SearchSpace.get_class_(cls)(**cfg)
-
 
 def plot_genotype(genotype, dest, cls, label="", edge_labels=None, **search_space_cfg):
     ss = get_search_space(cls, **search_space_cfg)
