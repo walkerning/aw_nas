@@ -329,25 +329,27 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
     def save(self, path):
         optimizer_states = {}
         scheduler_states = {}
-        hidden_states = {}
-        for compo_name in ["mepa", "controller", "surrogate"]:
+        for compo_name in ["mepa", "surrogate"]:
             optimizer = getattr(self, compo_name + "_optimizer")
             if optimizer is not None:
                 optimizer_states[compo_name] = optimizer.state_dict()
             scheduler = getattr(self, compo_name + "_scheduler")
             if scheduler is not None:
                 scheduler_states[compo_name] = scheduler.state_dict()
-            if self._data_type == "sequence":
-                # save hidden states
-                hidden = getattr(self, compo_name + "_hiddens")
-                hidden_states[compo_name] = hidden
         state_dict = {
             "weights_manager": self.weights_manager.state_dict(),
             "optimizers": optimizer_states,
             "schedulers": scheduler_states
         }
-        if hidden_states:
+
+        if self._data_type == "sequence":
+            hidden_states = {}
+            for compo_name in ["mepa", "surrogate", "controller"]:
+                # save hidden states
+                hidden = getattr(self, compo_name + "_hiddens")
+                hidden_states[compo_name] = hidden
             state_dict["hiddens"] = hidden_states
+
         torch.save(state_dict, path)
 
     def load(self, path):
@@ -356,12 +358,12 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
 
         # load hidden states if exists
         if "hiddens" in checkpoint:
-            for compo_name in ["mepa", "controller", "surrogate"]:
+            for compo_name in ["mepa", "surrogate", "controller"]:
                 getattr(self, compo_name + "_hiddens").copy_(checkpoint["hiddens"][compo_name])
 
         optimizer_states = checkpoint["optimizers"]
         scheduler_states = checkpoint["schedulers"]
-        for compo_name in ["mepa", "controller", "surrogate"]:
+        for compo_name in ["mepa", "surrogate"]:
             optimizer = getattr(self, compo_name + "_optimizer")
             if optimizer is not None:
                 optimizer.load_state_dict(optimizer_states[compo_name])
