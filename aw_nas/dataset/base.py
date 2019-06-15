@@ -17,7 +17,7 @@ class BaseDataset(Component):
         """
         super(BaseDataset, self).__init__(schedule_cfg=None)
 
-        base_dir = os.environ.get("AWNAS_DATA", os.path.expanduser("~/awnas_data"))
+        base_dir = utils.get_awnas_dir("AWNAS_DATA", "data")
         if relative_dir is None:
             relative_dir = self.NAME #pylint: disable=no-member
         self.data_dir = os.path.join(base_dir, relative_dir)

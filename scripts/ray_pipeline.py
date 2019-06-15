@@ -211,7 +211,7 @@ parser.add_argument("--redis-addr", required=True, type=str,
 parser.add_argument("--exp-name", required=True, type=str)
 parser.add_argument("--type", default="cnn", choices=["cnn", "rnn"], type=str,
                     help="(default: %(default)s)")
-parser.add_argument("--base-dir", default=os.path.abspath(os.path.expanduser("~/awnas_results")),
+parser.add_argument("--base-dir", default=os.path.abspath(os.path.expanduser("~/awnas/results")),
                     type=str,
                     help="results will be saved to `base_dir`/`exp_name` (default: %(default)s)")
 

@@ -26,10 +26,10 @@ After installation, you can run `awnas --help` to see what sub-commands are avai
 
 ### Prepare data
 
-When running `awnas` program, it will assume the data of a dataset with `name=<NAME>` under `AWNAS_DATA/<NAME>`, in which `AWNAS_DATA` base directory is read from the environment variable `AWNAS_DATA`. If the environment variable is not specified, the default is `~/awnas_data`.
+When running `awnas` program, it will assume the data of a dataset with `name=<NAME>` under `AWNAS_DATA/<NAME>`, in which `AWNAS_DATA` base directory is read from the environment variable `AWNAS_DATA`. If the environment variable is not specified, the default is `AWNAS_HOME/data`, in which `AWNAS_HOME` is an environment variable default to be `~/awnas`.
 
 * Cifar10: No specific preparation needed.
-* PTB: `bash scripts/get_data.sh`, the ptb data will be downloaded under `data/ptb` directory. For using `~/awnas_data` as the data directory, you can run `ln -s ./data/ptb ~/awnas_data/ptb`.
+* PTB: `bash scripts/get_data.sh`, the ptb data will be downloaded under `data/ptb` directory. For using `~/awnas/data` as the data directory, you can run `mkdir -p ~/awnas/data && ln -s ./data/ptb ~/awnas/data/ptb`.
 
 ### Run NAS search
 

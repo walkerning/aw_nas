@@ -4,6 +4,9 @@ class NasException(Exception):
 class ConfigException(NasException):
     pass
 
+class PluginException(NasException):
+    pass
+
 def expect(bool_expr, message="", exception_type=NasException):
     if not bool_expr:
         raise exception_type(message)
