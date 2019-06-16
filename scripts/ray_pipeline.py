@@ -1,9 +1,4 @@
 """
-For now, Python 3 is required for subprocess.Popen.wait with timeout and catching
-TimeoutExpired exception.
-
-TODO: Should change to avoid subprocess call. Should import aw_nas and call main directly.
-
 Example:
 Start the ray head on 4 gpus: 0, 2, 3, 4
 `CUDA_VISIBLE_DEVICES=0,2,3,4 ray start --head --num-cpus 10 --num-gpus 4 --object-store-memory 10000000`
@@ -34,6 +29,7 @@ import shutil
 import argparse
 import subprocess
 from functools import wraps
+from multiprocessing import Process
 
 import yaml
 import numpy as np
@@ -84,23 +80,32 @@ def call_search(cfg, seed, train_dir, vis_dir, data_dir, killer):
         seed = random.randint(1, 999999)
     gpu = _get_gpus(ray.get_gpu_ids())
     print("train seed: %s" % str(seed))
-    cmd = ("CUDA_VISIBLE_DEVICES={gpu} AWNAS_DATA={data_dir} awnas search {cfg} --gpu 0 --seed {seed} --save-every 20 "
-           "--train-dir {train_dir} --vis-dir {vis_dir} >/dev/null")\
-        .format(cfg=cfg, gpu=gpu, seed=seed,
-                train_dir=train_dir, vis_dir=vis_dir, data_dir=data_dir)
-    print(cmd)
-    print("check {} for log".format(os.path.join(train_dir, "search.log")))
 
-    proc = subprocess.Popen(cmd, shell=True)
-    print("search shell process pid: {}".format(proc.pid))
+    # setup gpu
+    os.environ["CUDA_VISIBLE_DEVICES"] = gpu
+    os.environ["AWNAS_DATA"] = data_dir
+
+    # call aw_nas.main::main
+    from aw_nas.main import main
+    cmd = ("search {cfg} --gpu 0 --seed {seed} --save-every 20 "
+           "--train-dir {train_dir} --vis-dir {vis_dir}")\
+        .format(cfg=cfg, seed=seed,
+                train_dir=train_dir, vis_dir=vis_dir)
+    print("CUDA_VISIBLE_DEVICES={} AWNAS_DATA={} awnas {}".format(gpu, data_dir, cmd))
+    print("check {} for log".format(os.path.join(train_dir, "search.log")))
+    def _run_main(*args):
+        sys.stdout = open("/dev/null", "w")
+        from aw_nas.main import main
+        main(*args)
+    proc = Process(target=_run_main, args=(re.split(r"\s+", cmd),))
+    proc.start()
 
     # wait for proc finish or killed
     while 1:
-        try:
-            exit_status = proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
+        time.sleep(10)
+        if proc.is_alive():
             sigs = ray.experimental.signal.receive([killer], timeout=1)
-            if sigs: # kill the process and its childrens
+            if sigs:
                 print("call_search: receive kill signal from killer, kill the working processes")
                 process = psutil.Process(proc.pid)
                 for c_proc in process.children(recursive=True):
@@ -109,6 +114,7 @@ def call_search(cfg, seed, train_dir, vis_dir, data_dir, killer):
                 exit_status = 1
                 break
         else:
+            exit_status = proc.exitcode
             break
     if exit_status != 0:
         raise subprocess.CalledProcessError(exit_status, cmd)
@@ -135,22 +141,30 @@ def call_derive(cfg, seed, load, out_file, data_dir, n, killer):
         seed = random.randint(1, 999999)
     gpu = _get_gpus(ray.get_gpu_ids())
     print("derive seed: %s" % str(seed))
-    cmd = ("CUDA_VISIBLE_DEVICES={gpu} AWNAS_DATA={data_dir} awnas derive {cfg} --load {load} --gpu 0 --seed {seed}"
+
+    # setup gpu
+    os.environ["CUDA_VISIBLE_DEVICES"] = gpu
+    os.environ["AWNAS_DATA"] = data_dir
+
+    # call aw_nas.main::main
+    from aw_nas.main import main
+    cmd = ("derive {cfg} --load {load} --gpu 0 --seed {seed}"
            " --test -n {n} -o {out_file}")\
-        .format(cfg=cfg, load=load, gpu=gpu, seed=seed,
-                out_file=out_file, data_dir=data_dir, n=n)
-    print(cmd)
-    
-    proc = subprocess.Popen(cmd, shell=True)
-    print("derive shell process pid: {}".format(proc.pid))
+        .format(cfg=cfg, load=load, seed=seed, out_file=out_file, n=n)
+    print("CUDA_VISIBLE_DEVICES={} AWNAS_DATA={} awnas {}".format(gpu, data_dir, cmd))
+    def _run_main(*args):
+        sys.stdout = open("/dev/null", "w")
+        from aw_nas.main import main
+        main(*args)
+    proc = Process(target=_run_main, args=(re.split(r"\s+", cmd),))
+    proc.start()
 
     # wait for proc finish or killed
     while 1:
-        try:
-            exit_status = proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
+        time.sleep(10)
+        if proc.is_alive():
             sigs = ray.experimental.signal.receive([killer], timeout=1)
-            if sigs: # kill the process and its childrens
+            if sigs:
                 print("call_derive: receive kill signal from killer, kill the working processes")
                 process = psutil.Process(proc.pid)
                 for c_proc in process.children(recursive=True):
@@ -159,6 +173,7 @@ def call_derive(cfg, seed, load, out_file, data_dir, n, killer):
                 exit_status = 1
                 break
         else:
+            exit_status = proc.exitcode
             break
     if exit_status != 0:
         raise subprocess.CalledProcessError(exit_status, cmd)
@@ -175,24 +190,30 @@ def call_train(cfg, seed, train_dir, data_dir, save_every, killer):
     gpu = _get_gpus(gpus)
     save_str = "" if save_every is None else "--save-every {}".format(save_every)
 
-    cmd = ("CUDA_VISIBLE_DEVICES={gpu} AWNAS_DATA={data_dir} awnas train {cfg} --gpus {range_gpu}"
-           " --seed {seed} {save_str} --train-dir {train_dir} >/dev/null")\
-        .format(cfg=cfg, gpu=gpu, seed=seed,
-                train_dir=train_dir, data_dir=data_dir, save_str=save_str,
-                range_gpu=",".join(map(str, range(len(gpus)))))
-    print(cmd)
-    print("check {} for log".format(os.path.join(train_dir, "train.log")))
+    # setup gpu
+    os.environ["CUDA_VISIBLE_DEVICES"] = gpu
+    os.environ["AWNAS_DATA"] = data_dir
 
-    proc = subprocess.Popen(cmd, shell=True)
-    print("train shell process pid: {}".format(proc.pid))
+    # call aw_nas.main::main
+    cmd = ("train {cfg} --gpus {range_gpu}"
+           " --seed {seed} {save_str} --train-dir {train_dir}")\
+        .format(cfg=cfg, seed=seed, train_dir=train_dir, save_str=save_str,
+                range_gpu=",".join(map(str, range(len(gpus)))))
+    print("CUDA_VISIBLE_DEVICES={} AWNAS_DATA={} awnas {}".format(gpu, data_dir, cmd))
+    print("check {} for log".format(os.path.join(train_dir, "train.log")))
+    def _run_main(*args):
+        sys.stdout = open("/dev/null", "w")
+        from aw_nas.main import main
+        main(*args)
+    proc = Process(target=_run_main, args=(re.split(r"\s+", cmd),))
+    proc.start()
 
     # wait for proc finish or killed
     while 1:
-        try:
-            exit_status = proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
+        time.sleep(10)
+        if proc.is_alive():
             sigs = ray.experimental.signal.receive([killer], timeout=1)
-            if sigs: # kill the process and its childrens
+            if sigs:
                 print("call_train: receive kill signal from killer, kill the working processes")
                 process = psutil.Process(proc.pid)
                 for c_proc in process.children(recursive=True):
@@ -201,6 +222,7 @@ def call_train(cfg, seed, train_dir, data_dir, save_every, killer):
                 exit_status = 1
                 break
         else:
+            exit_status = proc.exitcode
             break
     if exit_status != 0:
         raise subprocess.CalledProcessError(exit_status, cmd)
