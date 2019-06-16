@@ -25,7 +25,7 @@ class BaseEvaluator(Component):
         Return the supported data types.
         """
 
-    @classmethod
+    @utils.abstractclassmethod
     def supported_rollout_types(cls):
         """
         Return the supported rollout types.

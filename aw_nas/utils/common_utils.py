@@ -149,7 +149,16 @@ def component_sample_config_str(comp_name, prefix, filter_funcs=None):
     all_text = prefix + "## ---- Component {} ----\n".format(comp_name)
 
     for type_name, cls in six.iteritems(RegistryMeta.all_classes(comp_name)):
-        if any(not func(cls) for func in filter_funcs):
+        try:
+            is_skip = any(not func(cls) for func in filter_funcs)
+        except Exception as e: #pylint: disable=broad-except
+            # some plugin class might be wrongly implemented, check here
+            import traceback
+            traceback.print_exc()
+            _logger.getChild("utils")\
+                   .warn("Skip %s: %s(%s) as exception occurs in checking. %s: %s",
+                         comp_name, type_name, cls, e.__class__.__name__, str(e))
+        if is_skip:
             continue
 
         all_text += prefix + "# ---- Type {} ----\n".format(type_name)
