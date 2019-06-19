@@ -10,7 +10,7 @@ import six
 
 import torch
 
-from aw_nas import assert_rollout_type
+from aw_nas.common import assert_rollout_type, group_and_sort_by_to_node
 from aw_nas.weights_manager.base import CandidateNet
 from aw_nas.weights_manager.shared import SharedNet, SharedCell, SharedOp
 
@@ -35,6 +35,8 @@ class SubCandidateNet(CandidateNet):
         self._cached_nb = None
 
         self.genotypes = [g[1] for g in rollout.genotype_list()]
+        self.genotypes_grouped = [group_and_sort_by_to_node(g[1]) for g in rollout.genotype_list() \
+                                  if "concat" not in g[0]]
 
     @contextlib.contextmanager
     def begin_virtual(self):
@@ -64,7 +66,13 @@ class SubCandidateNet(CandidateNet):
         return self._device
 
     def forward(self, inputs): #pylint: disable=arguments-differ
-        return self.super_net.forward(inputs, self.genotypes)
+        return self.super_net.forward(inputs, self.genotypes_grouped)
+
+    def forward_one_step(self, context, inputs=None):
+        """
+        Forward one step.
+        """
+        return self.super_net.forward_one_step(context, inputs, self.genotypes_grouped)
 
     def plot_arch(self):
         return self.super_net.search_space.plot_arch(self.genotypes)
@@ -213,27 +221,43 @@ class DiscreteSharedCell(SharedCell):
 
     def forward(self, inputs, genotype): #pylint: disable=arguments-differ
         assert self._num_init == len(inputs)
-        states = {
-            i: op(inputs) for i, (op, inputs) in \
-            enumerate(zip(self.preprocess_ops, inputs))
-        }
+        states = [op(inputs) for op, inputs in zip(self.preprocess_ops, inputs)]
 
-        for op_type, from_, to_ in genotype:
-            edge_id = int((to_ - self._num_init) * \
-                          (self._num_init + to_ - 1) / 2 + from_)
-            # print("from_: {} ({}) ; to_: {} ; op_type: {} ; stride: {} , edge_id: {}"\
-            #       .format(from_, states[from_].shape[2], to_, op_type,
-            #               self.edges[edge_id].stride, edge_id))
-            out = self.edges[edge_id](states[from_], op_type)
-            if to_ in states:
-                states[to_] = states[to_] + out
-            else:
-                states[to_] = out
+        for to_, connections in genotype:
+            state_to_ = 0.
+            for op_type, from_, _ in connections:
+                edge_id = int((to_ - self._num_init) * \
+                              (self._num_init + to_ - 1) / 2 + from_)
+                # print("from_: {} ({}) ; to_: {} ; op_type: {} ; stride: {} , edge_id: {}"\
+                #       .format(from_, states[from_].shape[2], to_, op_type,
+                #               self.edges[edge_id].stride, edge_id))
+                out = self.edges[edge_id](states[from_], op_type)
+                state_to_ = state_to_ + out
+            states.append(state_to_)
 
-        return torch.cat([states[i] for i in \
-                          range(self._num_init,
-                                self._steps + self._num_init)],
-                         dim=1)
+        return torch.cat(states[self._num_init:], dim=1)
+
+    def forward_one_step(self, context, genotype):
+        to_ = cur_step = context.next_step_index[1]
+        if cur_step < self._num_init: # `self._num_init` preprocess steps
+            ind = len(context.previous_cells) - (self._num_init - cur_step)
+            ind = max(ind, 0)
+            state = self.preprocess_ops[cur_step](context.previous_cells[ind])
+            context.current_cell.append(state)
+        elif cur_step < self._num_init + self._steps: # the following steps
+            conns = genotype[cur_step - self._num_init][1]
+            state = 0.
+            for op_type, from_, _ in conns:
+                edge_id = int((to_ - self._num_init) * \
+                              (self._num_init + to_ - 1) / 2 + from_)
+                out = self.edges[edge_id](context.current_cell[from_], op_type)
+                state = state + out
+            context.current_cell.append(state)
+        else: # final concat
+            state = torch.cat(context.current_cell[self._num_init:], dim=1)
+            context.current_cell = []
+            context.previous_cells.append(state)
+        return state, context
 
     def sub_named_members(self, genotype,
                           prefix="", member="parameters"):

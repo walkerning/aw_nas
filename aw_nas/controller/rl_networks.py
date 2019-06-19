@@ -41,7 +41,7 @@ class BaseLSTM(BaseRLControllerNet):
     def __init__(self, search_space, device, num_lstm_layers=1,
                  controller_hid=64,
                  softmax_temperature=None, tanh_constant=1.1,
-                 op_tanh_reduce=2.5,
+                 op_tanh_reduce=2.5, force_uniform=False,
                  schedule_cfg=None):
         super(BaseLSTM, self).__init__(search_space, device, schedule_cfg)
 
@@ -50,6 +50,7 @@ class BaseLSTM(BaseRLControllerNet):
         self.softmax_temperature = softmax_temperature
         self.tanh_constant = tanh_constant
         self.op_tanh_reduce = op_tanh_reduce
+        self.force_uniform = force_uniform
 
         self._num_primitives = len(self.search_space.shared_primitives)
 
@@ -84,16 +85,19 @@ class BaseLSTM(BaseRLControllerNet):
         self.logger.info("Loaded controller network from %s", path)
 
     def _handle_logits(self, logits, mode):
-        if self.softmax_temperature is not None:
-            logits /= self.softmax_temperature
+        if self.force_uniform:
+            logits = F.softmax(torch.zeros_like(logits), dim=-1)
+        else:
+            if self.softmax_temperature is not None:
+                logits /= self.softmax_temperature
 
-        # exploration
-        # if self.mode == "train": # foxfi: ?
-        if self.tanh_constant is not None:
-            tanh_constant = self.tanh_constant
-            if mode == "op":
-                tanh_constant /= self.op_tanh_reduce
-            logits = tanh_constant * torch.tanh(logits)
+            # exploration
+            # if self.mode == "train": # foxfi: ?
+            if self.tanh_constant is not None:
+                tanh_constant = self.tanh_constant
+                if mode == "op":
+                    tanh_constant /= self.op_tanh_reduce
+                logits = tanh_constant * torch.tanh(logits)
 
         return logits
 
@@ -116,13 +120,14 @@ class AnchorControlNet(BaseLSTM):
 
     NAME = "anchor_lstm"
     SCHEDULABLE_ATTRS = [
-        "softmax_temperature"
+        "softmax_temperature",
+        "force_uniform"
     ]
 
     def __init__(self, search_space, device, num_lstm_layers=1,
                  controller_hid=64, attention_hid=64,
                  softmax_temperature=None, tanh_constant=1.1,
-                 op_tanh_reduce=2.5,
+                 op_tanh_reduce=2.5, force_uniform=False,
                  schedule_cfg=None):
         """
         Args:
@@ -133,6 +138,7 @@ class AnchorControlNet(BaseLSTM):
                 decision softmax.
             tanh_constant (float):
             op_tanh_reduce (float):
+            force_uniform (bool):
         """
         super(AnchorControlNet, self).__init__(search_space, device,
                                                num_lstm_layers=num_lstm_layers,
@@ -140,6 +146,7 @@ class AnchorControlNet(BaseLSTM):
                                                softmax_temperature=softmax_temperature,
                                                tanh_constant=tanh_constant,
                                                op_tanh_reduce=op_tanh_reduce,
+                                               force_uniform=force_uniform,
                                                schedule_cfg=schedule_cfg)
 
         self.attention_hid = attention_hid
@@ -282,13 +289,14 @@ class EmbedControlNet(BaseLSTM):
 
     NAME = "embed_lstm"
     SCHEDULABLE_ATTRS = [
-        "softmax_temperature"
+        "softmax_temperature",
+        "force_uniform"
     ]
 
     def __init__(self, search_space, device, num_lstm_layers=1,
                  controller_hid=64, attention_hid=64,
                  softmax_temperature=None, tanh_constant=1.1,
-                 op_tanh_reduce=2.5,
+                 op_tanh_reduce=2.5, force_uniform=False,
                  schedule_cfg=None):
         """
         Args:
@@ -298,6 +306,7 @@ class EmbedControlNet(BaseLSTM):
                 decision softmax.
             tanh_constant (float):
             op_tanh_reduce (float):
+            force_uniform (bool):
         """
         super(EmbedControlNet, self).__init__(search_space, device,
                                               num_lstm_layers=num_lstm_layers,
@@ -305,6 +314,7 @@ class EmbedControlNet(BaseLSTM):
                                               softmax_temperature=softmax_temperature,
                                               tanh_constant=tanh_constant,
                                               op_tanh_reduce=op_tanh_reduce,
+                                              force_uniform=force_uniform,
                                               schedule_cfg=schedule_cfg)
 
         self.attention_hid = attention_hid

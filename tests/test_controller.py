@@ -74,3 +74,15 @@ def test_diff_controller_use_prob():
     assert np.abs((utils.get_numpy(rollouts[0].sampled[0]) - utils.softmax(rollouts[0].logits[0])))\
              .mean() < 1e-6
     assert isinstance(rollouts[0].genotype, search_space.genotype_type)
+
+def test_diff_controller_force_uniform():
+    import numpy as np
+    from aw_nas.controller import DiffController
+
+    search_space = get_search_space(cls="cnn")
+    device = "cuda"
+    controller = DiffController(search_space, device, force_uniform=True)
+
+    rollouts = controller.sample(1)
+    assert np.equal(rollouts[0].sampled[0].data, 1./len(search_space.shared_primitives) * \
+                    np.ones((14, len(search_space.shared_primitives)))).all()

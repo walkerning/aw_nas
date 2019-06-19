@@ -23,12 +23,13 @@ class DiffController(BaseController, nn.Module):
 
     SCHEDULABLE_ATTRS = [
         "gumbel_temperature",
-        "entropy_coeff"
+        "entropy_coeff",
+        "force_uniform"
     ]
 
     def __init__(self, search_space, device, rollout_type="differentiable",
                  use_prob=False, gumbel_hard=False, gumbel_temperature=1.0,
-                 entropy_coeff=0.01, max_grad_norm=None,
+                 entropy_coeff=0.01, max_grad_norm=None, force_uniform=False,
                  schedule_cfg=None):
         """
         Args:
@@ -57,6 +58,7 @@ class DiffController(BaseController, nn.Module):
         # training
         self.entropy_coeff = entropy_coeff
         self.max_grad_norm = max_grad_norm
+        self.force_uniform = force_uniform 
 
         _num_ops = len(self.search_space.shared_primitives)
         _num_init_nodes = self.search_space.num_init_nodes
@@ -88,14 +90,25 @@ class DiffController(BaseController, nn.Module):
             sampled_list = []
             logits_list = []
             for alpha in self.cg_alphas:
-                if self.use_prob:
-                    sampled = F.softmax(alpha / self.gumbel_temperature, dim=-1)
+                if self.force_uniform: # alpha will not be in the graph
+                    # uniform probability as sample
+                    sampled = F.softmax(torch.zeros_like(alpha), dim=-1)
+                    if self.gumbel_hard:
+                        arch = torch.zeros_like(sampled)
+                        arch.scatter_(1, sampled.multinomial(num_samples=1), 1)
+                    else:
+                        arch = sampled
                 else:
-                    sampled, _ = utils.gumbel_softmax(alpha, self.gumbel_temperature, hard=False)
-                if self.gumbel_hard:
-                    arch = utils.straight_through(sampled)
-                else:
-                    arch = sampled
+                    if self.use_prob:
+                        # probability as sample
+                        sampled = F.softmax(alpha / self.gumbel_temperature, dim=-1)
+                    else:
+                        # gumbel sampling
+                        sampled, _ = utils.gumbel_softmax(alpha, self.gumbel_temperature, hard=False)
+                    if self.gumbel_hard:
+                        arch = utils.straight_through(sampled)
+                    else:
+                        arch = sampled
                 arch_list.append(arch)
                 sampled_list.append(utils.get_numpy(sampled))
                 logits_list.append(utils.get_numpy(alpha))

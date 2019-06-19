@@ -5,6 +5,21 @@ from torch import nn
 from aw_nas import ops
 from aw_nas.weights_manager.base import BaseWeightsManager
 
+
+class Context(object):
+    def __init__(self, previous_cells=None, current_cell=None):
+        self.previous_cells = previous_cells or []
+        self.current_cell = current_cell or []
+
+    @property
+    def next_step_index(self):
+        return len(self.previous_cells) - 1, len(self.current_cell)
+
+    @property
+    def is_end_of_cell(self):
+        return len(self.current_cell) == 0
+
+
 class SharedNet(BaseWeightsManager, nn.Module):
     def __init__(self, search_space, device, rollout_type,
                  cell_cls, op_cls,
@@ -91,6 +106,28 @@ class SharedNet(BaseWeightsManager, nn.Module):
         out = self.dropout(out)
         logits = self.classifier(out.view(out.size(0), -1))
         return logits
+
+    def forward_one_step(self, context, inputs, genotypes, **kwargs):
+        assert (context is None) + (inputs is None) == 1
+        # stem
+        if inputs is not None:
+            stemed = self.stem(inputs)
+            context = Context(previous_cells=[stemed], current_cell=[])
+            return stemed, context
+
+        cur_cell_ind, _ = context.next_step_index
+
+        # final: pooling->dropout->classifier
+        if cur_cell_ind == self._num_layers:
+            out = self.global_pooling(context.previous_cells[-1])
+            out = self.dropout(out)
+            logits = self.classifier(out.view(out.size(0), -1))
+            context.previous_cells.append(logits)
+            return logits, context
+
+        # cells
+        cell_genotype = genotypes[self._cell_layout[cur_cell_ind]]
+        return self.cells[cur_cell_ind].forward_one_step(context, cell_genotype, **kwargs)
 
     def step_current_gradients(self, optimizer):
         torch.nn.utils.clip_grad_norm_(self.parameters(), self.max_grad_norm)

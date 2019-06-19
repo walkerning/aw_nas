@@ -58,6 +58,30 @@ def test_supernet_forward(super_net):
     logits = cand_net.forward_data(data[0], mode="eval")
     assert logits.shape[-1] == 10
 
+def test_supernet_forward_step(super_net):
+    cand_net = _supernet_sample_cand(super_net)
+
+    data = _cnn_data()
+
+    # forward stem
+    stemed, context = cand_net.forward_one_step(context=None, inputs=data[0])
+    assert len(context.previous_cells) == 1 and context.previous_cells[0] is stemed
+
+    # forward the cells
+    for i_layer in range(0, super_net.search_space.num_layers):
+        num_steps = super_net.search_space.num_steps + super_net.search_space.num_init_nodes + 1
+        for i_step in range(num_steps):
+            step_state, context = cand_net.forward_one_step(context)
+            if i_step != num_steps - 1:
+                assert step_state is context.current_cell[-1] and \
+                    len(context.current_cell) == i_step + 1
+        assert context.is_end_of_cell
+        assert len(context.previous_cells) == i_layer + 2
+
+    # final forward
+    logits, _ = cand_net.forward_one_step(context)
+    assert logits.shape[-1] == 10
+
 @pytest.mark.parametrize("test_id",
                          range(5))
 def test_supernet_candidate_gradient_virtual(test_id, super_net):

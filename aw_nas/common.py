@@ -618,6 +618,7 @@ class RNNSearchSpace(SearchSpace):
         raise NotImplementedError()
 
 
+# --- search space/rollout/genotype utils ---
 def get_search_space(cls, **cfg):
     return SearchSpace.get_class_(cls)(**cfg)
 
@@ -640,3 +641,10 @@ def plot_genotype(genotype, dest, cls, label="", edge_labels=None, **search_spac
         genotype = list(genotype._asdict().items())
     expect(isinstance(genotype, (list, tuple)))
     return ss.plot_arch(genotype, dest, label, edge_labels)
+
+def group_and_sort_by_to_node(cell_geno):
+    group_dct = collections.defaultdict(list)
+    for conn in cell_geno:
+        group_dct[conn[2]].append(conn)
+    return sorted(group_dct.items(), key=lambda item: item[0])
+
