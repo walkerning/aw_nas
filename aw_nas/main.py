@@ -360,7 +360,7 @@ def eval_arch(cfg_file, arch_file, load, gpu, seed, save_plot, steps):
             )
         print("Finish test {}/{}\r".format(i+1, num_r), end="")
     for i, r in enumerate(rollouts):
-        LOGGER.info("Arch %3d: %s", i, "; ".join(["{}: {:.3f}".format(n, v) for n, v in r.perf]))
+        LOGGER.info("Arch %3d: %s", i, "; ".join(["{}: {:.3f}".format(n, v) for n, v in r.perf.items()]))
 
 
 @main.command(help="Derive architectures.")

@@ -183,7 +183,7 @@ class AnchorControlNet(BaseLSTM):
         "force_uniform"
     ]
 
-    def __init__(self, search_space, device, cell_index=None,
+    def __init__(self, search_space, device, cell_index,
                  num_lstm_layers=1,
                  controller_hid=64, attention_hid=64,
                  softmax_temperature=None, tanh_constant=1.1,
@@ -347,7 +347,7 @@ class EmbedControlNet(BaseLSTM):
         "force_uniform"
     ]
 
-    def __init__(self, search_space, device, cell_index=None,
+    def __init__(self, search_space, device, cell_index,
                  num_lstm_layers=1,
                  controller_hid=64, attention_hid=64,
                  softmax_temperature=None, tanh_constant=1.1,

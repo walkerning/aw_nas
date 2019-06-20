@@ -220,7 +220,7 @@ class SimpleTrainer(BaseTrainer):
     def supported_rollout_types(cls):
         return ["discrete", "differentiable"]
 
-    def train(self):
+    def train(self): #pylint: disable=too-many-branches
         assert self.is_setup, "Must call `trainer.setup` method before calling `trainer.train`."
 
         if self.interleave_controller_every is not None:
@@ -285,20 +285,24 @@ class SimpleTrainer(BaseTrainer):
                 self.logger.info("Epoch %3d: [evaluator update] %s", epoch,
                                  "; ".join(["{}: {:.3f}".format(n, v) \
                                             for n, v in eva_stat_meters.avgs().items()]))
-            self.logger.info("Epoch %3d: [controller update] controller loss: %.3f ; "
-                             "rollout performance: %s", epoch, c_loss_meter.avg,
-                             "; ".join(["{}: {:.3f}".format(n, v) \
-                                        for n, v in rollout_stat_meters.avgs().items()]))
-            self.logger.info("[controller stats] %s", \
-                             "; ".join(["{}: {:.3f}".format(n, v) \
-                                        for n, v in c_stat_meters.avgs().items()]))
+            if rollout_stat_meters:
+                self.logger.info("Epoch %3d: [controller update] controller loss: %.3f ; "
+                                 "rollout performance: %s", epoch, c_loss_meter.avg,
+                                 "; ".join(["{}: {:.3f}".format(n, v) \
+                                            for n, v in rollout_stat_meters.avgs().items()]))
+            if c_stat_meters:
+                self.logger.info("[controller stats] %s", \
+                                 "; ".join(["{}: {:.3f}".format(n, v) \
+                                            for n, v in c_stat_meters.avgs().items()]))
 
             # maybe write tensorboard info
             if not self.writer.is_none():
-                for n, meter in rollout_stat_meters.items():
-                    self.writer.add_scalar("{}/controller_update/valid".format(n), meter.avg, epoch)
-                self.writer.add_scalar("controller_loss",
-                                       c_loss_meter.avg, epoch)
+                if rollout_stat_meters:
+                    for n, meter in rollout_stat_meters.items():
+                        self.writer.add_scalar("{}/controller_update/valid".format(n),
+                                               meter.avg, epoch)
+                if not c_loss_meter.is_empty():
+                    self.writer.add_scalar("controller_loss", c_loss_meter.avg, epoch)
 
             # maybe save checkpoints
             self.maybe_save()

@@ -36,7 +36,7 @@ def test_controller_network(case):
     search_space = get_search_space(cls="cnn")
     device = "cuda"
     cls = BaseRLControllerNet.get_class_(case["type"])
-    net = cls(search_space, device)
+    net = cls(search_space, device, None)
 
     batch_size = 3
     arch, log_probs, entropies, (hx, cx) = net.sample(batch_size)

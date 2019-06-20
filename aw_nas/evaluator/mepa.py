@@ -501,7 +501,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
         self.logger.warn("After load the evaluator from a pickle file, the dataset does not "
                          "get loaded automatically, initialize a dataset and call "
                          "`set_dataset(dataset)` ")
-        
+
     def __getstate__(self):
         state = super(MepaEvaluator, self).__getstate__()
         del state["dataset"]

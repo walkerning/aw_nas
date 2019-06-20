@@ -86,7 +86,6 @@ def call_search(cfg, seed, train_dir, vis_dir, data_dir, killer):
     os.environ["AWNAS_DATA"] = data_dir
 
     # call aw_nas.main::main
-    from aw_nas.main import main
     cmd = ("search {cfg} --gpu 0 --seed {seed} --save-every 20 "
            "--train-dir {train_dir} --vis-dir {vis_dir}")\
         .format(cfg=cfg, seed=seed,
@@ -147,13 +146,12 @@ def call_derive(cfg, seed, load, out_file, data_dir, n, killer):
     os.environ["AWNAS_DATA"] = data_dir
 
     # call aw_nas.main::main
-    from aw_nas.main import main
     cmd = ("derive {cfg} --load {load} --gpu 0 --seed {seed}"
            " --test -n {n} -o {out_file}")\
         .format(cfg=cfg, load=load, seed=seed, out_file=out_file, n=n)
     print("CUDA_VISIBLE_DEVICES={} AWNAS_DATA={} awnas {}".format(gpu, data_dir, cmd))
     def _run_main(*args):
-        sys.stdout = open("/dev/null", "w")
+        # sys.stdout = open("/dev/null", "w")
         from aw_nas.main import main
         main(*args)
     proc = Process(target=_run_main, args=(re.split(r"\s+", cmd),))
