@@ -283,7 +283,8 @@ class CNNSearchSpace(SearchSpace):
                      "sep_conv_3x3",
                      "sep_conv_5x5",
                      "dil_conv_3x3",
-                     "dil_conv_5x5")):
+                     "dil_conv_5x5"),
+                 cell_shared_primitives=None):
 
         super(CNNSearchSpace, self).__init__()
 
@@ -335,6 +336,20 @@ class CNNSearchSpace(SearchSpace):
             "reduce" if i in self.reduce_cell_groups else "normal", i)\
                                  for i in range(self.num_cell_groups)]
 
+        # different layerwise primitives
+        if cell_shared_primitives is not None:
+            expect(len(cell_shared_primitives) == self.num_cell_groups,
+                   "When `cell_shared_primitives` is specified, "
+                   "it length should equal `num_cell_groups`", ConfigException)
+            self.cell_shared_primitives = cell_shared_primitives
+            self.logger.info("`cell_shared_primitives` specified, "
+                             "will ignore `shared_primitives` configuration.")
+            self.shared_primitives = None # avoid accidentally access this to cause subtle bugs
+            self.cellwise_primitives = True
+        else:
+            self.cell_shared_primitives = [self.shared_primitives] * self.num_cell_groups
+            self.cellwise_primitives = False
+
         self.genotype_type_name = "CNNGenotype"
         self.genotype_type = collections.namedtuple(self.genotype_type_name,
                                                     self.cell_group_names)
@@ -366,13 +381,13 @@ class CNNSearchSpace(SearchSpace):
         expect(len(arch) == self.num_cell_groups)
 
         genotype_list = []
-        for cg_arch in arch:
+        for i_cg, cg_arch in enumerate(arch):
             genotype = []
             nodes, ops = cg_arch
             for i_out in range(self.num_steps):
                 for i_in in range(self.num_node_inputs):
                     idx = i_out * self.num_node_inputs + i_in
-                    genotype.append((self.shared_primitives[ops[idx]],
+                    genotype.append((self.cell_shared_primitives[i_cg][ops[idx]],
                                      int(nodes[idx]), int(i_out + self.num_init_nodes)))
             genotype_list.append(genotype)
         return self.genotype_type(**dict(zip(self.cell_group_names,
@@ -381,12 +396,12 @@ class CNNSearchSpace(SearchSpace):
     def rollout_from_genotype(self, genotype):
         genotype_list = list(genotype._asdict().values())
         arch = []
-        for cell_geno in genotype_list:
+        for i_cg, cell_geno in enumerate(genotype_list):
             nodes, ops = [], []
             for i_out in range(self.num_steps):
                 for i_in in range(self.num_node_inputs):
                     conn = cell_geno[i_out * self.num_node_inputs + i_in]
-                    ops.append(self.shared_primitives.index(conn[0]))
+                    ops.append(self.cell_shared_primitives[i_cg].index(conn[0]))
                     nodes.append(conn[1])
             cg_arch = [nodes, ops]
             arch.append(cg_arch)
@@ -496,6 +511,11 @@ class RNNSearchSpace(SearchSpace):
         self.num_init_nodes = num_init_nodes # this must be 1 for current rnn weights manager
 
         self.num_layers = num_layers
+
+        # RNN do not support cell wise shared primitive for now,
+        # acutally, only `num_cell_group=1` is supported now
+        self.cell_shared_primitives = [self.shared_primitives] * self.num_cell_groups
+        self.cellwise_primitives = False
 
         self.cell_group_names = ["cell"]
 

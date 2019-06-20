@@ -60,11 +60,12 @@ class DiffController(BaseController, nn.Module):
         self.max_grad_norm = max_grad_norm
         self.force_uniform = force_uniform
 
-        _num_ops = len(self.search_space.shared_primitives)
         _num_init_nodes = self.search_space.num_init_nodes
         _num_edges = sum(_num_init_nodes+i for i in range(self.search_space.num_steps))
-        self.cg_alphas = nn.ParameterList([nn.Parameter(1e-3*torch.randn(_num_edges, _num_ops)) \
-                                           for _ in range(self.search_space.num_cell_groups)])
+        self.cg_alphas = nn.ParameterList([
+            nn.Parameter(1e-3*torch.randn(_num_edges,
+                                          len(self.search_space.cell_shared_primitives[i_cg])))
+            for i_cg in range(self.search_space.num_cell_groups)])
 
         self.to(self.device)
 

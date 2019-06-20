@@ -3,6 +3,7 @@
 Implementations of various controller rnn networks.
 """
 import abc
+import collections
 
 import numpy as np
 import torch
@@ -11,6 +12,7 @@ import torch.nn.functional as F
 
 from aw_nas import Component
 from aw_nas import utils
+from aw_nas.utils.exception import expect
 
 class BaseRLControllerNet(Component, nn.Module):
     REGISTRY = "controller_network"
@@ -26,7 +28,7 @@ class BaseRLControllerNet(Component, nn.Module):
         return self.sample(*args, **kwargs)
 
     @abc.abstractmethod
-    def sample(self, batch_size, prev_hidden):
+    def sample(self, batch_size, prev_hidden, cell_index):
         """Setup and initialize tasks of your ControlNet"""
 
     @abc.abstractmethod
@@ -38,13 +40,14 @@ class BaseRLControllerNet(Component, nn.Module):
         """Load the network state from disk."""
 
 class BaseLSTM(BaseRLControllerNet):
-    def __init__(self, search_space, device, num_lstm_layers=1,
-                 controller_hid=64,
+    def __init__(self, search_space, device, cell_index,
+                 num_lstm_layers=1, controller_hid=64,
                  softmax_temperature=None, tanh_constant=1.1,
                  op_tanh_reduce=2.5, force_uniform=False,
                  schedule_cfg=None):
         super(BaseLSTM, self).__init__(search_space, device, schedule_cfg)
 
+        self.cell_index = cell_index
         self.num_lstm_layers = num_lstm_layers
         self.controller_hid = controller_hid
         self.softmax_temperature = softmax_temperature
@@ -52,7 +55,24 @@ class BaseLSTM(BaseRLControllerNet):
         self.op_tanh_reduce = op_tanh_reduce
         self.force_uniform = force_uniform
 
-        self._num_primitives = len(self.search_space.shared_primitives)
+        if self.cell_index is None:
+            # parameters/inference for all cell group in one controller network
+            if not self.search_space.cellwise_primitives:
+                # the same set of primitives for different cg group
+                self._primitives = self.search_space.shared_primitives
+            else:
+                # different set of primitives for different cg group
+                _primitives = collections.OrderedDict()
+                for csp in self.search_space.cell_shared_primitives:
+                    for name in csp:
+                        if name not in _primitives:
+                            _primitives[name] = len(_primitives)
+                self._primitives = list(_primitives.keys())
+                self._cell_primitive_indexes = [[_primitives[name] for name in csp] \
+                                                for csp in self.search_space.cell_shared_primitives]
+        else:
+            self._primitives = self.search_space.cell_shared_primitives[self.cell_index]
+        self._num_primitives = len(self._primitives)
 
         self.lstm = nn.ModuleList()
         for _ in range(self.num_lstm_layers):
@@ -62,6 +82,20 @@ class BaseLSTM(BaseRLControllerNet):
         init_range = 0.1
         for param in self.parameters():
             param.data.uniform_(-init_range, init_range)
+
+    def forward_op(self, inputs, hidden, cell_index):
+        hx, cx = self.stack_lstm(inputs, hidden)
+        if self.cell_index is not None or not self.search_space.cellwise_primitives or \
+           tuple(self._cell_primitive_indexes[cell_index]) == tuple(range(self._num_primitives)):
+            logits = self.w_op_soft(hx[-1])
+        else:
+            # choose subset of op/primitive weight
+            w_op_soft_weight = self.w_op_soft.weight[self._cell_primitive_indexes[cell_index], :]
+            logits = torch.matmul(hx[-1], torch.transpose(w_op_soft_weight, 0, 1))
+
+        logits = self._handle_logits(logits, mode="op")
+
+        return logits, (hx, cx)
 
     def stack_lstm(self, x, hidden):
         prev_h, prev_c = hidden
@@ -85,6 +119,23 @@ class BaseLSTM(BaseRLControllerNet):
         self.load_state_dict(checkpoint["state_dict"])
         self.on_epoch_start(checkpoint["epoch"])
         self.logger.info("Loaded controller network from %s", path)
+
+    def _check_cell_index(self, cell_index):
+        if self.cell_index is not None:
+            # this controller network only handle one cell group
+            expect(cell_index is None or cell_index == self.cell_index,
+                   ("This controller network handle only cell group {},"
+                    " cell group {} not handlable").format(self.cell_index, cell_index))
+            cell_index = self.cell_index
+        else:
+            # this controller network handle all cell groups
+            if self.search_space.num_cell_groups == 1:
+                cell_index = 0
+            expect(not self.search_space.cellwise_primitives or cell_index is not None,
+                   "When controller network handle all cell groups, and cell-wise shared"
+                   " primitives are different. "
+                   "must specifiy `cell_index` when calling `c_net.sample`")
+        return cell_index
 
     def _handle_logits(self, logits, mode):
         if self.force_uniform:
@@ -115,6 +166,12 @@ class BaseLSTM(BaseRLControllerNet):
 
 class AnchorControlNet(BaseLSTM):
     """
+    if `cell_index` is specified, controller network will use
+    `search_space.cell_shared_primitives[cell_index]` to construct
+    op-related embeddings; Otherwise, when `cell_index is None`
+    will construct using all share op/primtivie embedding
+    primitives between different cell groups
+
     Ref:
         https://github.com/melodyguan/enas/
         https://github.com/carpedm20/ENAS-pytorch/
@@ -126,7 +183,8 @@ class AnchorControlNet(BaseLSTM):
         "force_uniform"
     ]
 
-    def __init__(self, search_space, device, num_lstm_layers=1,
+    def __init__(self, search_space, device, cell_index=None,
+                 num_lstm_layers=1,
                  controller_hid=64, attention_hid=64,
                  softmax_temperature=None, tanh_constant=1.1,
                  op_tanh_reduce=2.5, force_uniform=False,
@@ -142,7 +200,7 @@ class AnchorControlNet(BaseLSTM):
             op_tanh_reduce (float):
             force_uniform (bool):
         """
-        super(AnchorControlNet, self).__init__(search_space, device,
+        super(AnchorControlNet, self).__init__(search_space, device, cell_index,
                                                num_lstm_layers=num_lstm_layers,
                                                controller_hid=controller_hid,
                                                softmax_temperature=softmax_temperature,
@@ -175,14 +233,6 @@ class AnchorControlNet(BaseLSTM):
 
         self.reset_parameters()
 
-    def forward_op(self, inputs, hidden):
-        hx, cx = self.stack_lstm(inputs, hidden)
-        logits = self.w_op_soft(hx[-1])
-
-        logits = self._handle_logits(logits, mode="op")
-
-        return logits, (hx, cx)
-
     def forward_node(self, inputs, hidden,
                      node_idx, anchors_w_1):
         hx, cx = self.stack_lstm(inputs, hidden)
@@ -199,7 +249,7 @@ class AnchorControlNet(BaseLSTM):
 
         return logits, (hx, cx)
 
-    def sample(self, batch_size=1, prev_hidden=None):
+    def sample(self, batch_size=1, prev_hidden=None, cell_index=None):
         """
         Args:
             batch_size (int): Number of samples to generate.
@@ -207,6 +257,8 @@ class AnchorControlNet(BaseLSTM):
                 states of the stacked lstm cells.
         Returns:
         """
+        cell_index = self._check_cell_index(cell_index)
+
         entropies = []
         log_probs = []
         prev_nodes = []
@@ -254,7 +306,7 @@ class AnchorControlNet(BaseLSTM):
 
             # operation on edges
             for _ in range(self.search_space.num_node_inputs):
-                logits, hidden = self.forward_op(inputs, hidden)
+                logits, hidden = self.forward_op(inputs, hidden, cell_index)
 
                 probs = F.softmax(logits, dim=-1)
                 log_prob = F.log_softmax(logits, dim=-1)
@@ -295,7 +347,8 @@ class EmbedControlNet(BaseLSTM):
         "force_uniform"
     ]
 
-    def __init__(self, search_space, device, num_lstm_layers=1,
+    def __init__(self, search_space, device, cell_index=None,
+                 num_lstm_layers=1,
                  controller_hid=64, attention_hid=64,
                  softmax_temperature=None, tanh_constant=1.1,
                  op_tanh_reduce=2.5, force_uniform=False,
@@ -310,7 +363,7 @@ class EmbedControlNet(BaseLSTM):
             op_tanh_reduce (float):
             force_uniform (bool):
         """
-        super(EmbedControlNet, self).__init__(search_space, device,
+        super(EmbedControlNet, self).__init__(search_space, device, cell_index,
                                               num_lstm_layers=num_lstm_layers,
                                               controller_hid=controller_hid,
                                               softmax_temperature=softmax_temperature,
@@ -346,14 +399,6 @@ class EmbedControlNet(BaseLSTM):
 
         self.reset_parameters()
 
-    def forward_op(self, inputs, hidden):
-        hx, cx = self.stack_lstm(inputs, hidden)
-        logits = self.w_op_soft(hx[-1])
-
-        logits = self._handle_logits(logits, mode="op")
-
-        return logits, (hx, cx)
-
     def forward_node(self, inputs, hidden, node_idx):
         hx, cx = self.stack_lstm(inputs, hidden)
 
@@ -370,7 +415,7 @@ class EmbedControlNet(BaseLSTM):
 
         return logits, (hx, cx)
 
-    def sample(self, batch_size=1, prev_hidden=None):
+    def sample(self, batch_size=1, prev_hidden=None, cell_index=None):
         """
         Args:
             batch_size (int): Number of samples to generate.
@@ -378,6 +423,8 @@ class EmbedControlNet(BaseLSTM):
                 states of the stacked lstm cells.
         Returns:
         """
+        cell_index = self._check_cell_index(cell_index)
+
         entropies = []
         log_probs = []
         prev_nodes = []
@@ -413,7 +460,7 @@ class EmbedControlNet(BaseLSTM):
 
             # operation on edges
             for _ in range(self.search_space.num_node_inputs):
-                logits, hidden = self.forward_op(inputs, hidden)
+                logits, hidden = self.forward_op(inputs, hidden, cell_index)
 
                 probs = F.softmax(logits, dim=-1)
                 log_prob = torch.log(probs)

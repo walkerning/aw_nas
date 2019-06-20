@@ -152,7 +152,6 @@ def test_rnn_supernet_candidate_gradient_virtual(rnn_super_net):
 
 # ---- Test rnn_diff_super_net ----
 def test_rnn_diff_supernet_forward(rnn_diff_super_net):
-    from aw_nas.common import get_search_space
     from aw_nas.controller import DiffController
 
     time_steps = 5
@@ -179,8 +178,6 @@ def test_rnn_diff_supernet_forward(rnn_diff_super_net):
     assert (hiddens == next_hiddens).all()
 
 def test_rnn_diff_supernet_to_arch(rnn_diff_super_net):
-    from torch import nn
-    from aw_nas.common import get_search_space
     from aw_nas.controller import DiffController
 
     search_space = rnn_diff_super_net.search_space

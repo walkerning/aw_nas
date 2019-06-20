@@ -1,4 +1,4 @@
-
+from __future__ import print_function
 from aw_nas.common import get_search_space
 import pytest
 
@@ -28,8 +28,8 @@ def test_rl_controller():
     loss = controller_i.step(rollouts, optimizer)
 
 @pytest.mark.parametrize("case", [
-    {"type": "anchor_lstm", "cfg": {}},
-    {"type": "embed_lstm", "cfg": {}},
+    {"type": "anchor_lstm"},
+    {"type": "embed_lstm"}
 ])
 def test_controller_network(case):
     from aw_nas.controller.rl_networks import BaseRLControllerNet
@@ -47,6 +47,56 @@ def test_controller_network(case):
     num_actions = len(arch[0][0]) + len(arch[0][1])
     assert log_probs.shape == (batch_size, num_actions)
     assert entropies.shape == (batch_size, num_actions)
+
+@pytest.mark.parametrize("case", [
+    {"type": "anchor_lstm"},
+    {"type": "embed_lstm"}
+])
+def test_controller_network_cellwise_primitives(case):
+    import numpy as np
+    from aw_nas.controller.rl_networks import BaseRLControllerNet
+    search_space = get_search_space(cls="cnn", num_cell_groups=2,
+                                    cell_shared_primitives=[
+                                        ("none",
+                                         "avg_pool_3x3",
+                                         "max_pool_3x3",
+                                         "skip_connect"),
+                                        ("skip_connect",
+                                         "avg_pool_3x3", "dil_conv_3x3")
+                                    ])
+    device = "cuda"
+    cls = BaseRLControllerNet.get_class_(case["type"])
+    net0 = cls(search_space, device, cell_index=0)
+    net1 = cls(search_space, device, cell_index=1)
+
+    assert net0.w_op_soft.weight.shape[0] == 4
+    assert net1.w_op_soft.weight.shape[0] == 3
+
+    batch_size = 3
+    arch, log_probs, entropies, (hx, cx) = net0.sample(batch_size)
+    assert len(hx) == net0.num_lstm_layers
+    assert len(cx) == net0.num_lstm_layers
+    assert hx[0].shape == (batch_size, net0.controller_hid)
+    assert len(arch) == batch_size
+    num_actions = len(arch[0][0]) + len(arch[0][1])
+    assert log_probs.shape == (batch_size, num_actions)
+    assert entropies.shape == (batch_size, num_actions)
+
+    net_shared = cls(search_space, device, cell_index=None)
+    assert net_shared.w_op_soft.weight.shape[0] == 5
+
+    batch_size = 3
+    try:
+        arch, log_probs, entropies, (hx, cx) = net_shared.sample(batch_size)
+    except:
+        pass
+    else:
+        assert 1, "must raise, when no `cell_index` is provided for `cnet.sample` "\
+            "handled all cell groups with cellwise primitives"
+    arch, log_probs, entropies, (hx, cx) = net_shared.sample(batch_size, cell_index=0)
+    assert all(np.max(single_arch[1]) <= 3 for single_arch in arch)
+    arch, log_probs, entropies, (hx, cx) = net_shared.sample(batch_size, cell_index=1)
+    assert all(np.max(single_arch[1]) <= 2 for single_arch in arch)
 
 # --- test controller differentiable ----
 def test_diff_controller():
@@ -86,3 +136,30 @@ def test_diff_controller_force_uniform():
     rollouts = controller.sample(1)
     assert np.equal(rollouts[0].sampled[0].data, 1./len(search_space.shared_primitives) * \
                     np.ones((14, len(search_space.shared_primitives)))).all()
+
+def test_diff_controller_cellwise_primitives():
+    from aw_nas.controller import DiffController
+
+    search_space = get_search_space(cls="cnn", num_cell_groups=2,
+                                    cell_shared_primitives=[
+                                        ("none",
+                                         "avg_pool_3x3",
+                                         "max_pool_3x3",
+                                         "skip_connect"),
+                                        ("skip_connect",
+                                         "avg_pool_3x3", "dil_conv_3x3")
+                                    ])
+    device = "cuda"
+    controller = DiffController(search_space, device)
+    assert controller.cg_alphas[0].shape == (14, 4)
+    assert controller.cg_alphas[1].shape == (14, 3)
+    rollout = controller.sample(1)[0]
+    assert isinstance(rollout.genotype, search_space.genotype_type)
+    assert set([conn[0] for conn in rollout.genotype.normal_0]).issubset(["none",
+                                                                          "avg_pool_3x3",
+                                                                          "max_pool_3x3",
+                                                                          "skip_connect"])
+    assert set([conn[0] for conn in rollout.genotype.reduce_1]).issubset(["avg_pool_3x3",
+                                                                          "dil_conv_3x3",
+                                                                          "skip_connect"])
+    print(rollout.genotype)

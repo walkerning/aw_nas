@@ -48,7 +48,8 @@ class RLController(BaseController, nn.Module):
         cn_cls = BaseRLControllerNet.get_class_(controller_network_type)
         num_cnet = self.search_space.num_cell_groups if self.independent_cell_group else 1
         self.controllers = [cn_cls(self.search_space, self.device,
-                                   **controller_network_cfg) for _ in range(num_cnet)]
+                                   cell_index=i if self.independent_cell_group else None,
+                                   **controller_network_cfg) for i in range(num_cnet)]
         self.agents = [BaseRLAgent.get_class_(rl_agent_type)(cnet, **rl_agent_cfg)\
                        for cnet in self.controllers]
 
@@ -83,7 +84,8 @@ class RLController(BaseController, nn.Module):
             # sample the arch for cell groups sequentially
             cn_idx = i_cg if self.independent_cell_group else 0
             arch, lprob, ent, hidden = self.controllers[cn_idx].sample(batch_size=n,
-                                                                       prev_hidden=hidden)
+                                                                       prev_hidden=hidden,
+                                                                       cell_index=i_cg)
             hidden = None if self.independent_cell_group else hidden
             arch_lst.append(arch)
             log_probs_lst.append(lprob)

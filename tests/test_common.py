@@ -9,7 +9,7 @@ import pytest
     {"cls": "rnn", "loose_end": True},
 ])
 def test_search_space(case, tmp_path):
-    from aw_nas.common import get_search_space, Rollout
+    from aw_nas.common import get_search_space
 
     ss = get_search_space(**case)
     rollout = ss.random_sample()

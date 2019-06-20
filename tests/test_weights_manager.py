@@ -10,7 +10,6 @@ def _cnn_data(device="cuda"):
             torch.tensor([0, 1]).long().to(device))
 
 def _supernet_sample_cand(net):
-    from aw_nas.common import Rollout
     ss = net.search_space
 
     rollout = ss.random_sample()
