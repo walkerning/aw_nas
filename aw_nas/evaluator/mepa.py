@@ -292,6 +292,8 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
 
     def on_epoch_start(self, epoch):
         super(MepaEvaluator, self).on_epoch_start(epoch)
+        self.weights_manager.on_epoch_start(epoch)
+        self.objective.on_epoch_start(epoch)
 
         # scheduler epoch is 0-based, epoch of aw_nas components is 1-based
         lr_str = ""
@@ -306,6 +308,8 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
 
     def on_epoch_end(self, epoch):
         super(MepaEvaluator, self).on_epoch_end(epoch)
+        self.weights_manager.on_epoch_end(epoch)
+        self.objective.on_epoch_end(epoch)
 
         # logs meters info
         for name, meter in six.iteritems(self.epoch_average_meters):
@@ -337,6 +341,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
             if scheduler is not None:
                 scheduler_states[compo_name] = scheduler.state_dict()
         state_dict = {
+            "epoch": self.epoch,
             "weights_manager": self.weights_manager.state_dict(),
             "optimizers": optimizer_states,
             "schedulers": scheduler_states
@@ -370,6 +375,9 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
             scheduler = getattr(self, compo_name + "_scheduler")
             if scheduler is not None:
                 scheduler.load_state_dict(scheduler_states[compo_name])
+
+        # call `on_epoch_start` for scheduled values
+        self.on_epoch_start(checkpoint["epoch"])
 
     # ---- helper methods ----
     def _run_surrogate_steps(self, func, cand_net, surrogate_steps, phase, update_metric=True):

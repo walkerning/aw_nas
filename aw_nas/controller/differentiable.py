@@ -58,7 +58,7 @@ class DiffController(BaseController, nn.Module):
         # training
         self.entropy_coeff = entropy_coeff
         self.max_grad_norm = max_grad_norm
-        self.force_uniform = force_uniform 
+        self.force_uniform = force_uniform
 
         _num_ops = len(self.search_space.shared_primitives)
         _num_init_nodes = self.search_space.num_init_nodes
@@ -104,7 +104,8 @@ class DiffController(BaseController, nn.Module):
                         sampled = F.softmax(alpha / self.gumbel_temperature, dim=-1)
                     else:
                         # gumbel sampling
-                        sampled, _ = utils.gumbel_softmax(alpha, self.gumbel_temperature, hard=False)
+                        sampled, _ = utils.gumbel_softmax(alpha, self.gumbel_temperature,
+                                                          hard=False)
                     if self.gumbel_hard:
                         arch = utils.straight_through(sampled)
                     else:
@@ -117,13 +118,15 @@ class DiffController(BaseController, nn.Module):
 
     def save(self, path):
         """Save the parameters to disk."""
-        torch.save({"state_dict": self.state_dict()}, path)
+        torch.save({"epoch": self.epoch,
+                    "state_dict": self.state_dict()}, path)
         self.logger.info("Saved controller network to %s", path)
 
     def load(self, path):
         """Load the parameters from disk."""
         checkpoint = torch.load(path)
         self.load_state_dict(checkpoint["state_dict"])
+        self.on_epoch_start(checkpoint["epoch"])
         self.logger.info("Loaded controller network from %s", path)
 
     def _entropy_loss(self):

@@ -136,11 +136,13 @@ class RNNSharedNet(BaseWeightsManager, nn.Module):
         optimizer.step()
 
     def save(self, path):
-        torch.save({"state_dict": self.state_dict()}, path)
+        torch.save({"epoch": self.epoch,
+                    "state_dict": self.state_dict()}, path)
 
     def load(self, path):
         checkpoint = torch.load(path)
         self.load_state_dict(checkpoint["state_dict"])
+        self.on_epoch_start(checkpoint["epoch"])
 
     @classmethod
     def supported_data_types(cls):

@@ -19,7 +19,7 @@ from aw_nas.utils.registry import RegistryMeta
 from aw_nas.utils.exception import expect, ConfigException
 from aw_nas.utils.log import logger as _logger
 
-_home_dir = os.environ.get("AWNAS_HOME", os.path.expanduser("~/awnas"))
+_HOME_DIR = os.environ.get("AWNAS_HOME", os.path.expanduser("~/awnas"))
 
 ## --- misc helpers ---
 @contextmanager
@@ -38,7 +38,7 @@ def get_awnas_dir(env, name):
     dir_ = os.environ.get(env, None)
     if dir_ is None:
         # if not in environment variable, return the default
-        dir_ = os.path.join(_home_dir, name)
+        dir_ = os.path.join(_HOME_DIR, name)
     return makedir(dir_)
 
 class Ticker(object):

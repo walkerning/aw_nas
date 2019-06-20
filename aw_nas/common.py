@@ -647,4 +647,3 @@ def group_and_sort_by_to_node(cell_geno):
     for conn in cell_geno:
         group_dct[conn[2]].append(conn)
     return sorted(group_dct.items(), key=lambda item: item[0])
-

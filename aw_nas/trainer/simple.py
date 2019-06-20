@@ -140,7 +140,7 @@ class SimpleTrainer(BaseTrainer):
 
         # states and other help attributes
         self.last_epoch = 0
-        self.epoch = 1
+        self.epoch = 0
 
     def _evaluator_update(self, steps, finished_e_steps, finished_c_steps):
         self.controller.set_mode("eval")
@@ -346,9 +346,9 @@ class SimpleTrainer(BaseTrainer):
         return rollouts
 
     def derive(self, n, steps=None):
-        # some scheduled value might be used in test too, e.g., surrogate_lr, gumbel temperature...
-        self.on_epoch_start(self.epoch)
-
+        # # some scheduled value will be used in test too, e.g. surrogate_lr, gumbel temperature...
+        # called in `load` method already
+        # self.on_epoch_start(self.epoch)
         with self.controller.begin_mode("eval"):
             rollouts = self.controller.sample(n)
             for i_sample in range(n):
@@ -377,6 +377,7 @@ class SimpleTrainer(BaseTrainer):
             self.controller_optimizer.load_state_dict(checkpoint["controller_optimizer"])
         if self.controller_scheduler is not None:
             self.controller_scheduler.load_state_dict(checkpoint["controller_scheduler"])
+        self.on_epoch_start(self.last_epoch)
 
     def on_epoch_start(self, epoch):
         super(SimpleTrainer, self).on_epoch_start(epoch)
