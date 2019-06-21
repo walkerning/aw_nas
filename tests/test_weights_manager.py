@@ -118,6 +118,39 @@ def test_supernet_candidate_gradient_virtual(test_id, super_net):
     for n in c_buffers:
         assert (buffer_prev[n] - c_buffers[n]).abs().float().mean().item() < EPS
 
+@pytest.mark.parametrize("super_net", [{
+    "search_space_cfg": {"num_steps": 1, "num_node_inputs": 1, "num_init_nodes": 1,
+                         "num_layers": 3, "cell_layout": [0, 1, 2],
+                         "reduce_cell_groups": [1], "num_cell_groups": 3,
+                         "cell_shared_primitives":[
+                             ["none", "max_pool_3x3", "sep_conv_5x5"],
+                             ["sep_conv_3x3"],
+                             ["sep_conv_3x3", "dil_conv_3x3"]
+                         ]},
+    "cell_use_preprocess": False,
+    "init_channels": 16,
+    "stem_multiplier": 1,
+    "cell_group_kwargs": [
+        {"C_in": 16, "C_out": 16},
+        {"C_in": 16, "C_out": 24},
+        {"C_in": 24, "C_out": 64}
+    ]
+}], indirect=["super_net"])
+def test_supernet_specify_Cinout(super_net):
+    cand_net = _supernet_sample_cand(super_net)
+    assert cand_net.super_net.cells[0].num_out_channels == 16
+    assert cand_net.super_net.cells[1].num_out_channels == 24
+    assert cand_net.super_net.cells[2].num_out_channels == 64
+    assert len(cand_net.super_net.cells[0].edges) == 1
+    assert len(cand_net.super_net.cells[0].edges[0].p_ops) == 3
+    assert len(cand_net.super_net.cells[1].edges[0].p_ops) == 1
+    assert len(cand_net.super_net.cells[2].edges[0].p_ops) == 2
+
+    data = _cnn_data()
+
+    logits = cand_net.forward_data(data[0], mode="eval")
+    assert logits.shape[-1] == 10
+
 # ---- End test super_net ----
 
 # ---- Test diff_super_net ----

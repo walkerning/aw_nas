@@ -94,14 +94,15 @@ class Rollout(BaseRollout):
         random sample
         """
         arch = []
-        for _ in range(num_cell_groups):
+        for i_cg in range(num_cell_groups):
+            num_prims = num_primitives if isinstance(num_primitives, int) else num_primitives[i_cg]
             nodes = []
             ops = []
             for i_out in range(num_steps):
                 nodes += list(np.random.randint(
                     0, high=i_out + num_init_nodes, size=num_node_inputs))
                 ops += list(np.random.randint(
-                    0, high=num_primitives, size=num_node_inputs))
+                    0, high=num_prims, size=num_node_inputs))
             arch.append((nodes, ops))
         return arch
 
@@ -297,7 +298,6 @@ class CNNSearchSpace(SearchSpace):
 
         # primitive single-operand operations
         self.shared_primitives = shared_primitives
-        self._num_primitives = len(self.shared_primitives)
 
         ## overall structure/meta-arch: how to arrange cells
         # number of cell groups, different cell groups has different structure
@@ -346,9 +346,11 @@ class CNNSearchSpace(SearchSpace):
                              "will ignore `shared_primitives` configuration.")
             self.shared_primitives = None # avoid accidentally access this to cause subtle bugs
             self.cellwise_primitives = True
+            self._num_primitives_list = [len(cps) for cps in self.cell_shared_primitives]
         else:
             self.cell_shared_primitives = [self.shared_primitives] * self.num_cell_groups
             self.cellwise_primitives = False
+            self._num_primitives = len(self.shared_primitives)
 
         self.genotype_type_name = "CNNGenotype"
         self.genotype_type = collections.namedtuple(self.genotype_type_name,
@@ -361,11 +363,12 @@ class CNNSearchSpace(SearchSpace):
         """
         Random sample a discrete architecture.
         """
-        return Rollout(Rollout.random_sample_arch(self.num_cell_groups,
-                                                  self.num_steps,
-                                                  self.num_init_nodes,
-                                                  self.num_node_inputs,
-                                                  self._num_primitives),
+        return Rollout(Rollout.random_sample_arch(
+            self.num_cell_groups,
+            self.num_steps,
+            self.num_init_nodes,
+            self.num_node_inputs,
+            self._num_primitives if not self.cellwise_primitives else self._num_primitives_list),
                        info={}, search_space=self)
 
     def genotype(self, arch):

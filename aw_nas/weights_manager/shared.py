@@ -25,6 +25,8 @@ class SharedNet(BaseWeightsManager, nn.Module):
                  cell_cls, op_cls,
                  num_classes=10, init_channels=16, stem_multiplier=3,
                  max_grad_norm=5.0, dropout_rate=0.1,
+                 use_stem=True,
+                 cell_use_preprocess=True,
                  cell_group_kwargs=None):
         super(SharedNet, self).__init__(search_space, device, rollout_type)
         nn.Module.__init__(self)
@@ -35,6 +37,9 @@ class SharedNet(BaseWeightsManager, nn.Module):
         self.init_channels = init_channels
         # channels of stem conv / init_channels
         self.stem_multiplier = stem_multiplier
+        self.use_stem = use_stem
+        # possible cell group kwargs
+        self.cell_group_kwargs = cell_group_kwargs
 
         # training
         self.max_grad_norm = max_grad_norm
@@ -47,11 +52,14 @@ class SharedNet(BaseWeightsManager, nn.Module):
         self._num_layers = self.search_space.num_layers
 
         ## initialize sub modules
-        c_stem = self.stem_multiplier * self.init_channels
-        self.stem = nn.Sequential(
-            nn.Conv2d(3, c_stem, 3, padding=1, bias=False),
-            nn.BatchNorm2d(c_stem)
-        )
+        if self.use_stem:
+            c_stem = self.stem_multiplier * self.init_channels
+            self.stem = nn.Sequential(
+                nn.Conv2d(3, c_stem, 3, padding=1, bias=False),
+                nn.BatchNorm2d(c_stem)
+            )
+        else:
+            c_stem = 3
 
         self.cells = nn.ModuleList()
         num_channels = self.init_channels
@@ -64,16 +72,25 @@ class SharedNet(BaseWeightsManager, nn.Module):
             if cell_group_kwargs is not None:
                 # support passing in different kwargs when instantializing
                 # cell class for different cell groups
-                kwargs = cell_group_kwargs[self._cell_layout[i_layer]]
+                kwargs = {k: v for k, v in cell_group_kwargs[self._cell_layout[i_layer]].items()}
             else:
                 kwargs = {}
+            # A patch: Can specificy input/output channels by hand in configuration,
+            # instead of relying on the default
+            # "whenever stride/2, channelx2 and mapping with preprocess operations" assumption
+            _num_channels = num_channels if "C_in" not in kwargs \
+                            else kwargs.pop("C_in")
+            _num_out_channels = num_channels if "C_out" not in kwargs \
+                                else kwargs.pop("C_out")
             cell = cell_cls(op_cls,
                             self.search_space,
                             layer_index=i_layer,
-                            num_channels=num_channels,
+                            num_channels=_num_channels,
+                            num_out_channels=_num_out_channels,
                             prev_num_channels=tuple(prev_num_channels),
                             stride=stride,
                             prev_strides=[1] * self._num_init + strides[:i_layer],
+                            use_preprocess=cell_use_preprocess,
                             **kwargs)
             prev_num_channel = cell.num_out_channel()
             prev_num_channels.append(prev_num_channel)
@@ -85,8 +102,7 @@ class SharedNet(BaseWeightsManager, nn.Module):
             self.dropout = nn.Dropout(p=self.dropout_rate)
         else:
             self.dropout = ops.Identity()
-        self.classifier = nn.Linear(prev_num_channel,
-                                    self.num_classes)
+        self.classifier = nn.Linear(prev_num_channel, self.num_classes)
 
         self.to(self.device)
 
@@ -94,7 +110,10 @@ class SharedNet(BaseWeightsManager, nn.Module):
         return self._cell_layout[layer_idx] in self._reduce_cgs
 
     def forward(self, inputs, genotypes, **kwargs): #pylint: disable=arguments-differ
-        stemed = self.stem(inputs)
+        if self.use_stem:
+            stemed = self.stem(inputs)
+        else:
+            stemed = inputs
         states = [stemed] * self._num_init
 
         for cg_idx, cell in zip(self._cell_layout, self.cells):
@@ -111,9 +130,12 @@ class SharedNet(BaseWeightsManager, nn.Module):
         assert (context is None) + (inputs is None) == 1
         # stem
         if inputs is not None:
-            stemed = self.stem(inputs)
-            context = Context(previous_cells=[stemed], current_cell=[])
-            return stemed, context
+            if self.use_stem:
+                stemed = self.stem(inputs)
+                context = Context(previous_cells=[stemed], current_cell=[])
+                return stemed, context
+            else:
+                context = Context(previous_cells=[inputs], current_cell=[])
 
         cur_cell_ind, _ = context.next_step_index
 
@@ -130,7 +152,8 @@ class SharedNet(BaseWeightsManager, nn.Module):
         return self.cells[cur_cell_ind].forward_one_step(context, cell_genotype, **kwargs)
 
     def step_current_gradients(self, optimizer):
-        torch.nn.utils.clip_grad_norm_(self.parameters(), self.max_grad_norm)
+        if self.max_grad_norm is not None:
+            torch.nn.utils.clip_grad_norm_(self.parameters(), self.max_grad_norm)
         optimizer.step()
 
     def step(self, gradients, optimizer):
@@ -138,8 +161,9 @@ class SharedNet(BaseWeightsManager, nn.Module):
         named_params = dict(self.named_parameters())
         for k, grad in gradients:
             named_params[k].grad = grad
-        # clip the gradients
-        torch.nn.utils.clip_grad_norm_(self.parameters(), self.max_grad_norm)
+        if self.max_grad_norm is not None:
+            # clip the gradients
+            torch.nn.utils.clip_grad_norm_(self.parameters(), self.max_grad_norm)
         # apply the gradients
         optimizer.step()
 
@@ -158,24 +182,37 @@ class SharedNet(BaseWeightsManager, nn.Module):
 
 
 class SharedCell(nn.Module):
-    def __init__(self, op_cls, search_space, layer_index, num_channels,
-                 prev_num_channels, stride, prev_strides):
+    def __init__(self, op_cls, search_space, layer_index, num_channels, num_out_channels,
+                 prev_num_channels, stride, prev_strides, use_preprocess, **op_kwargs):
         super(SharedCell, self).__init__()
         self.search_space = search_space
         self.stride = stride
         self.is_reduce = stride != 1
         self.num_channels = num_channels
+        self.num_out_channels = num_out_channels
         self.layer_index = layer_index
+        self.use_preprocess = use_preprocess
+        self.op_kwargs = op_kwargs
 
         self._steps = self.search_space.num_steps
         self._num_init = self.search_space.num_init_nodes
-        self._primitives = self.search_space.shared_primitives
+        if not self.search_space.cellwise_primitives:
+            # the same set of primitives for different cg group
+            self._primitives = self.search_space.shared_primitives
+        else:
+            # different set of primitives for different cg group
+            self._primitives = \
+                self.search_space.cell_shared_primitives[self.search_space.cell_layout[layer_index]]
 
         self.preprocess_ops = nn.ModuleList()
         prev_strides = list(np.cumprod(list(reversed(prev_strides))))
         prev_strides.insert(0, 1)
         prev_strides = reversed(prev_strides[:len(prev_num_channels)])
         for prev_c, prev_s in zip(prev_num_channels, prev_strides):
+            if not self.use_preprocess:
+                # stride/channel not handled!
+                self.preprocess_ops.append(ops.Identity())
+                continue
             if prev_s > 1:
                 # need skip connection, and is not the connection from the input image
                 preprocess = ops.FactorizedReduce(C_in=prev_c,
@@ -195,8 +232,9 @@ class SharedCell(nn.Module):
         self.edges = nn.ModuleList()
         for i in range(self._steps):
             for j in range(i + self._num_init):
-                op = op_cls(self.num_channels, stride=self.stride if j < self._num_init else 1,
-                            primitives=self._primitives)
+                op = op_cls(self.num_channels, self.num_out_channels,
+                            stride=self.stride if j < self._num_init else 1,
+                            primitives=self._primitives, **op_kwargs)
                 self.edges.append(op)
 
 
@@ -205,13 +243,13 @@ class SharedOp(nn.Module):
     The operation on an edge, consisting of multiple primitives.
     """
 
-    def __init__(self, C, stride, primitives):
+    def __init__(self, C, C_out, stride, primitives):
         super(SharedOp, self).__init__()
         self.primitives = primitives
         self.stride = stride
         self.p_ops = nn.ModuleList()
         for primitive in self.primitives:
-            op = ops.get_op(primitive)(C, stride, False)
+            op = ops.get_op(primitive)(C, C_out, stride, False)
             if "pool" in primitive:
                 op = nn.Sequential(op, nn.BatchNorm2d(C,
                                                       affine=False))

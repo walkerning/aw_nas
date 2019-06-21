@@ -7,8 +7,10 @@ from aw_nas import Component, utils
 class BaseObjective(Component):
     REGISTRY = "objective"
 
-    def __init__(self, schedule_cfg=None):
+    def __init__(self, search_space, schedule_cfg=None):
         super(BaseObjective, self).__init__(schedule_cfg)
+
+        self.search_space = search_space
 
     @utils.abstractclassmethod
     def supported_data_types(cls):

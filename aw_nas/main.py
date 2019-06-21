@@ -93,7 +93,7 @@ def _init_components_from_cfg(cfg, device, evaluator_only=False, controller_only
     expect(_data_type in weights_manager.supported_data_types())
 
     # objective
-    objective = _init_component(cfg, "objective")
+    objective = _init_component(cfg, "objective", search_space=search_space)
 
     # evaluator
     evaluator = _init_component(cfg, "evaluator", dataset=whole_dataset,
@@ -360,7 +360,8 @@ def eval_arch(cfg_file, arch_file, load, gpu, seed, save_plot, steps):
             )
         print("Finish test {}/{}\r".format(i+1, num_r), end="")
     for i, r in enumerate(rollouts):
-        LOGGER.info("Arch %3d: %s", i, "; ".join(["{}: {:.3f}".format(n, v) for n, v in r.perf.items()]))
+        LOGGER.info("Arch %3d: %s", i, "; ".join(
+            ["{}: {:.3f}".format(n, v) for n, v in r.perf.items()]))
 
 
 @main.command(help="Derive architectures.")

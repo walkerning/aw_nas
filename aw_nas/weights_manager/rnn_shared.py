@@ -122,7 +122,8 @@ class RNNSharedNet(BaseWeightsManager, nn.Module):
         return logits, raw_outs, droped_outs, next_hiddens
 
     def step_current_gradients(self, optimizer):
-        torch.nn.utils.clip_grad_norm_(self.parameters(), self.max_grad_norm)
+        if self.max_grad_norm is not None:
+            torch.nn.utils.clip_grad_norm_(self.parameters(), self.max_grad_norm)
         optimizer.step()
 
     def step(self, gradients, optimizer):
@@ -130,8 +131,9 @@ class RNNSharedNet(BaseWeightsManager, nn.Module):
         named_params = dict(self.named_parameters())
         for k, grad in gradients:
             named_params[k].grad = grad
-        # clip the gradients
-        torch.nn.utils.clip_grad_norm_(self.parameters(), self.max_grad_norm)
+        if self.max_grad_norm is not None:
+            # clip the gradients
+            torch.nn.utils.clip_grad_norm_(self.parameters(), self.max_grad_norm)
         # apply the gradients
         optimizer.step()
 

@@ -1,6 +1,6 @@
 import numpy as np
 from torch.optim.lr_scheduler import _LRScheduler
-from torch.optim import lr_scheduler
+import torch.optim.lr_scheduler
 
 __all__ = ["CosineWithRestarts", "get_scheduler_cls"]
 
@@ -92,4 +92,4 @@ class ExpDecay(_LRScheduler):
 def get_scheduler_cls(type_):
     if type_ in {"CosineWithRestarts", "ExpDecay"}:
         return globals()[type_]
-    return getattr(lr_scheduler, type_)
+    return getattr(torch.optim.lr_scheduler, type_)

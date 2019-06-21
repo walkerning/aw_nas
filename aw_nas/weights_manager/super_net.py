@@ -141,6 +141,8 @@ class SuperNet(SharedNet):
     def __init__(self, search_space, device, rollout_type="discrete",
                  num_classes=10, init_channels=16, stem_multiplier=3,
                  max_grad_norm=5.0, dropout_rate=0.1,
+                 use_stem=True,
+                 cell_use_preprocess=True, cell_group_kwargs=None,
                  candidate_member_mask=True, candidate_cache_named_members=False,
                  candidate_virtual_parameter_only=False):
         """
@@ -161,7 +163,9 @@ class SuperNet(SharedNet):
                                        cell_cls=DiscreteSharedCell, op_cls=DiscreteSharedOp,
                                        num_classes=num_classes, init_channels=init_channels,
                                        stem_multiplier=stem_multiplier,
-                                       max_grad_norm=max_grad_norm, dropout_rate=dropout_rate)
+                                       max_grad_norm=max_grad_norm, dropout_rate=dropout_rate,
+                                       use_stem=use_stem, cell_use_preprocess=cell_use_preprocess,
+                                       cell_group_kwargs=cell_group_kwargs)
 
         # candidate net with/without parameter mask
         self.candidate_member_mask = candidate_member_mask
@@ -217,11 +221,14 @@ class SuperNet(SharedNet):
 
 class DiscreteSharedCell(SharedCell):
     def num_out_channel(self):
-        return self.num_channels * self.search_space.num_steps
+        return self.num_out_channels * self.search_space.num_steps
 
     def forward(self, inputs, genotype): #pylint: disable=arguments-differ
         assert self._num_init == len(inputs)
-        states = [op(inputs) for op, inputs in zip(self.preprocess_ops, inputs)]
+        if self.use_preprocess:
+            states = [op(inputs) for op, inputs in zip(self.preprocess_ops, inputs)]
+        else:
+            states = [s for s in inputs]
 
         for to_, connections in genotype:
             state_to_ = 0.

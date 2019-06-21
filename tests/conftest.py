@@ -16,9 +16,10 @@ def writer():
 @pytest.fixture
 def super_net(request):
     cfg = getattr(request, "param", {})
+    scfg = cfg.pop("search_space_cfg", {})
     from aw_nas.common import get_search_space
     from aw_nas.weights_manager import SuperNet
-    search_space = get_search_space(cls="cnn")
+    search_space = get_search_space(cls="cnn", **scfg)
     device = "cuda"
     net = SuperNet(search_space, device, **cfg)
     return net
@@ -26,9 +27,10 @@ def super_net(request):
 @pytest.fixture
 def diff_super_net(request):
     cfg = getattr(request, "param", {})
+    scfg = cfg.pop("search_space_cfg", {})
     from aw_nas.common import get_search_space
     from aw_nas.weights_manager import DiffSuperNet
-    search_space = get_search_space(cls="cnn")
+    search_space = get_search_space(cls="cnn", **scfg)
     device = "cuda"
     net = DiffSuperNet(search_space, device, **cfg)
     return net

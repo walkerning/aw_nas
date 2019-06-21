@@ -91,26 +91,19 @@ class DiffController(BaseController, nn.Module):
             sampled_list = []
             logits_list = []
             for alpha in self.cg_alphas:
-                if self.force_uniform: # alpha will not be in the graph
-                    # uniform probability as sample
-                    sampled = F.softmax(torch.zeros_like(alpha), dim=-1)
-                    if self.gumbel_hard:
-                        arch = torch.zeros_like(sampled)
-                        arch.scatter_(1, sampled.multinomial(num_samples=1), 1)
-                    else:
-                        arch = sampled
+                if self.force_uniform: # cg_alpha parameters will not be in the graph
+                    alpha = torch.zeros_like(alpha)
+                if self.use_prob:
+                    # probability as sample
+                    sampled = F.softmax(alpha / self.gumbel_temperature, dim=-1)
                 else:
-                    if self.use_prob:
-                        # probability as sample
-                        sampled = F.softmax(alpha / self.gumbel_temperature, dim=-1)
-                    else:
-                        # gumbel sampling
-                        sampled, _ = utils.gumbel_softmax(alpha, self.gumbel_temperature,
-                                                          hard=False)
-                    if self.gumbel_hard:
-                        arch = utils.straight_through(sampled)
-                    else:
-                        arch = sampled
+                    # gumbel sampling
+                    sampled, _ = utils.gumbel_softmax(alpha, self.gumbel_temperature,
+                                                      hard=False)
+                if self.gumbel_hard:
+                    arch = utils.straight_through(sampled)
+                else:
+                    arch = sampled
                 arch_list.append(arch)
                 sampled_list.append(utils.get_numpy(sampled))
                 logits_list.append(utils.get_numpy(alpha))

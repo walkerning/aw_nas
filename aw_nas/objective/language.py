@@ -8,8 +8,8 @@ from aw_nas.objective.base import BaseObjective
 class LanguageObjective(BaseObjective):
     NAME = "language"
 
-    def __init__(self, act_reg=0., slowness_reg=0., reward_c=80.):
-        super(LanguageObjective, self).__init__()
+    def __init__(self, search_space, act_reg=0., slowness_reg=0., reward_c=80.):
+        super(LanguageObjective, self).__init__(search_space)
         self.act_reg = act_reg
         self.slowness_reg = slowness_reg
         self.reward_c = reward_c

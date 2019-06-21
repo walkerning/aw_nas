@@ -8,8 +8,8 @@ from aw_nas.objective.base import BaseObjective
 class ClassificationObjective(BaseObjective):
     NAME = "classification"
 
-    def __init__(self):
-        super(ClassificationObjective, self).__init__()
+    def __init__(self, search_space):
+        super(ClassificationObjective, self).__init__(search_space)
 
     @classmethod
     def supported_data_types(cls):

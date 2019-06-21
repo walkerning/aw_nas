@@ -43,6 +43,7 @@ class CNNGenotypeModel(FinalModel):
                  num_classes=10, init_channels=36, stem_multiplier=3,
                  dropout_rate=0.1, dropout_path_rate=0.2,
                  auxiliary_head=False, auxiliary_cfg=None,
+                 use_stem=True, cell_use_preprocess=True, cell_group_kwargs=None,
                  schedule_cfg=None):
         super(CNNGenotypeModel, self).__init__(schedule_cfg)
 
@@ -56,6 +57,9 @@ class CNNGenotypeModel(FinalModel):
         self.num_classes = num_classes
         self.init_channels = init_channels
         self.stem_multiplier = stem_multiplier
+        self.use_stem = use_stem
+        self.cell_use_preprocess = cell_use_preprocess
+        self.cell_group_kwargs = cell_group_kwargs
 
         # training
         self.dropout_rate = dropout_rate
@@ -74,11 +78,14 @@ class CNNGenotypeModel(FinalModel):
                .format(len(self.genotypes), self.search_space.num_cell_groups))
 
         ## initialize sub modules
-        c_stem = self.stem_multiplier * self.init_channels
-        self.stem = nn.Sequential(
-            nn.Conv2d(3, c_stem, 3, padding=1, bias=False),
-            nn.BatchNorm2d(c_stem)
-        )
+        if self.use_stem:
+            c_stem = self.stem_multiplier * self.init_channels
+            self.stem = nn.Sequential(
+                nn.Conv2d(3, c_stem, 3, padding=1, bias=False),
+                nn.BatchNorm2d(c_stem)
+            )
+        else:
+            c_stem = 3
 
         self.cells = nn.ModuleList()
         num_channels = self.init_channels
@@ -92,14 +99,30 @@ class CNNGenotypeModel(FinalModel):
         for i_layer, stride in enumerate(strides):
             if stride > 1:
                 num_channels *= stride
+            if cell_group_kwargs is not None:
+                # support passing in different kwargs when instantializing
+                # cell class for different cell groups
+                kwargs = {k: v for k, v in cell_group_kwargs[self._cell_layout[i_layer]]}
+            else:
+                kwargs = {}
             cg_idx = self.search_space.cell_layout[i_layer]
+            # A patch: Can specificy input/output channels by hand in configuration,
+            # instead of relying on the default
+            # "whenever stride/2, channelx2 and mapping with preprocess operations" assumption
+            _num_channels = num_channels if "C_in" not in kwargs \
+                            else kwargs.pop("C_in")
+            _num_out_channels = num_channels if "C_out" not in kwargs \
+                                else kwargs.pop("C_out")
             cell = CNNGenotypeCell(self.search_space,
                                    self.genotypes[cg_idx],
                                    layer_index=i_layer,
-                                   num_channels=num_channels,
+                                   num_channels=_num_channels,
+                                   num_out_channels=_num_out_channels,
                                    prev_num_channels=tuple(prev_num_channels),
                                    stride=stride,
-                                   prev_strides=[1] * self._num_init + strides[:i_layer])
+                                   prev_strides=[1] * self._num_init + strides[:i_layer],
+                                   use_preprocess=cell_use_preprocess,
+                                   **kwargs)
             prev_num_channels.append(num_channels * self._out_multiplier)
             prev_num_channels = prev_num_channels[1:]
             self.cells.append(cell)
@@ -119,7 +142,12 @@ class CNNGenotypeModel(FinalModel):
         self.to(self.device)
 
     def forward(self, inputs): #pylint: disable=arguments-differ
-        states = [self.stem(inputs) for _ in range(self._num_init)]
+        if self.use_stem:
+            stemed = self.stem(inputs)
+        else:
+            stemed = inputs
+        states = [stemed] * self._num_init
+
         for layer_idx, cell in enumerate(self.cells):
             states.append(cell(states, self.dropout_path_rate))
             states = states[1:]
@@ -142,15 +170,18 @@ class CNNGenotypeModel(FinalModel):
         return self._cell_layout[layer_idx] in self._reduce_cgs
 
 class CNNGenotypeCell(nn.Module):
-    def __init__(self, search_space, genotype, layer_index, num_channels,
-                 prev_num_channels, stride, prev_strides):
+    def __init__(self, search_space, genotype, layer_index, num_channels, num_out_channels,
+                 prev_num_channels, stride, prev_strides, use_preprocess, **op_kwargs):
         super(CNNGenotypeCell, self).__init__()
         self.search_space = search_space
         self.genotype = genotype
         self.stride = stride
         self.is_reduce = stride != 1
         self.num_channels = num_channels
+        self.num_out_channels = num_out_channels
         self.layer_index = layer_index
+        self.use_preprocess = use_preprocess
+        self.op_kwargs = op_kwargs
 
         self._steps = self.search_space.num_steps
         self._num_init = self.search_space.num_init_nodes
@@ -161,6 +192,10 @@ class CNNGenotypeCell(nn.Module):
         prev_strides.insert(0, 1)
         prev_strides = reversed(prev_strides[:len(prev_num_channels)])
         for prev_c, prev_s in zip(prev_num_channels, prev_strides):
+            if not self.use_preprocess:
+                # stride/channel not handled!
+                self.preprocess_ops.append(ops.Identity())
+                continue
             if prev_s > 1:
                 # need skip connection, and is not the connection from the input image
                 preprocess = ops.FactorizedReduce(C_in=prev_c,
@@ -180,7 +215,7 @@ class CNNGenotypeCell(nn.Module):
         self.edges = nn.ModuleList()
         for op_type, from_, _ in self.genotype:
             stride = self.stride if from_ < self._num_init else 1
-            op = ops.get_op(op_type)(num_channels, stride, True)
+            op = ops.get_op(op_type)(num_channels, num_out_channels, stride, True, **op_kwargs)
             self.edges.append(op)
 
     def forward(self, inputs, dropout_path_rate): #pylint: disable=arguments-differ
