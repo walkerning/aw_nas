@@ -6,6 +6,7 @@ import sys
 import time
 import shutil
 import inspect
+import functools
 import collections
 from collections import OrderedDict
 from contextlib import contextmanager
@@ -40,6 +41,15 @@ def get_awnas_dir(env, name):
         # if not in environment variable, return the default
         dir_ = os.path.join(_HOME_DIR, name)
     return makedir(dir_)
+
+def flatten_list(lst):
+    return functools.reduce(lambda s, l: s + list(l) \
+                            if isinstance(l, (tuple, list)) else s + [l],
+                            lst, [])
+
+def recur_apply(func, lst, depth=0):
+    return [recur_apply(func, item, depth-1) if isinstance(item, (tuple, list)) and depth > 0 \
+            else func(item) for item in lst]
 
 class Ticker(object):
     def __init__(self, name):

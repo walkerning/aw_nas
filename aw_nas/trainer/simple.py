@@ -53,6 +53,9 @@ class SimpleTrainer(BaseTrainer):
                  controller_samples=1,
                  derive_samples=8,
 
+                 # >1 only work for differentiable rollout now
+                 rollout_batch_size=1,
+
                  # alternative training config
                  evaluator_steps=None,
                  controller_steps=None,
@@ -84,6 +87,8 @@ class SimpleTrainer(BaseTrainer):
 
         self.controller_samples = controller_samples
         self.derive_samples = derive_samples
+
+        self.rollout_batch_size = rollout_batch_size
 
         self.evaluator_steps = evaluator_steps
         self.controller_steps = controller_steps
@@ -167,7 +172,7 @@ class SimpleTrainer(BaseTrainer):
                           finished_c_steps+i_cont, self.controller_steps),
                   end="")
 
-            rollouts = self.controller.sample(self.controller_samples)
+            rollouts = self.controller.sample(self.controller_samples, self.rollout_batch_size)
             if self.rollout_type == "differentiable":
                 self.controller.zero_grad()
 

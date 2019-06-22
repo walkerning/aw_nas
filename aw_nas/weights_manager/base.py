@@ -138,14 +138,15 @@ class CandidateNet(nn.Module):
                      if v.grad is not None]
 
         if eval_criterions:
-            eval_res = [c(outputs, targets) for c in eval_criterions]
+            eval_res = utils.flatten_list([c(outputs, targets) for c in eval_criterions])
             return grads, eval_res
         return grads
 
     def train_queue(self, queue, optimizer, criterion=nn.CrossEntropyLoss(),
                     eval_criterions=None, steps=1, **kwargs):
-        if not steps:
-            return [None] * len(eval_criterions or [])
+        assert steps > 0
+        # if not steps:
+        #     return [None] * len(eval_criterions or [])
 
         self._set_mode("train")
 
@@ -157,11 +158,11 @@ class CandidateNet(nn.Module):
             outputs = self.forward_data(*data, **kwargs)
             loss = criterion(outputs, targets)
             if eval_criterions:
-                ans = [c(outputs, targets) for c in eval_criterions]
+                ans = utils.flatten_list([c(outputs, targets) for c in eval_criterions])
                 if average_ans is None:
                     average_ans = ans
                 else:
-                    average_ans = [s + x for s, x in zip(average_ans, ans)]
+                    average_ans = [s + a for s, a in zip(average_ans, ans)]
             self.zero_grad()
             loss.backward()
             optimizer.step()
@@ -180,11 +181,11 @@ class CandidateNet(nn.Module):
                 # print("{}/{}\r".format(i, steps), end="")
                 data = (data[0].to(self.get_device()), data[1].to(self.get_device()))
                 outputs = self.forward_data(data[0], **kwargs)
-                ans = [c(outputs, data[1]) for c in criterions]
+                ans = utils.flatten_list([c(outputs, data[1]) for c in criterions])
                 if average_ans is None:
                     average_ans = ans
                 else:
-                    average_ans = [s + x for s, x in zip(average_ans, ans)]
+                    average_ans = [s + a for s, a in zip(average_ans, ans)]
         return [s / steps for s in average_ans]
 
     def eval_data(self, data, criterions, mode="eval", **kwargs):
@@ -196,4 +197,4 @@ class CandidateNet(nn.Module):
 
         with torch.no_grad():
             outputs = self.forward_data(data[0], **kwargs)
-            return [c(outputs, data[1]) for c in criterions]
+            return utils.flatten_list([c(outputs, data[1]) for c in criterions])

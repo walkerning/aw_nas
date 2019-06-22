@@ -1,0 +1,160 @@
+rollout_type: differentiable
+## ---- Component search_space ----
+# ---- Type cnn ----
+search_space_type: cnn
+search_space_cfg:
+   # Schedulable attributes: 
+   num_cell_groups: 5
+   num_layers: 5
+   cell_layout: [0, 1, 2, 3, 4]
+   reduce_cell_groups: [0, 1, 2, 3, 4]
+   num_steps: 1
+   num_init_nodes: 1
+   num_node_inputs: 1
+   shared_primitives:
+   - block_0
+   - block_1
+   - block_2
+   - block_3
+   - block_4
+   - block_5
+   - block_6
+   - block_7
+   - block_8
+   cell_shared_primitives: [[block_3, block_4], [block_0, block_1, block_2, block_3, block_4, block_5, block_6, block_8], [block_1, block_3], [block_1, block_2, block_3, block_4, block_5, block_7, block_8], [block_0, block_3, block_4, block_6, block_7]]
+# ---- End Type cnn ----
+## ---- End Component search_space ----
+
+## ---- Component dataset ----
+# ---- Type cifar10 ----
+dataset_type: cifar10
+dataset_cfg:
+  # Schedulable attributes: 
+  cutout: null
+# ---- End Type cifar10 ----
+## ---- End Component dataset ----
+
+## ---- Component controller ----
+# ---- Type differentiable ----
+controller_type: differentiable
+controller_cfg:
+  # Schedulable attributes: gumbel_temperature, entropy_coeff, force_uniform
+  rollout_type: differentiable
+  use_prob: false
+  gumbel_hard: false
+  gumbel_temperature: 5.0
+  entropy_coeff: 0.0
+  max_grad_norm: null
+  force_uniform: true
+  schedule_cfg:
+    gumbel_temperature:
+      type: mul
+      every: 1
+      step: 0.956
+      start: 5.0
+      start_epoch: 10
+    force_uniform:
+      type: value
+      boundary: [1, 10]
+      value: [true, false]
+# ---- End Type differentiable ----
+## ---- End Component controller ----
+
+## ---- Component evaluator ----
+# ---- Type mepa ----
+evaluator_type: mepa
+evaluator_cfg:
+  # Schedulable attributes: controller_surrogate_steps, mepa_surrogate_steps, mepa_samples
+  rollout_type: differentiable
+  batch_size: 256
+  controller_surrogate_steps: 0
+  mepa_surrogate_steps: 0
+  mepa_optimizer:
+    lr: 0.1
+    momentum: 0.9
+    type: SGD
+    weight_decay: 0.0001
+  mepa_scheduler:
+    type: CosineDecayLR
+    T_max: 400
+    alpha: 1.e-4
+    warmup_step: 100
+    t_mul: 1.5
+    lr_mul: 0.98
+  surrogate_optimizer: null
+  surrogate_scheduler: null
+  schedule_every_batch: true
+  mepa_samples: 1
+  rollout_batch_size: 256
+  data_portion:
+  - 0.0
+  - 0.8
+  - 0.2
+  mepa_as_surrogate: false
+  bptt_steps: 35
+  schedule_cfg: null
+# ---- End Type mepa ----
+## ---- End Component evaluator ----
+
+## ---- Component weights_manager ----
+# ---- Type diff_supernet ----
+weights_manager_type: fb_diff_supernet
+weights_manager_cfg:
+  # Schedulable attributes: 
+  rollout_type: differentiable
+  num_classes: 10
+  init_channels: 64
+  stem_multiplier: 1
+  max_grad_norm: null
+  dropout_rate: 0.0
+  use_stem: false
+  cell_use_preprocess: false
+  cell_group_kwargs:
+  - C_in: 3
+    C_out: 16
+  - C_in: 16
+    C_out: 32
+  - C_in: 32
+    C_out: 64
+  - C_in: 64
+    C_out: 128
+  - C_in: 128
+    C_out: 256
+  candidate_virtual_parameter_only: true
+# ---- End Type diff_supernet ----
+## ---- End Component weights_manager ----
+
+## ---- Component objective ----
+# # ---- Type latency ----
+objective_type: latency
+objective_cfg:
+  # Schedulable attributes: 
+  latency_file: speed.txt
+# ---- End Type latency ----
+## ---- End Component objective ----
+
+## ---- Component trainer ----
+# ---- Type simple ----
+trainer_type: simple
+trainer_cfg:
+  # Schedulable attributes: controller_samples, derive_samples
+  rollout_type: differentiable
+  epochs: 90
+  test_every: 10
+  controller_optimizer:
+    lr: 0.01
+    type: Adam
+    betas: [0.9, 0.999]
+    weight_decay: 5.e-4
+  rollout_batch_size: 256
+  controller_scheduler: null
+  controller_samples: 1
+  derive_samples: 10
+  evaluator_steps: null
+  controller_steps: null
+  controller_train_every: 1
+  controller_train_begin: 10
+  interleave_controller_every: null
+  schedule_cfg: null
+# ---- End Type simple ----
+## ---- End Component trainer ----

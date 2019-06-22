@@ -108,13 +108,22 @@ class DiffSharedCell(SharedCell):
             new_state = sum(act_lst)
             offset += len(states)
             states.append(new_state)
-
         return torch.cat(states[-self.search_space.num_steps:], dim=1)
 
 
 class DiffSharedOp(SharedOp):
     def forward(self, x, weights, detach_arch=True): #pylint: disable=arguments-differ
+        if weights.ndimension() == 2:
+            # weights: (batch_size, num_op)
+            if not weights.shape[0] == x.shape[0]:
+                # every `x.shape[0] % weights.shape[0]` data use the same sampled arch weights
+                assert x.shape[0] % weights.shape[0] == 0
+                weights = weights.repeat(x.shape[0] // weights.shape[0], 1)
+            return sum([weights[:, i].reshape(-1, 1, 1, 1) * op(x)
+                        for i, op in enumerate(self.p_ops)])
+
         out_act = 0.
+        # weights: (num_op)
         for w, op in zip(weights, self.p_ops):
             if detach_arch and w.item() == 0:
                 continue

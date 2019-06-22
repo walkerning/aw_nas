@@ -15,15 +15,17 @@ class ClassificationObjective(BaseObjective):
     def supported_data_types(cls):
         return ["image"]
 
-    @classmethod
-    def perf_name(cls):
-        return "acc"
+    def perf_names(self):
+        return ["acc"]
 
-    def get_perf(self, inputs, targets, cand_net):
+    def get_perfs(self, inputs, targets, cand_net):
         """
         Get top-1 acc.
         """
-        return float(accuracy(inputs, targets)[0]) / 100
+        return [float(accuracy(inputs, targets)[0]) / 100]
+
+    def get_reward(self, inputs, targets, cand_net):
+        return self.get_perfs(inputs, targets, cand_net)[0]
 
     def get_loss(self, inputs, targets, cand_net,
                  add_controller_regularization=True, add_evaluator_regularization=True):

@@ -38,7 +38,7 @@ class BaseController(Component):
         """Set the device, do neccesary copy"""
 
     @abc.abstractmethod
-    def sample(self, n):
+    def sample(self, n, batch_size):
         """Sample a architecture rollout, which can be used to assemble an architecture.
 
         Returns:

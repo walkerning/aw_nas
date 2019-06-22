@@ -18,16 +18,18 @@ class LanguageObjective(BaseObjective):
     def supported_data_types(cls):
         return ["sequence"]
 
-    @classmethod
-    def perf_name(cls):
-        return "perp"
+    def perf_name(self):
+        return ["perp"]
 
-    def get_perf(self, inputs, targets, cand_net):
+    def get_perfs(self, inputs, targets, cand_net):
         """
         Get perplexity.
         """
-        return np.exp(self.get_loss_item(inputs, targets, cand_net,
-                                         add_evaluator_regularization=False))
+        return [np.exp(self.get_loss_item(inputs, targets, cand_net,
+                                          add_evaluator_regularization=False))]
+
+    def get_reward(self, inputs, targets, cand_net):
+        return self.reward_c / self.get_perfs(inputs, targets, cand_net)[0]
 
     def get_loss(self, inputs, targets, cand_net,
                  add_controller_regularization=True, add_evaluator_regularization=True):
@@ -48,6 +50,3 @@ class LanguageObjective(BaseObjective):
         if self.slowness_reg > 0: # slowness regularization
             loss += self.slowness_reg * (raw_outs[1:] - raw_outs[:-1]).pow(2).mean()
         return loss
-
-    def get_reward(self, inputs, targets, cand_net):
-        return self.reward_c / self.get_perf(inputs, targets, cand_net)

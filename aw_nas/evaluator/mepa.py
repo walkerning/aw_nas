@@ -58,10 +58,13 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
                 "factor": 2.0
             },
             surrogate_optimizer={"type": "SGD", "lr": 0.001}, surrogate_scheduler=None,
+            schedule_every_batch=False,
             # mepa samples for `update_evaluator`
             mepa_samples=1,
             # data queue configs: (surrogate, mepa, controller)
             data_portion=(0.1, 0.4, 0.5), mepa_as_surrogate=False,
+            # only work for differentiable controller now
+            rollout_batch_size=1,
             # only for rnn data
             bptt_steps=35,
             schedule_cfg=None):
@@ -85,6 +88,8 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
         self.data_portion = data_portion
         self.mepa_as_surrogate = mepa_as_surrogate
         self.mepa_samples = mepa_samples
+        self.rollout_batch_size = rollout_batch_size
+        self.schedule_every_batch = schedule_every_batch
 
         # rnn specific configs
         self.bptt_steps = bptt_steps
@@ -131,6 +136,9 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
 
         # for report surrogate loss
         self.epoch_average_meters = defaultdict(utils.AverageMeter)
+
+        # evaluator update steps
+        self.step = 0
 
     # ---- APIs ----
     @classmethod
@@ -228,7 +236,9 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
                 res = self._run_surrogate_steps(eval_func, cand_net,
                                                 self.controller_surrogate_steps,
                                                 phase="controller_test")
-                rollout.set_perfs(OrderedDict(zip(["reward", self._perf_name, "loss"], res)))
+                rollout.set_perfs(OrderedDict(zip(
+                    utils.flatten_list(["reward", "loss", self._perf_names]),
+                    res))) # res is already flattend
         return rollouts
 
     def update_rollouts(self, rollouts):
@@ -248,7 +258,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
         report_stats = []
         for _ in range(self.mepa_samples):
             # sample rollout
-            rollout = controller.sample()[0]
+            rollout = controller.sample(batch_size=self.rollout_batch_size)[0]
 
             # assemble candidate net
             cand_net = self.weights_manager.assemble_candidate(rollout)
@@ -271,13 +281,19 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
 
             # run surrogate steps and evalaute on queue
             gradients, res = self._run_surrogate_steps(gradient_func, cand_net,
-                                                       self.controller_surrogate_steps,
+                                                       self.mepa_surrogate_steps,
                                                        phase="mepa_update")
+
             if not self.mepa_step_current:
                 for n, g_v in gradients:
                     all_gradients[n] += g_v
                     counts[n] += 1
             report_stats.append(res)
+
+        if self.schedule_every_batch:
+            # schedule learning rate every evaluator step
+            self._scheduler_step(self.step)
+        self.step += 1
 
         # average the gradients and update the meta parameters
         if not self.mepa_step_current:
@@ -288,23 +304,20 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
             self.weights_manager.step_current_gradients(self.mepa_optimizer)
 
         del all_gradients
-        return OrderedDict(zip(["reward", self._perf_name, "loss"], np.mean(report_stats, axis=0)))
+        return OrderedDict(zip(
+            utils.flatten_list(["reward", "loss", self._perf_names]),
+            np.mean(report_stats, axis=0)))
 
     def on_epoch_start(self, epoch):
         super(MepaEvaluator, self).on_epoch_start(epoch)
         self.weights_manager.on_epoch_start(epoch)
         self.objective.on_epoch_start(epoch)
 
-        # scheduler epoch is 0-based, epoch of aw_nas components is 1-based
-        lr_str = ""
-        if self.mepa_scheduler is not None:
-            self.mepa_scheduler.step(epoch-1)
-            lr_str += "mepa LR: {:.5f}; ".format(self.mepa_scheduler.get_lr()[0])
-        if self.surrogate_scheduler is not None:
-            self.surrogate_scheduler.step(epoch-1)
-            lr_str += "surrogate LR: {:.5f};".format(self.surrogate_scheduler.get_lr()[0])
-        if lr_str:
-            self.logger.info("Epoch %3d: %s", epoch, lr_str)
+        if not self.schedule_every_batch:
+            # scheduler step is 0-based, epoch of aw_nas components is 1-based
+            self._scheduler_step(epoch - 1, log=True)
+        else:
+            self._scheduler_step(self.step, log=True)
 
     def on_epoch_end(self, epoch):
         super(MepaEvaluator, self).on_epoch_end(epoch)
@@ -317,7 +330,6 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
 
         for name, meter in six.iteritems(self.epoch_average_meters):
             if not meter.is_empty():
-
                 self.writer.add_scalar(name, meter.avg, epoch)
 
         # optionally write tensorboard info
@@ -342,6 +354,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
                 scheduler_states[compo_name] = scheduler.state_dict()
         state_dict = {
             "epoch": self.epoch,
+            "step": self.step,
             "weights_manager": self.weights_manager.state_dict(),
             "optimizers": optimizer_states,
             "schedulers": scheduler_states
@@ -377,6 +390,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
                 scheduler.load_state_dict(scheduler_states[compo_name])
 
         # call `on_epoch_start` for scheduled values
+        self.step = checkpoint["step"]
         self.on_epoch_start(checkpoint["epoch"])
 
     # ---- helper methods ----
@@ -424,16 +438,19 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
             self._reward_kwargs = {"detach_arch": False}
             self._scalar_reward_func = lambda *args, **kwargs: \
                 utils.get_numpy(self._reward_func(*args, **kwargs))
-        self._perf_name = self.objective.perf_name()
+        self._perf_names = self.objective.perf_names()
         # criterion funcs for meta parameter training
         self._mepa_loss_func = partial(self.objective.get_loss,
                                        add_controller_regularization=False,
                                        add_evaluator_regularization=True)
         # criterion funcs for log/report
-        self._report_loss_funcs = [self.objective.get_perf,
-                                   partial(self.objective.get_loss_item,
+        self._report_loss_funcs = [partial(self.objective.get_loss_item,
                                            add_controller_regularization=False,
-                                           add_evaluator_regularization=False)]
+                                           add_evaluator_regularization=False),
+                                   self.objective.get_perfs]
+        self._criterions_related_attrs = ["_reward_func", "_reward_kwargs", "_scalar_reward_func",
+                                          "_reward_kwargs", "_perf_names", "_mepa_loss_func",
+                                          "_report_loss_funcs"]
 
     def _init_data_queues_and_hidden(self, data_type, data_portion, mepa_as_surrogate):
         self._dataset_related_attrs = []
@@ -465,7 +482,8 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
 
         self.surrogate_queue, self.mepa_queue, self.controller_queue\
             = utils.prepare_data_queues(self.dataset.splits(), queue_cfgs,
-                                        data_type=self._data_type)
+                                        data_type=self._data_type,
+                                        drop_last=self.rollout_batch_size > 1)
         if mepa_as_surrogate:
             # use mepa data queue as surrogate data queue
             self.surrogate_queue = self.mepa_queue
@@ -484,11 +502,24 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
             criterions=criterions,
             mode="train",
             **kwargs)
-        rollout.set_perfs(OrderedDict(zip(["reward", self._perf_name, "loss"], res)))
+        rollout.set_perfs(OrderedDict(zip(
+            utils.flatten_list(["reward", "loss", self._perf_names]),
+            res)))
         callback(rollout)
         # set reward to be the scalar
         rollout.set_perf(utils.get_numpy(rollout.get_perf(name="reward")))
         return res
+
+    def _scheduler_step(self, step, log=False):
+        lr_str = ""
+        if self.mepa_scheduler is not None:
+            self.mepa_scheduler.step(step)
+            lr_str += "mepa LR: {:.5f}; ".format(self.mepa_scheduler.get_lr()[0])
+        if self.surrogate_scheduler is not None:
+            self.surrogate_scheduler.step(step)
+            lr_str += "surrogate LR: {:.5f};".format(self.surrogate_scheduler.get_lr()[0])
+        if log and lr_str:
+            self.logger.info("Schedule step %3d: %s", step, lr_str)
 
     def set_dataset(self, dataset):
         self.dataset = dataset
@@ -498,6 +529,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
 
     def __setstate__(self, state):
         super(MepaEvaluator, self).__setstate__(state)
+        self._init_criterions(self.rollout_type)
         self.logger.warn("After load the evaluator from a pickle file, the dataset does not "
                          "get loaded automatically, initialize a dataset and call "
                          "`set_dataset(dataset)` ")
@@ -505,7 +537,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
     def __getstate__(self):
         state = super(MepaEvaluator, self).__getstate__()
         del state["dataset"]
-        for attr_name in self._dataset_related_attrs:
+        for attr_name in self._dataset_related_attrs + self._criterions_related_attrs:
             if attr_name in state:
                 del state[attr_name]
         return state

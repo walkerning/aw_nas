@@ -5,8 +5,8 @@ import pytest
 
 
 # ---- Test super_net ----
-def _cnn_data(device="cuda"):
-    return (torch.rand(2, 3, 28, 28, dtype=torch.float, device=device),
+def _cnn_data(device="cuda", batch_size=2):
+    return (torch.rand(batch_size, 3, 28, 28, dtype=torch.float, device=device),
             torch.tensor([0, 1]).long().to(device))
 
 def _supernet_sample_cand(net):
@@ -193,4 +193,18 @@ def test_diff_supernet_to_arch(diff_super_net):
     assert controller.cg_alphas[0].grad is None
     loss.backward()
     assert controller.cg_alphas[0].grad is not None
+
+def test_diff_supernet_forward_rollout_batch_size(diff_super_net):
+    from aw_nas.common import get_search_space
+    from aw_nas.controller import DiffController
+
+    search_space = get_search_space(cls="cnn")
+    device = "cuda"
+    controller = DiffController(search_space, device)
+    rollout = controller.sample(1, batch_size=3)[0]
+    cand_net = diff_super_net.assemble_candidate(rollout)
+
+    data = _cnn_data(batch_size=6)
+    logits = cand_net.forward_data(data[0])
+    assert tuple(logits.shape) == (6, 10)
 # ---- End test diff_super_net ----

@@ -131,7 +131,7 @@ def test_diff_controller_force_uniform():
 
     search_space = get_search_space(cls="cnn")
     device = "cuda"
-    controller = DiffController(search_space, device, force_uniform=True)
+    controller = DiffController(search_space, device, force_uniform=True, use_prob=True)
 
     rollouts = controller.sample(1)
     assert np.equal(rollouts[0].sampled[0].data, 1./len(search_space.shared_primitives) * \
@@ -162,4 +162,17 @@ def test_diff_controller_cellwise_primitives():
     assert set([conn[0] for conn in rollout.genotype.reduce_1]).issubset(["avg_pool_3x3",
                                                                           "dil_conv_3x3",
                                                                           "skip_connect"])
+    print(rollout.genotype)
+
+def test_diff_controller_rollout_batch_size():
+    import numpy as np
+    from aw_nas.controller import DiffController
+
+    search_space = get_search_space(cls="cnn")
+    device = "cuda"
+    controller = DiffController(search_space, device)
+
+    rollout = controller.sample(1, batch_size=4)[0]
+    assert rollout.sampled[0].shape == (14, 4, len(search_space.shared_primitives))
+    assert rollout.logits[0].shape == (14, len(search_space.shared_primitives))
     print(rollout.genotype)

@@ -242,7 +242,7 @@ class DiscreteSharedCell(SharedCell):
                 state_to_ = state_to_ + out
             states.append(state_to_)
 
-        return torch.cat(states[self._num_init:], dim=1)
+        return torch.cat(states[-self.search_space.num_steps:], dim=1)
 
     def forward_one_step(self, context, genotype):
         to_ = cur_step = context.next_step_index[1]

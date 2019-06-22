@@ -129,7 +129,7 @@ class InfIterator(six.Iterator):
 def get_inf_iterator(iterable, callback):
     return InfIterator(iterable, [callback])
 
-def prepare_data_queues(splits, queue_cfg_lst, data_type="image"):
+def prepare_data_queues(splits, queue_cfg_lst, data_type="image", drop_last=False):
     """
     Further partition the dataset splits, prepare different data queues.
 
@@ -161,7 +161,8 @@ def prepare_data_queues(splits, queue_cfg_lst, data_type="image"):
                 "num_workers": 2,
                 "sampler": torch.utils.data.SubsetRandomSampler(
                     list(range(int(size*used_portion),
-                               int(size*(used_portion+portion)))))
+                               int(size*(used_portion+portion))))),
+                "drop_last": drop_last
             }
             queue = get_inf_iterator(torch.utils.data.DataLoader(
                 dset_splits[split], **kwargs), callback)

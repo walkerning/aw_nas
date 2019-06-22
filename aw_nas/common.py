@@ -9,9 +9,10 @@ import six
 
 import numpy as np
 
-from aw_nas import Component
+from aw_nas import Component, utils
 from aw_nas.utils import RegistryMeta, softmax
 from aw_nas.utils.exception import expect, ConfigException
+from aw_nas.utils import logger as _logger
 
 def assert_rollout_type(type_name):
     expect(type_name in BaseRollout.all_classes_(),
@@ -27,6 +28,14 @@ class BaseRollout(object):
 
     def __init__(self):
         self.perf = collections.OrderedDict()
+        self._logger = None
+
+    @property
+    def logger(self):
+        # logger should be a mixin class. but i'll leave it as it is...
+        if self._logger is None:
+            self._logger = _logger.getChild(self.__class__.__name__)
+        return self._logger
 
     @abc.abstractmethod
     def set_candidate_net(self, c_net):
@@ -166,7 +175,16 @@ class DifferentiableRollout(BaseRollout):
     @property
     def discretized_arch_and_prob(self):
         if self._discretized_arch is None:
-            self._discretized_arch, self._edge_probs = self.parse(self.sampled)
+            if self.arch[0].ndimension() == 2:
+                self._discretized_arch, self._edge_probs = self.parse(self.sampled)
+            else:
+                assert self.arch[0].ndimension() == 3
+                self.logger.warn("Rollout batch size > 1, use logits instead of samples"
+                                 "to parse the discretized arch.")
+                # if multiple arch samples per step is used, (2nd dim of sampled/arch is
+                # batch_size dim). use softmax(logits) to parse discretized arch
+                self._discretized_arch, self._edge_probs = \
+                                        self.parse(utils.softmax(utils.get_numpy(self.logits)))
         return self._discretized_arch, self._edge_probs
 
     @property

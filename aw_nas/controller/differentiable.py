@@ -84,7 +84,7 @@ class DiffController(BaseController, nn.Module):
     def forward(self, n=1): #pylint: disable=arguments-differ
         return self.sample(n=n)
 
-    def sample(self, n=1):
+    def sample(self, n=1, batch_size=1):
         rollouts = []
         for _ in range(n):
             arch_list = []
@@ -93,17 +93,26 @@ class DiffController(BaseController, nn.Module):
             for alpha in self.cg_alphas:
                 if self.force_uniform: # cg_alpha parameters will not be in the graph
                     alpha = torch.zeros_like(alpha)
+                if batch_size > 1:
+                    expanded_alpha = alpha.reshape([alpha.shape[0], 1, alpha.shape[1]])\
+                                          .repeat([1, batch_size, 1])\
+                                          .reshape([-1, alpha.shape[-1]])
+                else:
+                    expanded_alpha = alpha
                 if self.use_prob:
                     # probability as sample
-                    sampled = F.softmax(alpha / self.gumbel_temperature, dim=-1)
+                    sampled = F.softmax(expanded_alpha / self.gumbel_temperature, dim=-1)
                 else:
                     # gumbel sampling
-                    sampled, _ = utils.gumbel_softmax(alpha, self.gumbel_temperature,
+                    sampled, _ = utils.gumbel_softmax(expanded_alpha, self.gumbel_temperature,
                                                       hard=False)
                 if self.gumbel_hard:
                     arch = utils.straight_through(sampled)
                 else:
                     arch = sampled
+                if batch_size > 1:
+                    sampled = sampled.reshape([-1, batch_size, arch.shape[-1]])
+                    arch = arch.reshape([-1, batch_size, arch.shape[-1]])
                 arch_list.append(arch)
                 sampled_list.append(utils.get_numpy(sampled))
                 logits_list.append(utils.get_numpy(alpha))

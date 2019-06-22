@@ -16,12 +16,16 @@ class BaseObjective(Component):
     def supported_data_types(cls):
         pass
 
-    @utils.abstractclassmethod
-    def perf_name(cls):
+    @abc.abstractmethod
+    def perf_names(self):
         pass
 
     @abc.abstractmethod
-    def get_perf(self, inputs, targets, cand_net):
+    def get_perfs(self, inputs, targets, cand_net):
+        pass
+
+    @abc.abstractmethod
+    def get_reward(self, inputs, targets, cand_net):
         pass
 
     @abc.abstractmethod
@@ -33,6 +37,3 @@ class BaseObjective(Component):
                       add_controller_regularization=True, add_evaluator_regularization=True):
         return self.get_loss(inputs, targets, cand_net,
                              add_controller_regularization, add_evaluator_regularization).item()
-
-    def get_reward(self, inputs, targets, cand_net):
-        return self.get_perf(inputs, targets, cand_net)

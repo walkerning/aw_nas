@@ -74,7 +74,8 @@ class RLController(BaseController, nn.Module):
     def forward(self, n=1): #pylint: disable=arguments-differ
         return self.sample(n=n)
 
-    def sample(self, n=1):
+    def sample(self, n=1, batch_size=1):
+        assert batch_size == 1, "batch_size must equal 1 for rl controller"
         assert n > 0
         arch_lst = []
         log_probs_lst = []
