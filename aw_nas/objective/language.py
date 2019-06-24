@@ -18,7 +18,7 @@ class LanguageObjective(BaseObjective):
     def supported_data_types(cls):
         return ["sequence"]
 
-    def perf_name(self):
+    def perf_names(self):
         return ["perp"]
 
     def get_perfs(self, inputs, targets, cand_net):

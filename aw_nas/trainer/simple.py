@@ -302,9 +302,17 @@ class SimpleTrainer(BaseTrainer):
 
             # maybe write tensorboard info
             if not self.writer.is_none():
+                if eva_stat_meters:
+                    for n, meter in eva_stat_meters.items():
+                        self.writer.add_scalar("evaluator_update/{}".format(n.replace(" ", "-")),
+                                               meter.avg, epoch)
                 if rollout_stat_meters:
                     for n, meter in rollout_stat_meters.items():
-                        self.writer.add_scalar("{}/controller_update/valid".format(n),
+                        self.writer.add_scalar("controller_update/{}".format(n.replace(" ", "-")),
+                                               meter.avg, epoch)
+                if c_stat_meters:
+                    for n, meter in c_stat_meters.items():
+                        self.writer.add_scalar("controller_stats/{}".format(n.replace(" ", "-")),
                                                meter.avg, epoch)
                 if not c_loss_meter.is_empty():
                     self.writer.add_scalar("controller_loss", c_loss_meter.avg, epoch)

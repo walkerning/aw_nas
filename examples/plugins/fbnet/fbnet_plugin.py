@@ -40,9 +40,9 @@ class WeightInitDiffSuperNet(DiffSuperNet):
         self.apply(weights_init)
 
 class FBNetBlock(nn.Module):
-    def __init__(self, C_in, C_out, kernel_size, stride, expansion, bn=False):
+    def __init__(self, C_in, C_out, kernel_size, stride, expansion, bn=True):
         super(FBNetBlock, self).__init__()
-        assert not bn, "not support bn for now"
+        # assert not bn, "not support bn for now"
         bias_flag = not bn
         if kernel_size == 1:
             padding = 0
@@ -53,18 +53,25 @@ class FBNetBlock(nn.Module):
         elif kernel_size == 7:
             padding = 3
         else:
-            raise ValueError("Not supported kernel_size %d" % kernel_size)   
+            raise ValueError("Not supported kernel_size %d" % kernel_size)
+        inner_dim = int(C_in * expansion)
         self.opa = nn.Sequential(
-          nn.Conv2d(C_in, int(C_in*expansion), 1, stride=1, padding=0, bias=bias_flag),
-          nn.ReLU(inplace=False),
-          nn.Conv2d(int(C_in*expansion), int(C_in*expansion), kernel_size, stride=stride, padding=padding, bias=bias_flag),
-          nn.ReLU(inplace=False),
-          nn.Conv2d(int(C_in*expansion), C_out, 1, stride=1, padding=0, bias=bias_flag),
-          )
+            nn.Conv2d(C_in, inner_dim, 1, stride=1, padding=0, bias=bias_flag),
+            nn.BatchNorm2d(inner_dim),
+            nn.ReLU(inplace=False),
+            nn.Conv2d(inner_dim, inner_dim, kernel_size, stride=stride,
+                      padding=padding, bias=bias_flag),
+            nn.BatchNorm2d(inner_dim),
+            nn.ReLU(inplace=False),
+            nn.Conv2d(inner_dim, C_out, 1, stride=1, padding=0, bias=bias_flag),
+            nn.BatchNorm2d(C_out),
+        )
         self.opb = nn.Sequential(
           nn.Conv2d(C_in, C_in, kernel_size, stride=stride, padding=padding, bias=bias_flag),
+          nn.BatchNorm2d(C_in),
           nn.ReLU(inplace=False),
           nn.Conv2d(C_in, C_out, 1, stride=1, padding=0, bias=bias_flag),
+          nn.BatchNorm2d(C_out),
           )
         self.relus = nn.ReLU(inplace=False)
   
@@ -171,6 +178,10 @@ class LatencyObjective(BaseObjective):
             for lat_line in lat_lines:
                 lat_line = lat_line.rstrip()
                 self.latency_lut.append([float(x) for x in lat_line.split()])
+        self._min_lat = sum([min(lat) for lat in self.latency_lut])
+        self._max_lat = sum([max(lat) for lat in self.latency_lut])
+        self.logger.info("Min possible latency: %.3f; Max possible latency: %.3f",
+                         self._min_lat, self._max_lat)
 
     @classmethod
     def supported_data_types(cls):
@@ -182,24 +193,32 @@ class LatencyObjective(BaseObjective):
     def get_perfs(self, inputs, targets, cand_net):
         acc = float(accuracy(inputs, targets)[0]) / 100
         total_latency = 0.
-        for i_layer, arch in enumerate(cand_net.arch):
-            latency = (arch[0] * \
-                       torch.Tensor(self.latency_lut[i_layer]).to(arch.device)).sum().item()
-            if arch[0].ndimension() == 2:
-                latency /= arch[0].shape[0]
-            total_latency += latency
-        return [acc, latency]
+        ss = self.search_space
+        if cand_net.super_net.rollout_type == "discrete":
+            for i_layer, geno in enumerate(cand_net.genotypes):
+                prim = geno[0][0]
+                prims = ss.cell_shared_primitives[ss.cell_layout[i_layer]]
+                total_latency += float(self.latency_lut[i_layer][prims.index(prim)])
+        else:
+            for i_layer, arch in enumerate(cand_net.arch):
+                latency = (arch[0] * \
+                           torch.Tensor(self.latency_lut[i_layer]).to(arch.device)).sum().item()
+                if arch[0].ndimension() == 2:
+                    latency /= arch[0].shape[0]
+                total_latency += latency
+        return [acc, total_latency]
 
     def get_reward(self, inputs, targets, cand_net):
         acc = float(accuracy(inputs, targets)[0]) / 100
         if self.lamb is not None:
             latency_penalty = 0.
             ss = self.search_space
-            for i_layer, geno in enumerate(cand_net.rollout.genotype_list()):
-                prim = geno[1][0][0]
+            for i_layer, geno in enumerate(cand_net.genotypes):
+                prim = geno[0][0]
                 prims = ss.cell_shared_primitives[ss.cell_layout[i_layer]]
                 latency_penalty += float(self.latency_lut[i_layer][prims.index(prim)])
-            return self.lamb * acc / latency_penalty
+            # return acc  + float(self.lamb) / (latency_penalty - self._min_lat + 1.)
+            return acc  + float(self.lamb) * (1. / latency_penalty - 1. / self._max_lat)
         return acc
 
     def get_loss(self, inputs, targets, cand_net,

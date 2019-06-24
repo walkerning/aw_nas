@@ -213,12 +213,12 @@ class SearchSpace(Component):
     # namedtuple defined not at the module top level is unpicklable
     # remove it from the states
     def __getstate__(self):
-        state = self.__dict__.copy()
+        state = super(SearchSpace, self).__getstate__().copy()
         del state["genotype_type"]
         return state
 
     def __setstate__(self, state):
-        self.__dict__.update(state)
+        super(SearchSpace, self).__setstate__(state)
         self.genotype_type = collections.namedtuple(self.genotype_type_name, self.cell_group_names)
 
     @abc.abstractmethod
