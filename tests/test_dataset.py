@@ -33,3 +33,9 @@ def test_infinite_get_callback():
     _ = next(queue) # should trigger callback
     assert all((hid == 0).all() for hid in hiddens), "hiddens should be reset"
     assert all(id_ == id(hid) for id_, hid in zip(ids, hiddens)), "hiddens should be reset in-place"
+
+@pytest.mark.skipif(not AWNAS_TEST_SLOW, reason="parse dataset might be slow, by default not test")
+def test_imagenet_sample_class():
+    from aw_nas.dataset import BaseDataset
+    dataset = BaseDataset.get_class_("imagenet")(load_train_only=True, num_sample_classes=20, random_choose=True)
+    assert len(dataset.choosen_classes) == 20
