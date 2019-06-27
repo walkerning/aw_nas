@@ -522,12 +522,13 @@ def train(gpus, seed, cfg_file, load, save_every, train_dir):
                                 device=device)
     # check model support for data type
     expect(_data_type in model.supported_data_types())
-
+    objective = _init_component(cfg, "objective", search_space=search_space)
     trainer = _init_component(cfg, "final_trainer",
                               dataset=whole_dataset,
                               model=model,
                               device=device,
-                              gpus=gpu_list)
+                              gpus=gpu_list,
+                              objective=objective)
     # check trainer support for data type
     expect(_data_type in trainer.supported_data_types())
 
@@ -575,12 +576,13 @@ def test(cfg_file, load, split, gpus, seed): #pylint: disable=redefined-builtin
     # initialize components
     LOGGER.info("Initializing components.")
     whole_dataset = _init_component(cfg, "dataset")
-
+    objective = _init_component(cfg, "objective", search_space=search_space)
     trainer = _init_component(cfg, "final_trainer",
                               dataset=whole_dataset,
                               model=None,
                               device=device,
-                              gpus=gpu_list)
+                              gpus=gpu_list,
+                              objective=objective)
 
     # check trainer support for data type
     _data_type = whole_dataset.data_type()

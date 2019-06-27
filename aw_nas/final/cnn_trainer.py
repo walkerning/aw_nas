@@ -21,7 +21,7 @@ def _warmup_update_lr(optimizer, epoch, init_lr, warmup_epochs):
 class CNNFinalTrainer(FinalTrainer):
     NAME = "cnn_trainer"
 
-    def __init__(self, model, dataset, device, gpus, #pylint: disable=dangerous-default-value
+    def __init__(self, model, dataset, device, gpus, objective,#pylint: disable=dangerous-default-value
                  epochs=600, batch_size=96,
                  learning_rate=0.025, momentum=0.9,
                  warmup_epochs=0,
@@ -40,6 +40,9 @@ class CNNFinalTrainer(FinalTrainer):
         self.dataset = dataset
         self.device = device
         self.gpus = gpus
+        self.objective = objective
+        self._perf_func = self.objective.get_perfs
+        self._perf_names = self.objective.perf_names()
 
         self.epochs = epochs
         self.warmup_epochs = warmup_epochs
@@ -139,6 +142,7 @@ class CNNFinalTrainer(FinalTrainer):
         for epoch in range(self.last_epoch+1, self.epochs+1):
             self.epoch = epoch
             self.on_epoch_start(epoch)
+
             if epoch < self.warmup_epochs:
                 _warmup_update_lr(self.optimizer, epoch, self.learning_rate, self.warmup_epochs)
             else:
@@ -150,9 +154,11 @@ class CNNFinalTrainer(FinalTrainer):
                                                     self.device, epoch)
             self.logger.info('train_acc %f ; train_obj %f', train_acc, train_obj)
 
-            valid_acc, valid_obj = self.infer_epoch(self.valid_queue, self.parallel_model,
+            valid_acc, valid_obj, valid_perfs = self.infer_epoch(self.valid_queue, self.parallel_model,
                                                     self._criterion, self.device)
-            self.logger.info('valid_acc %f ; valid_obj %f', valid_acc, valid_obj)
+            self.logger.info('valid_acc %f ; valid_obj %f ; valid performances: %s', valid_acc, valid_obj,
+                             "; ".join(
+                                 ["{}: {:.3f}".format(n, v) for n, v in valid_perfs.items()]))
 
             if self.save_every and epoch % self.save_every == 0:
                 path = os.path.join(self.train_dir, str(epoch))
@@ -167,9 +173,11 @@ class CNNFinalTrainer(FinalTrainer):
             queue = self.valid_queue
         else:
             queue = self.train_queue
-        acc, obj = self.infer_epoch(queue, self.parallel_model,
-                                    self._criterion, self.device)
-        self.logger.info('acc %f ; obj %f', acc, obj)
+        acc, obj, perfs = self.infer_epoch(queue, self.parallel_model,
+                                           self._criterion, self.device)
+        self.logger.info('acc %f ; obj %f ; performance: %s', acc, obj,
+                         "; ".join(
+                             ["{}: {:.3f}".format(n, v) for n, v in perfs.items()]))
         return acc, obj
 
     @classmethod
@@ -251,6 +259,7 @@ class CNNFinalTrainer(FinalTrainer):
         objs = utils.AverageMeter()
         top1 = utils.AverageMeter()
         top5 = utils.AverageMeter()
+        objective_perfs = utils.OrderedStats()
         model.eval()
 
         for step, (inputs, target) in enumerate(valid_queue):
@@ -259,7 +268,8 @@ class CNNFinalTrainer(FinalTrainer):
             with torch.no_grad():
                 logits = model(inputs)
                 loss = criterion(logits, target)
-
+                perfs = self._perf_func(inputs, logits, target, model)
+                objective_perfs.update(dict(zip(self._perf_names, perfs)))
                 prec1, prec5 = utils.accuracy(logits, target, topk=(1, 5))
                 n = inputs.size(0)
                 objs.update(loss.item(), n)
@@ -267,9 +277,11 @@ class CNNFinalTrainer(FinalTrainer):
                 top5.update(prec5.item(), n)
 
                 if step % self.report_every == 0:
-                    self.logger.info('valid %03d %e %f %f', step, objs.avg, top1.avg, top5.avg)
+                    self.logger.info('valid %03d %e %f %f %s', step, objs.avg, top1.avg, top5.avg,
+                                     "; ".join(["{}: {:.3f}".format(n, v) \
+                                                for n, v in objective_perfs.avgs().items()]))
 
-        return top1.avg, objs.avg
+        return top1.avg, objs.avg, objective_perfs.avgs()
 
 
     def on_epoch_start(self, epoch):

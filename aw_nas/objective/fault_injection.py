@@ -82,8 +82,8 @@ class FaultInjector(object):
 class FaultInjectionObjective(BaseObjective):
     NAME = "fault_injection"
 
-    def __init__(self, fault_reward_coeff=0.2, inject_prob=0.001):
-        super(FaultInjectionObjective, self).__init__()
+    def __init__(self, search_space, fault_reward_coeff=0.2, inject_prob=0.001):
+        super(FaultInjectionObjective, self).__init__(search_space)
         assert 0. <= fault_reward_coeff <= 1.
         self.injector = FaultInjector()
         self.injector.set_random_inject(inject_prob)
@@ -105,13 +105,11 @@ class FaultInjectionObjective(BaseObjective):
         """
         Get top-1 acc.
         """
-        import pdb
-        pdb.set_trace()
         def inject(state, context):
             if context.is_end_of_cell or context.is_end_of_step:
                 return
             context.last_state = self.injector.inject_gpu(state)
-        cand_net.train()
+        # cand_net.train()
         logits_f = cand_net.forward_one_step_callback(inputs, callback=inject)
         return float(accuracy(logits, targets)[0]) / 100, float(accuracy(logits_f, targets)[0]) / 100
 

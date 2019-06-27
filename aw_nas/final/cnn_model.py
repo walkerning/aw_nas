@@ -53,10 +53,9 @@ class CNNGenotypeModel(FinalModel):
 
         self.search_space = search_space
         self.device = device
-
         assert isinstance(genotypes, str)
-        self.genotypes = list(genotype_from_str(genotypes, self.search_space)._asdict())
-        self.genotypes_grouped = [group_and_sort_by_to_node(g[0]) for g in self.genotypes\
+        self.genotypes = list(genotype_from_str(genotypes, self.search_space)._asdict().items())
+        self.genotypes_grouped = [group_and_sort_by_to_node(g[1]) for g in self.genotypes\
                                   if "concat" not in g[0]]
 
         self.num_classes = num_classes
@@ -204,13 +203,13 @@ class CNNGenotypeModel(FinalModel):
             num_steps = self.search_space.num_steps + self.search_space.num_init_nodes + 1
             for _ in range(num_steps):
                 while True: # call `forward_one_step` until this step ends
-                    step_state, context = self.forward_one_step(context)
+                    step_state, context = self.forward_one_step(context, inputs=None)
                     callback(step_state, context)
                     if context.is_end_of_step:
                         break
             # end of cell (every cell has the same number of num_steps)
         # final forward
-        logits, context = self.forward_one_step(context)
+        logits, context = self.forward_one_step(context, inputs=None)
         callback(logits, context)
         return logits
 
@@ -281,7 +280,7 @@ class CNNGenotypeCell(nn.Module):
             state_to_ = 0.
             for op_type, from_, _ in connections:
                 op = self.edges[from_][to_]
-                out = op(states[from_], op_type)
+                out = op(states[from_])
                 if self.training and dropout_path_rate > 0:
                     if not isinstance(op, ops.Identity):
                         out = utils.drop_path(out, dropout_path_rate)
