@@ -114,6 +114,9 @@ class DilConv(nn.Module):
     def forward(self, x):
         return self.op(x)
 
+    def forward_one_step(self, context=None, inputs=None):
+        return self.op.forward_one_step(context, inputs)
+
 
 class SepConv(nn.Module):
 
@@ -135,6 +138,60 @@ class SepConv(nn.Module):
     def forward(self, x):
         return self.op(x)
 
+    def forward_one_step(self, context=None, inputs=None):
+        return self.op.forward_one_step(context, inputs)
+
+def forward_one_step(self, context=None, inputs=None):
+    #pylint: disable=protected-access
+    assert not context is None
+
+    if not hasattr(self, "_conv_mod_inds"):
+        self._conv_mod_inds = []
+        mods = list(self._modules.values())
+        mod_num = len(mods)
+        for i, mod in enumerate(mods):
+            if isinstance(mod, nn.Conv2d):
+                if i < mod_num - 1 and isinstance(mods[i+1], nn.BatchNorm2d):
+                    self._conv_mod_inds.append(i+1)
+                else:
+                    self._conv_mod_inds.append(i)
+        self._num_convs = len(self._conv_mod_inds)
+
+    if not self._num_convs:
+        return stub_forward_one_step(self, context, inputs)
+
+    _, op_ind = context.next_op_index
+    if inputs is None:
+        inputs = context.current_op[-1]
+    modules_num = len(list(self._modules.values()))
+    if op_ind < self._num_convs:
+        for mod_ind in range(self._conv_mod_inds[op_ind-1]+1 if op_ind > 0 else 0,
+                             self._conv_mod_inds[op_ind]+1):
+            # running from the last point(exclusive) to the #op_ind's point (inclusive)
+            inputs = self._modules[str(mod_ind)](inputs)
+        if op_ind == self._num_convs - 1 and self._conv_mod_inds[-1] + 1 == modules_num:
+            # if the last calculated module is already the last module in the Sequence container
+            context.previous_op.append(inputs)
+            context.current_op = []
+        else:
+            context.current_op.append(inputs)
+    elif op_ind == self._num_convs:
+        for mod_ind in range(self._conv_mod_inds[-1]+1, modules_num):
+            inputs = self._modules[str(mod_ind)](inputs)
+        context.previous_op.append(inputs)
+        context.current_op = []
+    else:
+        assert "ERROR: wrong op index! should not reach here!"
+    return inputs, context
+
+def stub_forward_one_step(self, context=None, inputs=None):
+    assert not inputs is None and not context is None
+    state = self.forward(inputs)
+    context.previous_op.append(state)
+    return state, context
+
+nn.Sequential.forward_one_step = forward_one_step
+nn.Module.forward_one_step = stub_forward_one_step
 
 class Identity(nn.Module):
 

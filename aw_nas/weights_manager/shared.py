@@ -1,24 +1,13 @@
+# -*- coding: utf-8 -*-
+from collections import defaultdict
+
 import numpy as np
 import torch
 from torch import nn
 
 from aw_nas import ops
 from aw_nas.weights_manager.base import BaseWeightsManager
-
-
-class Context(object):
-    def __init__(self, previous_cells=None, current_cell=None):
-        self.previous_cells = previous_cells or []
-        self.current_cell = current_cell or []
-
-    @property
-    def next_step_index(self):
-        return len(self.previous_cells) - 1, len(self.current_cell)
-
-    @property
-    def is_end_of_cell(self):
-        return len(self.current_cell) == 0
-
+from aw_nas.utils.common_utils import Context
 
 class SharedNet(BaseWeightsManager, nn.Module):
     def __init__(self, search_space, device, rollout_type,
@@ -132,10 +121,10 @@ class SharedNet(BaseWeightsManager, nn.Module):
         if inputs is not None:
             if self.use_stem:
                 stemed = self.stem(inputs)
-                context = Context(previous_cells=[stemed], current_cell=[])
-                return stemed, context
             else:
-                context = Context(previous_cells=[inputs], current_cell=[])
+                stemed = inputs
+            context = Context(previous_cells=[stemed], current_cell=[])
+            return stemed, context
 
         cur_cell_ind, _ = context.next_step_index
 
@@ -229,13 +218,15 @@ class SharedCell(nn.Module):
             self.preprocess_ops.append(preprocess)
         assert len(self.preprocess_ops) == self._num_init
 
-        self.edges = nn.ModuleList()
-        for i in range(self._steps):
-            for j in range(i + self._num_init):
-                op = op_cls(self.num_channels, self.num_out_channels,
-                            stride=self.stride if j < self._num_init else 1,
-                            primitives=self._primitives, **op_kwargs)
-                self.edges.append(op)
+        self.edges = defaultdict(dict)
+        self.edge_mod = torch.nn.Module() # a stub wrapping module of all the edges
+        for i_step in range(self._steps):
+            to_ = i_step + self._num_init
+            for from_ in range(to_):
+                self.edges[from_][to_] = op_cls(self.num_channels, self.num_out_channels,
+                                                stride=self.stride if from_ < self._num_init else 1,
+                                                primitives=self._primitives, **op_kwargs)
+                self.edge_mod.add_module("f_{}_t_{}".format(from_, to_), self.edges[from_][to_])
 
 
 class SharedOp(nn.Module):

@@ -57,29 +57,83 @@ def test_supernet_forward(super_net):
     logits = cand_net.forward_data(data[0], mode="eval")
     assert logits.shape[-1] == 10
 
+@pytest.mark.parametrize("super_net", [
+    {
+        "dropout_rate": 0,
+        "search_space_cfg": {
+            "num_steps": 1,
+            "num_layers": 1,
+            "num_cell_groups": 1,
+            "cell_layout": [0],
+            "reduce_cell_groups": [],
+        }
+    }, {
+        "dropout_rate": 0,
+    }], indirect=["super_net"])
 def test_supernet_forward_step(super_net):
     cand_net = _supernet_sample_cand(super_net)
 
     data = _cnn_data()
 
+    ## test in eval mode
     # forward stem
+    cand_net.eval()
     stemed, context = cand_net.forward_one_step(context=None, inputs=data[0])
     assert len(context.previous_cells) == 1 and context.previous_cells[0] is stemed
 
     # forward the cells
-    for i_layer in range(0, super_net.search_space.num_layers):
+    for i_layer in range(1, super_net.search_space.num_layers+1):
         num_steps = super_net.search_space.num_steps + super_net.search_space.num_init_nodes + 1
         for i_step in range(num_steps):
-            step_state, context = cand_net.forward_one_step(context)
+            while True:
+                step_state, context = cand_net.forward_one_step(context)
+                if context.is_end_of_step:
+                    break
             if i_step != num_steps - 1:
-                assert step_state is context.current_cell[-1] and \
-                    len(context.current_cell) == i_step + 1
+                assert step_state is context.current_cell[-1] and len(context.current_cell) == i_step + 1
         assert context.is_end_of_cell
-        assert len(context.previous_cells) == i_layer + 2
+        assert len(context.previous_cells) == i_layer + 1
 
     # final forward
-    logits, _ = cand_net.forward_one_step(context)
+    logits, context = cand_net.forward_one_step(context)
     assert logits.shape[-1] == 10
+
+    logits_straight_forward = cand_net.forward_data(data[0])
+    assert (logits == logits_straight_forward).all()
+
+    logits = cand_net.forward_one_step_callback(data[0], lambda s, c: None)
+    assert (logits == logits_straight_forward).all()
+
+    ## test in train mode
+    cand_net.train()
+    logits_straight_forward = cand_net.forward_data(data[0])
+    logits = cand_net.forward_one_step_callback(data[0], lambda s, c: None)
+    assert (logits == logits_straight_forward).all()
+
+@pytest.mark.parametrize("super_net", [
+    {
+        "search_space_cfg": {
+            "num_steps": 1,
+            "num_layers": 1,
+            "num_cell_groups": 1,
+            "cell_layout": [0],
+            "reduce_cell_groups": []
+        }}], indirect=["super_net"])
+def test_inject(super_net):
+    cand_net = _supernet_sample_cand(super_net)
+
+    data = _cnn_data()
+
+    from aw_nas.objective.fault_injection import FaultInjector
+    injector = FaultInjector()
+    injector.set_random_inject(0.001)
+    # forward stem
+    cand_net.eval()
+    def inject(state, context):
+        if context.is_end_of_cell or context.is_end_of_step:
+            return
+        context.last_state = injector.inject(state)
+    cand_net.forward_one_step_callback(data[0], callback=inject)
 
 @pytest.mark.parametrize("test_id",
                          range(5))
@@ -104,6 +158,7 @@ def test_supernet_candidate_gradient_virtual(test_id, super_net):
         grads_2 = dict(cand_net.gradient(data, mode="train"))
         assert len(grads) == len(c_params)
         optimizer.step()
+
         for n, grad in grads:
             # this check is not very robust...
             assert (w_prev[n] - (grad + grads_2[n]) * lr - c_params[n]).abs().mean().item() < EPS
@@ -141,10 +196,11 @@ def test_supernet_specify_Cinout(super_net):
     assert cand_net.super_net.cells[0].num_out_channels == 16
     assert cand_net.super_net.cells[1].num_out_channels == 24
     assert cand_net.super_net.cells[2].num_out_channels == 64
-    assert len(cand_net.super_net.cells[0].edges) == 1
-    assert len(cand_net.super_net.cells[0].edges[0].p_ops) == 3
-    assert len(cand_net.super_net.cells[1].edges[0].p_ops) == 1
-    assert len(cand_net.super_net.cells[2].edges[0].p_ops) == 2
+    assert len(cand_net.super_net.cells[0].edges) == 1 and \
+        len(cand_net.super_net.cells[0].edges[0]) == 1
+    assert len(cand_net.super_net.cells[0].edges[0][1].p_ops) == 3
+    assert len(cand_net.super_net.cells[1].edges[0][1].p_ops) == 1
+    assert len(cand_net.super_net.cells[2].edges[0][1].p_ops) == 2
 
     data = _cnn_data()
 

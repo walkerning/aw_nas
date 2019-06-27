@@ -131,6 +131,25 @@ class SubCandidateNet(CandidateNet):
             memo.add(v)
             yield n, v
 
+    def forward_one_step_callback(self, inputs, callback):
+        # forward stem
+        stemed, context = self.forward_one_step(context=None, inputs=inputs)
+        callback(stemed, context)
+
+        # forward the cells
+        for _ in range(0, self.search_space.num_layers):
+            num_steps = self.search_space.num_steps + self.search_space.num_init_nodes + 1
+            for _ in range(num_steps):
+                while True: # call `forward_one_step` until this step ends
+                    step_state, context = self.forward_one_step(context)
+                    callback(step_state, context)
+                    if context.is_end_of_step:
+                        break
+            # end of cell (every cell has the same number of num_steps)
+        # final forward
+        logits, context = self.forward_one_step(context)
+        callback(logits, context)
+        return logits
 
 class SuperNet(SharedNet):
     """
@@ -223,28 +242,23 @@ class DiscreteSharedCell(SharedCell):
     def num_out_channel(self):
         return self.num_out_channels * self.search_space.num_steps
 
-    def forward(self, inputs, genotype): #pylint: disable=arguments-differ
+    def forward(self, inputs, genotype_grouped): #pylint: disable=arguments-differ
         assert self._num_init == len(inputs)
         if self.use_preprocess:
-            states = [op(inputs) for op, inputs in zip(self.preprocess_ops, inputs)]
+            states = [op(_input) for op, _input in zip(self.preprocess_ops, inputs)]
         else:
             states = [s for s in inputs]
 
-        for to_, connections in genotype:
+        for to_, connections in genotype_grouped:
             state_to_ = 0.
             for op_type, from_, _ in connections:
-                edge_id = int((to_ - self._num_init) * \
-                              (self._num_init + to_ - 1) / 2 + from_)
-                # print("from_: {} ({}) ; to_: {} ; op_type: {} ; stride: {} , edge_id: {}"\
-                #       .format(from_, states[from_].shape[2], to_, op_type,
-                #               self.edges[edge_id].stride, edge_id))
-                out = self.edges[edge_id](states[from_], op_type)
+                out = self.edges[from_][to_](states[from_], op_type)
                 state_to_ = state_to_ + out
             states.append(state_to_)
 
         return torch.cat(states[-self.search_space.num_steps:], dim=1)
 
-    def forward_one_step(self, context, genotype):
+    def forward_one_step(self, context, genotype_grouped):
         to_ = cur_step = context.next_step_index[1]
         if cur_step < self._num_init: # `self._num_init` preprocess steps
             ind = len(context.previous_cells) - (self._num_init - cur_step)
@@ -252,16 +266,21 @@ class DiscreteSharedCell(SharedCell):
             state = self.preprocess_ops[cur_step](context.previous_cells[ind])
             context.current_cell.append(state)
         elif cur_step < self._num_init + self._steps: # the following steps
-            conns = genotype[cur_step - self._num_init][1]
-            state = 0.
-            for op_type, from_, _ in conns:
-                edge_id = int((to_ - self._num_init) * \
-                              (self._num_init + to_ - 1) / 2 + from_)
-                out = self.edges[edge_id](context.current_cell[from_], op_type)
-                state = state + out
-            context.current_cell.append(state)
+            conns = genotype_grouped[cur_step - self._num_init][1]
+            op_ind, current_op = context.next_op_index
+            if op_ind == len(conns):
+                # all connections added to context.previous_ops, sum them up
+                state = sum([st for st in context.previous_op])
+                context.current_cell.append(state)
+                context.previous_op = []
+            else:
+                op_type, from_, _ = conns[op_ind]
+                state, context = self.edges[from_][to_].forward_one_step(
+                    context=context,
+                    inputs=context.current_cell[from_] if current_op == 0 else None,
+                    op_type=op_type)
         else: # final concat
-            state = torch.cat(context.current_cell[self._num_init:], dim=1)
+            state = torch.cat(context.current_cell[-self.search_space.num_steps:], dim=1)
             context.current_cell = []
             context.previous_cells.append(state)
         return state, context
@@ -277,18 +296,21 @@ class DiscreteSharedCell(SharedCell):
                     yield n, v
 
         for op_type, from_, to_ in genotype:
-            edge_id = int((to_ - self._num_init) * \
-                          (self._num_init + to_ - 1) / 2 + from_)
-            edge_share_op = self.edges[edge_id]
-            for n, v in edge_share_op.sub_named_members(op_type,
-                                                        prefix=prefix +"edges." + str(edge_id),
-                                                        member=member):
+            edge_share_op = self.edges[from_][to_]
+            for n, v in edge_share_op.sub_named_members(
+                    op_type,
+                    prefix=prefix + "edge_mod.f_{}_t_{}".format(from_, to_),
+                    member=member):
                 yield n, v
 
 class DiscreteSharedOp(SharedOp):
     def forward(self, x, op_type): #pylint: disable=arguments-differ
         index = self.primitives.index(op_type)
         return self.p_ops[index](x)
+
+    def forward_one_step(self, context, inputs, op_type): #pylint: disable=arguments-differ
+        index = self.primitives.index(op_type)
+        return self.p_ops[index].forward_one_step(context=context, inputs=inputs)
 
     def sub_named_members(self, op_type,
                           prefix="", member="parameters"):

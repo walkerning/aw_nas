@@ -230,7 +230,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
                     self.controller_queue,
                     criterions=criterions,
                     steps=eval_steps,
-                    mode="eval",
+                    mode="train", # FIXME: let's keep using train mode !!! Is this correct?
                     # if test, differentiable rollout does not need to set detach_arch=True too
                     **self.c_hid_kwargs)
                 res = self._run_surrogate_steps(eval_func, cand_net,

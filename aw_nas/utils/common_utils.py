@@ -22,6 +22,56 @@ from aw_nas.utils.log import logger as _logger
 
 _HOME_DIR = os.environ.get("AWNAS_HOME", os.path.expanduser("~/awnas"))
 
+class Context(object):
+    def __init__(self, previous_cells=None, current_cell=None, previous_op=None, current_op=None):
+        self.previous_cells = previous_cells or []
+        self.current_cell = current_cell or []
+        self.previous_op = previous_op or []
+        self.current_op = current_op or []
+
+    @property
+    def next_op_index(self):
+        return len(self.previous_op), len(self.current_op)
+
+    @property
+    def next_step_index(self):
+        return len(self.previous_cells) - 1, len(self.current_cell)
+
+    @property
+    def is_end_of_cell(self):
+        n_p, n_c = self.next_step_index
+        return self.is_end_of_step and n_c == 0 and n_p > 0
+
+    @property
+    def is_end_of_step(self):
+        return sum(self.next_op_index) == 0
+
+    @property
+    def is_end_of_op(self):
+        return len(self.current_op) == 0
+
+    @property
+    def last_state(self):
+        for lst in [self.current_op, self.previous_op, self.current_cell, self.previous_cells]:
+            if lst:
+                return lst[-1]
+        return None # empty context, which is not likely to happen
+
+    @last_state.setter
+    def last_state(self, state):
+        for lst in [self.current_op, self.previous_op, self.current_cell, self.previous_cells]:
+            if lst:
+                lst[-1] = state
+                break
+        else:
+            raise Exception("Empty context, set failed")
+
+    def __repr__(self):
+        next_cell, next_step = self.next_step_index
+        next_conn, next_op_step = self.next_op_index
+        return "Context(next_cell={}, next_step={}, next_conn={}, next_op_step={})"\
+            .format(next_cell, next_step, next_conn, next_op_step)
+
 ## --- misc helpers ---
 @contextmanager
 def nullcontext():

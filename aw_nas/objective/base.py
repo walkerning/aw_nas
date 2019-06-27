@@ -21,19 +21,19 @@ class BaseObjective(Component):
         pass
 
     @abc.abstractmethod
-    def get_perfs(self, inputs, targets, cand_net):
+    def get_perfs(self, inputs, outputs, targets, cand_net):
         pass
 
     @abc.abstractmethod
-    def get_reward(self, inputs, targets, cand_net):
+    def get_reward(self, inputs, outputs, targets, cand_net):
         pass
 
     @abc.abstractmethod
-    def get_loss(self, inputs, targets, cand_net,
+    def get_loss(self, inputs, outputs, targets, cand_net,
                  add_controller_regularization=True, add_evaluator_regularization=True):
         pass
 
-    def get_loss_item(self, inputs, targets, cand_net,
+    def get_loss_item(self, inputs, outputs, targets, cand_net,
                       add_controller_regularization=True, add_evaluator_regularization=True):
-        return self.get_loss(inputs, targets, cand_net,
+        return self.get_loss(inputs, outputs, targets, cand_net,
                              add_controller_regularization, add_evaluator_regularization).item()

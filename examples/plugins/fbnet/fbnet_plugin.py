@@ -190,8 +190,8 @@ class LatencyObjective(BaseObjective):
     def perf_names(self):
         return ["acc", "mean_latency"]
 
-    def get_perfs(self, inputs, targets, cand_net):
-        acc = float(accuracy(inputs, targets)[0]) / 100
+    def get_perfs(self, inputs, outputs, targets, cand_net):
+        acc = float(accuracy(outputs, targets)[0]) / 100
         total_latency = 0.
         ss = self.search_space
         if cand_net.super_net.rollout_type == "discrete":
@@ -208,8 +208,8 @@ class LatencyObjective(BaseObjective):
                 total_latency += latency
         return [acc, total_latency]
 
-    def get_reward(self, inputs, targets, cand_net):
-        acc = float(accuracy(inputs, targets)[0]) / 100
+    def get_reward(self, inputs, outputs, targets, cand_net):
+        acc = float(accuracy(outputs, targets)[0]) / 100
         if self.lamb is not None:
             latency_penalty = 0.
             ss = self.search_space
@@ -221,9 +221,9 @@ class LatencyObjective(BaseObjective):
             return acc  + float(self.lamb) * (1. / latency_penalty - 1. / self._max_lat)
         return acc
 
-    def get_loss(self, inputs, targets, cand_net,
+    def get_loss(self, inputs, outputs, targets, cand_net,
                  add_controller_regularization=True, add_evaluator_regularization=True):
-        loss = nn.CrossEntropyLoss()(inputs, targets)
+        loss = nn.CrossEntropyLoss()(outputs, targets)
         if add_controller_regularization:
             # differentiable rollout
             latency_loss = 0.

@@ -98,12 +98,13 @@ class DiffSharedCell(SharedCell):
 
     def forward(self, inputs, arch, detach_arch=True): #pylint: disable=arguments-differ
         assert self._num_init == len(inputs)
-        states = [op(inputs) for op, inputs in zip(self.preprocess_ops, inputs)]
+        states = [op(_input) for op, _input in zip(self.preprocess_ops, inputs)]
         offset = 0
 
-        for _ in range(self._steps):
-            act_lst = [self.edges[offset+from_](state, arch[offset+from_],
-                                                detach_arch=detach_arch) \
+        for i_step in range(self._steps):
+            to_ = i_step + self._num_init
+            act_lst = [self.edges[from_][to_](state, arch[offset+from_],
+                                              detach_arch=detach_arch) \
                        for from_, state in enumerate(states)]
             new_state = sum(act_lst)
             offset += len(states)

@@ -5,13 +5,17 @@ A cell-based model whose architecture is described by a genotype.
 
 from __future__ import print_function
 
+from collections import defaultdict
+
 import numpy as np
 import torch
 from torch import nn
 
 from aw_nas import ops, utils
+from aw_nas.common import genotype_from_str, group_and_sort_by_to_node
 from aw_nas.final.base import FinalModel
 from aw_nas.utils.exception import expect
+from aw_nas.utils.common_utils import Context
 
 class AuxiliaryHead(nn.Module):
     def __init__(self, C_in, num_classes):
@@ -49,10 +53,11 @@ class CNNGenotypeModel(FinalModel):
 
         self.search_space = search_space
         self.device = device
-        self.genotypes = genotypes
-        if isinstance(genotypes, str):
-            self.genotypes = eval("self.search_space.genotype_type({})".format(self.genotypes)) # pylint: disable=eval-used
-            self.genotypes = list(self.genotypes._asdict().values())
+
+        assert isinstance(genotypes, str)
+        self.genotypes = list(genotype_from_str(genotypes, self.search_space)._asdict())
+        self.genotypes_grouped = [group_and_sort_by_to_node(g[0]) for g in self.genotypes\
+                                  if "concat" not in g[0]]
 
         self.num_classes = num_classes
         self.init_channels = init_channels
@@ -114,7 +119,7 @@ class CNNGenotypeModel(FinalModel):
             _num_out_channels = num_channels if "C_out" not in kwargs \
                                 else kwargs.pop("C_out")
             cell = CNNGenotypeCell(self.search_space,
-                                   self.genotypes[cg_idx],
+                                   self.genotypes_grouped[cg_idx],
                                    layer_index=i_layer,
                                    num_channels=_num_channels,
                                    num_out_channels=_num_out_channels,
@@ -162,6 +167,53 @@ class CNNGenotypeModel(FinalModel):
             return logits, logits_aux
         return logits
 
+    def forward_one_step(self, context, inputs, **kwargs):
+        """
+        NOTE: forward_one_step do not forward the auxliary head now!
+        """
+        assert (context is None) + (inputs is None) == 1
+        # stem
+        if inputs is not None:
+            if self.use_stem:
+                stemed = self.stem(inputs)
+            else:
+                stemed = inputs
+            context = Context(previous_cells=[stemed], current_cell=[])
+            return stemed, context
+
+        cur_cell_ind, _ = context.next_step_index
+
+        # final: pooling->dropout->classifier
+        if cur_cell_ind == self._num_layers:
+            out = self.global_pooling(context.previous_cells[-1])
+            out = self.dropout(out)
+            logits = self.classifier(out.view(out.size(0), -1))
+            context.previous_cells.append(logits)
+            return logits, context
+
+        # cells
+        return self.cells[cur_cell_ind].forward_one_step(context, self.dropout_path_rate, **kwargs)
+
+    def forward_one_step_callback(self, inputs, callback):
+        # forward stem
+        stemed, context = self.forward_one_step(context=None, inputs=inputs)
+        callback(stemed, context)
+
+        # forward the cells
+        for _ in range(0, self.search_space.num_layers):
+            num_steps = self.search_space.num_steps + self.search_space.num_init_nodes + 1
+            for _ in range(num_steps):
+                while True: # call `forward_one_step` until this step ends
+                    step_state, context = self.forward_one_step(context)
+                    callback(step_state, context)
+                    if context.is_end_of_step:
+                        break
+            # end of cell (every cell has the same number of num_steps)
+        # final forward
+        logits, context = self.forward_one_step(context)
+        callback(logits, context)
+        return logits
+
     @classmethod
     def supported_data_types(cls):
         return ["image"]
@@ -170,11 +222,11 @@ class CNNGenotypeModel(FinalModel):
         return self._cell_layout[layer_idx] in self._reduce_cgs
 
 class CNNGenotypeCell(nn.Module):
-    def __init__(self, search_space, genotype, layer_index, num_channels, num_out_channels,
+    def __init__(self, search_space, genotype_grouped, layer_index, num_channels, num_out_channels,
                  prev_num_channels, stride, prev_strides, use_preprocess, **op_kwargs):
         super(CNNGenotypeCell, self).__init__()
         self.search_space = search_space
-        self.genotype = genotype
+        self.genotype_grouped = genotype_grouped
         self.stride = stride
         self.is_reduce = stride != 1
         self.num_channels = num_channels
@@ -212,30 +264,58 @@ class CNNGenotypeCell(nn.Module):
             self.preprocess_ops.append(preprocess)
         assert len(self.preprocess_ops) == self._num_init
 
-        self.edges = nn.ModuleList()
-        for op_type, from_, _ in self.genotype:
-            stride = self.stride if from_ < self._num_init else 1
-            op = ops.get_op(op_type)(num_channels, num_out_channels, stride, True, **op_kwargs)
-            self.edges.append(op)
+        self.edges = defaultdict(dict)
+        self.edge_mod = torch.nn.Module() # a stub wrapping module of all the edges
+        for _, conns in self.genotype_grouped:
+            for op_type, from_, to_ in conns:
+                stride = self.stride if from_ < self._num_init else 1
+                self.edges[from_][to_] = ops.get_op(op_type)(num_channels, num_out_channels,
+                                                             stride, True, **op_kwargs)
+                self.edge_mod.add_module("f_{}_t_{}".format(from_, to_), self.edges[from_][to_])
 
     def forward(self, inputs, dropout_path_rate): #pylint: disable=arguments-differ
         assert self._num_init == len(inputs)
-        states = {
-            i: op(inputs) for i, (op, inputs) in \
-            enumerate(zip(self.preprocess_ops, inputs))
-        }
+        states = [op(_input) for op, _input in zip(self.preprocess_ops, inputs)]
 
-        for op, (_, from_, to_) in zip(self.edges, self.genotype):
-            out = op(states[from_])
-            if self.training and dropout_path_rate > 0:
-                if not isinstance(op, ops.Identity):
-                    out = utils.drop_path(out, dropout_path_rate)
-            if to_ in states:
-                states[to_] = states[to_] + out
+        for to_, connections in self.genotype_grouped:
+            state_to_ = 0.
+            for op_type, from_, _ in connections:
+                op = self.edges[from_][to_]
+                out = op(states[from_], op_type)
+                if self.training and dropout_path_rate > 0:
+                    if not isinstance(op, ops.Identity):
+                        out = utils.drop_path(out, dropout_path_rate)
+                state_to_ = state_to_ + out
+            states.append(state_to_)
+
+        return torch.cat(states[-self.search_space.num_steps:], dim=1)
+
+    def forward_one_step(self, context, dropout_path_rate):
+        to_ = cur_step = context.next_step_index[1]
+        if cur_step < self._num_init: # `self._num_init` preprocess steps
+            ind = len(context.previous_cells) - (self._num_init - cur_step)
+            ind = max(ind, 0)
+            state = self.preprocess_ops[cur_step](context.previous_cells[ind])
+            context.current_cell.append(state)
+        elif cur_step < self._num_init + self._steps: # the following steps
+            conns = self.genotype_grouped[cur_step - self._num_init][1]
+            op_ind, current_op = context.next_op_index
+            if op_ind == len(conns):
+                # all connections added to context.previous_ops, sum them up
+                state = sum([st for st in context.previous_op])
+                context.current_cell.append(state)
+                context.previous_op = []
             else:
-                states[to_] = out
-
-        return torch.cat([states[i] for i in \
-                          range(self._num_init,
-                                self._steps + self._num_init)],
-                         dim=1)
+                _, from_, _ = conns[op_ind]
+                op = self.edges[from_][to_]
+                state, context = op.forward_one_step(
+                    context=context,
+                    inputs=context.current_cell[from_] if current_op == 0 else None)
+                if self.training and dropout_path_rate > 0:
+                    if not isinstance(op, ops.Identity):
+                        context.last_state = state = utils.drop_path(state, dropout_path_rate)
+        else: # final concat
+            state = torch.cat(context.current_cell[-self.search_space.num_steps:], dim=1)
+            context.current_cell = []
+            context.previous_cells.append(state)
+        return state, context
