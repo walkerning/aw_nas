@@ -67,8 +67,9 @@ class CNNFinalTrainer(FinalTrainer):
         self.valid_queue = torch.utils.data.DataLoader(
             _splits["test"], batch_size=batch_size, shuffle=False, pin_memory=True, num_workers=2)
 
-        self.optimizer = self._init_optimizer()
-        self.scheduler = self._init_scheduler(self.optimizer, self.optimizer_scheduler_cfg)
+        if self.model is not None:
+            self.optimizer = self._init_optimizer()
+            self.scheduler = self._init_scheduler(self.optimizer, self.optimizer_scheduler_cfg)
 
         # states of the trainer
         self.last_epoch = 0

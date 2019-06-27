@@ -576,6 +576,7 @@ def test(cfg_file, load, split, gpus, seed): #pylint: disable=redefined-builtin
     # initialize components
     LOGGER.info("Initializing components.")
     whole_dataset = _init_component(cfg, "dataset")
+    search_space = _init_component(cfg, "search_space")
     objective = _init_component(cfg, "objective", search_space=search_space)
     trainer = _init_component(cfg, "final_trainer",
                               dataset=whole_dataset,

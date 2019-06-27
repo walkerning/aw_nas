@@ -6,7 +6,7 @@ import contextlib
 
 import torch
 
-from aw_nas import assert_rollout_type
+from aw_nas import assert_rollout_type, utils
 from aw_nas.weights_manager.base import CandidateNet
 from aw_nas.weights_manager.shared import SharedNet, SharedCell, SharedOp
 
@@ -60,7 +60,7 @@ class DiffSubCandidateNet(CandidateNet):
         self._set_mode(mode)
 
         outputs = self.forward_data(data[0], **kwargs)
-        return [c(outputs, data[1]) for c in criterions]
+        return utils.flatten_list([c(data[0], outputs, data[1]) for c in criterions])
 
 
 class DiffSuperNet(SharedNet):

@@ -403,8 +403,8 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
                 self.surrogate_queue,
                 optimizer=self.surrogate_optimizer,
                 criterion=partial(self._mepa_loss_func, cand_net=cand_net),
-                eval_criterions=[partial(func, cand_net=cand_net) \
-                                 for func in self._report_loss_funcs],
+                eval_criterions=[partial(loss_func, cand_net=cand_net) \
+                                 for loss_func in self._report_loss_funcs],
                 steps=surrogate_steps,
                 **self.s_hid_kwargs
             )
