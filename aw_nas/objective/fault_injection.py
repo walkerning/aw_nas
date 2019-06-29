@@ -16,6 +16,8 @@ class FaultInjector(object):
         self.mode = mode
         self.fault_bias = fault_bias
         self.random_inject = 0.001
+        self.gaussian_std = 1.
+        self.mode = "gaussian"
 
     @staticmethod
     def inject2num(num_, min_, max_, step, bit_pos, mode):
@@ -42,7 +44,12 @@ class FaultInjector(object):
     def set_random_inject(self, value):
         self.random_inject = value
 
-    def inject_gpu(self, out):
+    def inject_gaussian(self, out):
+        gaussian = torch.rand(out.shape) * self.gaussian_std
+        out = out + gaussian
+        return out
+
+    def inject_fixed(self, out):
         random_tensor = out.clone()
         random_tensor.random_(0, int(1. / self.random_inject))
         scale = torch.ceil(torch.log(torch.max(torch.max(torch.abs(out)),
@@ -62,31 +69,18 @@ class FaultInjector(object):
         return out
 
     def inject(self, out):
-        out_origin = out
-        device = out.device
-        out = out.cpu()
-        cumprod_shape = np.cumprod(list(reversed(out.shape)))[::-1]
-        out_reshape = np.array(out.detach().reshape([cumprod_shape[0]]))
-        min_, max_ = np.min(out_reshape), np.max(out_reshape)
-        scale = torch.ceil(torch.log(torch.max(torch.max(torch.abs(out)), torch.tensor(1e-5).float().to(out.device))) / np.log(2.))
-        step = torch.pow(torch.autograd.Variable(torch.FloatTensor([2.]), requires_grad=False), (scale.float() - 7.))
-        inject_num = out_reshape.shape[0] * self.random_inject
-        sample_set = random.sample(range(out_reshape.shape[0]), int(inject_num))
-        for sample in sample_set:
-            indexes = self.get_index_by_shape(sample, cumprod_shape)
-            out[indexes] = \
-                self.inject2num(out[indexes], min_, max_, step, self.fault_bias, self.mode)
-        return out.to(device)
-
+        return eval("inject" + self.mode)(out)
 
 class FaultInjectionObjective(BaseObjective):
     NAME = "fault_injection"
 
-    def __init__(self, search_space, fault_reward_coeff=0.2, inject_prob=0.001):
+    def __init__(self, search_space, fault_reward_coeff=0.2, inject_prob=0.001, fault_mode="gaussian", gaussian_std=1.):
         super(FaultInjectionObjective, self).__init__(search_space)
         assert 0. <= fault_reward_coeff <= 1.
         self.injector = FaultInjector()
         self.injector.set_random_inject(inject_prob)
+        self.injector.mode = fault_mode
+        self.injector.gaussian_std = gaussian_std
         self.fault_reward_coeff = fault_reward_coeff
 
     @classmethod
@@ -108,7 +102,7 @@ class FaultInjectionObjective(BaseObjective):
         def inject(state, context):
             if context.is_end_of_cell or context.is_end_of_step:
                 return
-            context.last_state = self.injector.inject_gpu(state)
+            context.last_state = self.injector.inject(state)
         # cand_net.train()
         logits_f = cand_net.forward_one_step_callback(inputs, callback=inject)
         return float(accuracy(logits, targets)[0]) / 100, float(accuracy(logits_f, targets)[0]) / 100
