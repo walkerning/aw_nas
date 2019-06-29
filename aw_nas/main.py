@@ -556,7 +556,7 @@ def train(gpus, seed, cfg_file, load, load_state_dict, save_every, train_dir):
               help="the checkpoint to load")
 @click.option("--load-state-dict", type=str,
               help="the checkpoint (state dict) to load")
-@click.option("--split", "-s", multiple=True, type=str,
+@click.option("--split", "-s", multiple=True, required=True, type=str,
               help="evaluate on these dataset splits")
 @click.option("--gpus", default="0", type=str,
               help="the gpus to run training on, split by single comma")

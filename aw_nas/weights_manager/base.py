@@ -99,7 +99,7 @@ class CandidateNet(nn.Module):
             outputs.append(self.forward_data(*data, **kwargs))
         return torch.cat(outputs, dim=0)
 
-    def gradient(self, data, criterion=lambda i, l, t: nn.CrossEntropyLoss(l, t),
+    def gradient(self, data, criterion=lambda i, l, t: nn.CrossEntropyLoss()(l, t),
                  parameters=None, eval_criterions=None, mode="train",
                  zero_grads=True, return_grads=True, **kwargs):
         """Get the gradient with respect to the candidate net parameters.
@@ -123,7 +123,6 @@ class CandidateNet(nn.Module):
                         .format(", ".join(_addi))
             else:
                 _parameters = active_parameters
-
         _, targets = data
         outputs = self.forward_data(*data, **kwargs)
         loss = criterion(data[0], outputs, targets)
@@ -142,7 +141,7 @@ class CandidateNet(nn.Module):
             return grads, eval_res
         return grads
 
-    def train_queue(self, queue, optimizer, criterion=lambda i, l, t: nn.CrossEntropyLoss(l, t),
+    def train_queue(self, queue, optimizer, criterion=lambda i, l, t: nn.CrossEntropyLoss()(l, t),
                     eval_criterions=None, steps=1, **kwargs):
         assert steps > 0
         # if not steps:
