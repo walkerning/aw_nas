@@ -16,7 +16,7 @@ def _warmup_update_lr(optimizer, epoch, init_lr, warmup_epochs):
     """
     lr = init_lr * epoch / warmup_epochs
     for param_group in optimizer.param_groups:
-        param_group['lr'] = lr
+        param_group["lr"] = lr
 
 class CNNFinalTrainer(FinalTrainer):
     NAME = "cnn_trainer"
@@ -79,10 +79,30 @@ class CNNFinalTrainer(FinalTrainer):
         self.train_dir = None
         self._is_setup = False
 
-    def setup(self, load=None, save_every=None, train_dir=None, report_every=50):
+    def setup(self, load=None, load_state_dict=None,
+              save_every=None, train_dir=None, report_every=50):
+        expect(not (load is not None and load_state_dict is not None),
+               "`load` and `load_state_dict` cannot be passed simultaneously.")
         if load is not None:
             self.load(load)
         else:
+            assert self.model is not None
+            if load_state_dict is not None:
+                # load state dict
+                checkpoint = torch.load(load_state_dict)
+                extra_keys = set(checkpoint.keys()).difference(set(self.model.state_dict().keys()))
+                assert not extra_keys, "Extra keys in checkpoint! Make sure the genotype match"
+                missing_keys = {key for key in set(self.model.state_dict().keys())\
+                                .difference(checkpoint.keys()) \
+                                if "auxiliary" not in key}
+                if missing_keys:
+                    self.logger.warn(("{} missing keys will not be loaded! Check your genotype, "
+                                      "This should be due to your genotype actually skip some "
+                                      "cells, which might means, many parameters of your "
+                                      "sub-network is not actually active, "
+                                      "and this genotype might not be so effective.")
+                                     .format(len(missing_keys)))
+                self.model.load_state_dict(checkpoint, strict=False)
             self.logger.info("param size = %f M",
                              utils.count_parameters(self.model)/1.e6)
             self._parallelize()
@@ -148,16 +168,18 @@ class CNNFinalTrainer(FinalTrainer):
                 _warmup_update_lr(self.optimizer, epoch, self.learning_rate, self.warmup_epochs)
             else:
                 self.scheduler.step()
-            self.logger.info('epoch %d lr %e', epoch, self.scheduler.get_lr()[0])
+            self.logger.info("epoch %d lr %e", epoch, self.scheduler.get_lr()[0])
 
             train_acc, train_obj = self.train_epoch(self.train_queue, self.parallel_model,
                                                     self._criterion, self.optimizer,
                                                     self.device, epoch)
-            self.logger.info('train_acc %f ; train_obj %f', train_acc, train_obj)
+            self.logger.info("train_acc %f ; train_obj %f", train_acc, train_obj)
 
-            valid_acc, valid_obj, valid_perfs = self.infer_epoch(self.valid_queue, self.parallel_model,
-                                                    self._criterion, self.device)
-            self.logger.info('valid_acc %f ; valid_obj %f ; valid performances: %s', valid_acc, valid_obj,
+            valid_acc, valid_obj, valid_perfs = self.infer_epoch(self.valid_queue,
+                                                                 self.parallel_model,
+                                                                 self._criterion, self.device)
+            self.logger.info("valid_acc %f ; valid_obj %f ; valid performances: %s",
+                             valid_acc, valid_obj,
                              "; ".join(
                                  ["{}: {:.3f}".format(n, v) for n, v in valid_perfs.items()]))
 
@@ -176,7 +198,7 @@ class CNNFinalTrainer(FinalTrainer):
             queue = self.train_queue
         acc, obj, perfs = self.infer_epoch(queue, self.parallel_model,
                                            self._criterion, self.device)
-        self.logger.info('acc %f ; obj %f ; performance: %s', acc, obj,
+        self.logger.info("acc %f ; obj %f ; performance: %s", acc, obj,
                          "; ".join(
                              ["{}: {:.3f}".format(n, v) for n, v in perfs.items()]))
         return acc, obj
@@ -195,15 +217,15 @@ class CNNFinalTrainer(FinalTrainer):
         group_weight = []
         group_bias = []
         for name, param in self.model.named_parameters():
-            if 'bias' in name:
+            if "bias" in name:
                 group_bias.append(param)
             else:
                 group_weight.append(param)
         assert len(list(self.model.parameters())) == len(group_weight) + len(group_bias)
         optimizer = torch.optim.SGD(
-            [{'params': group_weight},
-             {'params': group_bias,
-              'weight_decay': 0 if self.no_bias_decay else self.weight_decay}],
+            [{"params": group_weight},
+             {"params": group_bias,
+              "weight_decay": 0 if self.no_bias_decay else self.weight_decay}],
             lr=self.learning_rate,
             momentum=self.momentum,
             weight_decay=self.weight_decay)
@@ -249,7 +271,7 @@ class CNNFinalTrainer(FinalTrainer):
             top5.update(prec5.item(), n)
 
             if step % self.report_every == 0:
-                self.logger.info('train %03d %.3f; %.2f%%; %.2f%%',
+                self.logger.info("train %03d %.3f; %.2f%%; %.2f%%",
                                  step, objs.avg, top1.avg, top5.avg)
 
         return top1.avg, objs.avg
@@ -278,7 +300,7 @@ class CNNFinalTrainer(FinalTrainer):
                 top5.update(prec5.item(), n)
 
                 if step % self.report_every == 0:
-                    self.logger.info('valid %03d %e %f %f %s', step, objs.avg, top1.avg, top5.avg,
+                    self.logger.info("valid %03d %e %f %f %s", step, objs.avg, top1.avg, top5.avg,
                                      "; ".join(["{}: {:.3f}".format(n, v) \
                                                 for n, v in objective_perfs.avgs().items()]))
 
