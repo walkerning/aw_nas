@@ -5,6 +5,8 @@ Shared weights super net.
 
 from __future__ import print_function
 
+import itertools
+from collections import OrderedDict
 import contextlib
 import six
 
@@ -130,6 +132,14 @@ class SubCandidateNet(CandidateNet):
                 continue
             memo.add(v)
             yield n, v
+
+    def state_dict(self, destination=None, prefix='', keep_vars=False):
+        member_lst = []
+        for n, v in itertools.chain(self.active_named_members(member="parameters", prefix=""),
+                                    self.active_named_members(member="buffers", prefix="")):
+            member_lst.append((n, v))
+        state_dict = OrderedDict(member_lst)
+        return state_dict
 
     def forward_one_step_callback(self, inputs, callback):
         # forward stem

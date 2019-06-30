@@ -18,7 +18,8 @@ class FinalTrainer(Component):
         """Train the model"""
 
     @abc.abstractmethod
-    def setup(self, load=None, save_every=None, train_dir=None, report_every=50):
+    def setup(self, load=None, load_state_dict=None,
+              save_every=None, train_dir=None, report_every=50):
         """Setup the scaffold: saving/loading settings."""
 
     @abc.abstractmethod

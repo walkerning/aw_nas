@@ -242,6 +242,6 @@ class SharedOp(nn.Module):
         for primitive in self.primitives:
             op = ops.get_op(primitive)(C, C_out, stride, False)
             if "pool" in primitive:
-                op = nn.Sequential(op, nn.BatchNorm2d(C,
+                op = nn.Sequential(op, nn.BatchNorm2d(C_out,
                                                       affine=False))
             self.p_ops.append(op)

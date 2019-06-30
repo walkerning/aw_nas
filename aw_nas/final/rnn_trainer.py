@@ -65,7 +65,9 @@ class RNNFinalTrainer(FinalTrainer):
         self.best_valid_obj = None
         self.valid_objs = []
 
-    def setup(self, load=None, save_every=None, train_dir=None, report_every=50):
+    def setup(self, load=None, load_state_dict=None,
+              save_every=None, train_dir=None, report_every=50):
+        assert load_state_dict is None, "Currently not supported and tested."
         if load is not None:
             self.load(load)
         else:

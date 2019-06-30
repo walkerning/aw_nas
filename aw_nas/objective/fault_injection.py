@@ -1,6 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-Contributed by Wilson Li.
+Fault injection objective.
+* Clean accuracy and fault-injected accuracy weighted for reward (for discrete controller search)
+* Clean loss and fault-injected loss weighted for loss
+  (for differentiable controller search or fault-injection training).
+
+Copyright (c) 2019 Wenshuo Li
+Copyright (c) 2019 Xuefei Ning
 """
 
 import torch
@@ -10,14 +16,14 @@ import numpy as np
 
 from aw_nas.utils.torch_utils import accuracy
 from aw_nas.objective.base import BaseObjective
+from aw_nas.utils.exception import expect, ConfigException
 
 class FaultInjector(object):
-    def __init__(self, mode="0-1flip", fault_bias=128):
-        self.mode = mode
+    def __init__(self, gaussian_std, mode, fault_bias=128):
         self.fault_bias = fault_bias
         self.random_inject = 0.001
-        self.gaussian_std = 1.
-        self.mode = "gaussian"
+        self.gaussian_std = gaussian_std
+        self.mode = mode
 
     @staticmethod
     def inject2num(num_, min_, max_, step, bit_pos, mode):
@@ -45,15 +51,16 @@ class FaultInjector(object):
         self.random_inject = value
 
     def inject_gaussian(self, out):
-        gaussian = torch.rand(out.shape) * self.gaussian_std
+        gaussian = torch.randn(out.shape, dtype=out.dtype, device=out.device) * self.gaussian_std
         out = out + gaussian
         return out
 
     def inject_fixed(self, out):
         random_tensor = out.clone()
         random_tensor.random_(0, int(1. / self.random_inject))
-        scale = torch.ceil(torch.log(torch.max(torch.max(torch.abs(out)),
-                                               torch.tensor(1e-5).float().to(out.device))) / np.log(2.))
+        scale = torch.ceil(torch.log(
+            torch.max(torch.max(torch.abs(out)),
+                      torch.tensor(1e-5).float().to(out.device))) / np.log(2.))
         step = torch.pow(torch.autograd.Variable(torch.FloatTensor([2.]).to(out.device),
                                                  requires_grad=False),
                          (scale.float() - 7.))
@@ -66,54 +73,81 @@ class FaultInjector(object):
         out = out + random_tensor
         out[out > max_] = max_
         out[out < -max_] = -max_
+        # for masked bp
+        normal_mask = torch.zeros_like(out)
+        normal_mask[normal_ind] = 1
+        masked = normal_mask * out
+        out = (out - masked).detach() + masked
         return out
 
     def inject(self, out):
-        return eval("inject" + self.mode)(out)
+        return eval("self.inject_" + self.mode)(out)
 
 class FaultInjectionObjective(BaseObjective):
     NAME = "fault_injection"
 
-    def __init__(self, search_space, fault_reward_coeff=0.2, inject_prob=0.001, fault_mode="gaussian", gaussian_std=1.):
+    def __init__(self, search_space,
+                 fault_modes="gaussian", gaussian_std=1., inject_prob=0.001,
+                 # loss
+                 fault_loss_coeff=0.,
+                 as_controller_regularization=False,
+                 as_evaluator_regularization=False,
+                 # reward
+                 fault_reward_coeff=0.2):
         super(FaultInjectionObjective, self).__init__(search_space)
         assert 0. <= fault_reward_coeff <= 1.
-        self.injector = FaultInjector()
+        self.injector = FaultInjector(gaussian_std, fault_modes)
         self.injector.set_random_inject(inject_prob)
-        self.injector.mode = fault_mode
-        self.injector.gaussian_std = gaussian_std
+        self.fault_loss_coeff = fault_loss_coeff
+        self.as_controller_regularization = as_controller_regularization
+        self.as_evaluator_regularization = as_evaluator_regularization
+        if self.fault_loss_coeff > 0:
+            expect(self.as_controller_regularization or self.as_evaluator_regularization,
+                   "When `fault_loss_coeff` > 0, you should either use this fault-injected loss"
+                   " as controller regularization or as evaluator regularization, or both. "
+                   "By setting `as_controller_regularization` and `as_evaluator_regularization`.")
         self.fault_reward_coeff = fault_reward_coeff
 
     @classmethod
     def supported_data_types(cls):
         return ["image"]
-
-    @classmethod
     def perf_names(cls):
         return ["acc_clean", "acc_fault"]
 
-    def get_reward(self, inputs, logits, targets, cand_net):
-        perfs = self.get_perfs(inputs, logits, targets, cand_net)
+    def get_reward(self, inputs, outputs, targets, cand_net):
+        perfs = self.get_perfs(inputs, outputs, targets, cand_net)
         return perfs[0] * (1 - self.fault_reward_coeff) + perfs[1] * self.fault_reward_coeff
 
-    def get_perfs(self, inputs, logits, targets, cand_net):
+    def get_perfs(self, inputs, outputs, targets, cand_net):
         """
         Get top-1 acc.
         """
-        def inject(state, context):
-            if context.is_end_of_cell or context.is_end_of_step:
-                return
-            context.last_state = self.injector.inject(state)
-        # cand_net.train()
-        logits_f = cand_net.forward_one_step_callback(inputs, callback=inject)
-        return float(accuracy(logits, targets)[0]) / 100, float(accuracy(logits_f, targets)[0]) / 100
+        outputs_f = cand_net.forward_one_step_callback(inputs, callback=self.inject)
+        return float(accuracy(outputs, targets)[0]) / 100, \
+            float(accuracy(outputs_f, targets)[0]) / 100
 
-    def get_loss(self, inputs, logits, targets, cand_net,
+    def get_loss(self, inputs, outputs, targets, cand_net,
                  add_controller_regularization=True, add_evaluator_regularization=True):
         """
         Get the cross entropy loss *tensor*, optionally add regluarization loss.
 
         Args:
-            inputs: logits
+            inputs: data inputs
+            outputs: logits
             targets: labels
         """
-        return nn.CrossEntropyLoss()(logits, targets)
+        loss = nn.CrossEntropyLoss()(outputs, targets)
+        if self.fault_loss_coeff > 0 and \
+           ((add_controller_regularization and self.as_controller_regularization) or \
+            (add_evaluator_regularization and self.as_evaluator_regularization)):
+            # only forward and random inject once, this might not be of high variance
+            # for differentiable controller training?
+            outputs_f = cand_net.forward_one_step_callback(inputs, callback=self.inject)
+            ce_loss_f = nn.CrossEntropyLoss()(outputs_f, targets)
+            loss += self.fault_loss_coeff * ce_loss_f
+        return loss
+
+    def inject(self, state, context):
+        if context.is_end_of_cell or context.is_end_of_step:
+            return
+        context.last_state = self.injector.inject(state)

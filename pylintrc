@@ -352,6 +352,8 @@ good-names=e,
            Run,
 	   EPS,
 	   ss,
+	   C_in,
+	   C_out,
            _
 
 # Include a hint for the correct naming format with invalid-name
