@@ -43,7 +43,9 @@ PRIMITVE_FACTORY = {
                                                               5, stride, 4, 2, affine=affine),
     "conv_7x1_1x7" : conv_7x1_1x7,
     "relu_conv_bn_3x3" : lambda C, C_out, stride, affine: ReLUConvBN(C, C_out,
-                                                              3, stride, 1, affine=affine),
+                                                                     3, stride, 1, affine=affine),
+    "relu_conv_bn_5x5" : lambda C, C_out, stride, affine: ReLUConvBN(C, C_out,
+                                                                     5, stride, 1, affine=affine),
     "conv_1x1" : lambda C, C_out, stride, affine: nn.Conv2d(C, C_out, 1, stride, 0),
 
     # activations
@@ -102,6 +104,9 @@ class ReLUConvBN(nn.Module):
 
     def forward(self, x):
         return self.op(x)
+
+    def forward_one_step(self, context=None, inputs=None):
+        return self.op.forward_one_step(context, inputs)
 
 
 class DilConv(nn.Module):
