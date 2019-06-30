@@ -32,6 +32,7 @@ class CNNFinalTrainer(FinalTrainer):
                  weight_decay=3e-4, no_bias_decay=False,
                  grad_clip=5.0,
                  auxiliary_head=False, auxiliary_weight=0.4,
+                 add_regularization=False,
                  schedule_cfg=None):
         super(CNNFinalTrainer, self).__init__(schedule_cfg)
 
@@ -43,6 +44,7 @@ class CNNFinalTrainer(FinalTrainer):
         self.objective = objective
         self._perf_func = self.objective.get_perfs
         self._perf_names = self.objective.perf_names()
+        self._obj_loss = self.objective.get_loss
 
         self.epochs = epochs
         self.warmup_epochs = warmup_epochs
@@ -50,6 +52,7 @@ class CNNFinalTrainer(FinalTrainer):
         self.grad_clip = grad_clip
         self.auxiliary_head = auxiliary_head
         self.auxiliary_weight = auxiliary_weight
+        self.add_regularization = add_regularization
 
         # for optimizer
         self.weight_decay = weight_decay
@@ -254,12 +257,12 @@ class CNNFinalTrainer(FinalTrainer):
             optimizer.zero_grad()
             if self.auxiliary_head: # assume model return two logits in train mode
                 logits, logits_aux = model(inputs)
-                loss = criterion(logits, target)
+                loss = self._obj_loss(inputs, logits, target, model, add_evaluator_regularization=self.add_regularization)
                 loss_aux = criterion(logits_aux, target)
                 loss += self.auxiliary_weight * loss_aux
             else:
                 logits = model(inputs)
-                loss = criterion(logits, target)
+                loss = self._obj_loss(inputs, logits, target, model, add_evaluator_regularization=self.add_regularization)
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), self.grad_clip)
             optimizer.step()

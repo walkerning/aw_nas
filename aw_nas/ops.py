@@ -42,6 +42,9 @@ PRIMITVE_FACTORY = {
     "dil_conv_5x5" : lambda C, C_out, stride, affine: DilConv(C, C_out,
                                                               5, stride, 4, 2, affine=affine),
     "conv_7x1_1x7" : conv_7x1_1x7,
+    "relu_conv_bn_3x3" : lambda C, C_out, stride, affine: ReLUConvBN(C, C_out,
+                                                              3, stride, 1, affine=affine),
+    "conv_1x1" : lambda C, C_out, stride, affine: nn.Conv2d(C, C_out, 1, stride, 0),
 
     # activations
     "tanh": lambda **kwargs: nn.Tanh(),
@@ -86,6 +89,7 @@ class FactorizedReduce(nn.Module):
         out = self.bn(out)
         return out
 
+
 class ReLUConvBN(nn.Module):
 
     def __init__(self, C_in, C_out, kernel_size, stride, padding, affine=True):
@@ -98,6 +102,7 @@ class ReLUConvBN(nn.Module):
 
     def forward(self, x):
         return self.op(x)
+
 
 class DilConv(nn.Module):
 

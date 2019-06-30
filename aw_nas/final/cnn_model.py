@@ -47,7 +47,7 @@ class CNNGenotypeModel(FinalModel):
     SCHEDULABLE_ATTRS = ["dropout_path_rate"]
 
     def __init__(self, search_space, device, genotypes,
-                 num_classes=10, init_channels=36, stem_multiplier=3,
+                 num_classes=10, init_channels=36, cell_channels=[], stem_multiplier=3,
                  dropout_rate=0.1, dropout_path_rate=0.2,
                  auxiliary_head=False, auxiliary_cfg=None,
                  use_stem=True, cell_use_preprocess=True,
@@ -64,6 +64,7 @@ class CNNGenotypeModel(FinalModel):
 
         self.num_classes = num_classes
         self.init_channels = init_channels
+        self.cell_channels = cell_channels
         self.stem_multiplier = stem_multiplier
         self.use_stem = use_stem
         self.cell_use_preprocess = cell_use_preprocess
@@ -99,13 +100,15 @@ class CNNGenotypeModel(FinalModel):
         num_channels = self.init_channels
         prev_num_channels = [c_stem] * self._num_init
         strides = [2 if self._is_reduce(i_layer) else 1 for i_layer in range(self._num_layers)]
-        self.cells = nn.ModuleList()
-        num_channels = self.init_channels
-        prev_num_channels = [c_stem] * self._num_init
-        strides = [2 if self._is_reduce(i_layer) else 1 for i_layer in range(self._num_layers)]
-
+        if len(self.cell_channels) > 0:
+            expect(len(self.cell_channels) == len(strides)),
+                ("Config cell channels({}) "
+                 "does not match search_space num layers({})"\
+                  .format(len(self.cell_channels), self.search_space.num_layers))
         for i_layer, stride in enumerate(strides):
-            if stride > 1:
+            if len(self.cell_channels) > 0:
+                num_channels = self.cell_channels[i_layer]
+            elif stride > 1:
                 num_channels *= stride
             if cell_group_kwargs is not None:
                 # support passing in different kwargs when instantializing
