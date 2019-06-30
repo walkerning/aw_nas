@@ -45,7 +45,7 @@ PRIMITVE_FACTORY = {
     "relu_conv_bn_3x3" : lambda C, C_out, stride, affine: ReLUConvBN(C, C_out,
                                                                      3, stride, 1, affine=affine),
     "relu_conv_bn_5x5" : lambda C, C_out, stride, affine: ReLUConvBN(C, C_out,
-                                                                     5, stride, 1, affine=affine),
+                                                                     5, stride, 2, affine=affine),
     "conv_1x1" : lambda C, C_out, stride, affine: nn.Conv2d(C, C_out, 1, stride, 0),
 
     # activations

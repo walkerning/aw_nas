@@ -101,9 +101,7 @@ class CNNGenotypeModel(FinalModel):
         prev_num_channels = [c_stem] * self._num_init
         strides = [2 if self._is_reduce(i_layer) else 1 for i_layer in range(self._num_layers)]
         if len(self.cell_channels) > 0:
-            expect(len(self.cell_channels) == len(strides)),
-                ("Config cell channels({}) "
-                 "does not match search_space num layers({})"\
+            expect(len(self.cell_channels) == len(strides)), ("Config cell channels({}) does not match search_space num layers({})"\
                   .format(len(self.cell_channels), self.search_space.num_layers))
         for i_layer, stride in enumerate(strides):
             if len(self.cell_channels) > 0:
