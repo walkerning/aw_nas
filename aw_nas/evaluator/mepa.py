@@ -3,9 +3,9 @@
 from functools import partial
 from collections import defaultdict, OrderedDict
 
+import six
 import numpy as np
 import torch
-import six
 
 from aw_nas import utils
 from aw_nas.evaluator.base import BaseEvaluator

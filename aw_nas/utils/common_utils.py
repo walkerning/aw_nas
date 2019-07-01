@@ -104,6 +104,7 @@ def recur_apply(func, lst, depth=0):
 class Ticker(object):
     def __init__(self, name):
         self.name = name
+        self.total_time = 0.
         self.cur_time = None
         self.tick()
         self.logger = _logger.getChild("ticker_{}".format(name))
@@ -113,6 +114,7 @@ class Ticker(object):
         if self.cur_time is not None:
             elapsed = cur_time - self.cur_time
             self.logger.debug("Ticker %s: %s: %.3f s", self.name, message, elapsed)
+            self.total_time += elapsed
         self.cur_time = cur_time
 
 class OrderedStats(object):

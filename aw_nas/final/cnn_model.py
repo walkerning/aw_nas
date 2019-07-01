@@ -14,7 +14,7 @@ from torch import nn
 from aw_nas import ops, utils
 from aw_nas.common import genotype_from_str, group_and_sort_by_to_node
 from aw_nas.final.base import FinalModel
-from aw_nas.utils.exception import expect
+from aw_nas.utils.exception import expect, ConfigException
 from aw_nas.utils.common_utils import Context
 
 def _defaultdict_dict():
@@ -47,7 +47,7 @@ class CNNGenotypeModel(FinalModel):
     SCHEDULABLE_ATTRS = ["dropout_path_rate"]
 
     def __init__(self, search_space, device, genotypes,
-                 num_classes=10, init_channels=36, cell_channels=[], stem_multiplier=3,
+                 num_classes=10, init_channels=36, cell_channels=tuple(), stem_multiplier=3,
                  dropout_rate=0.1, dropout_path_rate=0.2,
                  auxiliary_head=False, auxiliary_cfg=None,
                  use_stem=True, cell_use_preprocess=True,
@@ -100,11 +100,13 @@ class CNNGenotypeModel(FinalModel):
         num_channels = self.init_channels
         prev_num_channels = [c_stem] * self._num_init
         strides = [2 if self._is_reduce(i_layer) else 1 for i_layer in range(self._num_layers)]
-        if len(self.cell_channels) > 0:
-            expect(len(self.cell_channels) == len(strides)), ("Config cell channels({}) does not match search_space num layers({})"\
-                  .format(len(self.cell_channels), self.search_space.num_layers))
+        if self.cell_channels:
+            expect(len(self.cell_channels) == len(strides),
+                   ("Config cell channels({}) does not match search_space num layers({})"\
+                    .format(len(self.cell_channels), self.search_space.num_layers)),
+                   ConfigException)
         for i_layer, stride in enumerate(strides):
-            if len(self.cell_channels) > 0:
+            if self.cell_channels:
                 num_channels = self.cell_channels[i_layer]
             elif stride > 1:
                 num_channels *= stride

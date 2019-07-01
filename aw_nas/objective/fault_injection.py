@@ -9,10 +9,9 @@ Copyright (c) 2019 Wenshuo Li
 Copyright (c) 2019 Xuefei Ning
 """
 
-import torch
-import random
-from torch import nn
 import numpy as np
+import torch
+from torch import nn
 
 from aw_nas.utils.torch_utils import accuracy
 from aw_nas.objective.base import BaseObjective
@@ -50,14 +49,17 @@ class FaultInjector(object):
     def set_random_inject(self, value):
         self.random_inject = value
 
+    def set_gaussian_std(self, value):
+        self.gaussian_std = value
+
     def inject_gaussian(self, out):
         gaussian = torch.randn(out.shape, dtype=out.dtype, device=out.device) * self.gaussian_std
         out = out + gaussian
         return out
 
     def inject_fixed(self, out):
-        random_tensor = out.clone()
-        random_tensor.random_(0, int(1. / self.random_inject))
+        # set the fault tensor
+        random_tensor = out.new(out.size()).random_(0, int(1. / self.random_inject))
         scale = torch.ceil(torch.log(
             torch.max(torch.max(torch.abs(out)),
                       torch.tensor(1e-5).float().to(out.device))) / np.log(2.))
@@ -66,25 +68,27 @@ class FaultInjector(object):
                          (scale.float() - 7.))
         fault_bias = step * 128.
         fault_ind = (random_tensor < 1)
-        normal_ind = (random_tensor >= 1)
+        random_tensor.zero_()
         random_tensor[fault_ind] = fault_bias
-        random_tensor[normal_ind] = 0
-        max_ = torch.max(torch.abs(out))
+        max_ = torch.max(torch.abs(out)).cpu().data
         out = out + random_tensor
-        out[out > max_] = max_
-        out[out < -max_] = -max_
+
+        # clip
+        out.clamp_(min=-max_, max=max_)
+
         # for masked bp
-        normal_mask = torch.zeros_like(out)
-        normal_mask[normal_ind] = 1
+        normal_mask = torch.ones_like(out)
+        normal_mask[fault_ind] = 0
         masked = normal_mask * out
         out = (out - masked).detach() + masked
         return out
 
     def inject(self, out):
-        return eval("self.inject_" + self.mode)(out)
+        return eval("self.inject_" + self.mode)(out) #pylint: disable=eval-used
 
 class FaultInjectionObjective(BaseObjective):
     NAME = "fault_injection"
+    SCHEDULABLE_ATTRS = ["fault_reward_coeff", "fault_loss_coeff", "inject_prob", "gaussian_std"]
 
     def __init__(self, search_space,
                  fault_modes="gaussian", gaussian_std=1., inject_prob=0.001,
@@ -93,8 +97,9 @@ class FaultInjectionObjective(BaseObjective):
                  as_controller_regularization=False,
                  as_evaluator_regularization=False,
                  # reward
-                 fault_reward_coeff=0.2):
-        super(FaultInjectionObjective, self).__init__(search_space)
+                 fault_reward_coeff=0.2,
+                 schedule_cfg=None):
+        super(FaultInjectionObjective, self).__init__(search_space, schedule_cfg)
         assert 0. <= fault_reward_coeff <= 1.
         self.injector = FaultInjector(gaussian_std, fault_modes)
         self.injector.set_random_inject(inject_prob)
@@ -105,7 +110,8 @@ class FaultInjectionObjective(BaseObjective):
             expect(self.as_controller_regularization or self.as_evaluator_regularization,
                    "When `fault_loss_coeff` > 0, you should either use this fault-injected loss"
                    " as controller regularization or as evaluator regularization, or both. "
-                   "By setting `as_controller_regularization` and `as_evaluator_regularization`.")
+                   "By setting `as_controller_regularization` and `as_evaluator_regularization`.",
+                   ConfigException)
         self.fault_reward_coeff = fault_reward_coeff
 
     @classmethod
@@ -151,3 +157,19 @@ class FaultInjectionObjective(BaseObjective):
         if context.is_end_of_cell or context.is_end_of_step:
             return
         context.last_state = self.injector.inject(state)
+
+    @property
+    def inject_prob(self):
+        return self.injector.random_inject
+
+    @inject_prob.setter
+    def inject_prob(self, value):
+        self.injector.set_random_inject(value)
+
+    @property
+    def gaussian_std(self):
+        return self.injector.gaussian_std
+
+    @gaussian_std.setter
+    def gaussian_std(self, value):
+        self.injector.set_gaussian_std(value)
