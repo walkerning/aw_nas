@@ -107,10 +107,12 @@ class ImageNet(BaseDataset):
     def data_type(cls):
         return "image"
 
-    def _read_names_from_file(self, path):
+    @staticmethod
+    def _read_names_from_file(path):
         with open(path, "r") as f:
             return f.read().strip().split("\n")
 
-    def _write_names_to_file(self, names, path):
+    @staticmethod
+    def _write_names_to_file(names, path):
         with open(path, "w") as f:
             f.write("\n".join(names))
