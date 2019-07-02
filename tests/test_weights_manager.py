@@ -7,7 +7,7 @@ import pytest
 # ---- Test super_net ----
 def _cnn_data(device="cuda", batch_size=2):
     return (torch.rand(batch_size, 3, 28, 28, dtype=torch.float, device=device),
-            torch.tensor([0, 1]).long().to(device))
+            torch.tensor(np.random.randint(0, high=10, size=batch_size)).long().to(device))
 
 def _supernet_sample_cand(net):
     ss = net.search_space
@@ -125,7 +125,7 @@ def test_inject(super_net):
     data = _cnn_data()
 
     from aw_nas.objective.fault_injection import FaultInjector
-    injector = FaultInjector()
+    injector = FaultInjector(gaussian_std=None, mode="fixed")
     injector.set_random_inject(0.001)
     # forward stem
     cand_net.eval()
@@ -207,6 +207,30 @@ def test_supernet_specify_Cinout(super_net):
     logits = cand_net.forward_data(data[0], mode="eval")
     assert logits.shape[-1] == 10
 
+@pytest.mark.parametrize("super_net", [{
+    "gpus": [0, 1]
+}], indirect=["super_net"])
+def test_supernet_data_parallel_forward(super_net):
+    # test forward
+    cand_net = _supernet_sample_cand(super_net)
+    batch_size = 10
+    data = _cnn_data(batch_size=batch_size)
+
+    logits = cand_net.forward_data(data[0], mode="eval")
+    assert logits.shape == (batch_size, 10)
+
+@pytest.mark.parametrize("super_net", [{
+    "gpus": [0, 1]
+}], indirect=["super_net"])
+def test_supernet_data_parallel_gradient(super_net):
+    cand_net = _supernet_sample_cand(super_net)
+    batch_size = 10
+    data = _cnn_data(batch_size=batch_size)
+
+    logits = cand_net.forward_data(data[0], mode="eval")
+    assert logits.shape == (batch_size, 10)
+    _ = cand_net.gradient(data, mode="train")
+
 # ---- End test super_net ----
 
 # ---- Test diff_super_net ----
@@ -263,4 +287,63 @@ def test_diff_supernet_forward_rollout_batch_size(diff_super_net):
     data = _cnn_data(batch_size=6)
     logits = cand_net.forward_data(data[0])
     assert tuple(logits.shape) == (6, 10)
+
+@pytest.mark.parametrize("diff_super_net", [{
+    "gpus": [0, 1, 2]
+}], indirect=["diff_super_net"])
+def test_diff_supernet_data_parallel_forward(diff_super_net):
+    from aw_nas.common import get_search_space
+    from aw_nas.controller import DiffController
+
+    search_space = get_search_space(cls="cnn")
+    device = "cuda"
+    controller = DiffController(search_space, device)
+    rollout = controller.sample(1)[0]
+    cand_net = diff_super_net.assemble_candidate(rollout)
+
+    batch_size = 9
+    data = _cnn_data(batch_size=batch_size)
+    logits = cand_net.forward_data(data[0])
+    assert tuple(logits.shape) == (batch_size, 10)
+
+@pytest.mark.parametrize("diff_super_net", [{
+    "gpus": [0, 1, 2]
+}], indirect=["diff_super_net"])
+def test_diff_supernet_data_parallel_forward_rolloutsize(diff_super_net):
+    from aw_nas.common import get_search_space
+    from aw_nas.controller import DiffController
+
+    search_space = get_search_space(cls="cnn")
+    device = "cuda"
+    controller = DiffController(search_space, device)
+    rollout = controller.sample(1, batch_size=9)[0]
+    cand_net = diff_super_net.assemble_candidate(rollout)
+
+    batch_size = 9
+    data = _cnn_data(batch_size=batch_size)
+    logits = cand_net.forward_data(data[0])
+    assert tuple(logits.shape) == (batch_size, 10)
+
+@pytest.mark.parametrize("diff_super_net", [{
+    "gpus": [0, 1, 2]
+}], indirect=["diff_super_net"])
+def test_diff_supernet_data_parallel_backward_rolloutsize(diff_super_net):
+    from torch import nn
+    from aw_nas.common import get_search_space
+    from aw_nas.controller import DiffController
+
+    search_space = get_search_space(cls="cnn")
+    device = "cuda"
+    controller = DiffController(search_space, device)
+    rollout = controller.sample(1, batch_size=9)[0]
+    cand_net = diff_super_net.assemble_candidate(rollout)
+
+    batch_size = 9
+    data = _cnn_data(batch_size=batch_size)
+
+    logits = cand_net.forward_data(data[0], detach_arch=False)
+    loss = nn.CrossEntropyLoss()(logits, data[1].cuda())
+    assert controller.cg_alphas[0].grad is None
+    loss.backward()
+    assert controller.cg_alphas[0].grad is not None
 # ---- End test diff_super_net ----

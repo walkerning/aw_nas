@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
+
+import re
 from collections import defaultdict
 
+import six
 import numpy as np
 import torch
 from torch import nn
@@ -12,6 +15,7 @@ from aw_nas.utils.common_utils import Context
 class SharedNet(BaseWeightsManager, nn.Module):
     def __init__(self, search_space, device, rollout_type,
                  cell_cls, op_cls,
+                 gpus=tuple(),
                  num_classes=10, init_channels=16, stem_multiplier=3,
                  max_grad_norm=5.0, dropout_rate=0.1,
                  use_stem=True,
@@ -19,6 +23,9 @@ class SharedNet(BaseWeightsManager, nn.Module):
                  cell_group_kwargs=None):
         super(SharedNet, self).__init__(search_space, device, rollout_type)
         nn.Module.__init__(self)
+
+        # optionally data parallelism in SharedNet
+        self.gpus = gpus
 
         self.num_classes = num_classes
         # init channel number of the first cell layers,
@@ -169,7 +176,6 @@ class SharedNet(BaseWeightsManager, nn.Module):
     def supported_data_types(cls):
         return ["image"]
 
-
 class SharedCell(nn.Module):
     def __init__(self, op_cls, search_space, layer_index, num_channels, num_out_channels,
                  prev_num_channels, stride, prev_strides, use_preprocess, **op_kwargs):
@@ -228,6 +234,19 @@ class SharedCell(nn.Module):
                                                 primitives=self._primitives, **op_kwargs)
                 self.edge_mod.add_module("f_{}_t_{}".format(from_, to_), self.edges[from_][to_])
 
+        self._edge_name_pattern = re.compile("f_([0-9]+)_t_([0-9]+)")
+
+    def on_replicate(self):
+        # Although this edges is easy to understand, when paralleized,
+        # the reference relationship between `self.edge` and modules under `self.edge_mod`
+        # will not get updated automatically.
+
+        # So, after each replicate, we should initialize a new edges dict
+        # and update the reference manually.
+        self.edges = defaultdict(dict)
+        for edge_name, edge_mod in six.iteritems(self.edge_mod._modules):
+            from_, to_ = self._edge_name_pattern.match(edge_name).groups()
+            self.edges[int(from_)][int(to_)] = edge_mod
 
 class SharedOp(nn.Module):
     """

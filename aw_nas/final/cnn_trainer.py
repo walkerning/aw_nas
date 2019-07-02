@@ -9,6 +9,7 @@ from torch import nn
 from aw_nas import utils
 from aw_nas.final.base import FinalTrainer
 from aw_nas.utils.exception import expect
+from aw_nas.utils.torch_utils import DataParallel
 
 def _warmup_update_lr(optimizer, epoch, init_lr, warmup_epochs):
     """
@@ -18,7 +19,7 @@ def _warmup_update_lr(optimizer, epoch, init_lr, warmup_epochs):
     for param_group in optimizer.param_groups:
         param_group["lr"] = lr
 
-class CNNFinalTrainer(FinalTrainer):
+class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attributes
     NAME = "cnn_trainer"
 
     def __init__(self, model, dataset, device, gpus, objective,#pylint: disable=dangerous-default-value
@@ -27,6 +28,7 @@ class CNNFinalTrainer(FinalTrainer):
                  warmup_epochs=0,
                  optimizer_scheduler={
                      "type": "CosineAnnealingLR",
+                     "T_max": 600,
                      "eta_min": 0.001
                  },
                  weight_decay=3e-4, no_bias_decay=False,
@@ -212,7 +214,7 @@ class CNNFinalTrainer(FinalTrainer):
 
     def _parallelize(self):
         if len(self.gpus) >= 2:
-            self.parallel_model = torch.nn.DataParallel(self.model, self.gpus).to(self.device)
+            self.parallel_model = DataParallel(self.model, self.gpus).to(self.device)
         else:
             self.parallel_model = self.model
 
@@ -257,12 +259,14 @@ class CNNFinalTrainer(FinalTrainer):
             optimizer.zero_grad()
             if self.auxiliary_head: # assume model return two logits in train mode
                 logits, logits_aux = model(inputs)
-                loss = self._obj_loss(inputs, logits, target, model, add_evaluator_regularization=self.add_regularization)
+                loss = self._obj_loss(inputs, logits, target, model,
+                                      add_evaluator_regularization=self.add_regularization)
                 loss_aux = criterion(logits_aux, target)
                 loss += self.auxiliary_weight * loss_aux
             else:
                 logits = model(inputs)
-                loss = self._obj_loss(inputs, logits, target, model, add_evaluator_regularization=self.add_regularization)
+                loss = self._obj_loss(inputs, logits, target, model,
+                                      add_evaluator_regularization=self.add_regularization)
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), self.grad_clip)
             optimizer.step()

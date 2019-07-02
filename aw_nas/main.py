@@ -12,11 +12,11 @@ import shutil
 import functools
 
 import click
+import yaml
 import numpy as np
 import setproctitle
 import torch
 from torch.backends import cudnn
-import yaml
 
 from aw_nas.dataset import AVAIL_DATA_TYPES
 from aw_nas import utils, BaseRollout
@@ -650,12 +650,12 @@ def gen_sample_config(out_file, data_type, rollout_type):
               help="only dump the configs of the components support this data type")
 def gen_final_sample_config(out_file, data_type):
     with open(out_file, "w") as out_f:
-        for comp_name in ["search_space", "dataset", "final_model", "final_trainer"]:
+        for comp_name in ["search_space", "dataset", "final_model", "final_trainer", "objective"]:
             filter_funcs = []
             if data_type is not None:
                 if comp_name == "dataset":
                     filter_funcs.append(lambda cls: data_type == cls.data_type())
-                elif comp_name in {"final_model", "final_trainer"}:
+                elif comp_name in {"final_model", "final_trainer", "objective"}:
                     filter_funcs.append(lambda cls: data_type in cls.supported_data_types())
 
             out_f.write(utils.component_sample_config_str(comp_name, prefix="# ",

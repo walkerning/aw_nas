@@ -15,6 +15,7 @@ import torch
 from aw_nas.common import assert_rollout_type, group_and_sort_by_to_node
 from aw_nas.weights_manager.base import CandidateNet
 from aw_nas.weights_manager.shared import SharedNet, SharedCell, SharedOp
+from aw_nas.utils.torch_utils import data_parallel
 
 __all__ = ["SubCandidateNet", "SuperNet"]
 
@@ -24,11 +25,12 @@ class SubCandidateNet(CandidateNet):
     The candidate net for SuperNet weights manager.
     """
 
-    def __init__(self, super_net, rollout, member_mask, cache_named_members=False,
+    def __init__(self, super_net, rollout, member_mask, gpus=tuple(), cache_named_members=False,
                  virtual_parameter_only=True):
         super(SubCandidateNet, self).__init__()
         self.super_net = super_net
         self._device = self.super_net.device
+        self.gpus = gpus
         self.search_space = super_net.search_space
         self.member_mask = member_mask
         self.cache_named_members = cache_named_members
@@ -68,11 +70,14 @@ class SubCandidateNet(CandidateNet):
         return self._device
 
     def forward(self, inputs): #pylint: disable=arguments-differ
-        return self.super_net.forward(inputs, self.genotypes_grouped)
+        if not self.gpus or len(self.gpus) == 1:
+            return self.super_net.forward(inputs, self.genotypes_grouped)
+        return data_parallel(self.super_net, (inputs, self.genotypes_grouped), self.gpus)
 
     def forward_one_step(self, context, inputs=None):
         """
         Forward one step.
+        Data parallism is not supported for now.
         """
         return self.super_net.forward_one_step(context, inputs, self.genotypes_grouped)
 
@@ -168,6 +173,7 @@ class SuperNet(SharedNet):
     NAME = "supernet"
 
     def __init__(self, search_space, device, rollout_type="discrete",
+                 gpus=tuple(),
                  num_classes=10, init_channels=16, stem_multiplier=3,
                  max_grad_norm=5.0, dropout_rate=0.1,
                  use_stem=True,
@@ -190,6 +196,7 @@ class SuperNet(SharedNet):
         """
         super(SuperNet, self).__init__(search_space, device, rollout_type,
                                        cell_cls=DiscreteSharedCell, op_cls=DiscreteSharedOp,
+                                       gpus=gpus,
                                        num_classes=num_classes, init_channels=init_channels,
                                        stem_multiplier=stem_multiplier,
                                        max_grad_norm=max_grad_norm, dropout_rate=dropout_rate,
@@ -240,6 +247,7 @@ class SuperNet(SharedNet):
     # ---- APIs ----
     def assemble_candidate(self, rollout):
         return SubCandidateNet(self, rollout,
+                               gpus=self.gpus,
                                member_mask=self.candidate_member_mask,
                                cache_named_members=self.candidate_cache_named_members,
                                virtual_parameter_only=self.candidate_virtual_parameter_only)

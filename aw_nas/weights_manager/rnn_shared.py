@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 #pylint: disable=invalid-name
 
+import re
 from collections import defaultdict
 
+import six
 import torch
 from torch import nn
 
@@ -212,6 +214,20 @@ class RNNSharedCell(nn.Module):
                                                 if self.share_from_w else None,
                                                 batch_norm=batchnorm_edge)
                 self.edge_mod.add_module("f_{}_t_{}".format(from_, to_), self.edges[from_][to_])
+
+        self._edge_name_pattern = re.compile("f_([0-9]+)_t_([0-9]+)")
+
+    def on_replicate(self):
+        # Although this edges is easy to understand, when paralleized,
+        # the reference relationship between `self.edge` and modules under `self.edge_mod`
+        # will not get updated automatically.
+
+        # So, after each replicate, we should initialize a new edges dict
+        # and update the reference manually.
+        self.edges = defaultdict(dict)
+        for edge_name, edge_mod in six.iteritems(self.edge_mod._modules):
+            from_, to_ = self._edge_name_pattern.match(edge_name).groups()
+            self.edges[int(from_)][int(to_)] = edge_mod
 
     def _compute_init_state(self, x, h, x_mask, h_mask):
         if self.training:

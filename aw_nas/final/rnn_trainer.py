@@ -8,7 +8,8 @@ from torch import nn
 
 from aw_nas import utils
 from aw_nas.utils.exception import expect
-from .base import FinalTrainer
+from aw_nas.final.base import FinalTrainer
+from aw_nas.utils.torch_utils import DataParallel
 
 class RNNFinalTrainer(FinalTrainer):
     NAME = "rnn_trainer"
@@ -301,7 +302,7 @@ class RNNFinalTrainer(FinalTrainer):
         if self.model:
             if len(self.gpus) >= 2:
                 # dim=1 for batchsize, as dim=0 is time-step
-                self.parallel_model = torch.nn.DataParallel(self.model, self.gpus, dim=1).cuda()
+                self.parallel_model = DataParallel(self.model, self.gpus, dim=1).cuda()
             else:
                 self.parallel_model = self.model
 

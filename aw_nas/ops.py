@@ -152,7 +152,7 @@ class SepConv(nn.Module):
         return self.op.forward_one_step(context, inputs)
 
 def forward_one_step(self, context=None, inputs=None):
-    #pylint: disable=protected-access
+    #pylint: disable=protected-access,too-many-branches
     assert not context is None
 
     if not hasattr(self, "_conv_mod_inds"):

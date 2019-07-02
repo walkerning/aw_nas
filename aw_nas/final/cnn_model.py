@@ -5,8 +5,10 @@ A cell-based model whose architecture is described by a genotype.
 
 from __future__ import print_function
 
+import re
 from collections import defaultdict
 
+import six
 import numpy as np
 import torch
 from torch import nn
@@ -113,7 +115,7 @@ class CNNGenotypeModel(FinalModel):
             if cell_group_kwargs is not None:
                 # support passing in different kwargs when instantializing
                 # cell class for different cell groups
-                kwargs = {k: v for k, v in cell_group_kwargs[self._cell_layout[i_layer]]}
+                kwargs = {k: v for k, v in cell_group_kwargs[self._cell_layout[i_layer]].items()}
             else:
                 kwargs = {}
             cg_idx = self.search_space.cell_layout[i_layer]
@@ -135,7 +137,7 @@ class CNNGenotypeModel(FinalModel):
                                    use_preprocess=cell_use_preprocess,
                                    pool_batchnorm=cell_pool_batchnorm,
                                    **kwargs)
-            prev_num_channels.append(num_channels * self._out_multiplier)
+            prev_num_channels.append(_num_out_channels * self._out_multiplier)
             prev_num_channels = prev_num_channels[1:]
             self.cells.append(cell)
 
@@ -148,7 +150,7 @@ class CNNGenotypeModel(FinalModel):
             self.dropout = nn.Dropout(p=self.dropout_rate)
         else:
             self.dropout = ops.Identity()
-        self.classifier = nn.Linear(num_channels * self._out_multiplier,
+        self.classifier = nn.Linear(prev_num_channels[-1],
                                     self.num_classes)
 
         self.to(self.device)
@@ -286,6 +288,8 @@ class CNNGenotypeCell(nn.Module):
                     self.edges[from_][to_][op_type] = op
                     self.edge_mod.add_module("f_{}_t_{}-{}".format(from_, to_, op_type), op)
 
+        self._edge_name_pattern = re.compile("f_([0-9]+)_t_([0-9]+)-([a-z0-9_-]+)")
+
     def forward(self, inputs, dropout_path_rate): #pylint: disable=arguments-differ
         assert self._num_init == len(inputs)
         states = [op(_input) for op, _input in zip(self.preprocess_ops, inputs)]
@@ -332,3 +336,15 @@ class CNNGenotypeCell(nn.Module):
             context.current_cell = []
             context.previous_cells.append(state)
         return state, context
+
+    def on_replicate(self):
+        # Although this edges is easy to understand, when paralleized,
+        # the reference relationship between `self.edge` and modules under `self.edge_mod`
+        # will not get updated automatically.
+
+        # So, after each replicate, we should initialize a new edges dict
+        # and update the reference manually.
+        self.edges = defaultdict(_defaultdict_dict)
+        for edge_name, edge_mod in six.iteritems(self.edge_mod._modules):
+            from_, to_, op_type = self._edge_name_pattern.match(edge_name).groups()
+            self.edges[int(from_)][int(to_)][op_type] = edge_mod

@@ -9,14 +9,16 @@ import torch
 from aw_nas import assert_rollout_type, utils
 from aw_nas.weights_manager.base import CandidateNet
 from aw_nas.weights_manager.shared import SharedNet, SharedCell, SharedOp
+from aw_nas.utils.torch_utils import data_parallel
 
 __all__ = ["DiffSubCandidateNet", "DiffSuperNet"]
 
 class DiffSubCandidateNet(CandidateNet):
-    def __init__(self, super_net, rollout, virtual_parameter_only=True):
+    def __init__(self, super_net, rollout, gpus=tuple(), virtual_parameter_only=True):
         super(DiffSubCandidateNet, self).__init__()
         self.super_net = super_net
         self._device = super_net.device
+        self.gpus = gpus
         self.arch = rollout.arch
         self.virtual_parameter_only = virtual_parameter_only
 
@@ -42,7 +44,22 @@ class DiffSubCandidateNet(CandidateNet):
 
     def forward(self, inputs, detach_arch=True): #pylint: disable=arguments-differ
         arch = [a.detach() for a in self.arch] if detach_arch else self.arch
-        return self.super_net.forward(inputs, arch, detach_arch=detach_arch)
+        if not self.gpus or len(self.gpus) == 1:
+            return self.super_net.forward(inputs, arch, detach_arch=detach_arch)
+        if arch[0].ndimension() == 2:
+            arch = [a.repeat([len(self.gpus), 1]) for a in arch]
+        else:
+            # Ugly fix for rollout_size > 1
+            # call scatter here and stack...
+            # split along dimension 1,
+            # then concatenate along dimension 0 for `data_parallel` to scatter it again
+            num_split = len(self.gpus)
+            rollout_batch_size = arch[0].shape[1]
+            assert rollout_batch_size % num_split == 0
+            split_size = rollout_batch_size // num_split
+            arch = [torch.cat(torch.split(a, split_size, dim=1), dim=0) for a in arch]
+        return data_parallel(self.super_net, (inputs, arch), self.gpus,
+                             module_kwargs={"detach_arch": detach_arch})
 
     def named_parameters(self, *args, **kwargs): #pylint: disable=arguments-differ
         return self.super_net.named_parameters(*args, **kwargs)
@@ -67,12 +84,14 @@ class DiffSuperNet(SharedNet):
     NAME = "diff_supernet"
 
     def __init__(self, search_space, device, rollout_type="differentiable",
+                 gpus=tuple(),
                  num_classes=10, init_channels=16, stem_multiplier=3,
                  max_grad_norm=5.0, dropout_rate=0.1,
                  use_stem=True, cell_use_preprocess=True, cell_group_kwargs=None,
                  candidate_virtual_parameter_only=False):
         super(DiffSuperNet, self).__init__(search_space, device, rollout_type,
                                            cell_cls=DiffSharedCell, op_cls=DiffSharedOp,
+                                           gpus=gpus,
                                            num_classes=num_classes, init_channels=init_channels,
                                            stem_multiplier=stem_multiplier,
                                            max_grad_norm=max_grad_norm, dropout_rate=dropout_rate,
@@ -84,7 +103,7 @@ class DiffSuperNet(SharedNet):
 
     # ---- APIs ----
     def assemble_candidate(self, rollout):
-        return DiffSubCandidateNet(self, rollout,
+        return DiffSubCandidateNet(self, rollout, gpus=self.gpus,
                                    virtual_parameter_only=self.candidate_virtual_parameter_only)
 
     @classmethod
