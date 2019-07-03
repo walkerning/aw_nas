@@ -9,7 +9,7 @@ import torch
 from aw_nas import assert_rollout_type, utils
 from aw_nas.weights_manager.base import CandidateNet
 from aw_nas.weights_manager.shared import SharedNet, SharedCell, SharedOp
-from aw_nas.utils.torch_utils import data_parallel
+from aw_nas.utils import data_parallel
 
 __all__ = ["DiffSubCandidateNet", "DiffSuperNet"]
 

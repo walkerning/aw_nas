@@ -74,7 +74,8 @@ class RNNSuperNet(RNNSharedNet):
         return [assert_rollout_type("discrete")]
 
     def sub_named_members(self, genotypes,
-                          prefix="", member="parameters"):
+                          prefix="", member="parameters",
+                          check_visited=False):
         prefix = prefix + ("." if prefix else "")
 
         # the common modules that will be forwarded by every candidate

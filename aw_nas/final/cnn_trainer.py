@@ -9,7 +9,7 @@ from torch import nn
 from aw_nas import utils
 from aw_nas.final.base import FinalTrainer
 from aw_nas.utils.exception import expect
-from aw_nas.utils.torch_utils import DataParallel
+from aw_nas.utils import DataParallel
 
 def _warmup_update_lr(optimizer, epoch, init_lr, warmup_epochs):
     """
@@ -101,12 +101,14 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                                 .difference(checkpoint.keys()) \
                                 if "auxiliary" not in key}
                 if missing_keys:
-                    self.logger.warn(("{} missing keys will not be loaded! Check your genotype, "
-                                      "This should be due to your genotype actually skip some "
-                                      "cells, which might means, many parameters of your "
-                                      "sub-network is not actually active, "
-                                      "and this genotype might not be so effective.")
-                                     .format(len(missing_keys)))
+                    self.logger.error(("{} missing keys will not be loaded! Check your genotype, "
+                                       "This should be due to you're using the state dict dumped by "
+                                       "`awnas eval-arch --save-state-dict` in an old version, "
+                                       "and your genotype actually skip some "
+                                       "cells, which might means, many parameters of your "
+                                       "sub-network is not actually active, "
+                                       "and this genotype might not be so effective.")
+                                      .format(len(missing_keys)))
                 self.model.load_state_dict(checkpoint, strict=False)
             self.logger.info("param size = %f M",
                              utils.count_parameters(self.model)/1.e6)
@@ -308,8 +310,8 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
 
                 if step % self.report_every == 0:
                     self.logger.info("valid %03d %e %f %f %s", step, objs.avg, top1.avg, top5.avg,
-                                     "; ".join(["{}: {:.3f}".format(n, v) \
-                                                for n, v in objective_perfs.avgs().items()]))
+                                     "; ".join(["{}: {:.3f}".format(perf_n, v) \
+                                                for perf_n, v in objective_perfs.avgs().items()]))
 
         return top1.avg, objs.avg, objective_perfs.avgs()
 

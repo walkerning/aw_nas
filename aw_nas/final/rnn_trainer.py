@@ -9,7 +9,7 @@ from torch import nn
 from aw_nas import utils
 from aw_nas.utils.exception import expect
 from aw_nas.final.base import FinalTrainer
-from aw_nas.utils.torch_utils import DataParallel
+from aw_nas.utils import DataParallel
 
 class RNNFinalTrainer(FinalTrainer):
     NAME = "rnn_trainer"

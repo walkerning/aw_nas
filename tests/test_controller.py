@@ -118,7 +118,7 @@ def test_rl_agent_ppo():
     optimizer = torch.optim.SGD(controller.parameters(), lr=lr)
     agent.step(rollouts, optimizer)
     for n, v in controller.named_parameters():
-        assert (ori_params[n] - v).abs().mean() > 1e-10
+        assert (ori_params[n] - v).abs().mean() > 0
 
 # --- test controller differentiable ----
 def test_diff_controller():

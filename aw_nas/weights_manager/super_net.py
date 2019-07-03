@@ -15,7 +15,7 @@ import torch
 from aw_nas.common import assert_rollout_type, group_and_sort_by_to_node
 from aw_nas.weights_manager.base import CandidateNet
 from aw_nas.weights_manager.shared import SharedNet, SharedCell, SharedOp
-from aw_nas.utils.torch_utils import data_parallel
+from aw_nas.utils import data_parallel
 
 __all__ = ["SubCandidateNet", "SuperNet"]
 
@@ -69,10 +69,14 @@ class SubCandidateNet(CandidateNet):
     def get_device(self):
         return self._device
 
-    def forward(self, inputs): #pylint: disable=arguments-differ
-        if not self.gpus or len(self.gpus) == 1:
-            return self.super_net.forward(inputs, self.genotypes_grouped)
-        return data_parallel(self.super_net, (inputs, self.genotypes_grouped), self.gpus)
+    def _forward(self, inputs):
+        return self.super_net.forward(inputs, self.genotypes_grouped)
+
+    def forward(self, inputs, single=False): #pylint: disable=arguments-differ
+        if single or not self.gpus or len(self.gpus) == 1:
+            return self._forward(inputs)
+        # return data_parallel(self.super_net, (inputs, self.genotypes_grouped), self.gpus)
+        return data_parallel(self, (inputs,), self.gpus, module_kwargs={"single": True})
 
     def forward_one_step(self, context, inputs=None):
         """
@@ -119,20 +123,21 @@ class SubCandidateNet(CandidateNet):
             for n, v in self.super_net.named_buffers(prefix=prefix):
                 yield n, v
 
-    def active_named_members(self, member, prefix="", recurse=True):
+    def active_named_members(self, member, prefix="", recurse=True, check_visited=False):
         """
         Get the generator of name-member pairs active
         in this candidate network. Always recursive.
         """
         # memo, there are potential weight sharing, e.g. when `tie_weight` is True in rnn_super_net,
         # encoder/decoder share weights. If there is no memo, `sub_named_members` will return
-        # 'decoder.weight' and 'encoder.weight', both refering to the same parameter, whereas
+        # 'decoder.weight' and 'encoder.weight', both refering to the same parameter, whereasooo
         # `named_parameters` (with memo) will only return 'encoder.weight'. For possible future
         # weight sharing, use memo to keep the consistency with the builtin `named_parameters`.
         memo = set()
         for n, v in self.super_net.sub_named_members(self.genotypes,
                                                      prefix=prefix,
-                                                     member=member):
+                                                     member=member,
+                                                     check_visited=check_visited):
             if v in memo:
                 continue
             memo.add(v)
@@ -209,7 +214,7 @@ class SuperNet(SharedNet):
         self.candidate_virtual_parameter_only = candidate_virtual_parameter_only
 
     def sub_named_members(self, genotypes,
-                          prefix="", member="parameters"):
+                          prefix="", member="parameters", check_visited=False):
         prefix = prefix + ("." if prefix else "")
 
         # the common modules that will be forwarded by every candidate
@@ -220,28 +225,33 @@ class SuperNet(SharedNet):
             for n, v in _func(prefix=prefix+mod_name):
                 yield n, v
 
-        # only a subset of modules under `self.cells` will be forwarded
-        # from the last output, parse the dependency backward
-        visited = set()
-        cell_idxes = [len(self.cells)-1]
-        depend_nodes_lst = [{edge[1] for edge in genotype}.intersection(range(self._num_init))\
-                            for genotype in genotypes]
-        while cell_idxes:
-            cell_idx = cell_idxes.pop()
-            visited.update([cell_idx])
-            # cg_idx is the cell group of the cell i
-            cg_idx = self._cell_layout[cell_idx]
-            depend_nodes = depend_nodes_lst[cg_idx]
-            depend_cell_idxes = [cell_idx - self._num_init + node_idx for node_idx in depend_nodes]
-            depend_cell_idxes = [i for i in depend_cell_idxes if i >= 0 and i not in visited]
-            cell_idxes += depend_cell_idxes
+        if check_visited:
+            # only a subset of modules under `self.cells` will be forwarded
+            # from the last output, parse the dependency backward
+            visited = set()
+            cell_idxes = [len(self.cells)-1]
+            depend_nodes_lst = [{edge[1] for edge in genotype}.intersection(range(self._num_init))\
+                                for genotype in genotypes]
+            while cell_idxes:
+                cell_idx = cell_idxes.pop()
+                visited.update([cell_idx])
+                # cg_idx is the cell group of the cell i
+                cg_idx = self._cell_layout[cell_idx]
+                depend_nodes = depend_nodes_lst[cg_idx]
+                depend_cell_idxes = [cell_idx - self._num_init + node_idx
+                                     for node_idx in depend_nodes]
+                depend_cell_idxes = [i for i in depend_cell_idxes if i >= 0 and i not in visited]
+                cell_idxes += depend_cell_idxes
+        else:
+            visited = list(range(self._num_layers))
 
         for cell_idx in sorted(visited):
             cell = self.cells[cell_idx]
             genotype = genotypes[self._cell_layout[cell_idx]]
             for n, v in cell.sub_named_members(genotype,
                                                prefix=prefix + "cells.{}".format(cell_idx),
-                                               member=member):
+                                               member=member,
+                                               check_visited=check_visited):
                 yield n, v
 
     # ---- APIs ----
@@ -304,11 +314,11 @@ class DiscreteSharedCell(SharedCell):
         return state, context
 
     def sub_named_members(self, genotype,
-                          prefix="", member="parameters"):
+                          prefix="", member="parameters", check_visited=False):
         prefix = prefix + ("." if prefix else "")
         all_from = {edge[1] for edge in genotype}
         for i, pre_op in enumerate(self.preprocess_ops):
-            if i in all_from:
+            if not check_visited or i in all_from:
                 for n, v in getattr(pre_op, "named_" + member)\
                     (prefix=prefix+"preprocess_ops."+str(i)):
                     yield n, v

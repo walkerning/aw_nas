@@ -1,5 +1,3 @@
-from itertools import chain
-
 import six
 import numpy as np
 import torch
@@ -7,12 +5,6 @@ from torch import optim
 from torch.autograd import Variable
 import torch.nn.functional as F
 import torch.utils.data
-
-from torch.nn.parallel.scatter_gather import scatter_kwargs, gather
-from torch.nn.parallel.replicate import replicate
-from torch.nn.parallel.parallel_apply import parallel_apply
-from torch.cuda._utils import _get_device_index
-from torch.nn.parallel import DataParallel as _DataParallel
 
 from aw_nas.utils.exception import expect
 from aw_nas.utils.lr_scheduler import get_scheduler_cls
@@ -254,62 +246,3 @@ def count_parameters(model):
 
 def to_device(datas, device):
     return [data.to(device) for data in datas]
-
-
-## --- data parallel utils ---
-def data_parallel(module, inputs, device_ids=None, output_device=None, dim=0, module_kwargs=None,
-                  non_scatter_kwargs=None):
-    r"""Evaluates module(input) in parallel across the GPUs given in device_ids.
-
-    This is the functional version of the DataParallel module.
-
-    Args:
-        module (Module): the module to evaluate in parallel
-        inputs (Tensor): inputs to the module
-        device_ids (list of int or torch.device): GPU ids on which to replicate module
-        output_device (list of int or torch.device): GPU location of the output
-            Use -1 to indicate the CPU.
-            (default: device_ids[0])
-    Returns:
-        a Tensor containing the result of module(input) located on
-        output_device
-    """
-    if not isinstance(inputs, tuple):
-        inputs = (inputs,)
-
-    if device_ids is None:
-        device_ids = list(range(torch.cuda.device_count()))
-
-    if output_device is None:
-        output_device = device_ids[0]
-
-    device_ids = list(map(lambda x: _get_device_index(x, True), device_ids))
-    output_device = _get_device_index(output_device, True)
-    src_device_obj = torch.device("cuda:{}".format(device_ids[0]))
-
-    for tensor in chain(module.parameters(), module.buffers()):
-        if tensor.device != src_device_obj:
-            raise RuntimeError("module must have its parameters and buffers "
-                               "on device {} (device_ids[0]) but found one of "
-                               "them on device: {}".format(src_device_obj, tensor.device))
-
-    inputs, module_kwargs = scatter_kwargs(inputs, module_kwargs, device_ids, dim)
-    if len(device_ids) == 1:
-        return module(*inputs[0], **module_kwargs[0])
-    used_device_ids = device_ids[:len(inputs)]
-    replicas = replicate(module, used_device_ids)
-    for model_replica in replicas:
-        for _, submodule in model_replica.named_modules():
-            if hasattr(submodule, "on_replicate") and callable(submodule.on_replicate):
-                submodule.on_replicate()
-    outputs = parallel_apply(replicas, inputs, module_kwargs, used_device_ids)
-    return gather(outputs, output_device, dim)
-
-class DataParallel(_DataParallel):
-    def replicate(self, module, device_ids):
-        replicas = replicate(module, device_ids, not torch.is_grad_enabled())
-        for model_replica in replicas:
-            for _, submodule in model_replica.named_modules():
-                if hasattr(submodule, "on_replicate") and callable(submodule.on_replicate):
-                    submodule.on_replicate()
-        return replicas

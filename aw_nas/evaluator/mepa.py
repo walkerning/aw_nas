@@ -267,6 +267,9 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
             eval_criterions = [self._scalar_reward_func] + self._report_loss_funcs
             eval_criterions = [partial(func, cand_net=cand_net) for func in eval_criterions]
 
+            # if update in-place, here zero all the grads of weights_manager
+            if self.mepa_step_current:
+                self.weights_manager.zero_grad()
             # return gradients if not update in-place
             # here, use loop variable as closure/cell var, this is goodn for now,
             # as all samples are evaluated sequentially (no parallel/delayed eval)

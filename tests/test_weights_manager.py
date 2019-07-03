@@ -148,17 +148,17 @@ def test_supernet_candidate_gradient_virtual(test_id, super_net):
     # test `gradient`, `begin_virtual`
     w_prev = {k: v.clone() for k, v in six.iteritems(c_params)}
     buffer_prev = {k: v.clone() for k, v in six.iteritems(c_buffers)}
+    visited_c_params = dict(cand_net.active_named_members("parameters", check_visited=True))
     with cand_net.begin_virtual():
         grads = cand_net.gradient(data, mode="train")
-        assert len(grads) == len(c_params)
+        assert len(grads) == len(visited_c_params)
         optimizer = torch.optim.SGD(cand_net.parameters(), lr=lr)
         optimizer.step()
         for n, grad in grads:
             assert (w_prev[n] - grad * lr - c_params[n]).abs().sum().item() < EPS
         grads_2 = dict(cand_net.gradient(data, mode="train"))
-        assert len(grads) == len(c_params)
+        assert len(grads) == len(visited_c_params)
         optimizer.step()
-
         for n, grad in grads:
             # this check is not very robust...
             assert (w_prev[n] - (grad + grads_2[n]) * lr - c_params[n]).abs().mean().item() < EPS
