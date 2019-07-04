@@ -388,7 +388,7 @@ class SimpleTrainer(BaseTrainer):
         torch.save(state_dict, path)
 
     def load(self, path):
-        checkpoint = torch.load(path)
+        checkpoint = torch.load(path ,map_location=torch.device("cpu"))
         self.last_epoch = self.epoch = checkpoint["epoch"]
         if self.controller_optimizer is not None:
             self.controller_optimizer.load_state_dict(checkpoint["controller_optimizer"])

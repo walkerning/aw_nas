@@ -94,7 +94,7 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
             assert self.model is not None
             if load_state_dict is not None:
                 # load state dict
-                checkpoint = torch.load(load_state_dict)
+                checkpoint = torch.load(load_state_dict, map_location=torch.device("cpu"))
                 extra_keys = set(checkpoint.keys()).difference(set(self.model.state_dict().keys()))
                 assert not extra_keys, "Extra keys in checkpoint! Make sure the genotype match"
                 missing_keys = {key for key in set(self.model.state_dict().keys())\
@@ -148,7 +148,7 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
         self.optimizer = self._init_optimizer()
         o_path = os.path.join(path, "optimizer.pt") if os.path.isdir(path) else None
         if o_path and os.path.exists(o_path):
-            checkpoint = torch.load(o_path)
+            checkpoint = torch.load(o_path, map_location=torch.device("cpu"))
             self.optimizer.load_state_dict(checkpoint["optimizer"])
             log_strs.append("optimizer from {}".format(o_path))
             self.last_epoch = checkpoint["epoch"]
@@ -158,7 +158,7 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
         if self.scheduler is not None:
             s_path = os.path.join(path, "scheduler.pt") if os.path.isdir(path) else None
             if s_path and os.path.exists(s_path):
-                self.scheduler.load_state_dict(torch.load(s_path))
+                self.scheduler.load_state_dict(torch.load(s_path, map_location=torch.device("cpu")))
                 log_strs.append("scheduler from {}".format(s_path))
 
         self.logger.info("param size = %f M",

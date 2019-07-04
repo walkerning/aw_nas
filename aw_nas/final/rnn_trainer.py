@@ -112,7 +112,7 @@ class RNNFinalTrainer(FinalTrainer):
         o_path = os.path.join(path, "optimizer.pt") if os.path.isdir(path) else None
         if o_path and os.path.exists(o_path):
             # init according to the type of the saved optimizer, and then load
-            checkpoint = torch.load(o_path)
+            checkpoint = torch.load(o_path, map_location=torch.device("cpu"))
             optimizer_state = checkpoint["optimizer"]
             if "t0" in optimizer_state["param_groups"][0]:
                 # ASGD
@@ -135,7 +135,7 @@ class RNNFinalTrainer(FinalTrainer):
         if self.optimizer_scheduler_cfg is not None:
             s_path = os.path.join(path, "scheduler.pt") if os.path.isdir(path) else None
             if s_path and os.path.exists(s_path):
-                self.scheduler.load_state_dict(torch.load(s_path))
+                self.scheduler.load_state_dict(torch.load(s_path, map_location=torch.device("cpu")))
                 log_strs.append("scheduler from {}".format(s_path))
 
         self.logger.info("param size = %f M",

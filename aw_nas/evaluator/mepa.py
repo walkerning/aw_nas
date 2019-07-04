@@ -374,7 +374,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
         torch.save(state_dict, path)
 
     def load(self, path):
-        checkpoint = torch.load(path)
+        checkpoint = torch.load(path, map_location=torch.device("cpu"))
         self.weights_manager.load_state_dict(checkpoint["weights_manager"])
 
         # load hidden states if exists

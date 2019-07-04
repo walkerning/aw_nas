@@ -127,7 +127,7 @@ class DiffController(BaseController, nn.Module):
 
     def load(self, path):
         """Load the parameters from disk."""
-        checkpoint = torch.load(path)
+        checkpoint = torch.load(path, map_location=torch.device("cpu"))
         self.load_state_dict(checkpoint["state_dict"])
         self.on_epoch_start(checkpoint["epoch"])
         self.logger.info("Loaded controller network from %s", path)

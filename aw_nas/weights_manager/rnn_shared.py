@@ -144,7 +144,7 @@ class RNNSharedNet(BaseWeightsManager, nn.Module):
                     "state_dict": self.state_dict()}, path)
 
     def load(self, path):
-        checkpoint = torch.load(path)
+        checkpoint = torch.load(path, map_location=torch.device("cpu"))
         self.load_state_dict(checkpoint["state_dict"])
         self.on_epoch_start(checkpoint["epoch"])
 
