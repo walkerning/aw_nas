@@ -187,7 +187,8 @@ class CNNGenotypeModel(FinalModel):
                 stemed = self.stem(inputs)
             else:
                 stemed = inputs
-            context = Context(previous_cells=[stemed], current_cell=[])
+            context = Context(self._num_init, self._num_layers,
+                              previous_cells=[stemed], current_cell=[])
             return stemed, context
 
         cur_cell_ind, _ = context.next_step_index
@@ -205,23 +206,23 @@ class CNNGenotypeModel(FinalModel):
 
     def forward_one_step_callback(self, inputs, callback):
         # forward stem
-        stemed, context = self.forward_one_step(context=None, inputs=inputs)
-        callback(stemed, context)
+        _, context = self.forward_one_step(context=None, inputs=inputs)
+        callback(context.last_state, context)
 
         # forward the cells
         for _ in range(0, self.search_space.num_layers):
             num_steps = self.search_space.num_steps + self.search_space.num_init_nodes + 1
             for _ in range(num_steps):
                 while True: # call `forward_one_step` until this step ends
-                    step_state, context = self.forward_one_step(context, inputs=None)
-                    callback(step_state, context)
-                    if context.is_end_of_step:
+                    _, context = self.forward_one_step(context, inputs=None)
+                    callback(context.last_state, context)
+                    if context.is_end_of_cell or context.is_end_of_step:
                         break
             # end of cell (every cell has the same number of num_steps)
         # final forward
-        logits, context = self.forward_one_step(context, inputs=None)
-        callback(logits, context)
-        return logits
+        _, context = self.forward_one_step(context, inputs=None)
+        callback(context.last_state, context)
+        return context.last_state
 
     @classmethod
     def supported_data_types(cls):

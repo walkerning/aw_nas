@@ -130,7 +130,8 @@ class SharedNet(BaseWeightsManager, nn.Module):
                 stemed = self.stem(inputs)
             else:
                 stemed = inputs
-            context = Context(previous_cells=[stemed], current_cell=[])
+            context = Context(self._num_init, self._num_layers,
+                              previous_cells=[stemed], current_cell=[])
             return stemed, context
 
         cur_cell_ind, _ = context.next_step_index

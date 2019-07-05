@@ -23,7 +23,11 @@ from aw_nas.utils.log import logger as _logger
 _HOME_DIR = os.environ.get("AWNAS_HOME", os.path.expanduser("~/awnas"))
 
 class Context(object):
-    def __init__(self, previous_cells=None, current_cell=None, previous_op=None, current_op=None):
+    def __init__(self, num_init_nodes, num_layers, use_stem=True,
+                 previous_cells=None, current_cell=None, previous_op=None, current_op=None):
+        self.use_stem = use_stem
+        self.num_init_nodes = num_init_nodes
+        self.num_layers = num_layers
         self.previous_cells = previous_cells or []
         self.current_cell = current_cell or []
         self.previous_op = previous_op or []
@@ -35,16 +39,23 @@ class Context(object):
 
     @property
     def next_step_index(self):
-        return len(self.previous_cells) - 1, len(self.current_cell)
+        return len(self.previous_cells) - (1 if self.use_stem else 0), len(self.current_cell)
+
+    @property
+    def is_last_concat_op(self):
+        _, n_s = self.next_step_index
+        return self.is_end_of_cell or (n_s > self.num_init_nodes and self.is_end_of_step)
 
     @property
     def is_end_of_cell(self):
-        n_p, n_c = self.next_step_index
-        return self.is_end_of_step and n_c == 0 and n_p > 0
+        # next_cell, next_step
+        n_c, n_s = self.next_step_index
+        return sum(self.next_op_index) == 0 and n_s == 0 and self.num_layers >= n_c > 0
 
     @property
     def is_end_of_step(self):
-        return sum(self.next_op_index) == 0
+        _, n_s = self.next_step_index
+        return sum(self.next_op_index) == 0 and n_s > 0
 
     @property
     def is_end_of_op(self):

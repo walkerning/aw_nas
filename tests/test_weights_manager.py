@@ -87,10 +87,11 @@ def test_supernet_forward_step(super_net):
         for i_step in range(num_steps):
             while True:
                 step_state, context = cand_net.forward_one_step(context)
-                if context.is_end_of_step:
+                if context.is_end_of_cell or context.is_end_of_step:
                     break
             if i_step != num_steps - 1:
-                assert step_state is context.current_cell[-1] and len(context.current_cell) == i_step + 1
+                assert step_state is context.current_cell[-1] \
+                    and len(context.current_cell) == i_step + 1
         assert context.is_end_of_cell
         assert len(context.previous_cells) == i_layer + 1
 
@@ -130,7 +131,7 @@ def test_inject(super_net):
     # forward stem
     cand_net.eval()
     def inject(state, context):
-        if context.is_end_of_cell or context.is_end_of_step:
+        if context.is_last_concat_op:
             return
         context.last_state = injector.inject(state)
     cand_net.forward_one_step_callback(data[0], callback=inject)
