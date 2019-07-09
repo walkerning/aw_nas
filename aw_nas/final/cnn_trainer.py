@@ -174,8 +174,9 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
             if epoch < self.warmup_epochs:
                 _warmup_update_lr(self.optimizer, epoch, self.learning_rate, self.warmup_epochs)
             else:
-                self.scheduler.step()
-            self.logger.info("epoch %d lr %e", epoch, self.scheduler.get_lr()[0])
+                if self.scheduler is not None:
+                    self.scheduler.step()
+            self.logger.info("epoch %d lr %e", epoch, self.optimizer.param_groups[0]["lr"])
 
             train_acc, train_obj = self.train_epoch(self.train_queue, self.parallel_model,
                                                     self._criterion, self.optimizer,

@@ -155,6 +155,28 @@ class CNNGenotypeModel(FinalModel):
 
         self.to(self.device)
 
+        # for flops calculation
+        self.total_flops = 0
+        self._flops_calculated = False
+        self.set_hook()
+
+    def set_hook(self):
+        for name, module in self.named_modules():
+            if "auxiliary" in name:
+                continue
+            module.register_forward_hook(self._hook_intermediate_feature)
+
+    def _hook_intermediate_feature(self, module, inputs, outputs):
+        if not self._flops_calculated:
+            if isinstance(module, nn.Conv2d):
+                self.total_flops += 2* inputs[0].size(1) * outputs.size(1) * \
+                                    module.kernel_size[0] * module.kernel_size[1] * \
+                                    outputs.size(2) * outputs.size(3) / module.groups
+            elif isinstance(module, nn.Linear):
+                self.total_flops += 2 * inputs[0].size(1) * outputs.size(1)
+        else:
+            pass
+
     def forward(self, inputs): #pylint: disable=arguments-differ
         if self.use_stem:
             stemed = self.stem(inputs)
@@ -172,6 +194,11 @@ class CNNGenotypeModel(FinalModel):
         out = self.global_pooling(states[-1])
         out = self.dropout(out)
         logits = self.classifier(out.view(out.size(0), -1))
+
+        if not self._flops_calculated:
+            self.logger.info("FLOPS: flops num = %d M", self.total_flops/1.e6)
+            self._flops_calculated = True
+
         if self.auxiliary_head and self.training:
             return logits, logits_aux
         return logits
