@@ -23,7 +23,8 @@ class FaultInjector(object):
         self.gaussian_std = gaussian_std
         self.mode = mode
         self.max_value_mode = True
-        self.fault_bit_list = np.array([2**x for x in range(8)] + [-2**x for x in range(8)], dtype=np.float32)
+        self.fault_bit_list = np.array([2**x for x in range(8)] + [-2**x for x in range(8)],
+                                       dtype=np.float32)
 
     def set_random_inject(self, value, max_value=True):
         self.random_inject = value

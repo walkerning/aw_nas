@@ -33,6 +33,7 @@ class Context(object):
         self.previous_op = previous_op or []
         self.current_op = current_op or []
         self._is_inject = dict()
+        self._num_conn = dict()
 
     @property
     def next_op_index(self):

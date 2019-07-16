@@ -19,8 +19,8 @@ from aw_nas.final.base import FinalModel
 from aw_nas.utils.exception import expect, ConfigException
 from aw_nas.utils.common_utils import Context
 
-def _defaultdict_dict():
-    return defaultdict(dict)
+def _defaultdict_3():
+    return defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
 
 class AuxiliaryHead(nn.Module):
     def __init__(self, C_in, num_classes):
@@ -49,11 +49,12 @@ class CNNGenotypeModel(FinalModel):
     SCHEDULABLE_ATTRS = ["dropout_path_rate"]
 
     def __init__(self, search_space, device, genotypes,
-                 num_classes=10, init_channels=36, cell_channels=tuple(), stem_multiplier=3,
+                 num_classes=10, init_channels=36, layer_channels=tuple(), stem_multiplier=3,
                  dropout_rate=0.1, dropout_path_rate=0.2,
                  auxiliary_head=False, auxiliary_cfg=None,
                  use_stem=True, cell_use_preprocess=True,
                  cell_pool_batchnorm=False, cell_group_kwargs=None,
+                 cell_independent_conn=False,
                  schedule_cfg=None):
         super(CNNGenotypeModel, self).__init__(schedule_cfg)
 
@@ -66,11 +67,12 @@ class CNNGenotypeModel(FinalModel):
 
         self.num_classes = num_classes
         self.init_channels = init_channels
-        self.cell_channels = cell_channels
+        self.layer_channels = layer_channels
         self.stem_multiplier = stem_multiplier
         self.use_stem = use_stem
         self.cell_use_preprocess = cell_use_preprocess
         self.cell_group_kwargs = cell_group_kwargs
+        self.cell_independent_conn = cell_independent_conn
 
         # training
         self.dropout_rate = dropout_rate
@@ -82,6 +84,7 @@ class CNNGenotypeModel(FinalModel):
         self._cell_layout = self.search_space.cell_layout
         self._reduce_cgs = self.search_space.reduce_cell_groups
         self._num_layers = self.search_space.num_layers
+        # TODO: support concat op for every cell
         self._out_multiplier = self.search_space.num_steps
         expect(len(self.genotypes) == self.search_space.num_cell_groups,
                ("Config genotype cell group number({}) "
@@ -102,42 +105,48 @@ class CNNGenotypeModel(FinalModel):
         num_channels = self.init_channels
         prev_num_channels = [c_stem] * self._num_init
         strides = [2 if self._is_reduce(i_layer) else 1 for i_layer in range(self._num_layers)]
-        if self.cell_channels:
-            expect(len(self.cell_channels) == len(strides),
+        if self.layer_channels:
+            expect(len(self.layer_channels) == len(strides),
                    ("Config cell channels({}) does not match search_space num layers({})"\
-                    .format(len(self.cell_channels), self.search_space.num_layers)),
+                    .format(len(self.layer_channels), self.search_space.num_layers)),
                    ConfigException)
         for i_layer, stride in enumerate(strides):
-            if self.cell_channels:
-                num_channels = self.cell_channels[i_layer]
-            elif stride > 1:
-                num_channels *= stride
+            if self.layer_channels:
+                # input and output channels of every layer is specified
+                num_channels = self.layer_channels[i_layer]
+                num_out_channels = self.layer_channels[i_layer + 1]
+            else:
+                if stride > 1:
+                    num_channels *= stride
+                num_out_channels = num_channels
             if cell_group_kwargs is not None:
                 # support passing in different kwargs when instantializing
                 # cell class for different cell groups
+                # Can specificy input/output channels by hand in configuration,
+                # instead of relying on the default
+                # "whenever stride/2, channelx2 and mapping with preprocess operations" assumption
                 kwargs = {k: v for k, v in cell_group_kwargs[self._cell_layout[i_layer]].items()}
+                if "C_in" in kwargs:
+                    num_channels = kwargs.pop("C_in")
+                if "C_out" in kwargs:
+                    num_out_channels = kwargs.pop("C_out")
             else:
                 kwargs = {}
             cg_idx = self.search_space.cell_layout[i_layer]
-            # A patch: Can specificy input/output channels by hand in configuration,
-            # instead of relying on the default
-            # "whenever stride/2, channelx2 and mapping with preprocess operations" assumption
-            _num_channels = num_channels if "C_in" not in kwargs \
-                            else kwargs.pop("C_in")
-            _num_out_channels = num_channels if "C_out" not in kwargs \
-                                else kwargs.pop("C_out")
+
             cell = CNNGenotypeCell(self.search_space,
                                    self.genotypes_grouped[cg_idx],
                                    layer_index=i_layer,
-                                   num_channels=_num_channels,
-                                   num_out_channels=_num_out_channels,
+                                   num_channels=num_channels,
+                                   num_out_channels=num_out_channels,
                                    prev_num_channels=tuple(prev_num_channels),
                                    stride=stride,
                                    prev_strides=[1] * self._num_init + strides[:i_layer],
                                    use_preprocess=cell_use_preprocess,
                                    pool_batchnorm=cell_pool_batchnorm,
+                                   independent_conn=cell_independent_conn,
                                    **kwargs)
-            prev_num_channels.append(_num_out_channels * self._out_multiplier)
+            prev_num_channels.append(num_out_channels * self._out_multiplier)
             prev_num_channels = prev_num_channels[1:]
             self.cells.append(cell)
 
@@ -261,7 +270,7 @@ class CNNGenotypeModel(FinalModel):
 class CNNGenotypeCell(nn.Module):
     def __init__(self, search_space, genotype_grouped, layer_index, num_channels, num_out_channels,
                  prev_num_channels, stride, prev_strides, use_preprocess, pool_batchnorm,
-                 **op_kwargs):
+                 independent_conn, **op_kwargs):
         super(CNNGenotypeCell, self).__init__()
         self.search_space = search_space
         self.genotype_grouped = genotype_grouped
@@ -272,6 +281,7 @@ class CNNGenotypeCell(nn.Module):
         self.layer_index = layer_index
         self.use_preprocess = use_preprocess
         self.pool_batchnorm = pool_batchnorm
+        self.independent_conn = independent_conn
         self.op_kwargs = op_kwargs
 
         self._steps = self.search_space.num_steps
@@ -303,7 +313,7 @@ class CNNGenotypeCell(nn.Module):
             self.preprocess_ops.append(preprocess)
         assert len(self.preprocess_ops) == self._num_init
 
-        self.edges = defaultdict(_defaultdict_dict)
+        self.edges = _defaultdict_3()
         self.edge_mod = torch.nn.Module() # a stub wrapping module of all the edges
         for _, conns in self.genotype_grouped:
             for op_type, from_, to_ in conns:
@@ -312,20 +322,27 @@ class CNNGenotypeCell(nn.Module):
                     num_channels, num_out_channels, stride, True, **op_kwargs)
                 if self.pool_batchnorm and "pool" in op_type:
                     op = nn.Sequential(op, nn.BatchNorm2d(num_out_channels, affine=False))
-                if op_type not in self.edges[from_][to_]:
-                    self.edges[from_][to_][op_type] = op
-                    self.edge_mod.add_module("f_{}_t_{}-{}".format(from_, to_, op_type), op)
+                index = len(self.edges[from_][to_][op_type])
+                if index == 0 or self.independent_conn:
+                    # there is no this connection already established,
+                    # or use indepdent connection for exactly the same (from, to, op_type)
+                    self.edges[from_][to_][op_type][index] = op
+                    self.edge_mod.add_module("f_{}_t_{}-{}-{}".format(
+                        from_, to_, op_type, index), op)
 
-        self._edge_name_pattern = re.compile("f_([0-9]+)_t_([0-9]+)-([a-z0-9_-]+)")
+        self._edge_name_pattern = re.compile("f_([0-9]+)_t_([0-9]+)-([a-z0-9_-]+)-([0-9])")
 
     def forward(self, inputs, dropout_path_rate): #pylint: disable=arguments-differ
         assert self._num_init == len(inputs)
         states = [op(_input) for op, _input in zip(self.preprocess_ops, inputs)]
 
+        _num_conn = defaultdict(int)
         for to_, connections in self.genotype_grouped:
             state_to_ = 0.
             for op_type, from_, _ in connections:
-                op = self.edges[from_][to_][op_type]
+                conn_ind = 0 if not self.independent_conn else _num_conn[(from_, to_, op_type)]
+                op = self.edges[from_][to_][op_type][conn_ind]
+                _num_conn[(from_, to_, op_type)] += 1
                 out = op(states[from_])
                 if self.training and dropout_path_rate > 0:
                     if not isinstance(op, ops.Identity):
@@ -337,6 +354,8 @@ class CNNGenotypeCell(nn.Module):
 
     def forward_one_step(self, context, dropout_path_rate):
         to_ = cur_step = context.next_step_index[1]
+        if cur_step == 0:
+            context._num_conn[self] = defaultdict(int)
         if cur_step < self._num_init: # `self._num_init` preprocess steps
             ind = len(context.previous_cells) - (self._num_init - cur_step)
             ind = max(ind, 0)
@@ -352,13 +371,18 @@ class CNNGenotypeCell(nn.Module):
                 context.previous_op = []
             else:
                 op_type, from_, _ = conns[op_ind]
-                op = self.edges[from_][to_][op_type]
+                conn_ind = 0 if not self.independent_conn else \
+                           context._num_conn[self][(from_, to_, op_type)]
+                op = self.edges[from_][to_][op_type][conn_ind]
                 state, context = op.forward_one_step(
                     context=context,
                     inputs=context.current_cell[from_] if current_op == 0 else None)
                 if self.training and dropout_path_rate > 0:
                     if not isinstance(op, ops.Identity):
                         context.last_state = state = utils.drop_path(state, dropout_path_rate)
+                if context.next_op_index[0] != op_ind:
+                    # this op finish
+                    context._num_conn[self][(from_, to_, op_type)] += 1
         else: # final concat
             state = torch.cat(context.current_cell[-self.search_space.num_steps:], dim=1)
             context.current_cell = []
@@ -372,7 +396,7 @@ class CNNGenotypeCell(nn.Module):
 
         # So, after each replicate, we should initialize a new edges dict
         # and update the reference manually.
-        self.edges = defaultdict(_defaultdict_dict)
+        self.edges = _defaultdict_3()
         for edge_name, edge_mod in six.iteritems(self.edge_mod._modules):
-            from_, to_, op_type = self._edge_name_pattern.match(edge_name).groups()
-            self.edges[int(from_)][int(to_)][op_type] = edge_mod
+            from_, to_, op_type, index = self._edge_name_pattern.match(edge_name).groups()
+            self.edges[int(from_)][int(to_)][op_type][index] = edge_mod
