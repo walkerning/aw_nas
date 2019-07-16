@@ -136,7 +136,7 @@ def _set_gpu(gpu):
         cudnn.enabled = True
         LOGGER.info('GPU device = %d' % gpu)
     else:
-        LOGGER.warn('No GPU available, use CPU!!')
+        LOGGER.warning('No GPU available, use CPU!!')
 
 
 @click.group(cls=_OrderedCommandGroup,

@@ -108,10 +108,10 @@ class SimpleTrainer(BaseTrainer):
             self.controller_steps = suggested
         else: # `controller_steps` is provided, check if it matches with the suggested value
             if suggested is not None and not suggested == self.controller_steps:
-                self.logger.warn("The suggested `controller_steps` (%3d) from "
-                                 "`evaluator.suggested_controller_steps_per_epoch()` differs "
-                                 "from the config setting (%3d).",
-                                 suggested, self.controller_steps)
+                self.logger.warning("The suggested `controller_steps` (%3d) from "
+                                    "`evaluator.suggested_controller_steps_per_epoch()` differs "
+                                    "from the config setting (%3d).",
+                                    suggested, self.controller_steps)
 
         # prepare `self.evaluator_steps`
         expect(self.interleave_controller_every is None or (
@@ -132,10 +132,10 @@ class SimpleTrainer(BaseTrainer):
         elif self.interleave_controller_every is None:
             # `evaluator_steps` is provided, check if it matches with the suggested value
             if suggested is not None and not suggested == self.evaluator_steps:
-                self.logger.warn("The suggested `evaluator_steps` (%3d) from "
-                                 "`evaluator.suggested_evaluator_steps_per_epoch()` differs "
-                                 "from the config setting (%3d).",
-                                 suggested, self.evaluator_steps)
+                self.logger.warning("The suggested `evaluator_steps` (%3d) from "
+                                    "`evaluator.suggested_evaluator_steps_per_epoch()` differs "
+                                    "from the config setting (%3d).",
+                                    suggested, self.evaluator_steps)
 
         # init controller optimizer and scheduler
         self.controller_optimizer = utils.init_optimizer(self.controller.parameters(),

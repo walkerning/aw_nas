@@ -242,8 +242,8 @@ def component_sample_config_str(comp_name, prefix, filter_funcs=None):
             import traceback
             traceback.print_exc()
             _logger.getChild("utils")\
-                   .warn("Skip %s: %s(%s) as exception occurs in checking. %s: %s",
-                         comp_name, type_name, cls, e.__class__.__name__, str(e))
+                   .warning("Skip %s: %s(%s) as exception occurs in checking. %s: %s",
+                            comp_name, type_name, cls, e.__class__.__name__, str(e))
         if is_skip:
             continue
 

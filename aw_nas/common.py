@@ -179,8 +179,8 @@ class DifferentiableRollout(BaseRollout):
                 self._discretized_arch, self._edge_probs = self.parse(self.sampled)
             else:
                 assert self.arch[0].ndimension() == 3
-                self.logger.warn("Rollout batch size > 1, use logits instead of samples"
-                                 "to parse the discretized arch.")
+                self.logger.warning("Rollout batch size > 1, use logits instead of samples"
+                                    "to parse the discretized arch.")
                 # if multiple arch samples per step is used, (2nd dim of sampled/arch is
                 # batch_size dim). use softmax(logits) to parse discretized arch
                 self._discretized_arch, self._edge_probs = \

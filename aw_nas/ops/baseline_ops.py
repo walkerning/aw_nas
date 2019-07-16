@@ -1,4 +1,3 @@
-import torch
 from torch import nn
 import torch.nn.functional as F
 from aw_nas.ops import register_primitive, ConvBNReLU, Identity
@@ -59,11 +58,11 @@ class MobileNetBlock(nn.Module):
                 nn.BatchNorm2d(C_out, affine=affine),
             )
 
-    def forward(self, x):
-        out = F.relu(self.bn1(self.conv1(x)))
+    def forward(self, inputs):
+        out = F.relu(self.bn1(self.conv1(inputs)))
         out = F.relu(self.bn2(self.conv2(out)))
         out = self.bn3(self.conv3(out))
-        out = out + self.shortcut(x) if self.stride == 1 else out
+        out = out + self.shortcut(inputs) if self.stride == 1 else out
         return out
 
     def forward_one_step(self, context=None, inputs=None):
