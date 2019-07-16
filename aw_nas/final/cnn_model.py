@@ -52,7 +52,8 @@ class CNNGenotypeModel(FinalModel):
                  num_classes=10, init_channels=36, layer_channels=tuple(), stem_multiplier=3,
                  dropout_rate=0.1, dropout_path_rate=0.2,
                  auxiliary_head=False, auxiliary_cfg=None,
-                 use_stem=True, cell_use_preprocess=True,
+                 use_stem="conv_bn_3x3", stem_stride=1, stem_affine=True,
+                 cell_use_preprocess=True,
                  cell_pool_batchnorm=False, cell_group_kwargs=None,
                  cell_independent_conn=False,
                  schedule_cfg=None):
@@ -92,23 +93,21 @@ class CNNGenotypeModel(FinalModel):
                .format(len(self.genotypes), self.search_space.num_cell_groups))
 
         ## initialize sub modules
-        if self.use_stem:
-            c_stem = self.stem_multiplier * self.init_channels
-            self.stem = nn.Sequential(
-                nn.Conv2d(3, c_stem, 3, padding=1, bias=False),
-                nn.BatchNorm2d(c_stem)
-            )
-        else:
+        if not self.use_stem:
             c_stem = 3
+        else:
+            c_stem = self.stem_multiplier * self.init_channels
+            self.stem = ops.get_op(self.use_stem)(3, c_stem,
+                                                  stride=stem_stride, affine=stem_affine)
 
         self.cells = nn.ModuleList()
         num_channels = self.init_channels
         prev_num_channels = [c_stem] * self._num_init
         strides = [2 if self._is_reduce(i_layer) else 1 for i_layer in range(self._num_layers)]
         if self.layer_channels:
-            expect(len(self.layer_channels) == len(strides),
-                   ("Config cell channels({}) does not match search_space num layers({})"\
-                    .format(len(self.layer_channels), self.search_space.num_layers)),
+            expect(len(self.layer_channels) == len(strides) + 1,
+                   ("Config cell channels({}) does not match search_space num layers + 1 ({})"\
+                    .format(len(self.layer_channels), self.search_space.num_layers + 1)),
                    ConfigException)
         for i_layer, stride in enumerate(strides):
             if self.layer_channels:
@@ -399,4 +398,4 @@ class CNNGenotypeCell(nn.Module):
         self.edges = _defaultdict_3()
         for edge_name, edge_mod in six.iteritems(self.edge_mod._modules):
             from_, to_, op_type, index = self._edge_name_pattern.match(edge_name).groups()
-            self.edges[int(from_)][int(to_)][op_type][index] = edge_mod
+            self.edges[int(from_)][int(to_)][op_type][int(index)] = edge_mod

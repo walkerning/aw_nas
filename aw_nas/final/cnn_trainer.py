@@ -24,6 +24,7 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
 
     def __init__(self, model, dataset, device, gpus, objective,#pylint: disable=dangerous-default-value
                  epochs=600, batch_size=96,
+                 optimizer_type="SGD", optimizer_kwargs=None,
                  learning_rate=0.025, momentum=0.9,
                  warmup_epochs=0,
                  optimizer_scheduler={
@@ -35,6 +36,7 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                  grad_clip=5.0,
                  auxiliary_head=False, auxiliary_weight=0.4,
                  add_regularization=False,
+                 save_as_state_dict=False,
                  schedule_cfg=None):
         super(CNNFinalTrainer, self).__init__(schedule_cfg)
 
@@ -50,11 +52,14 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
 
         self.epochs = epochs
         self.warmup_epochs = warmup_epochs
+        self.optimizer_type = optimizer_type
+        self.optimizer_kwargs = optimizer_kwargs
         self.learning_rate = learning_rate
         self.grad_clip = grad_clip
         self.auxiliary_head = auxiliary_head
         self.auxiliary_weight = auxiliary_weight
         self.add_regularization = add_regularization
+        self.save_as_state_dict = save_as_state_dict
 
         # for optimizer
         self.weight_decay = weight_decay
@@ -125,9 +130,12 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
 
     def save(self, path):
         path = utils.makedir(path)
-        # save the model directly instead of the state_dict,
-        # so that it can be loaded and run directly, without specificy configuration
-        torch.save(self.model, os.path.join(path, "model.pt"))
+        if self.save_as_state_dict:
+            torch.save(self.model.state_dict(), os.path.join(path, "model_state.pt"))
+        else:
+            # save the model directly instead of the state_dict,
+            # so that it can be loaded and run directly, without specificy configuration
+            torch.save(self.model, os.path.join(path, "model.pt"))
         torch.save({
             "epoch": self.epoch,
             "optimizer":self.optimizer.state_dict()
@@ -167,6 +175,8 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
         self.logger.info("Last epoch: %d", self.last_epoch)
 
     def train(self):
+        if len(self.gpus) >= 2:
+            self._forward_once_for_flops(self.model)
         for epoch in range(self.last_epoch+1, self.epochs+1):
             self.epoch = epoch
             self.on_epoch_start(epoch)
@@ -230,13 +240,19 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
             else:
                 group_weight.append(param)
         assert len(list(self.model.parameters())) == len(group_weight) + len(group_bias)
-        optimizer = torch.optim.SGD(
+        optim_cls = getattr(torch.optim, self.optimizer_type)
+        optim_kwargs = {
+            "lr": self.learning_rate,
+            "momentum": self.momentum,
+            "weight_decay": self.weight_decay
+        }
+        optim_kwargs.update(self.optimizer_kwargs or {})
+        optimizer = optim_cls(
             [{"params": group_weight},
              {"params": group_bias,
               "weight_decay": 0 if self.no_bias_decay else self.weight_decay}],
-            lr=self.learning_rate,
-            momentum=self.momentum,
-            weight_decay=self.weight_decay)
+            **optim_kwargs)
+
         return optimizer
 
     @staticmethod
@@ -324,3 +340,9 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
     def on_epoch_end(self, epoch):
         super(CNNFinalTrainer, self).on_epoch_end(epoch)
         self.model.on_epoch_end(epoch)
+
+    def _forward_once_for_flops(self, model):
+        # forward the model once to get the flops calculated
+        self.logger.info("Training parallel: Forward one batch for the flops information")
+        inputs, _ = next(iter(self.train_queue))
+        model(inputs.to(self.device))

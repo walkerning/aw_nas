@@ -18,7 +18,7 @@ class SharedNet(BaseWeightsManager, nn.Module):
                  gpus=tuple(),
                  num_classes=10, init_channels=16, stem_multiplier=3,
                  max_grad_norm=5.0, dropout_rate=0.1,
-                 use_stem=True,
+                 use_stem="conv_bn_3x3", stem_stride=1, stem_affine=True,
                  cell_use_preprocess=True,
                  cell_group_kwargs=None):
         super(SharedNet, self).__init__(search_space, device, rollout_type)
@@ -48,14 +48,12 @@ class SharedNet(BaseWeightsManager, nn.Module):
         self._num_layers = self.search_space.num_layers
 
         ## initialize sub modules
-        if self.use_stem:
-            c_stem = self.stem_multiplier * self.init_channels
-            self.stem = nn.Sequential(
-                nn.Conv2d(3, c_stem, 3, padding=1, bias=False),
-                nn.BatchNorm2d(c_stem)
-            )
-        else:
+        if not self.use_stem:
             c_stem = 3
+        else:
+            c_stem = self.stem_multiplier * self.init_channels
+            self.stem = ops.get_op(self.use_stem)(3, c_stem,
+                                                  stride=stem_stride, affine=stem_affine)
 
         self.cells = nn.ModuleList()
         num_channels = self.init_channels

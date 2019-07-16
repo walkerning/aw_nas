@@ -87,17 +87,19 @@ class DiffSuperNet(SharedNet):
                  gpus=tuple(),
                  num_classes=10, init_channels=16, stem_multiplier=3,
                  max_grad_norm=5.0, dropout_rate=0.1,
-                 use_stem=True, cell_use_preprocess=True, cell_group_kwargs=None,
+                 use_stem="conv_bn_3x3", stem_stride=1, stem_affine=True,
+                 cell_use_preprocess=True, cell_group_kwargs=None,
                  candidate_virtual_parameter_only=False):
-        super(DiffSuperNet, self).__init__(search_space, device, rollout_type,
-                                           cell_cls=DiffSharedCell, op_cls=DiffSharedOp,
-                                           gpus=gpus,
-                                           num_classes=num_classes, init_channels=init_channels,
-                                           stem_multiplier=stem_multiplier,
-                                           max_grad_norm=max_grad_norm, dropout_rate=dropout_rate,
-                                           use_stem=use_stem,
-                                           cell_use_preprocess=cell_use_preprocess,
-                                           cell_group_kwargs=cell_group_kwargs)
+        super(DiffSuperNet, self).__init__(
+            search_space, device, rollout_type,
+            cell_cls=DiffSharedCell, op_cls=DiffSharedOp,
+            gpus=gpus,
+            num_classes=num_classes, init_channels=init_channels,
+            stem_multiplier=stem_multiplier,
+            max_grad_norm=max_grad_norm, dropout_rate=dropout_rate,
+            use_stem=use_stem, stem_stride=stem_stride, stem_affine=stem_affine,
+            cell_use_preprocess=cell_use_preprocess,
+            cell_group_kwargs=cell_group_kwargs)
 
         self.candidate_virtual_parameter_only = candidate_virtual_parameter_only
 

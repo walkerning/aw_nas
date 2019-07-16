@@ -51,6 +51,8 @@ PRIMITVE_FACTORY = {
                                                                      1, stride, 0, affine=affine),
     "conv_bn_relu_3x3" : lambda C, C_out, stride, affine: ConvBNReLU(C, C_out,
                                                                      3, stride, 1, affine=affine),
+    "conv_bn_3x3" : lambda C, C_out, stride, affine: ConvBNReLU(C, C_out,
+                                                                3, stride, 1, affine=affine, relu=False),
     "conv_bn_relu_5x5" : lambda C, C_out, stride, affine: ConvBNReLU(C, C_out,
                                                                      5, stride, 2, affine=affine),
     "conv_1x1" : lambda C, C_out, stride, affine: nn.Conv2d(C, C_out, 1, stride, 0),
