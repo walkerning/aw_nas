@@ -18,36 +18,16 @@ from aw_nas.objective.base import BaseObjective
 from aw_nas.utils.exception import expect, ConfigException
 
 class FaultInjector(object):
-    def __init__(self, gaussian_std, mode, fault_bias=128):
-        self.fault_bias = fault_bias
+    def __init__(self, gaussian_std=1., mode="fixed"):
         self.random_inject = 0.001
         self.gaussian_std = gaussian_std
         self.mode = mode
+        self.max_value_mode = True
+        self.fault_bit_list = np.array([2**x for x in range(8)] + [-2**x for x in range(8)], dtype=np.float32)
 
-    @staticmethod
-    def inject2num(num_, min_, max_, step, bit_pos, mode):
-        out = 0
-        num = int(round(float(num_) / float(step)))
-        if mode == "1-0flip":
-            out = np.int8(num & bit_pos) * step
-        elif mode == "0-1flip":
-            out = np.int8(num | bit_pos) * step
-        else:
-            print("Error: no such mode!")
-            exit(1)
-        return out
-
-    @staticmethod
-    def get_index_by_shape(index, shape):
-        index_list = []
-        newshape = list(shape) + [1]
-        for ind in range(len(newshape) - 1):
-            index_s = (index % shape[ind]) // newshape[ind + 1]
-            index_list.append(int(index_s))
-        return tuple(index_list)
-
-    def set_random_inject(self, value):
+    def set_random_inject(self, value, max_value=True):
         self.random_inject = value
+        self.max_value_mode = max_value
 
     def set_gaussian_std(self, value):
         self.gaussian_std = value
@@ -55,6 +35,15 @@ class FaultInjector(object):
     def inject_gaussian(self, out):
         gaussian = torch.randn(out.shape, dtype=out.dtype, device=out.device) * self.gaussian_std
         out = out + gaussian
+        return out
+
+    def inject_saltandpepper(self, out):
+        random_tensor = out.new(out.size()).random_(0, 2*int(1./self.random_inject))
+        salt_ind = (random_tensor == 0)
+        pepper_ind = (random_tensor == 1)
+        max_ = torch.max(torch.abs(out)).cpu().data
+        out[salt_ind] = 0
+        out[pepper_ind] = max_
         return out
 
     def inject_fixed(self, out):
@@ -66,21 +55,26 @@ class FaultInjector(object):
         step = torch.pow(torch.autograd.Variable(torch.FloatTensor([2.]).to(out.device),
                                                  requires_grad=False),
                          (scale.float() - 7.))
-        fault_bias = step * 128.
         fault_ind = (random_tensor < 1)
         random_tensor.zero_()
-        random_tensor[fault_ind] = fault_bias
+        if self.max_value_mode:
+            fault_bias = step * 128.
+            random_tensor[fault_ind] = fault_bias
+        else:
+            random_tensor[fault_ind] = step * \
+                torch.tensor(self.fault_bit_list[np.random.randint(
+                    0, 16, size=fault_ind.sum().cpu().data)]).to(out.device)
         max_ = torch.max(torch.abs(out)).cpu().data
         out = out + random_tensor
 
         # clip
         out.clamp_(min=-max_, max=max_)
 
-        # for masked bp
-        normal_mask = torch.ones_like(out)
-        normal_mask[fault_ind] = 0
-        masked = normal_mask * out
-        out = (out - masked).detach() + masked
+        # # for masked bp
+        # normal_mask = torch.ones_like(out)
+        # normal_mask[fault_ind] = 0
+        # masked = normal_mask * out
+        # out = (out - masked).detach() + masked
         return out
 
     def inject(self, out):
@@ -91,7 +85,7 @@ class FaultInjectionObjective(BaseObjective):
     SCHEDULABLE_ATTRS = ["fault_reward_coeff", "fault_loss_coeff", "inject_prob", "gaussian_std"]
 
     def __init__(self, search_space,
-                 fault_modes="gaussian", gaussian_std=1., inject_prob=0.001,
+                 fault_modes="gaussian", gaussian_std=1., inject_prob=0.001, max_value_mode=True,
                  # loss
                  fault_loss_coeff=0.,
                  as_controller_regularization=False,
@@ -102,7 +96,7 @@ class FaultInjectionObjective(BaseObjective):
         super(FaultInjectionObjective, self).__init__(search_space, schedule_cfg)
         assert 0. <= fault_reward_coeff <= 1.
         self.injector = FaultInjector(gaussian_std, fault_modes)
-        self.injector.set_random_inject(inject_prob)
+        self.injector.set_random_inject(inject_prob, max_value_mode)
         self.fault_loss_coeff = fault_loss_coeff
         self.as_controller_regularization = as_controller_regularization
         self.as_evaluator_regularization = as_evaluator_regularization
@@ -117,6 +111,7 @@ class FaultInjectionObjective(BaseObjective):
     @classmethod
     def supported_data_types(cls):
         return ["image"]
+
     def perf_names(cls):
         return ["acc_clean", "acc_fault"]
 
@@ -150,12 +145,13 @@ class FaultInjectionObjective(BaseObjective):
             # for differentiable controller training?
             outputs_f = cand_net.forward_one_step_callback(inputs, callback=self.inject)
             ce_loss_f = nn.CrossEntropyLoss()(outputs_f, targets)
-            loss += self.fault_loss_coeff * ce_loss_f
+            loss = (1 - self.fault_loss_coeff) * loss + self.fault_loss_coeff * ce_loss_f
         return loss
 
     def inject(self, state, context):
-        if context.is_end_of_cell or context.is_end_of_step:
+        if context.is_last_concat_op or not context.is_last_inject:
             return
+        assert state is context.last_state
         context.last_state = self.injector.inject(state)
 
     @property

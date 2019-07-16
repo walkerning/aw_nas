@@ -32,6 +32,7 @@ class Context(object):
         self.current_cell = current_cell or []
         self.previous_op = previous_op or []
         self.current_op = current_op or []
+        self._is_inject = dict()
 
     @property
     def next_op_index(self):
@@ -76,6 +77,17 @@ class Context(object):
                 break
         else:
             raise Exception("Empty context, set failed")
+
+    def flag_inject(self, is_inject):
+        next_cell, next_step = self.next_step_index
+        next_conn, next_op_step = self.next_op_index
+        self._is_inject[(next_cell, next_step, next_conn, next_op_step)] = is_inject
+
+    @property
+    def is_last_inject(self):
+        next_cell, next_step = self.next_step_index
+        next_conn, next_op_step = self.next_op_index
+        return self._is_inject.get((next_cell, next_step, next_conn, next_op_step), True)
 
     def __repr__(self):
         next_cell, next_step = self.next_step_index

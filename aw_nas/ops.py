@@ -42,9 +42,16 @@ PRIMITVE_FACTORY = {
     "dil_conv_5x5" : lambda C, C_out, stride, affine: DilConv(C, C_out,
                                                               5, stride, 4, 2, affine=affine),
     "conv_7x1_1x7" : conv_7x1_1x7,
+
     "relu_conv_bn_3x3" : lambda C, C_out, stride, affine: ReLUConvBN(C, C_out,
                                                                      3, stride, 1, affine=affine),
     "relu_conv_bn_5x5" : lambda C, C_out, stride, affine: ReLUConvBN(C, C_out,
+                                                                     5, stride, 2, affine=affine),
+    "conv_bn_relu_1x1" : lambda C, C_out, stride, affine: ConvBNReLU(C, C_out,
+                                                                     1, stride, 0, affine=affine),
+    "conv_bn_relu_3x3" : lambda C, C_out, stride, affine: ConvBNReLU(C, C_out,
+                                                                     3, stride, 1, affine=affine),
+    "conv_bn_relu_5x5" : lambda C, C_out, stride, affine: ConvBNReLU(C, C_out,
                                                                      5, stride, 2, affine=affine),
     "conv_1x1" : lambda C, C_out, stride, affine: nn.Conv2d(C, C_out, 1, stride, 0),
 
@@ -92,6 +99,29 @@ class FactorizedReduce(nn.Module):
         return out
 
 
+class ConvBNReLU(nn.Module):
+
+    def __init__(self, C_in, C_out, kernel_size, stride, padding, affine=True, relu=True):
+        super(ConvBNReLU, self).__init__()
+        if relu:
+            self.op = nn.Sequential(
+                nn.Conv2d(C_in, C_out, kernel_size, stride=stride, padding=padding, bias=False),
+                nn.BatchNorm2d(C_out, affine=affine),
+                nn.ReLU(inplace=False)
+            )
+        else:
+            self.op = nn.Sequential(
+                nn.Conv2d(C_in, C_out, kernel_size, stride=stride, padding=padding, bias=False),
+                nn.BatchNorm2d(C_out, affine=affine)
+            )
+
+    def forward(self, x):
+        return self.op(x)
+
+    def forward_one_step(self, context=None, inputs=None):
+        return self.op.forward_one_step(context, inputs)
+
+
 class ReLUConvBN(nn.Module):
 
     def __init__(self, C_in, C_out, kernel_size, stride, padding, affine=True):
@@ -126,7 +156,6 @@ class DilConv(nn.Module):
 
     def forward_one_step(self, context=None, inputs=None):
         return self.op.forward_one_step(context, inputs)
-
 
 class SepConv(nn.Module):
 
@@ -190,6 +219,7 @@ def forward_one_step(self, context=None, inputs=None):
             inputs = self._modules[str(mod_ind)](inputs)
         context.previous_op.append(inputs)
         context.current_op = []
+        context.flag_inject(False)
     else:
         assert "ERROR: wrong op index! should not reach here!"
     return inputs, context

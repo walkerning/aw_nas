@@ -429,7 +429,7 @@ class CNNSearchSpace(SearchSpace):
         return Rollout(arch, {}, self)
 
     def plot_cell(self, genotype, filename,
-                  label="", edge_labels=None):
+                  label="", edge_labels=None, plot_format="png"):
         """Plot a cell to `filename` on disk."""
 
         from graphviz import Digraph
@@ -438,7 +438,7 @@ class CNNSearchSpace(SearchSpace):
             expect(len(edge_labels) == len(genotype))
 
         graph = Digraph(
-            format="png",
+            format=plot_format,
             # https://stackoverflow.com/questions/4714262/graphviz-dot-captions
             body=["label=\"{l}\"".format(l=label),
                   "labelloc=top", "labeljust=left"],
@@ -459,6 +459,8 @@ class CNNSearchSpace(SearchSpace):
         node_names += [str(i) for i in range(self.num_steps)]
 
         for i, (op_type, from_, to_) in enumerate(genotype):
+            if op_type == "none":
+                continue
             edge_label = op_type
             if edge_labels is not None:
                 edge_label = edge_label + "; " + str(edge_labels[i])
@@ -475,7 +477,7 @@ class CNNSearchSpace(SearchSpace):
 
         return filename + ".png"
 
-    def plot_arch(self, genotypes, filename, label="", edge_labels=None): #pylint: disable=arguments-differ
+    def plot_arch(self, genotypes, filename, label="", edge_labels=None, plot_format="png"): #pylint: disable=arguments-differ
         """Plot an architecture to files on disk"""
 
         if edge_labels is None:
@@ -484,7 +486,8 @@ class CNNSearchSpace(SearchSpace):
         for e_label, (cg_n, cg_geno) in zip(edge_labels, genotypes):
             fname = self.plot_cell(cg_geno, filename+"-"+cg_n,
                                    label=cg_n + " " + label,
-                                   edge_labels=e_label)
+                                   edge_labels=e_label,
+                                   plot_format=plot_format)
             fnames.append((cg_n, fname))
 
         return fnames
@@ -604,7 +607,7 @@ class RNNSearchSpace(SearchSpace):
             arch.append(cg_arch)
         return Rollout(arch, {}, self)
 
-    def plot_arch(self, genotypes, filename, label="", edge_labels=None): #pylint: disable=arguments-differ
+    def plot_arch(self, genotypes, filename, label="", edge_labels=None, plot_format="png"): #pylint: disable=arguments-differ
         """Plot an architecture to files on disk"""
         expect(len(genotypes) == 2 and self.num_cell_groups == 1,
                "Current RNN search space only support one cell group")
@@ -619,7 +622,7 @@ class RNNSearchSpace(SearchSpace):
         from graphviz import Digraph
 
         graph = Digraph(
-            format="png",
+            format=plot_format,
             # https://stackoverflow.com/questions/4714262/graphviz-dot-captions
             body=["label=\"{l}\"".format(l=label),
                   "labelloc=top", "labeljust=left"],
@@ -675,13 +678,13 @@ def genotype_from_str(genotype_str, search_space):
 def rollout_from_genotype_str(genotype_str, search_space):
     return search_space.rollout_from_genotype(genotype_from_str(genotype_str, search_space))
 
-def plot_genotype(genotype, dest, cls, label="", edge_labels=None, **search_space_cfg):
+def plot_genotype(genotype, dest, cls, label="", edge_labels=None, plot_format="png", **search_space_cfg):
     ss = get_search_space(cls, **search_space_cfg)
     if isinstance(genotype, str):
         genotype = eval("ss.genotype_type({})".format(genotype)) # pylint: disable=eval-used
         genotype = list(genotype._asdict().items())
     expect(isinstance(genotype, (list, tuple)))
-    return ss.plot_arch(genotype, dest, label, edge_labels)
+    return ss.plot_arch(genotype, dest, label, edge_labels, plot_format=plot_format)
 
 def group_and_sort_by_to_node(cell_geno):
     group_dct = collections.defaultdict(list)
