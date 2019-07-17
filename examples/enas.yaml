@@ -75,8 +75,8 @@ evaluator_cfg:
   # Schedulable attributes: controller_surrogate_steps, mepa_surrogate_steps, mepa_samples
   rollout_type: discrete
   batch_size: 128
-  controller_surrogate_steps: 1
-  mepa_surrogate_steps: 1
+  controller_surrogate_steps: 0
+  mepa_surrogate_steps: 0
   mepa_optimizer:
     lr: 0.01
     momentum: 0.9
@@ -95,8 +95,8 @@ evaluator_cfg:
     type: CosineAnnealingLR
   mepa_samples: 1
   data_portion:
-  - 0.1
-  - 0.7
+  - 0.0
+  - 0.8
   - 0.2
   mepa_as_surrogate: false
   bptt_steps: 35

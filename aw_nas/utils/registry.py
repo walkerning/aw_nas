@@ -43,9 +43,9 @@ class RegistryMeta(abc.ABCMeta):
             else:
                 if "NAME" in namespace:
                     entry = namespace["NAME"]
-                    LOGGER.warn("Can't register abstract class `%s` as entry `%s`"
-                                " in table `%s`, ignore. Abstract methods: %s",
-                                name, entry, table, ", ".join(abstract_methods))
+                    LOGGER.warning("Can't register abstract class `%s` as entry `%s`"
+                                   " in table `%s`, ignore. Abstract methods: %s",
+                                   name, entry, table, ", ".join(abstract_methods))
 
     @classmethod
     def get_class(mcs, table, name):

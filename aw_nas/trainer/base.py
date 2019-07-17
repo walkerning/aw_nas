@@ -110,8 +110,8 @@ class BaseTrainer(Component):
             try:
                 torch.save(self.evaluator, os.path.join(dir_, "evaluator.pt"))
             except pickle.PicklingError as e:
-                self.logger.warn("Final saving: torch.save(evaluator) fail, fallback to call "
-                                 "`evaluator.save`: %s", e)
+                self.logger.warning("Final saving: torch.save(evaluator) fail, fallback to call "
+                                    "`evaluator.save`: %s", e)
                 self.evaluator.save(os.path.join(dir_, "evaluator.pt"))
             self.logger.info("Final Saving: Dump controller to directory %s", dir_)
 
@@ -142,16 +142,25 @@ class BaseTrainer(Component):
 
             if "controller" in load_components:
                 path = os.path.join(load, "controller")
-                self.logger.info("Load controller from %s", path)
-                self.controller.load(path)
+                if os.path.exists(path):
+                    self.logger.info("Load controller from %s", path)
+                    self.controller.load(path)
+                else:
+                    self.logger.warning("Controller not loaded! Path `{}` not exists.".format(path))
             if "evaluator" in load_components:
                 path = os.path.join(load, "evaluator")
-                self.logger.info("Load evaluator from %s", path)
-                self.evaluator.load(path)
+                if os.path.exists(path):
+                    self.logger.info("Load evaluator from %s", path)
+                    self.evaluator.load(path)
+                else:
+                    self.logger.warning("Evaluator not loaded! Path `{}` not exists.".format(path))
             if "trainer" in load_components:
                 path = os.path.join(load, "trainer")
-                self.logger.info("Load trainer from %s", path)
-                self.load(path)
+                if os.path.exists(path):
+                    self.logger.info("Load trainer from %s", path)
+                    self.load(path)
+                else:
+                    self.logger.warning("Trainer not loaded! Path `{}` not exists.".format(path))
 
         self.save_every = save_every
         self.train_dir = utils.makedir(train_dir) if train_dir is not None else train_dir

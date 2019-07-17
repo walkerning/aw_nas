@@ -1,35 +1,31 @@
+# -*- coding: utf-8 -*-
+
+import re
+from collections import defaultdict
+
+import six
 import numpy as np
 import torch
 from torch import nn
 
 from aw_nas import ops
 from aw_nas.weights_manager.base import BaseWeightsManager
-
-
-class Context(object):
-    def __init__(self, previous_cells=None, current_cell=None):
-        self.previous_cells = previous_cells or []
-        self.current_cell = current_cell or []
-
-    @property
-    def next_step_index(self):
-        return len(self.previous_cells) - 1, len(self.current_cell)
-
-    @property
-    def is_end_of_cell(self):
-        return len(self.current_cell) == 0
-
+from aw_nas.utils.common_utils import Context
 
 class SharedNet(BaseWeightsManager, nn.Module):
     def __init__(self, search_space, device, rollout_type,
                  cell_cls, op_cls,
+                 gpus=tuple(),
                  num_classes=10, init_channels=16, stem_multiplier=3,
                  max_grad_norm=5.0, dropout_rate=0.1,
-                 use_stem=True,
+                 use_stem="conv_bn_3x3", stem_stride=1, stem_affine=True,
                  cell_use_preprocess=True,
                  cell_group_kwargs=None):
         super(SharedNet, self).__init__(search_space, device, rollout_type)
         nn.Module.__init__(self)
+
+        # optionally data parallelism in SharedNet
+        self.gpus = gpus
 
         self.num_classes = num_classes
         # init channel number of the first cell layers,
@@ -52,14 +48,12 @@ class SharedNet(BaseWeightsManager, nn.Module):
         self._num_layers = self.search_space.num_layers
 
         ## initialize sub modules
-        if self.use_stem:
-            c_stem = self.stem_multiplier * self.init_channels
-            self.stem = nn.Sequential(
-                nn.Conv2d(3, c_stem, 3, padding=1, bias=False),
-                nn.BatchNorm2d(c_stem)
-            )
-        else:
+        if not self.use_stem:
             c_stem = 3
+        else:
+            c_stem = self.stem_multiplier * self.init_channels
+            self.stem = ops.get_op(self.use_stem)(3, c_stem,
+                                                  stride=stem_stride, affine=stem_affine)
 
         self.cells = nn.ModuleList()
         num_channels = self.init_channels
@@ -132,10 +126,11 @@ class SharedNet(BaseWeightsManager, nn.Module):
         if inputs is not None:
             if self.use_stem:
                 stemed = self.stem(inputs)
-                context = Context(previous_cells=[stemed], current_cell=[])
-                return stemed, context
             else:
-                context = Context(previous_cells=[inputs], current_cell=[])
+                stemed = inputs
+            context = Context(self._num_init, self._num_layers,
+                              previous_cells=[stemed], current_cell=[])
+            return stemed, context
 
         cur_cell_ind, _ = context.next_step_index
 
@@ -172,14 +167,13 @@ class SharedNet(BaseWeightsManager, nn.Module):
                     "state_dict": self.state_dict()}, path)
 
     def load(self, path):
-        checkpoint = torch.load(path)
+        checkpoint = torch.load(path, map_location=torch.device("cpu"))
         self.load_state_dict(checkpoint["state_dict"])
         self.on_epoch_start(checkpoint["epoch"])
 
     @classmethod
     def supported_data_types(cls):
         return ["image"]
-
 
 class SharedCell(nn.Module):
     def __init__(self, op_cls, search_space, layer_index, num_channels, num_out_channels,
@@ -229,14 +223,29 @@ class SharedCell(nn.Module):
             self.preprocess_ops.append(preprocess)
         assert len(self.preprocess_ops) == self._num_init
 
-        self.edges = nn.ModuleList()
-        for i in range(self._steps):
-            for j in range(i + self._num_init):
-                op = op_cls(self.num_channels, self.num_out_channels,
-                            stride=self.stride if j < self._num_init else 1,
-                            primitives=self._primitives, **op_kwargs)
-                self.edges.append(op)
+        self.edges = defaultdict(dict)
+        self.edge_mod = torch.nn.Module() # a stub wrapping module of all the edges
+        for i_step in range(self._steps):
+            to_ = i_step + self._num_init
+            for from_ in range(to_):
+                self.edges[from_][to_] = op_cls(self.num_channels, self.num_out_channels,
+                                                stride=self.stride if from_ < self._num_init else 1,
+                                                primitives=self._primitives, **op_kwargs)
+                self.edge_mod.add_module("f_{}_t_{}".format(from_, to_), self.edges[from_][to_])
 
+        self._edge_name_pattern = re.compile("f_([0-9]+)_t_([0-9]+)")
+
+    def on_replicate(self):
+        # Although this edges is easy to understand, when paralleized,
+        # the reference relationship between `self.edge` and modules under `self.edge_mod`
+        # will not get updated automatically.
+
+        # So, after each replicate, we should initialize a new edges dict
+        # and update the reference manually.
+        self.edges = defaultdict(dict)
+        for edge_name, edge_mod in six.iteritems(self.edge_mod._modules):
+            from_, to_ = self._edge_name_pattern.match(edge_name).groups()
+            self.edges[int(from_)][int(to_)] = edge_mod
 
 class SharedOp(nn.Module):
     """
@@ -251,6 +260,6 @@ class SharedOp(nn.Module):
         for primitive in self.primitives:
             op = ops.get_op(primitive)(C, C_out, stride, False)
             if "pool" in primitive:
-                op = nn.Sequential(op, nn.BatchNorm2d(C,
+                op = nn.Sequential(op, nn.BatchNorm2d(C_out,
                                                       affine=False))
             self.p_ops.append(op)

@@ -98,6 +98,28 @@ def test_controller_network_cellwise_primitives(case):
     arch, log_probs, entropies, (hx, cx) = net_shared.sample(batch_size, cell_index=1)
     assert all(np.max(single_arch[1]) <= 2 for single_arch in arch)
 
+def test_rl_agent_ppo():
+    import numpy as np
+    import torch
+    from aw_nas.controller import RLController
+    from aw_nas.controller.rl_agents import PPOAgent
+
+    search_space = get_search_space(cls="cnn")
+    device = "cuda"
+    controller = RLController(search_space, device)
+    agent = PPOAgent(controller)
+
+    # set pseudo performance of rollouts
+    rollouts = controller.sample(n=3)
+    [r.set_perf(np.random.rand(), name="reward") for r in rollouts]
+
+    ori_params = {n: v.clone() for n, v in controller.named_parameters()}
+    lr = 0.01
+    optimizer = torch.optim.SGD(controller.parameters(), lr=lr)
+    agent.step(rollouts, optimizer)
+    for n, v in controller.named_parameters():
+        assert (ori_params[n] - v).abs().mean() > 0
+
 # --- test controller differentiable ----
 def test_diff_controller():
     from aw_nas.controller import DiffController

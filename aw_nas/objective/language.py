@@ -21,26 +21,26 @@ class LanguageObjective(BaseObjective):
     def perf_names(self):
         return ["perp"]
 
-    def get_perfs(self, inputs, targets, cand_net):
+    def get_perfs(self, inputs, outputs, targets, cand_net):
         """
         Get perplexity.
         """
-        return [np.exp(self.get_loss_item(inputs, targets, cand_net,
+        return [np.exp(self.get_loss_item(inputs, outputs, targets, cand_net,
                                           add_evaluator_regularization=False))]
 
-    def get_reward(self, inputs, targets, cand_net):
-        return self.reward_c / self.get_perfs(inputs, targets, cand_net)[0]
+    def get_reward(self, inputs, outputs, targets, cand_net):
+        return self.reward_c / self.get_perfs(inputs, outputs, targets, cand_net)[0]
 
-    def get_loss(self, inputs, targets, cand_net,
+    def get_loss(self, inputs, outputs, targets, cand_net,
                  add_controller_regularization=True, add_evaluator_regularization=True):
         """
         Get the cross entropy loss *tensor*, optionally add regluarization loss.
 
         Args:
-            inputs(Tuple): (predict_logits, raw_outs, dropped_outs, hidden)
+            outputs(Tuple): (predict_logits, raw_outs, dropped_outs, hidden)
             targets: target tokens
         """
-        logits, raw_outs, outs, _ = inputs
+        logits, raw_outs, outs, _ = outputs
         loss = nn.CrossEntropyLoss()(logits.view(-1, logits.size(-1)), targets.view(-1))
         if not add_evaluator_regularization:
             return loss

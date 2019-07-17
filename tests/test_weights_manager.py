@@ -7,7 +7,7 @@ import pytest
 # ---- Test super_net ----
 def _cnn_data(device="cuda", batch_size=2):
     return (torch.rand(batch_size, 3, 28, 28, dtype=torch.float, device=device),
-            torch.tensor([0, 1]).long().to(device))
+            torch.tensor(np.random.randint(0, high=10, size=batch_size)).long().to(device))
 
 def _supernet_sample_cand(net):
     ss = net.search_space
@@ -57,29 +57,84 @@ def test_supernet_forward(super_net):
     logits = cand_net.forward_data(data[0], mode="eval")
     assert logits.shape[-1] == 10
 
+@pytest.mark.parametrize("super_net", [
+    {
+        "dropout_rate": 0,
+        "search_space_cfg": {
+            "num_steps": 1,
+            "num_layers": 1,
+            "num_cell_groups": 1,
+            "cell_layout": [0],
+            "reduce_cell_groups": [],
+        }
+    }, {
+        "dropout_rate": 0,
+    }], indirect=["super_net"])
 def test_supernet_forward_step(super_net):
     cand_net = _supernet_sample_cand(super_net)
 
     data = _cnn_data()
 
+    ## test in eval mode
     # forward stem
+    cand_net.eval()
     stemed, context = cand_net.forward_one_step(context=None, inputs=data[0])
     assert len(context.previous_cells) == 1 and context.previous_cells[0] is stemed
 
     # forward the cells
-    for i_layer in range(0, super_net.search_space.num_layers):
+    for i_layer in range(1, super_net.search_space.num_layers+1):
         num_steps = super_net.search_space.num_steps + super_net.search_space.num_init_nodes + 1
         for i_step in range(num_steps):
-            step_state, context = cand_net.forward_one_step(context)
+            while True:
+                step_state, context = cand_net.forward_one_step(context)
+                if context.is_end_of_cell or context.is_end_of_step:
+                    break
             if i_step != num_steps - 1:
-                assert step_state is context.current_cell[-1] and \
-                    len(context.current_cell) == i_step + 1
+                assert step_state is context.current_cell[-1] \
+                    and len(context.current_cell) == i_step + 1
         assert context.is_end_of_cell
-        assert len(context.previous_cells) == i_layer + 2
+        assert len(context.previous_cells) == i_layer + 1
 
     # final forward
-    logits, _ = cand_net.forward_one_step(context)
+    logits, context = cand_net.forward_one_step(context)
     assert logits.shape[-1] == 10
+
+    logits_straight_forward = cand_net.forward_data(data[0])
+    assert (logits == logits_straight_forward).all()
+
+    logits = cand_net.forward_one_step_callback(data[0], lambda s, c: None)
+    assert (logits == logits_straight_forward).all()
+
+    ## test in train mode
+    cand_net.train()
+    logits_straight_forward = cand_net.forward_data(data[0])
+    logits = cand_net.forward_one_step_callback(data[0], lambda s, c: None)
+    assert (logits == logits_straight_forward).all()
+
+@pytest.mark.parametrize("super_net", [
+    {
+        "search_space_cfg": {
+            "num_steps": 1,
+            "num_layers": 1,
+            "num_cell_groups": 1,
+            "cell_layout": [0],
+            "reduce_cell_groups": []
+        }}], indirect=["super_net"])
+def test_inject(super_net):
+    cand_net = _supernet_sample_cand(super_net)
+
+    data = _cnn_data()
+
+    from aw_nas.objective.fault_injection import FaultInjector
+    injector = FaultInjector(gaussian_std=None, mode="fixed")
+    injector.set_random_inject(0.001)
+    # forward stem
+    cand_net.eval()
+    def inject(state, context):
+        if context.is_last_concat_op:
+            return
+        context.last_state = injector.inject(state)
+    cand_net.forward_one_step_callback(data[0], callback=inject)
 
 @pytest.mark.parametrize("test_id",
                          range(5))
@@ -94,15 +149,16 @@ def test_supernet_candidate_gradient_virtual(test_id, super_net):
     # test `gradient`, `begin_virtual`
     w_prev = {k: v.clone() for k, v in six.iteritems(c_params)}
     buffer_prev = {k: v.clone() for k, v in six.iteritems(c_buffers)}
+    visited_c_params = dict(cand_net.active_named_members("parameters", check_visited=True))
     with cand_net.begin_virtual():
         grads = cand_net.gradient(data, mode="train")
-        assert len(grads) == len(c_params)
+        assert len(grads) == len(visited_c_params)
         optimizer = torch.optim.SGD(cand_net.parameters(), lr=lr)
         optimizer.step()
         for n, grad in grads:
             assert (w_prev[n] - grad * lr - c_params[n]).abs().sum().item() < EPS
         grads_2 = dict(cand_net.gradient(data, mode="train"))
-        assert len(grads) == len(c_params)
+        assert len(grads) == len(visited_c_params)
         optimizer.step()
         for n, grad in grads:
             # this check is not very robust...
@@ -141,15 +197,40 @@ def test_supernet_specify_Cinout(super_net):
     assert cand_net.super_net.cells[0].num_out_channels == 16
     assert cand_net.super_net.cells[1].num_out_channels == 24
     assert cand_net.super_net.cells[2].num_out_channels == 64
-    assert len(cand_net.super_net.cells[0].edges) == 1
-    assert len(cand_net.super_net.cells[0].edges[0].p_ops) == 3
-    assert len(cand_net.super_net.cells[1].edges[0].p_ops) == 1
-    assert len(cand_net.super_net.cells[2].edges[0].p_ops) == 2
+    assert len(cand_net.super_net.cells[0].edges) == 1 and \
+        len(cand_net.super_net.cells[0].edges[0]) == 1
+    assert len(cand_net.super_net.cells[0].edges[0][1].p_ops) == 3
+    assert len(cand_net.super_net.cells[1].edges[0][1].p_ops) == 1
+    assert len(cand_net.super_net.cells[2].edges[0][1].p_ops) == 2
 
     data = _cnn_data()
 
     logits = cand_net.forward_data(data[0], mode="eval")
     assert logits.shape[-1] == 10
+
+@pytest.mark.parametrize("super_net", [{
+    "gpus": [0, 1]
+}], indirect=["super_net"])
+def test_supernet_data_parallel_forward(super_net):
+    # test forward
+    cand_net = _supernet_sample_cand(super_net)
+    batch_size = 10
+    data = _cnn_data(batch_size=batch_size)
+
+    logits = cand_net.forward_data(data[0], mode="eval")
+    assert logits.shape == (batch_size, 10)
+
+@pytest.mark.parametrize("super_net", [{
+    "gpus": [0, 1]
+}], indirect=["super_net"])
+def test_supernet_data_parallel_gradient(super_net):
+    cand_net = _supernet_sample_cand(super_net)
+    batch_size = 10
+    data = _cnn_data(batch_size=batch_size)
+
+    logits = cand_net.forward_data(data[0], mode="eval")
+    assert logits.shape == (batch_size, 10)
+    _ = cand_net.gradient(data, mode="train")
 
 # ---- End test super_net ----
 
@@ -207,4 +288,63 @@ def test_diff_supernet_forward_rollout_batch_size(diff_super_net):
     data = _cnn_data(batch_size=6)
     logits = cand_net.forward_data(data[0])
     assert tuple(logits.shape) == (6, 10)
+
+@pytest.mark.parametrize("diff_super_net", [{
+    "gpus": [0, 1, 2]
+}], indirect=["diff_super_net"])
+def test_diff_supernet_data_parallel_forward(diff_super_net):
+    from aw_nas.common import get_search_space
+    from aw_nas.controller import DiffController
+
+    search_space = get_search_space(cls="cnn")
+    device = "cuda"
+    controller = DiffController(search_space, device)
+    rollout = controller.sample(1)[0]
+    cand_net = diff_super_net.assemble_candidate(rollout)
+
+    batch_size = 9
+    data = _cnn_data(batch_size=batch_size)
+    logits = cand_net.forward_data(data[0])
+    assert tuple(logits.shape) == (batch_size, 10)
+
+@pytest.mark.parametrize("diff_super_net", [{
+    "gpus": [0, 1, 2]
+}], indirect=["diff_super_net"])
+def test_diff_supernet_data_parallel_forward_rolloutsize(diff_super_net):
+    from aw_nas.common import get_search_space
+    from aw_nas.controller import DiffController
+
+    search_space = get_search_space(cls="cnn")
+    device = "cuda"
+    controller = DiffController(search_space, device)
+    rollout = controller.sample(1, batch_size=9)[0]
+    cand_net = diff_super_net.assemble_candidate(rollout)
+
+    batch_size = 9
+    data = _cnn_data(batch_size=batch_size)
+    logits = cand_net.forward_data(data[0])
+    assert tuple(logits.shape) == (batch_size, 10)
+
+@pytest.mark.parametrize("diff_super_net", [{
+    "gpus": [0, 1, 2]
+}], indirect=["diff_super_net"])
+def test_diff_supernet_data_parallel_backward_rolloutsize(diff_super_net):
+    from torch import nn
+    from aw_nas.common import get_search_space
+    from aw_nas.controller import DiffController
+
+    search_space = get_search_space(cls="cnn")
+    device = "cuda"
+    controller = DiffController(search_space, device)
+    rollout = controller.sample(1, batch_size=9)[0]
+    cand_net = diff_super_net.assemble_candidate(rollout)
+
+    batch_size = 9
+    data = _cnn_data(batch_size=batch_size)
+
+    logits = cand_net.forward_data(data[0], detach_arch=False)
+    loss = nn.CrossEntropyLoss()(logits, data[1].cuda())
+    assert controller.cg_alphas[0].grad is None
+    loss.backward()
+    assert controller.cg_alphas[0].grad is not None
 # ---- End test diff_super_net ----

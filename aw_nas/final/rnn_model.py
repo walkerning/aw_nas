@@ -89,8 +89,8 @@ class RNNGenotypeCell(nn.Module):
             # the first bn
             self.bn_prev = nn.BatchNorm1d(num_emb + num_hid, affine=True)
             # other bn
-            self.bn_edges = [nn.BatchNorm1d(num_emb + num_hid, affine=True)
-                             for _ in range(len(self.genotypes[0]))]
+            self.bn_edges = nn.ModuleList([nn.BatchNorm1d(num_emb + num_hid, affine=True)
+                                           for _ in range(len(self.genotypes[0]))])
 
         if self.batchnorm_step:
             # batchnorm after every step (as in darts's implementation)

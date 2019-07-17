@@ -8,7 +8,7 @@ import pytest
 
 # ---- Test rnn_super_net ----
 _criterion = nn.CrossEntropyLoss()
-def _rnn_criterion(outputs, targets):
+def _rnn_criterion(_, outputs, targets):
     logits, _, _, _ = outputs
     return _criterion(logits.view(-1, logits.size(-1)), targets.view(-1))
 
@@ -195,13 +195,13 @@ def test_rnn_diff_supernet_to_arch(rnn_diff_super_net):
 
     # default detach_arch=True, no grad w.r.t the controller param
     results = cand_net.forward_data(data[0], hiddens=hiddens)
-    loss = _rnn_criterion(results, data[1].cuda())
+    loss = _rnn_criterion(data[0], results, data[1].cuda())
     assert controller.cg_alphas[0].grad is None
     loss.backward()
     assert controller.cg_alphas[0].grad is None
 
     results = cand_net.forward_data(data[0], hiddens=hiddens, detach_arch=False)
-    loss = _rnn_criterion(results, data[1].cuda())
+    loss = _rnn_criterion(data[0], results, data[1].cuda())
     assert controller.cg_alphas[0].grad is None
     loss.backward()
     assert controller.cg_alphas[0].grad is not None

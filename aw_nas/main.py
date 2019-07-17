@@ -12,11 +12,11 @@ import shutil
 import functools
 
 import click
+import yaml
 import numpy as np
 import setproctitle
 import torch
 from torch.backends import cudnn
-import yaml
 
 from aw_nas.dataset import AVAIL_DATA_TYPES
 from aw_nas import utils, BaseRollout
@@ -136,7 +136,7 @@ def _set_gpu(gpu):
         cudnn.enabled = True
         LOGGER.info('GPU device = %d' % gpu)
     else:
-        LOGGER.warn('No GPU available, use CPU!!')
+        LOGGER.warning('No GPU available, use CPU!!')
 
 
 @click.group(cls=_OrderedCommandGroup,
@@ -306,9 +306,12 @@ def sample(load, out_file, n, save_plot, gpu, seed, dump_mode):
               help="the random seed to run training")
 @click.option("--save-plot", default=None, type=str,
               help="If specified, save the plot of the rollouts to this path")
+@click.option("--save-state-dict", default=None, type=str,
+              help="If specified, save the sub state dict of the rollouts to this path; "
+              "Only tested for CNN now.")
 @click.option("--steps", default=None, type=int,
               help="number of batches to eval for each arch, default to be the whole derive queue.")
-def eval_arch(cfg_file, arch_file, load, gpu, seed, save_plot, steps):
+def eval_arch(cfg_file, arch_file, load, gpu, seed, save_plot, save_state_dict, steps):
     setproctitle.setproctitle("awnas-eval-arch config: {}; arch_file: {}; load: {}; cwd: {}"\
                               .format(cfg_file, arch_file, load, os.getcwd()))
 
@@ -350,9 +353,16 @@ def eval_arch(cfg_file, arch_file, load, gpu, seed, save_plot, steps):
     LOGGER.info("Eval...")
     rollouts = [rollout_from_genotype_str(geno, search_space) for geno in genotypes]
     num_r = len(rollouts)
+
     for i, r in enumerate(rollouts):
         evaluator.evaluate_rollouts([r], is_training=False,
-                                    eval_batches=steps)[0]
+                                    eval_batches=steps,
+                                    return_candidate_net=save_state_dict)[0]
+        if save_state_dict is not None:
+            # save state dict of the candidate network (active members only)
+            # corresponding to each rollout to `save_state_dict` path
+            torch.save(r.candidate_net.state_dict(),
+                       os.path.join(save_state_dict, str(i)))
         if save_plot is not None:
             r.plot_arch(
                 filename=os.path.join(save_plot, str(i)),
@@ -460,12 +470,14 @@ def derive(cfg_file, load, out_file, n, save_plot, test, steps, gpu, seed, dump_
 @click.option("--seed", default=None, type=int,
               help="the random seed to run training")
 @click.option("--load", default=None, type=str,
-              help="the directory to load checkpoint")
+              help="the checkpoint to load")
+@click.option("--load-state-dict", default=None, type=str,
+              help="the checkpoint (state dict) to load")
 @click.option("--save-every", default=None, type=int,
               help="the number of epochs to save checkpoint every")
 @click.option("--train-dir", default=None, type=str,
               help="the directory to save checkpoints")
-def train(gpus, seed, cfg_file, load, save_every, train_dir):
+def train(gpus, seed, cfg_file, load, load_state_dict, save_every, train_dir):
     if train_dir:
         # backup config file, and if in `develop` mode, also backup the aw_nas source code
         train_dir = utils.makedir(train_dir, remove=True)
@@ -522,32 +534,38 @@ def train(gpus, seed, cfg_file, load, save_every, train_dir):
                                 device=device)
     # check model support for data type
     expect(_data_type in model.supported_data_types())
-
+    objective = _init_component(cfg, "objective", search_space=search_space)
     trainer = _init_component(cfg, "final_trainer",
                               dataset=whole_dataset,
                               model=model,
                               device=device,
-                              gpus=gpu_list)
+                              gpus=gpu_list,
+                              objective=objective)
     # check trainer support for data type
     expect(_data_type in trainer.supported_data_types())
 
     # start training
     LOGGER.info("Start training.")
-    trainer.setup(load, save_every, train_dir)
+    trainer.setup(load, load_state_dict, save_every, train_dir)
     trainer.train()
 
 
 @main.command(help="Test a final-trained model.")
 @click.argument("cfg_file", required=True, type=str)
-@click.option("--load", required=True, type=str,
-              help="the directory to load checkpoint")
-@click.option("--split", "-s", multiple=True, type=str,
+@click.option("--load", type=str,
+              help="the checkpoint to load")
+@click.option("--load-state-dict", type=str,
+              help="the checkpoint (state dict) to load")
+@click.option("--split", "-s", multiple=True, required=True, type=str,
               help="evaluate on these dataset splits")
 @click.option("--gpus", default="0", type=str,
               help="the gpus to run training on, split by single comma")
 @click.option("--seed", default=None, type=int,
               help="the random seed to run training")
-def test(cfg_file, load, split, gpus, seed): #pylint: disable=redefined-builtin
+def test(cfg_file, load, load_state_dict, split, gpus, seed): #pylint: disable=redefined-builtin
+    assert (load is None) + (load_state_dict is None) == 1, \
+        "One and only one of `--load` and `--load-state-dict` arguments is required."
+
     setproctitle.setproctitle("awnas-test config: {}; load: {}; cwd: {}"\
                               .format(cfg_file, load, os.getcwd()))
 
@@ -575,12 +593,17 @@ def test(cfg_file, load, split, gpus, seed): #pylint: disable=redefined-builtin
     # initialize components
     LOGGER.info("Initializing components.")
     whole_dataset = _init_component(cfg, "dataset")
-
+    search_space = _init_component(cfg, "search_space")
+    objective = _init_component(cfg, "objective", search_space=search_space)
     trainer = _init_component(cfg, "final_trainer",
                               dataset=whole_dataset,
-                              model=None,
+                              model=_init_component(
+                                  cfg, "final_model",
+                                  search_space=search_space,
+                                  device=device) if load_state_dict else None,
                               device=device,
-                              gpus=gpu_list)
+                              gpus=gpu_list,
+                              objective=objective)
 
     # check trainer support for data type
     _data_type = whole_dataset.data_type()
@@ -588,7 +611,7 @@ def test(cfg_file, load, split, gpus, seed): #pylint: disable=redefined-builtin
 
     # start training
     LOGGER.info("Start eval.")
-    trainer.setup(load)
+    trainer.setup(load, load_state_dict)
     for split_name in split:
         trainer.evaluate_split(split_name)
 
@@ -627,12 +650,12 @@ def gen_sample_config(out_file, data_type, rollout_type):
               help="only dump the configs of the components support this data type")
 def gen_final_sample_config(out_file, data_type):
     with open(out_file, "w") as out_f:
-        for comp_name in ["search_space", "dataset", "final_model", "final_trainer"]:
+        for comp_name in ["search_space", "dataset", "final_model", "final_trainer", "objective"]:
             filter_funcs = []
             if data_type is not None:
                 if comp_name == "dataset":
                     filter_funcs.append(lambda cls: data_type == cls.data_type())
-                elif comp_name in {"final_model", "final_trainer"}:
+                elif comp_name in {"final_model", "final_trainer", "objective"}:
                     filter_funcs.append(lambda cls: data_type in cls.supported_data_types())
 
             out_f.write(utils.component_sample_config_str(comp_name, prefix="# ",

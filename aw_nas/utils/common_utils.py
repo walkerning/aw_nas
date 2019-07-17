@@ -22,6 +22,80 @@ from aw_nas.utils.log import logger as _logger
 
 _HOME_DIR = os.environ.get("AWNAS_HOME", os.path.expanduser("~/awnas"))
 
+class Context(object):
+    def __init__(self, num_init_nodes, num_layers, use_stem=True,
+                 previous_cells=None, current_cell=None, previous_op=None, current_op=None):
+        self.use_stem = use_stem
+        self.num_init_nodes = num_init_nodes
+        self.num_layers = num_layers
+        self.previous_cells = previous_cells or []
+        self.current_cell = current_cell or []
+        self.previous_op = previous_op or []
+        self.current_op = current_op or []
+        self._is_inject = dict()
+        self._num_conn = dict()
+
+    @property
+    def next_op_index(self):
+        return len(self.previous_op), len(self.current_op)
+
+    @property
+    def next_step_index(self):
+        return len(self.previous_cells) - (1 if self.use_stem else 0), len(self.current_cell)
+
+    @property
+    def is_last_concat_op(self):
+        _, n_s = self.next_step_index
+        return self.is_end_of_cell or (n_s > self.num_init_nodes and self.is_end_of_step)
+
+    @property
+    def is_end_of_cell(self):
+        # next_cell, next_step
+        n_c, n_s = self.next_step_index
+        return sum(self.next_op_index) == 0 and n_s == 0 and self.num_layers >= n_c > 0
+
+    @property
+    def is_end_of_step(self):
+        _, n_s = self.next_step_index
+        return sum(self.next_op_index) == 0 and n_s > 0
+
+    @property
+    def is_end_of_op(self):
+        return len(self.current_op) == 0
+
+    @property
+    def last_state(self):
+        for lst in [self.current_op, self.previous_op, self.current_cell, self.previous_cells]:
+            if lst:
+                return lst[-1]
+        return None # empty context, which is not likely to happen
+
+    @last_state.setter
+    def last_state(self, state):
+        for lst in [self.current_op, self.previous_op, self.current_cell, self.previous_cells]:
+            if lst:
+                lst[-1] = state
+                break
+        else:
+            raise Exception("Empty context, set failed")
+
+    def flag_inject(self, is_inject):
+        next_cell, next_step = self.next_step_index
+        next_conn, next_op_step = self.next_op_index
+        self._is_inject[(next_cell, next_step, next_conn, next_op_step)] = is_inject
+
+    @property
+    def is_last_inject(self):
+        next_cell, next_step = self.next_step_index
+        next_conn, next_op_step = self.next_op_index
+        return self._is_inject.get((next_cell, next_step, next_conn, next_op_step), True)
+
+    def __repr__(self):
+        next_cell, next_step = self.next_step_index
+        next_conn, next_op_step = self.next_op_index
+        return "Context(next_cell={}, next_step={}, next_conn={}, next_op_step={})"\
+            .format(next_cell, next_step, next_conn, next_op_step)
+
 ## --- misc helpers ---
 @contextmanager
 def nullcontext():
@@ -54,6 +128,7 @@ def recur_apply(func, lst, depth=0):
 class Ticker(object):
     def __init__(self, name):
         self.name = name
+        self.total_time = 0.
         self.cur_time = None
         self.tick()
         self.logger = _logger.getChild("ticker_{}".format(name))
@@ -63,6 +138,7 @@ class Ticker(object):
         if self.cur_time is not None:
             elapsed = cur_time - self.cur_time
             self.logger.debug("Ticker %s: %s: %.3f s", self.name, message, elapsed)
+            self.total_time += elapsed
         self.cur_time = cur_time
 
 class OrderedStats(object):
@@ -166,8 +242,8 @@ def component_sample_config_str(comp_name, prefix, filter_funcs=None):
             import traceback
             traceback.print_exc()
             _logger.getChild("utils")\
-                   .warn("Skip %s: %s(%s) as exception occurs in checking. %s: %s",
-                         comp_name, type_name, cls, e.__class__.__name__, str(e))
+                   .warning("Skip %s: %s(%s) as exception occurs in checking. %s: %s",
+                            comp_name, type_name, cls, e.__class__.__name__, str(e))
         if is_skip:
             continue
 

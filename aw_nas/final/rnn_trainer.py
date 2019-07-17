@@ -8,7 +8,8 @@ from torch import nn
 
 from aw_nas import utils
 from aw_nas.utils.exception import expect
-from .base import FinalTrainer
+from aw_nas.final.base import FinalTrainer
+from aw_nas.utils import DataParallel
 
 class RNNFinalTrainer(FinalTrainer):
     NAME = "rnn_trainer"
@@ -65,7 +66,9 @@ class RNNFinalTrainer(FinalTrainer):
         self.best_valid_obj = None
         self.valid_objs = []
 
-    def setup(self, load=None, save_every=None, train_dir=None, report_every=50):
+    def setup(self, load=None, load_state_dict=None,
+              save_every=None, train_dir=None, report_every=50):
+        assert load_state_dict is None, "Currently not supported and tested."
         if load is not None:
             self.load(load)
         else:
@@ -109,7 +112,7 @@ class RNNFinalTrainer(FinalTrainer):
         o_path = os.path.join(path, "optimizer.pt") if os.path.isdir(path) else None
         if o_path and os.path.exists(o_path):
             # init according to the type of the saved optimizer, and then load
-            checkpoint = torch.load(o_path)
+            checkpoint = torch.load(o_path, map_location=torch.device("cpu"))
             optimizer_state = checkpoint["optimizer"]
             if "t0" in optimizer_state["param_groups"][0]:
                 # ASGD
@@ -132,7 +135,7 @@ class RNNFinalTrainer(FinalTrainer):
         if self.optimizer_scheduler_cfg is not None:
             s_path = os.path.join(path, "scheduler.pt") if os.path.isdir(path) else None
             if s_path and os.path.exists(s_path):
-                self.scheduler.load_state_dict(torch.load(s_path))
+                self.scheduler.load_state_dict(torch.load(s_path, map_location=torch.device("cpu")))
                 log_strs.append("scheduler from {}".format(s_path))
 
         self.logger.info("param size = %f M",
@@ -299,7 +302,7 @@ class RNNFinalTrainer(FinalTrainer):
         if self.model:
             if len(self.gpus) >= 2:
                 # dim=1 for batchsize, as dim=0 is time-step
-                self.parallel_model = torch.nn.DataParallel(self.model, self.gpus, dim=1).cuda()
+                self.parallel_model = DataParallel(self.model, self.gpus, dim=1).cuda()
             else:
                 self.parallel_model = self.model
 

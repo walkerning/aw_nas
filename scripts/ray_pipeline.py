@@ -151,7 +151,7 @@ def call_derive(cfg, seed, load, out_file, data_dir, n, killer):
         .format(cfg=cfg, load=load, seed=seed, out_file=out_file, n=n)
     print("CUDA_VISIBLE_DEVICES={} AWNAS_DATA={} awnas {}".format(gpu, data_dir, cmd))
     def _run_main(*args):
-        # sys.stdout = open("/dev/null", "w")
+        sys.stdout = open("/dev/null", "w")
         from aw_nas.main import main
         main(*args)
     proc = Process(target=_run_main, args=(re.split(r"\s+", cmd),))
@@ -271,7 +271,7 @@ parser.add_argument("--start-surrogate-index", default=0, type=int,
                     "can specificy start train from which surrogate cfg")
 parser.add_argument("--derive-n", default=10, type=int,
                     help="Number of dervied arch after search.")
-parser.add_argument("--data", type=str, default=os.path.expanduser("~/awnas_data"),
+parser.add_argument("--data", type=str, default=os.path.expanduser("~/awnas/data"),
                     help="the data base dir(exclude the dataset name), "
                     "will set `AWNAS_DATA` environment variable accordingly. (default: %(default)s)")
 
@@ -364,7 +364,7 @@ try:
         vis_dir = os.path.join(result_dir, "vis")
         final_checkpoint = call_search.remote(search_cfg, cmd_args.search_seed, search_dir,
                                               vis_dir, cmd_args.data, killer)
-    
+        final_checkpoint = ray.get(final_checkpoint)
         check_killed()
     if end_stage <= 0: # search
         sys.exit(0)

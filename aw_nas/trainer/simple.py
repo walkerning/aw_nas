@@ -108,10 +108,10 @@ class SimpleTrainer(BaseTrainer):
             self.controller_steps = suggested
         else: # `controller_steps` is provided, check if it matches with the suggested value
             if suggested is not None and not suggested == self.controller_steps:
-                self.logger.warn("The suggested `controller_steps` (%3d) from "
-                                 "`evaluator.suggested_controller_steps_per_epoch()` differs "
-                                 "from the config setting (%3d).",
-                                 suggested, self.controller_steps)
+                self.logger.warning("The suggested `controller_steps` (%3d) from "
+                                    "`evaluator.suggested_controller_steps_per_epoch()` differs "
+                                    "from the config setting (%3d).",
+                                    suggested, self.controller_steps)
 
         # prepare `self.evaluator_steps`
         expect(self.interleave_controller_every is None or (
@@ -132,10 +132,10 @@ class SimpleTrainer(BaseTrainer):
         elif self.interleave_controller_every is None:
             # `evaluator_steps` is provided, check if it matches with the suggested value
             if suggested is not None and not suggested == self.evaluator_steps:
-                self.logger.warn("The suggested `evaluator_steps` (%3d) from "
-                                 "`evaluator.suggested_evaluator_steps_per_epoch()` differs "
-                                 "from the config setting (%3d).",
-                                 suggested, self.evaluator_steps)
+                self.logger.warning("The suggested `evaluator_steps` (%3d) from "
+                                    "`evaluator.suggested_evaluator_steps_per_epoch()` differs "
+                                    "from the config setting (%3d).",
+                                    suggested, self.evaluator_steps)
 
         # init controller optimizer and scheduler
         self.controller_optimizer = utils.init_optimizer(self.controller.parameters(),
@@ -339,7 +339,7 @@ class SimpleTrainer(BaseTrainer):
         rewards = [r.get_perf() for r in rollouts]
         mean_rew = np.mean(rewards)
         idx = np.argmax(rewards)
-        other_perfs = dict([(n, [r.perf[n] for r in rollouts]) for n in rollouts[0].perf])
+        other_perfs = {n: [r.perf[n] for r in rollouts] for n in rollouts[0].perf}
 
         save_path = self._save_path("rollout/cell")
         if save_path is not None:
@@ -388,7 +388,7 @@ class SimpleTrainer(BaseTrainer):
         torch.save(state_dict, path)
 
     def load(self, path):
-        checkpoint = torch.load(path)
+        checkpoint = torch.load(path ,map_location=torch.device("cpu"))
         self.last_epoch = self.epoch = checkpoint["epoch"]
         if self.controller_optimizer is not None:
             self.controller_optimizer.load_state_dict(checkpoint["controller_optimizer"])

@@ -18,22 +18,22 @@ class ClassificationObjective(BaseObjective):
     def perf_names(self):
         return ["acc"]
 
-    def get_perfs(self, inputs, targets, cand_net):
+    def get_perfs(self, inputs, outputs, targets, cand_net):
         """
         Get top-1 acc.
         """
-        return [float(accuracy(inputs, targets)[0]) / 100]
+        return [float(accuracy(outputs, targets)[0]) / 100]
 
-    def get_reward(self, inputs, targets, cand_net):
-        return self.get_perfs(inputs, targets, cand_net)[0]
+    def get_reward(self, inputs, outputs, targets, cand_net):
+        return self.get_perfs(inputs, outputs, targets, cand_net)[0]
 
-    def get_loss(self, inputs, targets, cand_net,
+    def get_loss(self, inputs, outputs, targets, cand_net,
                  add_controller_regularization=True, add_evaluator_regularization=True):
         """
         Get the cross entropy loss *tensor*, optionally add regluarization loss.
 
         Args:
-            inputs: logits
+            outputs: logits
             targets: labels
         """
-        return nn.CrossEntropyLoss()(inputs, targets)
+        return nn.CrossEntropyLoss()(outputs, targets)

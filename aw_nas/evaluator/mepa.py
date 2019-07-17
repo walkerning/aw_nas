@@ -3,9 +3,9 @@
 from functools import partial
 from collections import defaultdict, OrderedDict
 
+import six
 import numpy as np
 import torch
-import six
 
 from aw_nas import utils
 from aw_nas.evaluator.base import BaseEvaluator
@@ -230,7 +230,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
                     self.controller_queue,
                     criterions=criterions,
                     steps=eval_steps,
-                    mode="eval",
+                    mode="train", # FIXME: let's keep using train mode !!! Is this correct?
                     # if test, differentiable rollout does not need to set detach_arch=True too
                     **self.c_hid_kwargs)
                 res = self._run_surrogate_steps(eval_func, cand_net,
@@ -267,6 +267,9 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
             eval_criterions = [self._scalar_reward_func] + self._report_loss_funcs
             eval_criterions = [partial(func, cand_net=cand_net) for func in eval_criterions]
 
+            # if update in-place, here zero all the grads of weights_manager
+            if self.mepa_step_current:
+                self.weights_manager.zero_grad()
             # return gradients if not update in-place
             # here, use loop variable as closure/cell var, this is goodn for now,
             # as all samples are evaluated sequentially (no parallel/delayed eval)
@@ -371,7 +374,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
         torch.save(state_dict, path)
 
     def load(self, path):
-        checkpoint = torch.load(path)
+        checkpoint = torch.load(path, map_location=torch.device("cpu"))
         self.weights_manager.load_state_dict(checkpoint["weights_manager"])
 
         # load hidden states if exists
@@ -403,8 +406,8 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
                 self.surrogate_queue,
                 optimizer=self.surrogate_optimizer,
                 criterion=partial(self._mepa_loss_func, cand_net=cand_net),
-                eval_criterions=[partial(func, cand_net=cand_net) \
-                                 for func in self._report_loss_funcs],
+                eval_criterions=[partial(loss_func, cand_net=cand_net) \
+                                 for loss_func in self._report_loss_funcs],
                 steps=surrogate_steps,
                 **self.s_hid_kwargs
             )
@@ -530,9 +533,9 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
     def __setstate__(self, state):
         super(MepaEvaluator, self).__setstate__(state)
         self._init_criterions(self.rollout_type)
-        self.logger.warn("After load the evaluator from a pickle file, the dataset does not "
-                         "get loaded automatically, initialize a dataset and call "
-                         "`set_dataset(dataset)` ")
+        self.logger.warning("After load the evaluator from a pickle file, the dataset does not "
+                            "get loaded automatically, initialize a dataset and call "
+                            "`set_dataset(dataset)` ")
 
     def __getstate__(self):
         state = super(MepaEvaluator, self).__getstate__()

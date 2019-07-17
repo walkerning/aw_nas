@@ -20,7 +20,7 @@ def super_net(request):
     from aw_nas.common import get_search_space
     from aw_nas.weights_manager import SuperNet
     search_space = get_search_space(cls="cnn", **scfg)
-    device = "cuda"
+    device = "cuda:0"
     net = SuperNet(search_space, device, **cfg)
     return net
 
