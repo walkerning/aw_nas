@@ -140,6 +140,8 @@ def prepare_data_queues(splits, queue_cfg_lst, data_type="image", drop_last=Fals
 
     dset_splits = splits
     dset_sizes = {n: len(d) for n, d in six.iteritems(dset_splits)}
+    dset_indices = {n: list(range(size)) for n, size in dset_sizes.items()}
+    [np.random.shuffle(indices) for indices in dset_indices.values()]
     used_portions = {n: 0. for n in splits}
     queues = []
     for cfg in queue_cfg_lst: # all the queues interleave sub-dataset
@@ -153,6 +155,7 @@ def prepare_data_queues(splits, queue_cfg_lst, data_type="image", drop_last=Fals
             continue
 
         used_portion = used_portions[split]
+        indices = dset_indices[split]
         size = dset_sizes[split]
         if data_type == "image":
             kwargs = {
@@ -160,8 +163,7 @@ def prepare_data_queues(splits, queue_cfg_lst, data_type="image", drop_last=Fals
                 "pin_memory": True,
                 "num_workers": 2,
                 "sampler": torch.utils.data.SubsetRandomSampler(
-                    list(range(int(size*used_portion),
-                               int(size*(used_portion+portion))))),
+                    indices[int(size*used_portion):int(size*(used_portion+portion))]),
                 "drop_last": drop_last
             }
             queue = get_inf_iterator(torch.utils.data.DataLoader(
