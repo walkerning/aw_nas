@@ -253,13 +253,14 @@ class SimpleTrainer(BaseTrainer):
             finished_c_steps = 0
             for i_inter in range(1, inter_steps+1): # interleave mepa/controller training
                 # meta parameter training
-                e_stats = self._evaluator_update(evaluator_steps, finished_e_steps,
-                                                 finished_c_steps)
-                eva_stat_meters.update(e_stats)
-                finished_e_steps += evaluator_steps
+                if evaluator_steps > 0:
+                    e_stats = self._evaluator_update(evaluator_steps, finished_e_steps,
+                                                     finished_c_steps)
+                    eva_stat_meters.update(e_stats)
+                    finished_e_steps += evaluator_steps
 
                 if epoch >= self.controller_train_begin and \
-                   epoch % self.controller_train_every == 0:
+                   epoch % self.controller_train_every == 0 and controller_steps > 0:
                     # controller training
                     c_loss, rollout_stats, c_stats \
                         = self._controller_update(controller_steps,
@@ -388,7 +389,7 @@ class SimpleTrainer(BaseTrainer):
         torch.save(state_dict, path)
 
     def load(self, path):
-        checkpoint = torch.load(path ,map_location=torch.device("cpu"))
+        checkpoint = torch.load(path, map_location=torch.device("cpu"))
         self.last_epoch = self.epoch = checkpoint["epoch"]
         if self.controller_optimizer is not None:
             self.controller_optimizer.load_state_dict(checkpoint["controller_optimizer"])

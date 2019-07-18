@@ -107,8 +107,8 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                                 if "auxiliary" not in key}
                 if missing_keys:
                     self.logger.error(("{} missing keys will not be loaded! Check your genotype, "
-                                       "This should be due to you're using the state dict dumped by "
-                                       "`awnas eval-arch --save-state-dict` in an old version, "
+                                       "This should be due to you're using the state dict dumped by"
+                                       " `awnas eval-arch --save-state-dict` in an old version, "
                                        "and your genotype actually skip some "
                                        "cells, which might means, many parameters of your "
                                        "sub-network is not actually active, "

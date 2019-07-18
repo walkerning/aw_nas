@@ -61,6 +61,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
             schedule_every_batch=False,
             # mepa samples for `update_evaluator`
             mepa_samples=1,
+            disable_step_current=False,
             # data queue configs: (surrogate, mepa, controller)
             data_portion=(0.1, 0.4, 0.5), mepa_as_surrogate=False,
             # only work for differentiable controller now
@@ -85,6 +86,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
         self.batch_size = batch_size
         self.controller_surrogate_steps = controller_surrogate_steps
         self.mepa_surrogate_steps = mepa_surrogate_steps
+        self.disable_step_current = disable_step_current
         self.data_portion = data_portion
         self.mepa_as_surrogate = mepa_as_surrogate
         self.mepa_samples = mepa_samples
@@ -119,9 +121,11 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
                                                    mepa_scheduler)
 
         # for performance when doing 1-sample ENAS in `update_evaluator`
-        if self.mepa_surrogate_steps == 0 and self.mepa_samples == 1:
+        if not self.disable_step_current and\
+           self.mepa_surrogate_steps == 0 and self.mepa_samples == 1:
             # Will call `step_current_gradients` of weights manager
-            self.logger.info("As `mepa_surrogate_steps==0`(ENAS) and `mepa_sample==1`, "
+            self.logger.info("As `mepa_surrogate_steps==0`(ENAS), `mepa_sample==1`, "
+                             "and `disable_step_current` is not set, "
                              "to speed up, will accumulate mepa gradients in-place and call "
                              "`super_net.step_current_gradients`.")
             self.mepa_step_current = True

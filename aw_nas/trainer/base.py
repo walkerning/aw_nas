@@ -142,25 +142,27 @@ class BaseTrainer(Component):
 
             if "controller" in load_components:
                 path = os.path.join(load, "controller")
-                if os.path.exists(path):
-                    self.logger.info("Load controller from %s", path)
+                self.logger.info("Load controller from %s", path)
+                try:
                     self.controller.load(path)
-                else:
-                    self.logger.warning("Controller not loaded! Path `{}` not exists.".format(path))
+                except Exception as e:
+                    self.logger.error("Controller not loaded! %s", e)
             if "evaluator" in load_components:
                 path = os.path.join(load, "evaluator")
-                if os.path.exists(path):
-                    self.logger.info("Load evaluator from %s", path)
+                # if os.path.exists(path):
+                self.logger.info("Load evaluator from %s", path)
+                try:
                     self.evaluator.load(path)
-                else:
-                    self.logger.warning("Evaluator not loaded! Path `{}` not exists.".format(path))
+                except Exception as e:
+                    self.logger.error("Evaluator not loaded: %s", e)
             if "trainer" in load_components:
                 path = os.path.join(load, "trainer")
-                if os.path.exists(path):
-                    self.logger.info("Load trainer from %s", path)
+                # if os.path.exists(path):
+                self.logger.info("Load trainer from %s", path)
+                try:
                     self.load(path)
-                else:
-                    self.logger.warning("Trainer not loaded! Path `{}` not exists.".format(path))
+                except Exception as e:
+                    self.logger.error("Trainer not loaded: %s", e)
 
         self.save_every = save_every
         self.train_dir = utils.makedir(train_dir) if train_dir is not None else train_dir

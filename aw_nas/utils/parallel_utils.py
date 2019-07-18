@@ -2,6 +2,7 @@
 Patch replicate function, to ignore those parameters/buffers that are not copied.
 Bring a 1.4x performance increase for super_net weights_manager using discrete rollout.
 """
+#pylint: disable-all
 
 from itertools import chain
 

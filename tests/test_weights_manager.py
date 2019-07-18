@@ -3,8 +3,7 @@ import six
 import torch
 import pytest
 
-
-# ---- Test super_net ----
+# ---- test super_net ----
 def _cnn_data(device="cuda", batch_size=2):
     return (torch.rand(batch_size, 3, 28, 28, dtype=torch.float, device=device),
             torch.tensor(np.random.randint(0, high=10, size=batch_size)).long().to(device))
@@ -18,6 +17,7 @@ def _supernet_sample_cand(net):
 
     cand_net = net.assemble_candidate(rollout)
     return cand_net
+
 
 @pytest.mark.parametrize("super_net", [{"candidate_member_mask": False}],
                          indirect=["super_net"])
@@ -110,31 +110,6 @@ def test_supernet_forward_step(super_net):
     logits_straight_forward = cand_net.forward_data(data[0])
     logits = cand_net.forward_one_step_callback(data[0], lambda s, c: None)
     assert (logits == logits_straight_forward).all()
-
-@pytest.mark.parametrize("super_net", [
-    {
-        "search_space_cfg": {
-            "num_steps": 1,
-            "num_layers": 1,
-            "num_cell_groups": 1,
-            "cell_layout": [0],
-            "reduce_cell_groups": []
-        }}], indirect=["super_net"])
-def test_inject(super_net):
-    cand_net = _supernet_sample_cand(super_net)
-
-    data = _cnn_data()
-
-    from aw_nas.objective.fault_injection import FaultInjector
-    injector = FaultInjector(gaussian_std=None, mode="fixed")
-    injector.set_random_inject(0.001)
-    # forward stem
-    cand_net.eval()
-    def inject(state, context):
-        if context.is_last_concat_op:
-            return
-        context.last_state = injector.inject(state)
-    cand_net.forward_one_step_callback(data[0], callback=inject)
 
 @pytest.mark.parametrize("test_id",
                          range(5))

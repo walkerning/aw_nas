@@ -4,6 +4,7 @@
 import os
 import sys
 import time
+import copy
 import shutil
 import inspect
 import functools
@@ -213,6 +214,16 @@ class abstractclassmethod(classmethod):
         a_callable.__isabstractmethod__ = True
         super(abstractclassmethod, self).__init__(a_callable)
 
+def get_argspec(func):
+    if sys.version_info.major == 3:
+        # python 3
+        sig = inspect.signature(func) #pylint: disable=no-member
+        return OrderedDict([(n, param.default) for n, param in six.iteritems(sig.parameters)])
+
+    sig = inspect.getargspec(func) #pylint: disable=deprecated-method
+    return OrderedDict(list(zip(sig.args,
+                                [None] * (len(sig.args) - len(sig.defaults)) + list(sig.defaults))))
+
 def get_default_argspec(func):
     if sys.version_info.major == 3:
         # python 3
@@ -342,3 +353,36 @@ def get_schedule_value(schedule, epoch):
             next_v = schedule["start"] + schedule["step"] * ind
         next_v = max(min(next_v, max_), min_)
     return next_v
+
+
+## --- cache utils ---
+def cache_results(cache_params, key_funcs, buffer_size):
+    if callable(key_funcs):
+        key_funcs = [key_funcs] * len(cache_params)
+    def decorator(func):
+        sig_dct = OrderedDict(get_argspec(func))
+        cache_dict = OrderedDict()
+        cache_hit_and_miss = [0, 0] # hit, miss
+        @functools.wraps(func)
+        def _inner_func(*args, **kwargs):
+            params = copy.deepcopy(sig_dct)
+            params.update(kwargs)
+            for value, arg_name in zip(args, sig_dct):
+                params[arg_name] = value
+            key_tuple = []
+            for name, key_func in zip(cache_params, key_funcs):
+                key_tuple.append(key_func(params[name]))
+            key_tuple = tuple(key_tuple)
+            if key_tuple in cache_dict:
+                cache_hit_and_miss[0] += 1
+                return cache_dict[key_tuple]
+            cache_hit_and_miss[1] += 1
+            res = func(*args, **kwargs)
+            cache_dict[key_tuple] = res
+            if len(cache_dict) > buffer_size:
+                cache_dict.popitem(last=False)
+            return res
+        _inner_func.cache_dict = cache_dict
+        _inner_func.cache_hit_and_miss = cache_hit_and_miss
+        return _inner_func
+    return decorator

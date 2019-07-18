@@ -678,7 +678,8 @@ def genotype_from_str(genotype_str, search_space):
 def rollout_from_genotype_str(genotype_str, search_space):
     return search_space.rollout_from_genotype(genotype_from_str(genotype_str, search_space))
 
-def plot_genotype(genotype, dest, cls, label="", edge_labels=None, plot_format="png", **search_space_cfg):
+def plot_genotype(genotype, dest, cls, label="",
+                  edge_labels=None, plot_format="png", **search_space_cfg):
     ss = get_search_space(cls, **search_space_cfg)
     if isinstance(genotype, str):
         genotype = eval("ss.genotype_type({})".format(genotype)) # pylint: disable=eval-used

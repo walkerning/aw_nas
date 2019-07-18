@@ -61,3 +61,26 @@ def test_wrap_writer(writer):
     v = {"entropy": 1, "regularization": 0.1}
     assert subsub_writer.add_scalars("losses", v) == \
         writer.add_scalars("controller/rl_agent/losses", v)
+
+def test_cache_results():
+    import torch
+    from aw_nas.utils.common_utils import cache_results
+    class A(object):
+        @cache_results(cache_params=["x", "y", "z"], key_func=id, buffer_size=1)
+        def method(self, x, y, z=1):
+            str_ = "{} {} {}".format(x, y, z)
+            return str_
+    a = A()
+    x_1 = torch.Tensor([0.1, 0.2, 0.3])
+    x_2 = torch.Tensor([0.1, 0.2, 0.3])
+    a.method(x_1, 2) # called
+    assert A.method.cache_hit_and_miss == [0, 1]
+    a.method(x_1, 2) # use cached
+    assert A.method.cache_hit_and_miss == [1, 1]
+    a.method(x_2, 2) # called
+    assert A.method.cache_hit_and_miss == [1, 2]
+    assert len(A.method.cache_dict) == 1
+    a.method(x_2, 2, 1) # use cached
+    assert A.method.cache_hit_and_miss == [2, 2]
+    a.method(x_1, 2) # called
+    assert A.method.cache_hit_and_miss == [2, 3]

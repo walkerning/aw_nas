@@ -9,6 +9,7 @@ import torch
 from torch import nn
 
 from aw_nas import Component, utils
+from aw_nas.utils.common_utils import nullcontext
 from aw_nas.utils.exception import expect, ConfigException
 
 class BaseWeightsManager(Component):
@@ -51,6 +52,10 @@ class BaseWeightsManager(Component):
         """Return the supported data types"""
 
 class CandidateNet(nn.Module):
+    def __init__(self, eval_no_grad=True):
+        super(CandidateNet, self).__init__()
+        self.eval_no_grad = eval_no_grad
+
     @contextlib.contextmanager
     def begin_virtual(self):
         """Enter a virtual context, in which all the state changes will be reset when exiting.
@@ -174,7 +179,8 @@ class CandidateNet(nn.Module):
         self._set_mode(mode)
 
         average_ans = None
-        with torch.no_grad():
+        context = torch.no_grad if self.eval_no_grad else nullcontext
+        with context():
             for _ in range(steps):
                 data = next(queue)
                 # print("{}/{}\r".format(i, steps), end="")
@@ -194,6 +200,7 @@ class CandidateNet(nn.Module):
         """
         self._set_mode(mode)
 
-        with torch.no_grad():
+        context = torch.no_grad if self.eval_no_grad else nullcontext
+        with context():
             outputs = self.forward_data(data[0], **kwargs)
             return utils.flatten_list([c(data[0], outputs, data[1]) for c in criterions])

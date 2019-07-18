@@ -26,8 +26,8 @@ class SubCandidateNet(CandidateNet):
     """
 
     def __init__(self, super_net, rollout, member_mask, gpus=tuple(), cache_named_members=False,
-                 virtual_parameter_only=True):
-        super(SubCandidateNet, self).__init__()
+                 virtual_parameter_only=True, eval_no_grad=True):
+        super(SubCandidateNet, self).__init__(eval_no_grad=eval_no_grad)
         self.super_net = super_net
         self._device = self.super_net.device
         self.gpus = gpus
@@ -152,6 +152,9 @@ class SubCandidateNet(CandidateNet):
         return state_dict
 
     def forward_one_step_callback(self, inputs, callback):
+        """
+        For fault injection.
+        """
         # forward stem
         _, context = self.forward_one_step(context=None, inputs=inputs)
         callback(context.last_state, context)
@@ -184,7 +187,7 @@ class SuperNet(SharedNet):
                  use_stem="conv_bn_3x3", stem_stride=1, stem_affine=True,
                  cell_use_preprocess=True, cell_group_kwargs=None,
                  candidate_member_mask=True, candidate_cache_named_members=False,
-                 candidate_virtual_parameter_only=False):
+                 candidate_virtual_parameter_only=False, candidate_eval_no_grad=True):
         """
         Args:
             candidate_member_mask (bool): If true, the candidate network's `named_parameters`
@@ -214,6 +217,7 @@ class SuperNet(SharedNet):
         self.candidate_member_mask = candidate_member_mask
         self.candidate_cache_named_members = candidate_cache_named_members
         self.candidate_virtual_parameter_only = candidate_virtual_parameter_only
+        self.candidate_eval_no_grad = candidate_eval_no_grad
 
     def sub_named_members(self, genotypes,
                           prefix="", member="parameters", check_visited=False):
@@ -262,7 +266,8 @@ class SuperNet(SharedNet):
                                gpus=self.gpus,
                                member_mask=self.candidate_member_mask,
                                cache_named_members=self.candidate_cache_named_members,
-                               virtual_parameter_only=self.candidate_virtual_parameter_only)
+                               virtual_parameter_only=self.candidate_virtual_parameter_only,
+                               eval_no_grad=self.candidate_eval_no_grad)
 
     @classmethod
     def supported_rollout_types(cls):
