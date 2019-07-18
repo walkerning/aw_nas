@@ -42,13 +42,13 @@ def test_inject(super_net):
         context.last_state = injector.inject(state)
     cand_net.forward_one_step_callback(data[0], callback=inject)
 
-# ---- Test robustness ----
-def test_generate_adv(super_net):
-    cand_net = _supernet_sample_cand(super_net)
-    data = _cnn_data()
-    from aw_nas.objective.robustness import PgdAdvGenerator
-    generator = PgdAdvGenerator(epsilon=0.03, n_step=5, step_size=0.0078, rand_init=False)
-    inputs_adv = generator.generate_adv(data[0], None, data[1], cand_net)
+# # ---- Test robustness ----
+# def test_generate_adv(super_net):
+#     cand_net = _supernet_sample_cand(super_net)
+#     data = _cnn_data()
+#     from aw_nas.objective.robustness import PgdAdvGenerator
+#     generator = PgdAdvGenerator(epsilon=0.03, n_step=5, step_size=0.0078, rand_init=False)
+#     inputs_adv = generator.generate_adv(data[0], None, data[1], cand_net)
 
-    assert (inputs_adv - data[0] != 0).any()
-    assert ((inputs_adv - data[0]).abs().max() <= 0.03 + 1e-5).all()
+#     assert (inputs_adv - data[0] != 0).any()
+#     assert ((inputs_adv - data[0]).abs().max() <= 0.03 + 1e-5).all()

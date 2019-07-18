@@ -66,7 +66,7 @@ def test_cache_results():
     import torch
     from aw_nas.utils.common_utils import cache_results
     class A(object):
-        @cache_results(cache_params=["x", "y", "z"], key_func=id, buffer_size=1)
+        @cache_results(cache_params=["x", "y", "z"], key_funcs=id, buffer_size=1)
         def method(self, x, y, z=1):
             str_ = "{} {} {}".format(x, y, z)
             return str_

@@ -92,13 +92,8 @@ class AdversarialRobustnessObjective(BaseObjective):
     def get_perfs(self, inputs, outputs, targets, cand_net):
         inputs_adv = self._gen_adv(inputs, outputs, targets, cand_net)
         outputs_adv = cand_net.forward_data(inputs_adv)
-        try:
-            return float(accuracy(outputs, targets)[0]) / 100, \
-                float(accuracy(outputs_adv, targets)[0]) / 100
-        except Exception as e:
-            print(e)
-            import ipdb
-            ipdb.set_trace()
+        return float(accuracy(outputs, targets)[0]) / 100, \
+            float(accuracy(outputs_adv, targets)[0]) / 100
 
     def get_loss(self, inputs, outputs, targets, cand_net,
                  add_controller_regularization=True, add_evaluator_regularization=True):
