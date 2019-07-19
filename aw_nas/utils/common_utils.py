@@ -35,6 +35,7 @@ class Context(object):
         self.current_op = current_op or []
         self._is_inject = dict()
         self._num_conn = dict()
+        self._last_conv_modules = dict()
 
     @property
     def next_op_index(self):
@@ -80,20 +81,29 @@ class Context(object):
         else:
             raise Exception("Empty context, set failed")
 
-    def flag_inject(self, is_inject):
+    @property
+    def index(self):
         next_cell, next_step = self.next_step_index
         next_conn, next_op_step = self.next_op_index
-        self._is_inject[(next_cell, next_step, next_conn, next_op_step)] = is_inject
+        return next_cell, next_step, next_conn, next_op_step
+
+    def flag_inject(self, is_inject):
+        self._is_inject[self.index] = is_inject
 
     @property
     def is_last_inject(self):
-        next_cell, next_step = self.next_step_index
-        next_conn, next_op_step = self.next_op_index
-        return self._is_inject.get((next_cell, next_step, next_conn, next_op_step), True)
+        return self._is_inject.get(self.index, True)
+
+    @property
+    def last_conv_module(self):
+        return self._last_conv_modules.get(self.index, None)
+
+    @last_conv_module.setter
+    def last_conv_module(self, value):
+        self._last_conv_modules[self.index] = value
 
     def __repr__(self):
-        next_cell, next_step = self.next_step_index
-        next_conn, next_op_step = self.next_op_index
+        next_cell, next_step, next_conn, next_op_step = self.index
         return "Context(next_cell={}, next_step={}, next_conn={}, next_op_step={})"\
             .format(next_cell, next_step, next_conn, next_op_step)
 

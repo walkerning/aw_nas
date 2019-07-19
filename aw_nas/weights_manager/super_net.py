@@ -304,6 +304,7 @@ class DiscreteSharedCell(SharedCell):
             ind = max(ind, 0)
             state = self.preprocess_ops[cur_step](context.previous_cells[ind])
             context.current_cell.append(state)
+            context.last_conv_module = self.preprocess_ops[cur_step].get_last_conv_module()
         elif cur_step < self._num_init + self._steps: # the following steps
             conns = genotype_grouped[cur_step - self._num_init][1]
             op_ind, current_op = context.next_op_index

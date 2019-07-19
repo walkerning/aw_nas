@@ -21,6 +21,7 @@ class VggBlock(nn.Module):
             assert inputs is not None
             out = self.conv_bn(inputs)
             context.current_op.append(out)
+            context.last_conv_module = self.conv_bn[0]
         elif op_ind == 1:
             out = self.pool(F.relu(context.current_op[-1]))
             context.previous_op.append(out)
@@ -72,9 +73,11 @@ class MobileNetBlock(nn.Module):
             context.current_op.append(inputs) # save inputs
             out = self.bn1(self.conv1(inputs))
             context.current_op.append(out)
+            context.last_conv_module = self.conv1
         elif op_ind == 2:
             out = self.bn2(self.conv2(F.relu(context.current_op[-1])))
             context.current_op.append(out)
+            context.last_conv_module = self.conv2
         elif op_ind == 3:
             out = self.bn3(self.conv3(F.relu(context.current_op[-1])))
             context.current_op.append(out)
@@ -82,14 +85,17 @@ class MobileNetBlock(nn.Module):
                 # return out
                 context.previous_op.append(out)
                 context.current_op = []
+                context.last_conv_module = self.conv3
             elif not self.has_conv_shortcut:
                 # return out + shortcut
                 context.previous_op.append(out + self.shortcut(context.current_op[0]))
+                context.last_conv_module = self.conv3
                 context.current_op = []
         elif op_ind == 4:
             # has_conv_shortcut
             out = self.shortcut(context.current_op[0])
             context.current_op.append(out)
+            context.last_conv_module = self.shortcut[0]
         elif op_ind == 5:
             out = context.current_op[-1] + context.current_op[-2]
             context.previous_op.append(out)
@@ -152,6 +158,7 @@ class ResNetBlockSplit(nn.Module):
 class ResNetBlock(nn.Module):
     def __init__(self, C, C_out, stride, affine):
         super(ResNetBlock, self).__init__()
+        self.stride = stride
         self.op_1 = ConvBNReLU(C, C_out,
                                3, stride, 1, affine=affine, relu=False)
         self.op_2 = ConvBNReLU(C_out, C_out,
@@ -173,14 +180,21 @@ class ResNetBlock(nn.Module):
             context.current_op.append(inputs) # save inputs
             out = self.op_1(inputs)
             context.current_op.append(out)
+            context.last_conv_module = self.op_1.op[0]
         elif op_ind == 2:
             out = self.op_2(F.relu(context.current_op[-1]))
-            out_skip = self.skip_op(context.current_op[0]) # inputs
-            out = out + out_skip
             context.current_op.append(out)
+            context.last_conv_module = self.op_2.op[0]
+        elif op_ind == 3:
+            out = self.skip_op(context.current_op[0]) # inputs
+            context.current_op.append(out)
+            if self.stride == 1: # skip connection is just identity
+                context.flag_inject(False)
+            else:
+                context.last_conv_module = self.skip_op.op[0]
         else:
-            assert op_ind == 3
-            out = F.relu(context.current_op[-1])
+            assert op_ind == 4
+            out = F.relu(context.current_op[-1] + context.current_op[-2])
             context.current_op = []
             context.previous_op.append(out)
             context.flag_inject(False)

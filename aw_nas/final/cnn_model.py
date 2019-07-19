@@ -270,6 +270,7 @@ class CNNGenotypeModel(FinalModel):
                 stemed = inputs
             context = Context(self._num_init, self._num_layers,
                               previous_cells=[stemed], current_cell=[])
+            context.last_conv_module = self.stem.get_last_conv_module()
             return stemed, context
 
         cur_cell_ind, _ = context.next_step_index
@@ -406,6 +407,7 @@ class CNNGenotypeCell(nn.Module):
             ind = max(ind, 0)
             state = self.preprocess_ops[cur_step](context.previous_cells[ind])
             context.current_cell.append(state)
+            context.last_conv_module = self.preprocess_ops[cur_step].get_last_conv_module()
         elif cur_step < self._num_init + self._steps: # the following steps
             conns = self.genotype_grouped[cur_step - self._num_init][1]
             op_ind, current_op = context.next_op_index

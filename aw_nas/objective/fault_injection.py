@@ -9,10 +9,14 @@ Copyright (c) 2019 Wenshuo Li
 Copyright (c) 2019 Xuefei Ning
 """
 
+from collections import defaultdict
+import six
+
 import numpy as np
 import torch
 from torch import nn
 
+from aw_nas import utils
 from aw_nas.utils.torch_utils import accuracy
 from aw_nas.objective.base import BaseObjective
 from aw_nas.utils.exception import expect, ConfigException
@@ -87,6 +91,7 @@ class FaultInjectionObjective(BaseObjective):
 
     def __init__(self, search_space,
                  fault_modes="gaussian", gaussian_std=1., inject_prob=0.001, max_value_mode=True,
+                 inject_propto_flops=False,
                  # loss
                  fault_loss_coeff=0.,
                  as_controller_regularization=False,
@@ -108,6 +113,12 @@ class FaultInjectionObjective(BaseObjective):
                    "By setting `as_controller_regularization` and `as_evaluator_regularization`.",
                    ConfigException)
         self.fault_reward_coeff = fault_reward_coeff
+        self.inject_propto_flops = inject_propto_flops
+        if self.inject_propto_flops:
+            expect(fault_modes == "fixed",
+                   "When `inject_propto_flops` is True, must use the bit-flip fault mode `fixed`",
+                   ConfigException)
+        self.inject_prob_avg_meters = defaultdict(utils.AverageMeter)
 
     @classmethod
     def supported_data_types(cls):
@@ -153,7 +164,36 @@ class FaultInjectionObjective(BaseObjective):
         if context.is_last_concat_op or not context.is_last_inject:
             return
         assert state is context.last_state
+        if self.inject_propto_flops:
+            mod = context.last_conv_module
+            if mod is None:
+                return # last op is not conv op
+            mul_per_loc = mod.in_channels / mod.groups * mod.kernel_size[0] * mod.kernel_size[1]
+            backup_inject_prob = self.inject_prob
+            inject_prob = 1 - (1 - backup_inject_prob) ** mul_per_loc
+            self.inject_prob = inject_prob
+            self.inject_prob_avg_meters[context.index].update(inject_prob)
         context.last_state = self.injector.inject(state)
+        if self.inject_propto_flops:
+            self.inject_prob = backup_inject_prob
+
+    def on_epoch_end(self, epoch):
+        super(FaultInjectionObjective, self).on_epoch_end(epoch)
+        if self.inject_prob_avg_meters:
+            # in final trianing, if the base inject prob do not vary, the inject prob of the same
+            # position/feature map should always be the same.
+            stats = [(ind, meter.avg) for ind, meter in six.iteritems(self.inject_prob_avg_meters)]
+            num_pos = len(stats) # number of inject position
+            stats = sorted(stats, key=lambda stat: stat[1])
+            mean_prob = np.mean([stat[1] for stat in stats])
+            geomean_prob = np.prod([stat[1] for stat in stats])**(1.0/num_pos)
+            self.logger.info("[NOTE: not meaningful in search, as every pass the same index "
+                             "corresponds to different op] Num feature map injected: %3d; "
+                             "Inject prob range: [%.4f (%s), %.4f (%s)]; "
+                             "Mean: %.4f ; Geometric mean: %.4f",
+                             num_pos, stats[0][1], stats[0][0], stats[-1][1], stats[-1][0],
+                             mean_prob, geomean_prob)
+            self.inject_prob_avg_meters = defaultdict(utils.AverageMeter) # reset
 
     @property
     def inject_prob(self):

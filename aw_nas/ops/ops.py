@@ -99,6 +99,11 @@ class FactorizedReduce(nn.Module):
         self.relu = nn.ReLU(inplace=False)
         self.bn = nn.BatchNorm2d(C_out, affine=affine)
 
+        # just specificy one conv module here, as only C_in, kernel_size, group is used
+        # for inject prob calculation every output position, this will work even though
+        # not so meaningful conceptually
+        self.last_conv_module = self.convs[-1]
+
     def forward(self, x):
         x = self.relu(x)
         mod = x.size(2) % self.stride
@@ -225,6 +230,9 @@ def forward_one_step(self, context=None, inputs=None):
             context.current_op = []
         else:
             context.current_op.append(inputs)
+        last_mod = self._modules[str(self._conv_mod_inds[op_ind])]
+        context.last_conv_module = last_mod if isinstance(last_mod, nn.Conv2d) \
+            else self._modules[str(self._conv_mod_inds[op_ind]-1)]
     elif op_ind == self._num_convs:
         for mod_ind in range(self._conv_mod_inds[-1]+1, modules_num):
             inputs = self._modules[str(mod_ind)](inputs)
@@ -239,10 +247,34 @@ def stub_forward_one_step(self, context=None, inputs=None):
     assert not inputs is None and not context is None
     state = self.forward(inputs)
     context.previous_op.append(state)
+    if isinstance(self, nn.Conv2d):
+        context.last_conv_module = self
     return state, context
 
 nn.Sequential.forward_one_step = forward_one_step
 nn.Module.forward_one_step = stub_forward_one_step
+
+def get_last_conv_module(self):
+    if hasattr(self, "last_conv_module"):
+        return self.last_conv_module
+
+    # in some cases, can auto induce the last conv module
+    if isinstance(self, nn.Conv2d):
+        return self
+    if isinstance(self, nn.Sequential):
+        for mod in reversed(self._modules.values()):
+            if isinstance(mod, nn.Conv2d):
+                return mod
+        return None
+    if not self._modules:
+        return None
+    if len(self._modules) == 1:
+        only_sub_mod = list(self._modules.values())[0]
+        return get_last_conv_module(only_sub_mod)
+    raise Exception("Cannot auto induce the last conv module of mod {}, "
+                    "Specificy `last_conv_module` attribute!`".format(self))
+
+nn.Module.get_last_conv_module = get_last_conv_module
 
 class Identity(nn.Module):
 
