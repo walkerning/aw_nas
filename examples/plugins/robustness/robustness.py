@@ -91,7 +91,7 @@ class AdversarialRobustnessObjective(BaseObjective):
 
     def get_perfs(self, inputs, outputs, targets, cand_net):
         inputs_adv = self._gen_adv(inputs, outputs, targets, cand_net)
-        outputs_adv = cand_net.forward_data(inputs_adv)
+        outputs_adv = cand_net(inputs_adv)
         return float(accuracy(outputs, targets)[0]) / 100, \
             float(accuracy(outputs_adv, targets)[0]) / 100
 
@@ -110,7 +110,7 @@ class AdversarialRobustnessObjective(BaseObjective):
            ((add_controller_regularization and self.as_controller_regularization) or \
             (add_evaluator_regularization and self.as_evaluator_regularization)):
             inputs_adv = self._gen_adv(inputs, outputs, targets, cand_net)
-            outputs_adv = cand_net.forward_data(inputs_adv)
+            outputs_adv = cand_net(inputs_adv)
             ce_loss_adv = nn.CrossEntropyLoss()(outputs_adv, targets)
             loss = (1 - self.adv_loss_coeff) * loss + self.adv_loss_coeff * ce_loss_adv
         return loss

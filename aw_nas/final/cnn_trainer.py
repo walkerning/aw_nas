@@ -8,6 +8,7 @@ from torch import nn
 
 from aw_nas import utils
 from aw_nas.final.base import FinalTrainer
+from aw_nas.utils.common_utils import nullcontext
 from aw_nas.utils.exception import expect
 from aw_nas.utils import DataParallel
 
@@ -37,6 +38,7 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                  auxiliary_head=False, auxiliary_weight=0.4,
                  add_regularization=False,
                  save_as_state_dict=False,
+                 eval_no_grad=True,
                  schedule_cfg=None):
         super(CNNFinalTrainer, self).__init__(schedule_cfg)
 
@@ -60,6 +62,7 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
         self.auxiliary_weight = auxiliary_weight
         self.add_regularization = add_regularization
         self.save_as_state_dict = save_as_state_dict
+        self.eval_no_grad = eval_no_grad
 
         # for optimizer
         self.weight_decay = weight_decay
@@ -311,10 +314,12 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
         objective_perfs = utils.OrderedStats()
         model.eval()
 
-        for step, (inputs, target) in enumerate(valid_queue):
-            inputs = inputs.to(device)
-            target = target.to(device)
-            with torch.no_grad():
+        context = torch.no_grad if self.eval_no_grad else nullcontext
+        with context():
+            for step, (inputs, target) in enumerate(valid_queue):
+                inputs = inputs.to(device)
+                target = target.to(device)
+
                 logits = model(inputs)
                 loss = criterion(logits, target)
                 perfs = self._perf_func(inputs, logits, target, model)
@@ -336,10 +341,12 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
     def on_epoch_start(self, epoch):
         super(CNNFinalTrainer, self).on_epoch_start(epoch)
         self.model.on_epoch_start(epoch)
+        self.objective.on_epoch_start(epoch)
 
     def on_epoch_end(self, epoch):
         super(CNNFinalTrainer, self).on_epoch_end(epoch)
         self.model.on_epoch_end(epoch)
+        self.objective.on_epoch_end(epoch)
 
     def _forward_once_for_flops(self, model):
         # forward the model once to get the flops calculated
