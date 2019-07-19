@@ -44,7 +44,8 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
 
     def __init__( #pylint: disable=dangerous-default-value
             self, dataset, weights_manager, objective, rollout_type="discrete",
-            batch_size=128, controller_surrogate_steps=1, mepa_surrogate_steps=1,
+            batch_size=128,
+            controller_surrogate_steps=1, mepa_surrogate_steps=1, derive_surrogate_steps=1,
             mepa_optimizer={
                 "type": "SGD",
                 "lr": 0.01,
@@ -84,8 +85,23 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
 
         # configs
         self.batch_size = batch_size
+        self.derive_surrogate_steps = derive_surrogate_steps
+
         self.controller_surrogate_steps = controller_surrogate_steps
+        if not isinstance(self.controller_surrogate_steps, int):
+            if isinstance(self.controller_surrogate_steps, str):
+                self.controller_surrogate_steps = tuple(eval(self.controller_surrogate_steps)) #pylint: disable=eval-used
+            expect(isinstance(self.controller_surrogate_steps, (list, tuple)),
+                   "`controller_surrogate_steps` must be an integer, or a list/tuple, "
+                   "or a string eval to a list/tuple", ConfigException)
         self.mepa_surrogate_steps = mepa_surrogate_steps
+        if not isinstance(self.mepa_surrogate_steps, int):
+            if isinstance(self.mepa_surrogate_steps, str):
+                self.mepa_surrogate_steps = tuple(eval(self.mepa_surrogate_steps)) #pylint: disable=eval-used
+            expect(isinstance(self.mepa_surrogate_steps, (list, tuple)),
+                   "`mepa_surrogate_steps` must be an integer, or a list/tuple, "
+                   "or a string eval to a list/tuple", ConfigException)
+
         self.disable_step_current = disable_step_current
         self.data_portion = data_portion
         self.mepa_as_surrogate = mepa_as_surrogate
@@ -190,6 +206,12 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
             _reward_kwargs = {k: v for k, v in self._reward_kwargs.items()}
             _reward_kwargs.update(self.c_hid_kwargs)
 
+            if isinstance(self.controller_surrogate_steps, (tuple, list)):
+                # random sample from the range
+                num_surrogate_step = np.random.choice(self.controller_surrogate_steps)
+            else:
+                num_surrogate_step = self.controller_surrogate_steps
+
             # evaluate these rollouts on one batch of data
             for rollout in rollouts:
                 cand_net = self.weights_manager.assemble_candidate(rollout)
@@ -208,7 +230,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
                                                         callback=callback,
                                                         rollout=rollout),
                                                 cand_net,
-                                                self.controller_surrogate_steps,
+                                                num_surrogate_step,
                                                 phase="controller_update")
         else: # only for test
             if eval_batches is not None:
@@ -238,7 +260,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
                     # if test, differentiable rollout does not need to set detach_arch=True too
                     **self.c_hid_kwargs)
                 res = self._run_surrogate_steps(eval_func, cand_net,
-                                                self.controller_surrogate_steps,
+                                                self.derive_surrogate_steps,
                                                 phase="controller_test")
                 rollout.set_perfs(OrderedDict(zip(
                     utils.flatten_list(["reward", "loss", self._perf_names]),
@@ -260,6 +282,13 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
         all_gradients = defaultdict(float)
         counts = defaultdict(int)
         report_stats = []
+
+        if isinstance(self.mepa_surrogate_steps, (tuple, list)):
+            # random sample from the range
+            num_surrogate_step = np.random.choice(self.mepa_surrogate_steps)
+        else:
+            num_surrogate_step = self.mepa_surrogate_steps
+
         for _ in range(self.mepa_samples):
             # sample rollout
             rollout = controller.sample(batch_size=self.rollout_batch_size)[0]
@@ -288,7 +317,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
 
             # run surrogate steps and evalaute on queue
             gradients, res = self._run_surrogate_steps(gradient_func, cand_net,
-                                                       self.mepa_surrogate_steps,
+                                                       num_surrogate_step,
                                                        phase="mepa_update")
 
             if not self.mepa_step_current:
