@@ -45,7 +45,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
     def __init__( #pylint: disable=dangerous-default-value
             self, dataset, weights_manager, objective, rollout_type="discrete",
             batch_size=128,
-            controller_surrogate_steps=1, mepa_surrogate_steps=1, derive_surrogate_steps=1,
+            controller_surrogate_steps=1, mepa_surrogate_steps=1, derive_surrogate_steps=None,
             mepa_optimizer={
                 "type": "SGD",
                 "lr": 0.01,
@@ -85,8 +85,6 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
 
         # configs
         self.batch_size = batch_size
-        self.derive_surrogate_steps = derive_surrogate_steps
-
         self.controller_surrogate_steps = controller_surrogate_steps
         if not isinstance(self.controller_surrogate_steps, int):
             if isinstance(self.controller_surrogate_steps, str):
@@ -94,6 +92,14 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
             expect(isinstance(self.controller_surrogate_steps, (list, tuple)),
                    "`controller_surrogate_steps` must be an integer, or a list/tuple, "
                    "or a string eval to a list/tuple", ConfigException)
+
+        self.derive_surrogate_steps = derive_surrogate_steps
+        if self.derive_surrogate_steps is None:
+            if isinstance(self.controller_surrogate_steps, int):
+                self.derive_surrogate_steps = self.controller_surrogate_steps
+            else:
+                self.derive_surrogate_steps = np.max(self.controller_surrogate_steps)
+
         self.mepa_surrogate_steps = mepa_surrogate_steps
         if not isinstance(self.mepa_surrogate_steps, int):
             if isinstance(self.mepa_surrogate_steps, str):
@@ -101,6 +107,10 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
             expect(isinstance(self.mepa_surrogate_steps, (list, tuple)),
                    "`mepa_surrogate_steps` must be an integer, or a list/tuple, "
                    "or a string eval to a list/tuple", ConfigException)
+
+        self.logger.info("mepa surrogate steps: %s; controller surrogate steps: %s; "
+                         "derive surrogate steps: %s", self.mepa_surrogate_steps,
+                         self.controller_surrogate_steps, self.derive_surrogate_steps)
 
         self.disable_step_current = disable_step_current
         self.data_portion = data_portion

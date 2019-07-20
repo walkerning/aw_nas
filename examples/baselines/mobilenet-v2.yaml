@@ -1,14 +1,15 @@
 # param: 2.3 M
-# flops: 608 M
-# clean acc: 0.934 (150 epoch 0.938)
+# flops: 182 M
+# clean acc: 0.925
+
 
 ## ---- Component search_space ----
 # ---- Type cnn ----
 search_space_type: cnn
 search_space_cfg:
   # Schedulable attributes:
-  # cell_layout:  [0, 1, 1, 2, 1, 1, 2, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 3]
-  cell_layout:  [0, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 3]
+  cell_layout:  [0, 1, 1, 2, 1, 1, 2, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 3]
+  # cell_layout:  [0, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 3]
   num_cell_groups: 4
   num_init_nodes: 1
   num_layers: 18
