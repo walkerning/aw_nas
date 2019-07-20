@@ -4,9 +4,6 @@ Fault injection objective.
 * Clean accuracy and fault-injected accuracy weighted for reward (for discrete controller search)
 * Clean loss and fault-injected loss weighted for loss
   (for differentiable controller search or fault-injection training).
-
-Copyright (c) 2019 Wenshuo Li
-Copyright (c) 2019 Xuefei Ning
 """
 
 from collections import defaultdict
@@ -92,6 +89,7 @@ class FaultInjectionObjective(BaseObjective):
     def __init__(self, search_space,
                  fault_modes="gaussian", gaussian_std=1., inject_prob=0.001, max_value_mode=True,
                  inject_propto_flops=False,
+                 activation_fixed_bitwidth=None,
                  # loss
                  fault_loss_coeff=0.,
                  as_controller_regularization=False,
@@ -119,6 +117,23 @@ class FaultInjectionObjective(BaseObjective):
                    "When `inject_propto_flops` is True, must use the bit-flip fault mode `fixed`",
                    ConfigException)
         self.inject_prob_avg_meters = defaultdict(utils.AverageMeter)
+
+        self.activation_fixed_bitwidth = activation_fixed_bitwidth
+        if self.activation_fixed_bitwidth:
+            import nics_fix_pt.nn_fix as nfp
+            self.fix = nfp.Activation_fix(nf_fix_params={
+                "activation": {
+                    # auto fix
+                    "method": torch.autograd.Variable(torch.IntTensor(np.array([1])),
+                                                      requires_grad=False),
+                    # not meaningful
+                    "scale": torch.autograd.Variable(torch.IntTensor(np.array([0])),
+                                                     requires_grad=False),
+                    "bitwidth": torch.autograd.Variable(torch.IntTensor(
+                        np.array([self.activation_fixed_bitwidth])),
+                                                        requires_grad=False)
+                }
+            })
 
     @classmethod
     def supported_data_types(cls):
@@ -161,6 +176,9 @@ class FaultInjectionObjective(BaseObjective):
         return loss
 
     def inject(self, state, context):
+        if self.activation_fixed_bitwidth:
+            # fixed point the activation
+            state = context.last_state = self.fix(state)
         if context.is_last_concat_op or not context.is_last_inject:
             return
         assert state is context.last_state
