@@ -396,3 +396,20 @@ def cache_results(cache_params, key_funcs, buffer_size):
         _inner_func.cache_hit_and_miss = cache_hit_and_miss
         return _inner_func
     return decorator
+
+
+## ---- thread utils ----
+class LazyThreadLocal(six.moves._thread._local):
+    def __init__(self, creator_map=None):
+        super(LazyThreadLocal, self).__init__()
+        if creator_map is not None:
+            assert isinstance(creator_map, dict)
+        self.creator_map = creator_map
+
+    def __getattr__(self, name):
+        if name in self.creator_map:
+            value = self.creator_map[name]()
+            setattr(self, name, value)
+            return value
+        raise AttributeError(("LazyThreadlocal object do not have attribute named {}, "
+                              "also not specified in the lazy creator map.").format(name))

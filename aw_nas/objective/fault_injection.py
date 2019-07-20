@@ -6,6 +6,7 @@ Fault injection objective.
   (for differentiable controller search or fault-injection training).
 """
 
+import threading
 from collections import defaultdict
 import six
 
@@ -122,19 +123,22 @@ class FaultInjectionObjective(BaseObjective):
         self.activation_fixed_bitwidth = activation_fixed_bitwidth
         if self.activation_fixed_bitwidth:
             import nics_fix_pt.nn_fix as nfp
-            self.fix = nfp.Activation_fix(nf_fix_params={
-                "activation": {
-                    # auto fix
-                    "method": torch.autograd.Variable(torch.IntTensor(np.array([1])),
-                                                      requires_grad=False),
-                    # not meaningful
-                    "scale": torch.autograd.Variable(torch.IntTensor(np.array([0])),
-                                                     requires_grad=False),
-                    "bitwidth": torch.autograd.Variable(torch.IntTensor(
-                        np.array([self.activation_fixed_bitwidth])),
-                                                        requires_grad=False)
-                }
+            self.thread_local = utils.LazyThreadLocal(creator_map={
+                "fix": lambda: nfp.Activation_fix(nf_fix_params={
+                    "activation": {
+                        # auto fix
+                        "method": torch.autograd.Variable(torch.IntTensor(np.array([1])),
+                                                          requires_grad=False),
+                        # not meaningful
+                        "scale": torch.autograd.Variable(torch.IntTensor(np.array([0])),
+                                                         requires_grad=False),
+                        "bitwidth": torch.autograd.Variable(torch.IntTensor(
+                            np.array([self.activation_fixed_bitwidth])),
+                                                            requires_grad=False)
+                    }
+                })
             })
+        self.thread_lock = threading.Lock()
 
     @classmethod
     def supported_data_types(cls):
@@ -177,31 +181,39 @@ class FaultInjectionObjective(BaseObjective):
         return loss
 
     def inject(self, state, context):
+        # This method can be call concurrently when using `DataParallel.forward_one_step_callback`
+        # Add a lock to protect the critic section
         if self.activation_fixed_bitwidth:
-            # fixed point the activation
-            state = context.last_state = self.fix(state)
+            # quantize the activation
+            # NOTE: the quantization of the weights is done in nfp patch,
+            # see `examples/fixed_point_patch.py`
+            # import this manually before creating operations, or soft-link this script under
+            # plugin dir to enable quantization for the weights
+            state = context.last_state = self.thread_local.fix(state)
         if context.is_last_concat_op or not context.is_last_inject:
             return
         assert state is context.last_state
-        if self.inject_propto_flops:
-            mod = context.last_conv_module
-            if mod is None:
-                return # last op is not conv op
-            mul_per_loc = mod.in_channels / mod.groups * mod.kernel_size[0] * mod.kernel_size[1]
-            backup_inject_prob = self.inject_prob
-            inject_prob = 1 - (1 - backup_inject_prob) ** mul_per_loc
-            self.inject_prob = inject_prob
-            self.inject_prob_avg_meters[context.index].update(inject_prob)
-            if mod.groups > 1:
-                # sep conv
-                cls_name = "conv_{}x{}".format(mod.kernel_size[0], mod.kernel_size[1])
-            else:
-                # normal conv
-                cls_name = "conv_Cx{}x{}".format(mod.kernel_size[0], mod.kernel_size[1])
-            self.cls_inject_prob_avg_meters[cls_name][context.index].update(inject_prob)
-        context.last_state = self.injector.inject(state)
-        if self.inject_propto_flops:
-            self.inject_prob = backup_inject_prob
+
+        with self.thread_lock:
+            if self.inject_propto_flops:
+                mod = context.last_conv_module
+                if mod is None:
+                    return # last op is not conv op
+                mul_per_loc = mod.in_channels / mod.groups * mod.kernel_size[0] * mod.kernel_size[1]
+                backup_inject_prob = self.inject_prob
+                inject_prob = 1 - (1 - backup_inject_prob) ** mul_per_loc
+                self.inject_prob = inject_prob
+                self.inject_prob_avg_meters[context.index].update(inject_prob)
+                if mod.groups > 1:
+                    # sep conv
+                    cls_name = "conv_{}x{}".format(mod.kernel_size[0], mod.kernel_size[1])
+                else:
+                    # normal conv
+                    cls_name = "conv_Cx{}x{}".format(mod.kernel_size[0], mod.kernel_size[1])
+                self.cls_inject_prob_avg_meters[cls_name][context.index].update(inject_prob)
+            context.last_state = self.injector.inject(state)
+            if self.inject_propto_flops:
+                self.inject_prob = backup_inject_prob
 
     def on_epoch_end(self, epoch):
         super(FaultInjectionObjective, self).on_epoch_end(epoch)
