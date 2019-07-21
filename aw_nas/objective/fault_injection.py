@@ -117,6 +117,7 @@ class FaultInjectionObjective(BaseObjective):
                    "When `inject_propto_flops` is True, must use the bit-flip fault mode `fixed`",
                    ConfigException)
         self.inject_prob_avg_meters = defaultdict(utils.AverageMeter)
+        self.cls_inject_prob_avg_meters = defaultdict(lambda: defaultdict(utils.AverageMeter))
 
         self.activation_fixed_bitwidth = activation_fixed_bitwidth
         if self.activation_fixed_bitwidth:
@@ -191,6 +192,13 @@ class FaultInjectionObjective(BaseObjective):
             inject_prob = 1 - (1 - backup_inject_prob) ** mul_per_loc
             self.inject_prob = inject_prob
             self.inject_prob_avg_meters[context.index].update(inject_prob)
+            if mod.groups > 1:
+                # sep conv
+                cls_name = "conv_{}x{}".format(mod.kernel_size[0], mod.kernel_size[1])
+            else:
+                # normal conv
+                cls_name = "conv_Cx{}x{}".format(mod.kernel_size[0], mod.kernel_size[1])
+            self.cls_inject_prob_avg_meters[cls_name][context.index].update(inject_prob)
         context.last_state = self.injector.inject(state)
         if self.inject_propto_flops:
             self.inject_prob = backup_inject_prob
@@ -212,6 +220,21 @@ class FaultInjectionObjective(BaseObjective):
                              num_pos, stats[0][1], stats[0][0], stats[-1][1], stats[-1][0],
                              mean_prob, geomean_prob)
             self.inject_prob_avg_meters = defaultdict(utils.AverageMeter) # reset
+
+            # mean according to operation types
+            for cls_name, avg_meters in sorted(self.cls_inject_prob_avg_meters.items(),
+                                               key=lambda item: item[0]):
+                stats = [(ind, meter.avg) for ind, meter in six.iteritems(avg_meters)]
+                num_pos = len(stats) # number of inject position
+                stats = sorted(stats, key=lambda stat: stat[1])
+                mean_prob = np.mean([stat[1] for stat in stats])
+                geomean_prob = np.prod([stat[1] for stat in stats])**(1.0/num_pos)
+                self.logger.info("Type: %s: Num feature map injected: %3d; "
+                                 "Inject prob range: [%.4f (%s), %.4f (%s)]; "
+                                 "Mean: %.4f ; Geometric mean: %.4f", cls_name,
+                                 num_pos, stats[0][1], stats[0][0], stats[-1][1], stats[-1][0],
+                                 mean_prob, geomean_prob)
+            self.cls_inject_prob_avg_meters = defaultdict(lambda: defaultdict(utils.AverageMeter))
 
     @property
     def inject_prob(self):

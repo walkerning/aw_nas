@@ -32,7 +32,7 @@ class VggBlock(nn.Module):
         return out, context
 
 class MobileNetBlock(nn.Module):
-    def __init__(self, expansion, C, C_out, stride, affine):
+    def __init__(self, expansion, C, C_out, stride, affine, kernel_size=3):
         super(MobileNetBlock, self).__init__()
         C_inner = self.C_inner = int(expansion * C)
         self.stride = stride
@@ -41,9 +41,10 @@ class MobileNetBlock(nn.Module):
                                kernel_size=1, stride=1,
                                padding=0, bias=False)
         self.bn1 = nn.BatchNorm2d(C_inner, affine=affine)
+        padding = int((kernel_size - 1) / 2)
         self.conv2 = nn.Conv2d(C_inner, C_inner,
-                               kernel_size=3, stride=stride,
-                               padding=1, groups=C_inner, bias=False)
+                               kernel_size=kernel_size, stride=stride,
+                               padding=padding, groups=C_inner, bias=False)
         self.bn2 = nn.BatchNorm2d(C_inner, affine=affine)
         self.conv3 = nn.Conv2d(C_inner, C_out,
                                kernel_size=1, stride=1, padding=0, bias=False)
@@ -200,8 +201,16 @@ class ResNetBlock(nn.Module):
             context.flag_inject(False)
         return out, context
 
+register_primitive("mobilenet_block_3",
+                   lambda C, C_out, stride, affine: MobileNetBlock(2, C, C_out, stride, affine))
+register_primitive("mobilenet_block_3_5x5",
+                   lambda C, C_out, stride, affine: MobileNetBlock(2, C, C_out, stride, affine,
+                                                                   kernel_size=5))
 register_primitive("mobilenet_block_6",
                    lambda C, C_out, stride, affine: MobileNetBlock(6, C, C_out, stride, affine))
+register_primitive("mobilenet_block_6_5x5",
+                   lambda C, C_out, stride, affine: MobileNetBlock(6, C, C_out, stride, affine,
+                                                                   kernel_size=5))
 register_primitive("mobilenet_block_1",
                    lambda C, C_out, stride, affine: MobileNetBlock(1, C, C_out, stride, affine))
 register_primitive("resnet_block",
