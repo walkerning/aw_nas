@@ -445,7 +445,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
             return func()
 
         with cand_net.begin_virtual():
-            sur_loss, sur_perf = cand_net.train_queue(
+            results = cand_net.train_queue(
                 self.surrogate_queue,
                 optimizer=self.surrogate_optimizer,
                 criterion=partial(self._mepa_loss_func, cand_net=cand_net),
@@ -455,8 +455,10 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
                 **self.s_hid_kwargs
             )
             if update_metric:
+                sur_loss = results[0]
                 self.epoch_average_meters["loss/{}/surrogate".format(phase)].update(sur_loss)
-                self.epoch_average_meters["perf/{}/surrogate".format(phase)].update(sur_perf)
+                for p_n, p_v in zip(self._perf_names, results[1:]):
+                    self.epoch_average_meters["{}/{}/surrogate".format(p_n, phase)].update(p_v)
             return func()
 
     def _get_hiddens_resetter(self, name):

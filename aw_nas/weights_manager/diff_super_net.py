@@ -14,8 +14,9 @@ from aw_nas.utils import data_parallel
 __all__ = ["DiffSubCandidateNet", "DiffSuperNet"]
 
 class DiffSubCandidateNet(CandidateNet):
-    def __init__(self, super_net, rollout, gpus=tuple(), virtual_parameter_only=True):
-        super(DiffSubCandidateNet, self).__init__()
+    def __init__(self, super_net, rollout, gpus=tuple(), virtual_parameter_only=True,
+                 eval_no_grad=True):
+        super(DiffSubCandidateNet, self).__init__(eval_no_grad=eval_no_grad)
         self.super_net = super_net
         self._device = super_net.device
         self.gpus = gpus
@@ -89,7 +90,8 @@ class DiffSuperNet(SharedNet):
                  max_grad_norm=5.0, dropout_rate=0.1,
                  use_stem="conv_bn_3x3", stem_stride=1, stem_affine=True,
                  cell_use_preprocess=True, cell_group_kwargs=None,
-                 candidate_virtual_parameter_only=False):
+                 candidate_virtual_parameter_only=False,
+                 candidate_eval_no_grad=True):
         super(DiffSuperNet, self).__init__(
             search_space, device, rollout_type,
             cell_cls=DiffSharedCell, op_cls=DiffSharedOp,
@@ -102,11 +104,13 @@ class DiffSuperNet(SharedNet):
             cell_group_kwargs=cell_group_kwargs)
 
         self.candidate_virtual_parameter_only = candidate_virtual_parameter_only
+        self.candidate_eval_no_grad = candidate_eval_no_grad
 
     # ---- APIs ----
     def assemble_candidate(self, rollout):
         return DiffSubCandidateNet(self, rollout, gpus=self.gpus,
-                                   virtual_parameter_only=self.candidate_virtual_parameter_only)
+                                   virtual_parameter_only=self.candidate_virtual_parameter_only,
+                                   eval_no_grad=self.candidate_eval_no_grad)
 
     @classmethod
     def supported_rollout_types(cls):

@@ -14,9 +14,10 @@ import torch
 from torch import nn
 from torch.autograd import Variable
 
-from aw_nas import AwnasPlugin
+from aw_nas import AwnasPlugin, utils
 from aw_nas.objective.base import BaseObjective
 from aw_nas.weights_manager.super_net import SuperNet, SubCandidateNet
+from aw_nas.weights_manager.diff_super_net import DiffSuperNet, DiffSubCandidateNet
 from aw_nas.utils.torch_utils import accuracy
 from aw_nas.utils.exception import expect, ConfigException
 
@@ -265,7 +266,101 @@ class CacheAdvSuperNet(SuperNet):
         for cand_net in self.candidate_map.values():
             cand_net.clear_cache()
 
+class CacheAdvDiffCandidateNet(DiffSubCandidateNet):
+    def __init__(self, *args, **kwargs):
+        super(CacheAdvDiffCandidateNet, self).__init__(*args, **kwargs)
+        # 820s -> 400s
+        self.cached_advs = _Cache([], buffer_size=3)
+
+    def clear_cache(self):
+        """
+        There are model updates. Clear the cache.
+        """
+        self.cached_advs.clear()
+
+    @contextlib.contextmanager
+    def begin_virtual(self):
+        w_clone = {k: v.clone() for k, v in self.named_parameters()}
+        if not self.virtual_parameter_only:
+            buffer_clone = {k: v.clone() for k, v in self.named_buffers()}
+
+        yield
+
+        for n, v in self.named_parameters():
+            v.data.copy_(w_clone[n])
+        del w_clone
+
+        if not self.virtual_parameter_only:
+            for n, v in self.named_buffers():
+                v.data.copy_(buffer_clone[n])
+            del buffer_clone
+
+        self.clear_cache()
+
+    def train_queue(self, queue, optimizer, criterion=lambda i, l, t: nn.CrossEntropyLoss()(l, t),
+                    eval_criterions=None, steps=1, **kwargs):
+        assert steps > 0
+        self._set_mode("train")
+
+        average_ans = None
+        for _ in range(steps):
+            data = next(queue)
+            data = (data[0].to(self.get_device()), data[1].to(self.get_device()))
+            _, targets = data
+            outputs = self.forward_data(*data, **kwargs)
+            loss = criterion(data[0], outputs, targets)
+            if eval_criterions:
+                ans = utils.flatten_list([c(data[0], outputs, targets) for c in eval_criterions])
+                if average_ans is None:
+                    average_ans = ans
+                else:
+                    average_ans = [s + a for s, a in zip(average_ans, ans)]
+            self.zero_grad()
+            loss.backward()
+            optimizer.step()
+            self.clear_cache()
+
+        if eval_criterions:
+            return [s / steps for s in average_ans]
+        return []
+
+class CacheAdvDiffSuperNet(DiffSuperNet):
+    NAME = "adv_diff_supernet"
+
+    @functools.wraps(DiffSuperNet.__init__)
+    def __init__(self, *args, **kwargs):
+        super(CacheAdvDiffSuperNet, self).__init__(*args, **kwargs)
+        if self.candidate_eval_no_grad:
+            self.logger.warning(
+                "candidate_eval_no_grad for CacheAdvSuperNet should be set to `false` (not {}), "
+                "automatically changed to `false`".format(self.candidate_eval_no_grad))
+        self.candidate_eval_no_grad = False
+        self.assembled = 0
+        self.candidate_map = weakref.WeakValueDictionary()
+
+    def assemble_candidate(self, rollout):
+        cand_net = CacheAdvDiffCandidateNet(
+            self, rollout, gpus=self.gpus,
+            virtual_parameter_only=self.candidate_virtual_parameter_only,
+            eval_no_grad=self.candidate_eval_no_grad)
+        self.candidate_map[self.assembled] = cand_net
+        self.assembled += 1
+        return cand_net
+
+    def step_current_gradients(self, optimizer):
+        assert 0, "step_current_gradient should not be called!"
+
+    def step(self, gradients, optimizer):
+        super(CacheAdvDiffSuperNet, self).step(gradients, optimizer)
+        for cand_net in self.candidate_map.values():
+            cand_net.clear_cache()
+
+    def load(self, path):
+        super(CacheAdvDiffSuperNet, self).load(path)
+        for cand_net in self.candidate_map.values():
+            cand_net.clear_cache()
+
 class AdversarialRobustnessPlugin(AwnasPlugin):
     NAME = "adversarial_robustness"
     objective_list = [AdversarialRobustnessObjective]
-    weights_manager_list = [CacheAdvSuperNet]
+    weights_manager_list = [CacheAdvSuperNet, CacheAdvDiffSuperNet]
