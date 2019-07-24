@@ -370,14 +370,6 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
         self.weights_manager.on_epoch_end(epoch)
         self.objective.on_epoch_end(epoch)
 
-        # logs meters info
-        for name, meter in six.iteritems(self.epoch_average_meters):
-            self.writer.add_scalar(name, meter.avg, epoch)
-
-        for name, meter in six.iteritems(self.epoch_average_meters):
-            if not meter.is_empty():
-                self.writer.add_scalar(name, meter.avg, epoch)
-
         # optionally write tensorboard info
         if not self.writer.is_none():
             for name, meter in six.iteritems(self.epoch_average_meters):

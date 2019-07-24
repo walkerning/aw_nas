@@ -266,6 +266,15 @@ class CacheAdvSuperNet(SuperNet):
         for cand_net in self.candidate_map.values():
             cand_net.clear_cache()
 
+    def __setstate__(self):
+        super(CacheAdvSuperNet, self).__setstate__(state)
+        self.candidate_map = weakref.WeakValueDictionary()
+
+    def __getstate__(self):
+        state = super(CacheAdvSuperNet, self).__getstate__()
+        del state["candidate_map"]
+        return state
+
 class CacheAdvDiffCandidateNet(DiffSubCandidateNet):
     def __init__(self, *args, **kwargs):
         super(CacheAdvDiffCandidateNet, self).__init__(*args, **kwargs)
@@ -359,6 +368,15 @@ class CacheAdvDiffSuperNet(DiffSuperNet):
         super(CacheAdvDiffSuperNet, self).load(path)
         for cand_net in self.candidate_map.values():
             cand_net.clear_cache()
+
+    def __setstate__(self):
+        super(CacheAdvDiffSuperNet, self).__setstate__(state)
+        self.candidate_map = weakref.WeakValueDictionary()
+
+    def __getstate__(self):
+        state = super(CacheAdvDiffSuperNet, self).__getstate__()
+        del state["candidate_map"]
+        return state
 
 class AdversarialRobustnessPlugin(AwnasPlugin):
     NAME = "adversarial_robustness"

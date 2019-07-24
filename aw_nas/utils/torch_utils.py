@@ -120,6 +120,9 @@ class InfIterator(six.Iterator):
                 [callback() for callback in self.callbacks if callback is not None]
             self.iter_ = iter(self.iterable)
             data = next(self.iter_)
+        # except RuntimeError as e:
+        #     self.logger.error(e)
+        #     raise
         return data
 
     def add_callback(self, callback):
@@ -166,7 +169,8 @@ def prepare_data_queues(splits, queue_cfg_lst, data_type="image", drop_last=Fals
                 "num_workers": 2,
                 "sampler": torch.utils.data.SubsetRandomSampler(
                     indices[int(size*used_portion):int(size*(used_portion+portion))]),
-                "drop_last": drop_last
+                "drop_last": drop_last,
+                "timeout": 5
             }
             queue = get_inf_iterator(torch.utils.data.DataLoader(
                 dset_splits[split], **kwargs), callback)
