@@ -101,7 +101,7 @@ def batchify_sentences(data, bsz, device="cuda"):
 class InfIterator(six.Iterator):
     def __init__(self, iterable, callbacks=()):
         self.iterable = iterable
-        self.iter_ = iter(self.iterable)
+        self.iter_ = None
         self.callbacks = list(callbacks)
 
     def __getattr__(self, name):
@@ -111,6 +111,8 @@ class InfIterator(six.Iterator):
         return len(self.iterable)
 
     def __next__(self):
+        if self.iter_ is None:
+            self.iter_ = iter(self.iterable)
         try:
             data = next(self.iter_)
         except StopIteration:
