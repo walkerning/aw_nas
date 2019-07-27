@@ -134,7 +134,7 @@ class InfIterator(six.Iterator):
 def get_inf_iterator(iterable, callback):
     return InfIterator(iterable, [callback])
 
-def prepare_data_queues(splits, queue_cfg_lst, data_type="image", drop_last=False):
+def prepare_data_queues(splits, queue_cfg_lst, data_type="image", drop_last=False, shuffle=True):
     """
     Further partition the dataset splits, prepare different data queues.
 
@@ -146,7 +146,8 @@ def prepare_data_queues(splits, queue_cfg_lst, data_type="image", drop_last=Fals
     dset_splits = splits
     dset_sizes = {n: len(d) for n, d in six.iteritems(dset_splits)}
     dset_indices = {n: list(range(size)) for n, size in dset_sizes.items()}
-    [np.random.shuffle(indices) for indices in dset_indices.values()]
+    if shuffle:
+        [np.random.shuffle(indices) for indices in dset_indices.values()]
     used_portions = {n: 0. for n in splits}
     queues = []
     for cfg in queue_cfg_lst: # all the queues interleave sub-dataset

@@ -60,11 +60,15 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
             },
             surrogate_optimizer={"type": "SGD", "lr": 0.001}, surrogate_scheduler=None,
             schedule_every_batch=False,
+            # whether load optimizer/scheduler when loading
+            load_optimizer=True,
+            load_scheduler=True,
             # mepa samples for `update_evaluator`
             mepa_samples=1,
             disable_step_current=False,
             # data queue configs: (surrogate, mepa, controller)
             data_portion=(0.1, 0.4, 0.5), mepa_as_surrogate=False,
+            shuffle_data_before_split=True,
             # only work for differentiable controller now
             rollout_batch_size=1,
             # only for rnn data
@@ -114,10 +118,13 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
 
         self.disable_step_current = disable_step_current
         self.data_portion = data_portion
+        self.shuffle_data_before_split = shuffle_data_before_split
         self.mepa_as_surrogate = mepa_as_surrogate
         self.mepa_samples = mepa_samples
         self.rollout_batch_size = rollout_batch_size
         self.schedule_every_batch = schedule_every_batch
+        self.load_optimizer = load_optimizer
+        self.load_scheduler = load_scheduler
 
         # rnn specific configs
         self.bptt_steps = bptt_steps
@@ -421,10 +428,10 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
         scheduler_states = checkpoint["schedulers"]
         for compo_name in ["mepa", "surrogate"]:
             optimizer = getattr(self, compo_name + "_optimizer")
-            if optimizer is not None:
+            if self.load_optimizer and optimizer is not None and compo_name in optimizer_states:
                 optimizer.load_state_dict(optimizer_states[compo_name])
             scheduler = getattr(self, compo_name + "_scheduler")
-            if scheduler is not None:
+            if self.load_scheduler and scheduler is not None and compo_name in scheduler_states:
                 scheduler.load_state_dict(scheduler_states[compo_name])
 
         # call `on_epoch_start` for scheduled values
@@ -523,7 +530,8 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
         self.surrogate_queue, self.mepa_queue, self.controller_queue\
             = utils.prepare_data_queues(self.dataset.splits(), queue_cfgs,
                                         data_type=self._data_type,
-                                        drop_last=self.rollout_batch_size > 1)
+                                        drop_last=self.rollout_batch_size > 1,
+                                        shuffle=self.shuffle_data_before_split)
         if mepa_as_surrogate:
             # use mepa data queue as surrogate data queue
             self.surrogate_queue = self.mepa_queue

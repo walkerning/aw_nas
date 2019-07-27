@@ -75,7 +75,7 @@ def make_surrogate_cfgs(derive_out_file, template_file, sur_dir):
             yaml.safe_dump(cfg_template, of)
 
 @ray.remote(num_gpus=1, max_calls=1)
-def call_search(cfg, seed, train_dir, vis_dir, data_dir, killer):
+def call_search(cfg, seed, train_dir, vis_dir, data_dir, save_every, killer):
     if seed is None:
         seed = random.randint(1, 999999)
     gpu = _get_gpus(ray.get_gpu_ids())
@@ -86,9 +86,9 @@ def call_search(cfg, seed, train_dir, vis_dir, data_dir, killer):
     os.environ["AWNAS_DATA"] = data_dir
 
     # call aw_nas.main::main
-    cmd = ("search {cfg} --gpu 0 --seed {seed} --save-every 20 "
+    cmd = ("search {cfg} --gpu 0 --seed {seed} --save-every {save_every} "
            "--train-dir {train_dir} --vis-dir {vis_dir}")\
-        .format(cfg=cfg, seed=seed,
+        .format(cfg=cfg, seed=seed, save_every=save_every,
                 train_dir=train_dir, vis_dir=vis_dir)
     print("CUDA_VISIBLE_DEVICES={} AWNAS_DATA={} awnas {}".format(gpu, data_dir, cmd))
     print("check {} for log".format(os.path.join(train_dir, "search.log")))
@@ -245,6 +245,7 @@ parser.add_argument("--seed", default=None, type=int, help="the default seeds of
 
 parser.add_argument("--search-cfg", required=True, type=str)
 parser.add_argument("--search-seed", default=None, type=int)
+parser.add_argument("--search-save-every", default=20, type=int)
 
 parser.add_argument("--derive-seed", default=123, type=int)
 
@@ -291,6 +292,10 @@ def terminate_procs(sig, frame):
     print("sending kill signals, please wait for some seconds for all these tasks to exit")
     killer.send_kill.remote()
     killed = 1
+
+def _exit():
+    print("End exp {}".format(exp_name))
+    sys.exit(0)
 
 signal.signal(signal.SIGINT, terminate_procs)
 signal.signal(signal.SIGTERM, terminate_procs)
@@ -362,12 +367,13 @@ try:
     if start_stage <= 0: # search
         # search
         vis_dir = os.path.join(result_dir, "vis")
-        final_checkpoint = call_search.remote(search_cfg, cmd_args.search_seed, search_dir,
-                                              vis_dir, cmd_args.data, killer)
+        final_checkpoint = call_search.remote(search_cfg, cmd_args.search_seed,
+                                              search_dir, vis_dir,
+                                              cmd_args.data, cmd_args.search_save_every, killer)
         final_checkpoint = ray.get(final_checkpoint)
         check_killed()
     if end_stage <= 0: # search
-        sys.exit(0)
+        _exit()
 
     if start_stage <= 1: # derive
         # derive
@@ -382,7 +388,7 @@ try:
 
         check_killed()
     if end_stage <= 1: # derive
-        sys.exit(0)
+        _exit()
 
     if start_stage <= 2: # train_surrogate
         # make surrogate cfgs
@@ -404,7 +410,7 @@ try:
 
         check_killed()
     if end_stage <= 2: # train_surrogate
-        sys.exit(0)
+        _exit()
 
     # if start_stage <= 3: # always true
     # choose best
@@ -439,7 +445,8 @@ try:
                                           save_every=total_epochs // 4, killer=killer))
     final_valid_perf = _get_perf(final_log, type_=cmd_args.type)
     # if end_stage <= 3: # always true
+    _exit()
 except ray.exceptions.RayTaskError as e:
-    print("EXIT! Exception when executing task: ", e)
+    print("EXIT! exp {}: Exception when executing task: ".format(exp_name), e)
     sys.exit(1)
 

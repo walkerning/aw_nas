@@ -25,19 +25,19 @@ def _get_perf(log, type_="cnn"):
         return acc
     raise NotImplementedError("unknown type: {}".format(type_))
 
-def call_search(cfg, gpu, seed, train_dir, vis_dir):
+def call_search(cfg, gpu, seed, train_dir, vis_dir, save_every):
     if seed is None:
         seed = random.randint(1, 999999)
     logging.info("train seed: %s", str(seed))
-    logging.info(("awnas search {cfg} --gpu {gpu} --seed {seed} --save-every 20 "
+    logging.info(("awnas search {cfg} --gpu {gpu} --seed {seed} --save-every {save_every} "
                   "--train-dir {train_dir} --vis-dir {vis_dir}")\
                  .format(cfg=cfg, gpu=gpu, seed=seed,
-                         train_dir=train_dir, vis_dir=vis_dir))
+                         train_dir=train_dir, vis_dir=vis_dir, save_every=save_every))
 
-    subprocess.check_call(("awnas search {cfg} --gpu {gpu} --seed {seed} --save-every 20 "
+    subprocess.check_call(("awnas search {cfg} --gpu {gpu} --seed {seed} --save-every {save_every} "
                            "--train-dir {train_dir} --vis-dir {vis_dir}")\
                           .format(cfg=cfg, gpu=gpu, seed=seed,
-                                  train_dir=train_dir, vis_dir=vis_dir),
+                                  train_dir=train_dir, vis_dir=vis_dir, save_every=save_every),
                           shell=True)
 
 # derive
@@ -107,6 +107,7 @@ parser.add_argument("--search-cfg", required=True, type=str)
 parser.add_argument("--search-memory", default=6000, type=int)
 parser.add_argument("--search-util", default=30, type=int)
 parser.add_argument("--search-seed", default=None, type=int)
+parser.add_argument("--search-save-every", default=20, type=int)
 
 parser.add_argument("--derive-memory", default=3000, type=int)
 parser.add_argument("--derive-util", default=0, type=int)
@@ -150,8 +151,8 @@ shutil.copy(args.train_surrogate_cfg, train_surrogate_template)
 shutil.copy(args.train_final_cfg, train_final_template)
 
 # # search
-# vis_dir = os.path.join(result_dir, "vis")
-# call_search(search_cfg, gpu, args.search_seed, search_dir, vis_dir)
+vis_dir = os.path.join(result_dir, "vis")
+call_search(search_cfg, gpu, args.search_seed, search_dir, vis_dir, args.search_save_every)
 
 # derive
 max_epoch = max([int(n) for n in os.listdir(search_dir) if n.isdigit()])
