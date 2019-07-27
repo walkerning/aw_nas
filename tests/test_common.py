@@ -67,7 +67,7 @@ def test_plot_genotype_util(genotype, cls, tmp_path):
     {"cls": "rnn", "loose_end": True},
 ])
 def test_rollout_from_genotype_str(case):
-    from aw_nas.common import get_search_space, Rollout, rollout_from_genotype_str
+    from aw_nas.common import get_search_space, rollout_from_genotype_str
 
     genotype_str = case.pop("genotype_str", None)
     ss = get_search_space(**case)
@@ -77,3 +77,22 @@ def test_rollout_from_genotype_str(case):
         rollout = ss.random_sample()
         rec_rollout = rollout_from_genotype_str(str(rollout.genotype), ss)
         assert (np.array(rec_rollout.arch) == np.array(rollout.arch)).all()
+
+# ---- test mutation rollout/population ----
+def test_mutation_rollout_random_sample(population):
+    from aw_nas.rollout.mutation import MutationRollout
+
+    ss = population.search_space
+    parent_index = 1
+    mutated_rollout = MutationRollout.random_sample(population, parent_index=parent_index, num_mutations=1)
+    assert len(mutated_rollout.mutations) == 1
+    ori_arch = np.array(ss.rollout_from_genotype(population.get_model(parent_index).genotype).arch)
+    new_arch = mutated_rollout.arch
+    s_mutation = mutated_rollout.mutations[0]
+    assert tuple(np.squeeze(np.where(ori_arch != new_arch))) == (
+        s_mutation.cell, s_mutation.mutation_type,
+        s_mutation.step * ss.num_node_inputs + s_mutation.connection)
+
+def test_population():
+    # TODO
+    pass

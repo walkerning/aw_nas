@@ -50,6 +50,7 @@ class RLController(BaseController, nn.Module):
         cn_cls = BaseRLControllerNet.get_class_(controller_network_type)
         num_cnet = self.search_space.num_cell_groups if self.independent_cell_group else 1
         self.controllers = [cn_cls(self.search_space, self.device,
+
                                    cell_index=i if self.independent_cell_group else None,
                                    **controller_network_cfg) for i in range(num_cnet)]
         self.agents = [BaseRLAgent.get_class_(rl_agent_type)(cnet, **rl_agent_cfg)\

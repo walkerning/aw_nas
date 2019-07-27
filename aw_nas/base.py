@@ -1,12 +1,8 @@
 # -*- coding: utf-8 -*-
 
-try:
-    from StringIO import StringIO
-except ImportError:
-    from io import StringIO
-
 from collections import OrderedDict
 import six
+from six import StringIO
 import yaml
 
 from aw_nas import utils
