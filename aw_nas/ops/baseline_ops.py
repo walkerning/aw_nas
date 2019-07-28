@@ -31,7 +31,7 @@ class VggBlock(nn.Module):
         return out, context
 
 class MobileNetBlock(nn.Module):
-    def __init__(self, expansion, C, C_out, stride, affine):
+    def __init__(self, expansion, C, C_out, stride, affine, kernel_size=3):
         super(MobileNetBlock, self).__init__()
         C_inner = self.C_inner = int(expansion * C)
         self.stride = stride
@@ -40,9 +40,10 @@ class MobileNetBlock(nn.Module):
                                kernel_size=1, stride=1,
                                padding=0, bias=False)
         self.bn1 = nn.BatchNorm2d(C_inner, affine=affine)
+        padding = int((kernel_size - 1) / 2)
         self.conv2 = nn.Conv2d(C_inner, C_inner,
-                               kernel_size=3, stride=stride,
-                               padding=1, groups=C_inner, bias=False)
+                               kernel_size=kernel_size, stride=stride,
+                               padding=padding, groups=C_inner, bias=False)
         self.bn2 = nn.BatchNorm2d(C_inner, affine=affine)
         self.conv3 = nn.Conv2d(C_inner, C_out,
                                kernel_size=1, stride=1, padding=0, bias=False)
@@ -150,12 +151,13 @@ class ResNetBlockSplit(nn.Module):
         return out, context
 
 class ResNetBlock(nn.Module):
-    def __init__(self, C, C_out, stride, affine):
+    def __init__(self, C, C_out, stride, affine, kernel_size=3):
         super(ResNetBlock, self).__init__()
+        padding = int((kernel_size - 1) / 2)
         self.op_1 = ConvBNReLU(C, C_out,
-                               3, stride, 1, affine=affine, relu=False)
+                               kernel_size, stride, padding, affine=affine, relu=False)
         self.op_2 = ConvBNReLU(C_out, C_out,
-                               3, 1, 1, affine=affine, relu=False)
+                               kernel_size, 1, padding, affine=affine, relu=False)
         self.skip_op = Identity() if stride == 1 else ConvBNReLU(C, C_out,
                                                                  1, stride, 0,
                                                                  affine=affine, relu=False)
@@ -188,10 +190,23 @@ class ResNetBlock(nn.Module):
 
 register_primitive("mobilenet_block_6",
                    lambda C, C_out, stride, affine: MobileNetBlock(6, C, C_out, stride, affine))
+register_primitive("mobilenet_block_6_5x5",
+                   lambda C, C_out, stride, affine: MobileNetBlock(6, C, C_out, stride, affine, 5))
+register_primitive("mobilenet_block_3",
+                   lambda C, C_out, stride, affine: MobileNetBlock(3, C, C_out, stride, affine))
+register_primitive("mobilenet_block_3_5x5",
+                   lambda C, C_out, stride, affine: MobileNetBlock(3, C, C_out, stride, affine, 5))
 register_primitive("mobilenet_block_1",
                    lambda C, C_out, stride, affine: MobileNetBlock(1, C, C_out, stride, affine))
+
+register_primitive("resnet_block_1x1",
+                   lambda C, C_out, stride, affine: ResNetBlock(C, C_out, stride, affine=affine,
+                                                                kernel_size=1))
 register_primitive("resnet_block",
                    lambda C, C_out, stride, affine: ResNetBlock(C, C_out, stride, affine=affine))
+register_primitive("resnet_block_5x5",
+                   lambda C, C_out, stride, affine: ResNetBlock(C, C_out, stride, affine=affine,
+                                                                kernel_size=5))
 register_primitive("resnet_block_split",
                    lambda C, C_out, stride, affine: ResNetBlockSplit(C, C_out,
                                                                      stride, affine=affine))

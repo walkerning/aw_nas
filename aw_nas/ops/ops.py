@@ -31,6 +31,9 @@ PRIMITVE_FACTORY = {
     "max_pool_3x3" : max_pool_3x3,
     "skip_connect" : lambda C, C_out, stride, affine: Identity() if stride == 1 \
       else FactorizedReduce(C, C_out, stride=stride, affine=affine),
+    "res_reduce_block": lambda C, C_out, stride, affine: ResFactorizedReduceBlock(
+        C, C_out, stride=stride, affine=affine),
+
     "sep_conv_3x3" : lambda C, C_out, stride, affine: SepConv(C, C_out,
                                                               3, stride, 1, affine=affine),
     "sep_conv_5x5" : lambda C, C_out, stride, affine: SepConv(C, C_out,
@@ -43,6 +46,8 @@ PRIMITVE_FACTORY = {
                                                               5, stride, 4, 2, affine=affine),
     "conv_7x1_1x7" : conv_7x1_1x7,
 
+    "relu_conv_bn_1x1" : lambda C, C_out, stride, affine: ReLUConvBN(C, C_out,
+                                                                     1, stride, 0, affine=affine),
     "relu_conv_bn_3x3" : lambda C, C_out, stride, affine: ReLUConvBN(C, C_out,
                                                                      3, stride, 1, affine=affine),
     "relu_conv_bn_5x5" : lambda C, C_out, stride, affine: ReLUConvBN(C, C_out,
@@ -338,3 +343,26 @@ class LockedDropout(nn.Module):
         mask = m.div_(1 - dropout)
         mask = mask.expand_as(x)
         return mask * x
+
+class ResFactorizedReduceBlock(nn.Module):
+    def __init__(self, C, C_out, stride, affine):
+        super(ResFactorizedReduceBlock, self).__init__()
+        kernel_size = 1
+        padding = int((kernel_size - 1) / 2)
+        self.op_1 = ReLUConvBN(
+            C, C_out, kernel_size, stride,
+            padding, affine=affine) if stride == 1 \
+            else FactorizedReduce(C, C_out, stride=stride, affine=affine)
+        self.op_2 = ReLUConvBN(C_out, C_out,
+                               kernel_size, 1, padding, affine=affine)
+        self.skip_op = Identity() if stride == 1 and C == C_out else \
+                       ConvBNReLU(C, C_out, 1, stride, 0, affine=affine)
+
+    def forward(self, inputs):
+        inner = self.op_1(inputs)
+        out = self.op_2(inner)
+        out_skip = self.skip_op(inputs)
+        return out + out_skip
+
+    def forward_one_step(self, context=None, inputs=None):
+        raise NotImplementedError()

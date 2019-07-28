@@ -56,6 +56,7 @@ class CNNGenotypeModel(FinalModel):
                  cell_use_preprocess=True,
                  cell_pool_batchnorm=False, cell_group_kwargs=None,
                  cell_independent_conn=False,
+                 cell_preprocess_stride="skip_connect", cell_preprocess_normal="relu_conv_bn_1x1",
                  schedule_cfg=None):
         super(CNNGenotypeModel, self).__init__(schedule_cfg)
 
@@ -144,6 +145,8 @@ class CNNGenotypeModel(FinalModel):
                                    use_preprocess=cell_use_preprocess,
                                    pool_batchnorm=cell_pool_batchnorm,
                                    independent_conn=cell_independent_conn,
+                                   preprocess_stride=cell_preprocess_stride,
+                                   preprocess_normal=cell_preprocess_normal,
                                    **kwargs)
             prev_num_channels.append(num_out_channels * self._out_multiplier)
             prev_num_channels = prev_num_channels[1:]
@@ -269,7 +272,7 @@ class CNNGenotypeModel(FinalModel):
 class CNNGenotypeCell(nn.Module):
     def __init__(self, search_space, genotype_grouped, layer_index, num_channels, num_out_channels,
                  prev_num_channels, stride, prev_strides, use_preprocess, pool_batchnorm,
-                 independent_conn, **op_kwargs):
+                 independent_conn, preprocess_stride, preprocess_normal, **op_kwargs):
         super(CNNGenotypeCell, self).__init__()
         self.search_space = search_space
         self.genotype_grouped = genotype_grouped
@@ -298,17 +301,18 @@ class CNNGenotypeCell(nn.Module):
                 continue
             if prev_s > 1:
                 # need skip connection, and is not the connection from the input image
-                preprocess = ops.FactorizedReduce(C_in=prev_c,
-                                                  C_out=num_channels,
-                                                  stride=prev_s,
-                                                  affine=True)
+                # ops.FactorizedReduce(C_in=prev_c,
+                preprocess = ops.get_op(preprocess_stride)(
+                    C=prev_c,
+                    C_out=num_channels,
+                    stride=prev_s,
+                    affine=True)
             else: # prev_c == _steps * num_channels or inputs
-                preprocess = ops.ReLUConvBN(C_in=prev_c,
-                                            C_out=num_channels,
-                                            kernel_size=1,
-                                            stride=1,
-                                            padding=0,
-                                            affine=True)
+                preprocess = ops.get_op(preprocess_normal)(
+                    C=prev_c,
+                    C_out=num_channels,
+                    stride=1,
+                    affine=True)
             self.preprocess_ops.append(preprocess)
         assert len(self.preprocess_ops) == self._num_init
 
