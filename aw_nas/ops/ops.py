@@ -61,6 +61,8 @@ PRIMITVE_FACTORY = {
     "conv_bn_relu_5x5" : lambda C, C_out, stride, affine: ConvBNReLU(C, C_out,
                                                                      5, stride, 2, affine=affine),
     "conv_1x1" : lambda C, C_out, stride, affine: nn.Conv2d(C, C_out, 1, stride, 0),
+    "conv_3x3" : lambda C, C_out, stride, affine: nn.Conv2d(C, C_out, 3, stride, 1),
+    "bn_relu" : lambda C, C_out, stride, affine: BNReLU(C, C_out, affine),
 
     # activations
     "tanh": lambda **kwargs: nn.Tanh(),
@@ -80,6 +82,15 @@ def get_op(name):
     assert name in PRIMITVE_FACTORY, \
         "{} not registered, use `register_primitive` to register primitive op".format(name)
     return PRIMITVE_FACTORY[name]
+
+class BNReLU(nn.Module):
+    def __init__(self, C_in, C_out, affine=True):
+        super(BNReLU, self).__init__()
+        assert(C_in == C_out)
+        self.bn = nn.BatchNorm2d(C_out, affine=affine)
+
+    def forward(self, x):
+        return F.relu(self.bn(x))
 
 class FactorizedReduce(nn.Module):
     def __init__(self, C_in, C_out, stride, affine=True):
