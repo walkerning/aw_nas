@@ -4,6 +4,7 @@ python plot_train_curves.py -s <file to save image> <log file1> <log file2> ...
 
 The corresponding legend label will be set to the basename of the log file.
 """
+#pylint: disable=invalid-name,wrong-import-position
 from __future__ import print_function
 
 import re
@@ -15,7 +16,7 @@ from functools import reduce # pylint:disable=redefined-builtin
 import matplotlib
 matplotlib.use("Agg")
 from matplotlib import pyplot as plt
-import matplotlib.gridspec as gridspec
+from matplotlib import gridspec
 
 def _convert_float(x):
     if hasattr(x, "__iter__") and not isinstance(x, str):
@@ -24,7 +25,8 @@ def _convert_float(x):
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--save", "-s", required=True, help="save to path")
-parser.add_argument("--type", "-t", choices=["rnn", "cnn"], default="cnn", help="the type of logs")
+parser.add_argument("--type", "-t", choices=["rnn", "cnn", "pgd_robustness"],
+                    default="cnn", help="the type of logs")
 
 args, fnames = parser.parse_known_args()
 
@@ -39,13 +41,21 @@ if args.type == "rnn": # rnn
     valid_pattern = re.compile("valid: perp ([0-9.]+) ; bpc [0-9.]+ ; loss ([0-9.]+)")
     valid_obj_names = ["perp", "loss"]
     valid_ylims = [(40, 200), None]
-else: # cnn
+elif args.type == "cnn": # cnn
     train_pattern = re.compile("train_acc ([0-9.]+) ; train_obj ([0-9.]+)")
     train_obj_names = ["acc", "loss"]
     train_ylims = [(80, 100), None]
     valid_pattern = re.compile("valid_acc ([0-9.]+) ; valid_obj ([0-9.]+)")
     valid_obj_names = ["acc", "loss"]
     valid_ylims = [(80, 100), None]
+elif args.type == "pgd_robustness":
+    train_pattern = re.compile("train_acc ([0-9.]+) ; train_obj ([0-9.]+)")
+    train_obj_names = ["acc", "loss"]
+    train_ylims = [(30, 100), None]
+    valid_pattern = re.compile("valid_acc ([0-9.]+) ; valid_obj ([0-9.]+) ; "
+                               "valid performances: acc_clean: ([0-9.]+); acc_adv: ([0-9.]+)")
+    valid_obj_names = ["acc", "loss", "acc_clean", "acc_adv"]
+    valid_ylims = [(30, 100), None, (0.3, 1.0), (0.3, 1.0)]
 
 ## --- parse logs ---
 labels = []
@@ -53,14 +63,18 @@ file_train_objs_list = []
 file_valid_objs_list = []
 for fname in fnames:
     label = os.path.basename(fname)
+    if label == "train.log":
+        label = os.path.basename(os.path.dirname(fname))
     if "." in fname:
         label = label.rsplit(".", 1)[0]
     labels.append(label)
     content = open(fname, "r").read().strip()
     train_objs = list(zip(*_convert_float(train_pattern.findall(content))))
     valid_objs = list(zip(*_convert_float(valid_pattern.findall(content))))
-    assert len(train_objs) == len(train_obj_names) and len(train_objs[0]) > 0, "maybe `--type` is not correctly set?"
-    assert len(valid_objs) == len(valid_obj_names) and len(valid_objs[0]) > 0, "maybe `--type` is not correctly set?"
+    assert len(train_objs) == len(train_obj_names) and len(train_objs[0]) > 0, \
+        "maybe `--type` is not correctly set?"
+    assert len(valid_objs) == len(valid_obj_names) and len(valid_objs[0]) > 0, \
+        "maybe `--type` is not correctly set?"
     file_train_objs_list.append(train_objs)
     file_valid_objs_list.append(valid_objs)
 

@@ -63,9 +63,13 @@ class CNNGenotypeModel(FinalModel):
         self.search_space = search_space
         self.device = device
         assert isinstance(genotypes, str)
-        self.genotypes = list(genotype_from_str(genotypes, self.search_space)._asdict().items())
-        self.genotypes_grouped = [group_and_sort_by_to_node(g[1]) for g in self.genotypes\
-                                  if "concat" not in g[0]]
+        self.genotypes = list(genotype_from_str(genotypes, self.search_space)._asdict().values())
+        self.genotypes_grouped = list(zip(
+            [group_and_sort_by_to_node(conns)
+             for conns in self.genotypes[:self.search_space.num_cell_groups]],
+            self.genotypes[self.search_space.num_cell_groups:]))
+        # self.genotypes_grouped = [group_and_sort_by_to_node(g[1]) for g in self.genotypes\
+        #                           if "concat" not in g[0]]
 
         self.num_classes = num_classes
         self.init_channels = init_channels
@@ -86,12 +90,10 @@ class CNNGenotypeModel(FinalModel):
         self._cell_layout = self.search_space.cell_layout
         self._reduce_cgs = self.search_space.reduce_cell_groups
         self._num_layers = self.search_space.num_layers
-        # TODO: support concat op for every cell
-        self._out_multiplier = self.search_space.num_steps
-        expect(len(self.genotypes) == self.search_space.num_cell_groups,
+        expect(len(self.genotypes_grouped) == self.search_space.num_cell_groups,
                ("Config genotype cell group number({}) "
                 "does not match search_space cell group number({})")\
-               .format(len(self.genotypes), self.search_space.num_cell_groups))
+               .format(len(self.genotypes_grouped), self.search_space.num_cell_groups))
 
         ## initialize sub modules
         if not self.use_stem:
@@ -148,7 +150,9 @@ class CNNGenotypeModel(FinalModel):
                                    preprocess_stride=cell_preprocess_stride,
                                    preprocess_normal=cell_preprocess_normal,
                                    **kwargs)
-            prev_num_channels.append(num_out_channels * self._out_multiplier)
+            # TODO: support specify concat explicitly
+            prev_num_channel = cell.num_out_channel()
+            prev_num_channels.append(prev_num_channel)
             prev_num_channels = prev_num_channels[1:]
             self.cells.append(cell)
 
@@ -248,8 +252,9 @@ class CNNGenotypeModel(FinalModel):
         callback(context.last_state, context)
 
         # forward the cells
-        for _ in range(0, self.search_space.num_layers):
-            num_steps = self.search_space.num_steps + self.search_space.num_init_nodes + 1
+        for i_layer in range(0, self.search_space.num_layers):
+            num_steps = self.search_space.get_layer_num_steps(i_layer) + \
+                        self.search_space.num_init_nodes + 1
             for _ in range(num_steps):
                 while True: # call `forward_one_step` until this step ends
                     _, context = self.forward_one_step(context, inputs=None)
@@ -275,7 +280,7 @@ class CNNGenotypeCell(nn.Module):
                  independent_conn, preprocess_stride, preprocess_normal, **op_kwargs):
         super(CNNGenotypeCell, self).__init__()
         self.search_space = search_space
-        self.genotype_grouped = genotype_grouped
+        self.conns_grouped, self.concat_nodes = genotype_grouped
         self.stride = stride
         self.is_reduce = stride != 1
         self.num_channels = num_channels
@@ -286,9 +291,21 @@ class CNNGenotypeCell(nn.Module):
         self.independent_conn = independent_conn
         self.op_kwargs = op_kwargs
 
-        self._steps = self.search_space.num_steps
+        self._steps = self.search_space.get_layer_num_steps(layer_index)
         self._num_init = self.search_space.num_init_nodes
         self._primitives = self.search_space.shared_primitives
+
+        # initialize self.concat_op, self._out_multiplier (only used for discrete super net)
+        self.concat_op = ops.get_concat_op(self.search_space.concat_op)
+        if not self.concat_op.is_elementwise:
+            expect(not self.search_space.loose_end,
+                   "For shared weights weights manager, when non-elementwise concat op do not "
+                   "support loose-end search space")
+            self._out_multipler = self._steps if not self.search_space.concat_nodes \
+                                  else len(self.search_space.concat_nodes)
+        else:
+            # elementwise concat op. e.g. sum, mean
+            self._out_multipler = 1
 
         self.preprocess_ops = nn.ModuleList()
         prev_strides = list(np.cumprod(list(reversed(prev_strides))))
@@ -318,7 +335,7 @@ class CNNGenotypeCell(nn.Module):
 
         self.edges = _defaultdict_3()
         self.edge_mod = torch.nn.Module() # a stub wrapping module of all the edges
-        for _, conns in self.genotype_grouped:
+        for _, conns in self.conns_grouped:
             for op_type, from_, to_ in conns:
                 stride = self.stride if from_ < self._num_init else 1
                 op = ops.get_op(op_type)(
@@ -335,12 +352,15 @@ class CNNGenotypeCell(nn.Module):
 
         self._edge_name_pattern = re.compile("f_([0-9]+)_t_([0-9]+)-([a-z0-9_-]+)-([0-9])")
 
+    def num_out_channel(self):
+        return self.num_out_channels * self._out_multipler
+
     def forward(self, inputs, dropout_path_rate): #pylint: disable=arguments-differ
         assert self._num_init == len(inputs)
         states = [op(_input) for op, _input in zip(self.preprocess_ops, inputs)]
 
         _num_conn = defaultdict(int)
-        for to_, connections in self.genotype_grouped:
+        for to_, connections in self.conns_grouped:
             state_to_ = 0.
             for op_type, from_, _ in connections:
                 conn_ind = 0 if not self.independent_conn else _num_conn[(from_, to_, op_type)]
@@ -353,7 +373,7 @@ class CNNGenotypeCell(nn.Module):
                 state_to_ = state_to_ + out
             states.append(state_to_)
 
-        return torch.cat(states[-self.search_space.num_steps:], dim=1)
+        return self.concat_op([states[ind] for ind in self.concat_nodes])
 
     def forward_one_step(self, context, dropout_path_rate):
         to_ = cur_step = context.next_step_index[1]
@@ -365,7 +385,7 @@ class CNNGenotypeCell(nn.Module):
             state = self.preprocess_ops[cur_step](context.previous_cells[ind])
             context.current_cell.append(state)
         elif cur_step < self._num_init + self._steps: # the following steps
-            conns = self.genotype_grouped[cur_step - self._num_init][1]
+            conns = self.conns_grouped[cur_step - self._num_init][1]
             op_ind, current_op = context.next_op_index
             if op_ind == len(conns):
                 # all connections added to context.previous_ops, sum them up
@@ -387,7 +407,7 @@ class CNNGenotypeCell(nn.Module):
                     # this op finish
                     context._num_conn[self][(from_, to_, op_type)] += 1
         else: # final concat
-            state = torch.cat(context.current_cell[-self.search_space.num_steps:], dim=1)
+            state = self.concat_op([context.current_cell[ind] for ind in self.concat_nodes])
             context.current_cell = []
             context.previous_cells.append(state)
         return state, context

@@ -11,6 +11,7 @@ from torch import nn
 from aw_nas import ops
 from aw_nas.weights_manager.base import BaseWeightsManager
 from aw_nas.utils.common_utils import Context
+from aw_nas.utils.exception import expect
 
 class SharedNet(BaseWeightsManager, nn.Module):
     def __init__(self, search_space, device, rollout_type,
@@ -188,7 +189,7 @@ class SharedCell(nn.Module):
         self.use_preprocess = use_preprocess
         self.op_kwargs = op_kwargs
 
-        self._steps = self.search_space.num_steps
+        self._steps = self.search_space.get_layer_num_steps(layer_index)
         self._num_init = self.search_space.num_init_nodes
         if not self.search_space.cellwise_primitives:
             # the same set of primitives for different cg group
@@ -197,6 +198,18 @@ class SharedCell(nn.Module):
             # different set of primitives for different cg group
             self._primitives = \
                 self.search_space.cell_shared_primitives[self.search_space.cell_layout[layer_index]]
+
+        # initialize self.concat_op, self._out_multiplier (only used for discrete super net)
+        self.concat_op = ops.get_concat_op(self.search_space.concat_op)
+        if not self.concat_op.is_elementwise:
+            expect(not self.search_space.loose_end,
+                   "For shared weights weights manager, when non-elementwise concat op do not "
+                   "support loose-end search space")
+            self._out_multipler = self._steps if not self.search_space.concat_nodes \
+                                  else len(self.search_space.concat_nodes)
+        else:
+            # elementwise concat op. e.g. sum, mean
+            self._out_multipler = 1
 
         self.preprocess_ops = nn.ModuleList()
         prev_strides = list(np.cumprod(list(reversed(prev_strides))))

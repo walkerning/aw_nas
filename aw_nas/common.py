@@ -107,7 +107,8 @@ class Rollout(BaseRollout):
             num_prims = num_primitives if isinstance(num_primitives, int) else num_primitives[i_cg]
             nodes = []
             ops = []
-            for i_out in range(num_steps):
+            _num_step = num_steps if isinstance(num_steps, int) else num_steps[i_cg]
+            for i_out in range(_num_step):
                 nodes += list(np.random.randint(
                     0, high=i_out + num_init_nodes, size=num_node_inputs))
                 ops += list(np.random.randint(
@@ -149,13 +150,14 @@ class DifferentiableRollout(BaseRollout):
         """parse and get the discertized arch"""
         archs = []
         edge_probs = []
-        for cg_weight, cg_logits in zip(weights, self.logits):
+        for i_cg, (cg_weight, cg_logits) in enumerate(zip(weights, self.logits)):
             cg_probs = softmax(cg_logits)
             start = 0
             n = self.search_space.num_init_nodes
             arch = [[], []]
             edge_prob = []
-            for _ in range(self.search_space.num_steps):
+            num_steps = self.search_space.get_num_steps(i_cg)
+            for _ in range(num_steps):
                 end = start + n
                 w = cg_weight[start:end]
                 probs = cg_probs[start:end]
@@ -219,7 +221,13 @@ class SearchSpace(Component):
 
     def __setstate__(self, state):
         super(SearchSpace, self).__setstate__(state)
-        self.genotype_type = collections.namedtuple(self.genotype_type_name, self.cell_group_names)
+        self.genotype_type = collections.namedtuple(self.genotype_type_name,
+                                                    self.cell_group_names +\
+                                                    [n + "_concat" for n in self.cell_group_names])
+
+    @abc.abstractmethod
+    def get_num_steps(self, cell_index):
+        pass
 
     @abc.abstractmethod
     def random_sample(self):
@@ -294,6 +302,10 @@ class CNNSearchSpace(SearchSpace):
                  reduce_cell_groups=(1,),
                  # cell arch
                  num_steps=4, num_node_inputs=2,
+                 # concat for output
+                 concat_op="concat",
+                 concat_nodes=None,
+                 loose_end=False,
                  shared_primitives=(
                      "none",
                      "max_pool_3x3",
@@ -316,6 +328,16 @@ class CNNSearchSpace(SearchSpace):
 
         # primitive single-operand operations
         self.shared_primitives = shared_primitives
+
+        # for now, fixed `concat_op` will not be in the rollout
+        self.concat_op = concat_op
+
+        self.concat_nodes = concat_nodes
+        self.loose_end = loose_end
+        if loose_end:
+            expect(self.concat_nodes is None,
+                   "When `loose_end` is given, `concat_nodes` will be automatically determined, "
+                   "should not be explicitly specified.", ConfigException)
 
         ## overall structure/meta-arch: how to arrange cells
         # number of cell groups, different cell groups has different structure
@@ -370,12 +392,42 @@ class CNNSearchSpace(SearchSpace):
             self.cellwise_primitives = False
             self._num_primitives = len(self.shared_primitives)
 
+        # check concat node
+        if self.concat_nodes is not None:
+            if isinstance(self.concat_nodes[0], int):
+                # same concat node specification for every cell groups
+                _concat_nodes = [self.concat_nodes] * self.num_cell_groups
+            for i_cg in range(self.num_cell_groups):
+                _num_steps = self.get_num_steps(i_cg)
+                expect(np.max(_concat_nodes[i_cg]) < num_init_nodes + _num_steps,
+                       "`concat_nodes` {} should be in range(0, {}+{}) for cell group {}"\
+                       .format(_concat_nodes[i_cg], num_init_nodes, _num_steps, i_cg))
+
         self.genotype_type_name = "CNNGenotype"
-        self.genotype_type = collections.namedtuple(self.genotype_type_name,
-                                                    self.cell_group_names)
+        if self.concat_nodes is None and not self.loose_end:
+            # For backward compatiblity, when concat all steps as output
+            # specificy default concats
+            default_concats = [
+                list(range(num_init_nodes, num_init_nodes + self.get_num_steps(i_cg)))
+                for i_cg in range(self.num_cell_groups)
+            ]
+        else:
+            # concat_nodes specified or loose end
+            default_concats = []
+
+        self.genotype_type = utils.namedtuple_with_defaults(
+            self.genotype_type_name,
+            self.cell_group_names + [n + "_concat" for n in self.cell_group_names],
+            default_concats)
 
         # init nodes(meta arch: connect from the last `num_init_nodes` cell's output)
         self.num_init_nodes = num_init_nodes
+
+    def get_layer_num_steps(self, layer_index):
+        return self.get_num_steps(self.cell_layout[layer_index])
+
+    def get_num_steps(self, cell_index):
+        return self.num_steps if isinstance(self.num_steps, int) else self.num_steps[cell_index]
 
     def random_sample(self):
         """
@@ -402,24 +454,42 @@ class CNNSearchSpace(SearchSpace):
         expect(len(arch) == self.num_cell_groups)
 
         genotype_list = []
+        concat_list = []
         for i_cg, cg_arch in enumerate(arch):
             genotype = []
+            used_end = set()
             nodes, ops = cg_arch
-            for i_out in range(self.num_steps):
+            num_steps = self.get_num_steps(i_cg)
+            for i_out in range(num_steps):
                 for i_in in range(self.num_node_inputs):
                     idx = i_out * self.num_node_inputs + i_in
+                    from_ = int(nodes[idx])
+                    used_end.add(from_)
                     genotype.append((self.cell_shared_primitives[i_cg][ops[idx]],
-                                     int(nodes[idx]), int(i_out + self.num_init_nodes)))
+                                     from_, int(i_out + self.num_init_nodes)))
             genotype_list.append(genotype)
-        return self.genotype_type(**dict(zip(self.cell_group_names,
-                                             genotype_list)))
+            if self.loose_end:
+                concat = [i for i in range(self.num_init_nodes, num_steps + self.num_init_nodes)
+                          if i not in used_end]
+            else:
+                concat = list(range(self.num_init_nodes, num_steps + self.num_init_nodes))
+            concat_list.append(concat)
+        kwargs = dict(itertools.chain(
+            zip(self.cell_group_names, genotype_list),
+            zip([n + "_concat" for n in self.cell_group_names], concat_list)
+        ))
+        return self.genotype_type(**kwargs)
 
     def rollout_from_genotype(self, genotype):
         genotype_list = list(genotype._asdict().values())
+        assert len(genotype_list) == 2 * self.num_cell_groups
+        conn_list = genotype_list[:self.num_cell_groups]
+
         arch = []
-        for i_cg, cell_geno in enumerate(genotype_list):
+        for i_cg, cell_geno in enumerate(conn_list):
             nodes, ops = [], []
-            for i_out in range(self.num_steps):
+            num_steps = self.get_num_steps(i_cg)
+            for i_out in range(num_steps):
                 for i_in in range(self.num_node_inputs):
                     conn = cell_geno[i_out * self.num_node_inputs + i_in]
                     ops.append(self.cell_shared_primitives[i_cg].index(conn[0]))
@@ -428,9 +498,11 @@ class CNNSearchSpace(SearchSpace):
             arch.append(cg_arch)
         return Rollout(arch, {}, self)
 
-    def plot_cell(self, genotype, filename,
+    def plot_cell(self, genotype_concat, filename, cell_index,
                   label="", edge_labels=None, plot_format="png"):
         """Plot a cell to `filename` on disk."""
+
+        genotype, concat = genotype_concat
 
         from graphviz import Digraph
 
@@ -454,9 +526,10 @@ class CNNSearchSpace(SearchSpace):
                       for i_in in range(self.num_init_nodes)]
         [graph.node(node_name, fillcolor="darkseagreen2") for node_name in node_names]
 
-        for i in range(self.num_steps):
+        num_steps = self.get_num_steps(cell_index)
+        for i in range(num_steps):
             graph.node(str(i), fillcolor="lightblue")
-        node_names += [str(i) for i in range(self.num_steps)]
+        node_names += [str(i) for i in range(num_steps)]
 
         for i, (op_type, from_, to_) in enumerate(genotype):
             if op_type == "none":
@@ -470,8 +543,12 @@ class CNNSearchSpace(SearchSpace):
 
 
         graph.node("c_{k}", fillcolor="palegoldenrod")
-        for i in range(self.num_steps):
-            graph.edge(str(i), "c_{k}", fillcolor="gray")
+        for node in concat:
+            if node < self.num_init_nodes:
+                from_ = "c_{k-" + str(self.num_init_nodes - node) + "}"
+            else:
+                from_ = str(node - self.num_init_nodes)
+            graph.edge(from_, "c_{k}", fillcolor="gray")
 
         graph.render(filename, view=False)
 
@@ -483,8 +560,11 @@ class CNNSearchSpace(SearchSpace):
         if edge_labels is None:
             edge_labels = [None] * self.num_cell_groups
         fnames = []
-        for e_label, (cg_n, cg_geno) in zip(edge_labels, genotypes):
-            fname = self.plot_cell(cg_geno, filename+"-"+cg_n,
+        for i_cg, (e_label, (cg_n, cg_geno)) in enumerate(zip(edge_labels,
+                                                              genotypes[:self.num_cell_groups])):
+            fname = self.plot_cell((cg_geno, genotypes[self.num_cell_groups + i_cg][1]),
+                                   filename+"-"+cg_n,
+                                   cell_index=i_cg,
                                    label=cg_n + " " + label,
                                    edge_labels=e_label,
                                    plot_format=plot_format)
@@ -517,6 +597,8 @@ class RNNSearchSpace(SearchSpace):
         ## inner-cell
         # number of nodes in every cell
         self.num_steps = num_steps
+        assert isinstance(self.num_steps, int), \
+            "RNN Searchspace not support multple cell group for now"
 
         # number of input nodes for every node in the cell
         self.num_node_inputs = num_node_inputs
@@ -547,6 +629,12 @@ class RNNSearchSpace(SearchSpace):
         self.genotype_type = collections.namedtuple(self.genotype_type_name,
                                                     self.cell_group_names +\
                                                     [n + "_concat" for n in self.cell_group_names])
+
+    def get_layer_num_steps(self, layer_index):
+        pass
+
+    def get_num_steps(self, cell_index):
+        return self.num_steps if isinstance(self.num_steps, int) else self.num_steps[cell_index]
 
     def random_sample(self):
         """
@@ -607,7 +695,8 @@ class RNNSearchSpace(SearchSpace):
             arch.append(cg_arch)
         return Rollout(arch, {}, self)
 
-    def plot_arch(self, genotypes, filename, label="", edge_labels=None, plot_format="png"): #pylint: disable=arguments-differ
+    def plot_arch(self, genotypes, filename,
+                  label="", edge_labels=None, plot_format="png"): #pylint: disable=arguments-differ
         """Plot an architecture to files on disk"""
         expect(len(genotypes) == 2 and self.num_cell_groups == 1,
                "Current RNN search space only support one cell group")
@@ -640,6 +729,7 @@ class RNNSearchSpace(SearchSpace):
         graph.edge("h_{t-1}", "0", fillcolor="gray")
 
         _steps = self.num_steps
+        # _steps = self.get_num_steps(cell_index)
         for i in range(1, 1 + _steps):
             graph.node(str(i), fillcolor="lightblue")
 

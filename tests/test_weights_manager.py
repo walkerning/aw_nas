@@ -19,8 +19,11 @@ def _supernet_sample_cand(net):
     return cand_net
 
 
-@pytest.mark.parametrize("super_net", [{"candidate_member_mask": False}],
-                         indirect=["super_net"])
+@pytest.mark.parametrize("super_net", [
+    {"candidate_member_mask": False},
+    {"search_space_cfg": {"concat_op": "sum"},
+     "candidate_member_mask": False}
+], indirect=["super_net"])
 def test_supernet_assemble_nomask(super_net):
     net = super_net
     cand_net = _supernet_sample_cand(net)
@@ -48,12 +51,17 @@ def test_supernet_assemble(super_net):
     assert len(s_b_names.intersection(c_b_names)) == len(c_b_names)
     # names = sorted(set(c_names).difference([g[0] for g in grads]))
 
+@pytest.mark.parametrize("super_net", [
+    {},
+    {"search_space_cfg": {"num_steps": [2, 4]}},
+    {"search_space_cfg": {"concat_op": "sum"}},
+    {"search_space_cfg": {"loose_end": True, "concat_op": "mean"}},
+], indirect=["super_net"])
 def test_supernet_forward(super_net):
     # test forward
     cand_net = _supernet_sample_cand(super_net)
 
     data = _cnn_data()
-
     logits = cand_net.forward_data(data[0], mode="eval")
     assert logits.shape[-1] == 10
 
@@ -210,6 +218,9 @@ def test_supernet_data_parallel_gradient(super_net):
 # ---- End test super_net ----
 
 # ---- Test diff_super_net ----
+@pytest.mark.parametrize("diff_super_net", [
+    {"search_space_cfg": {"num_steps": [2, 4]}}
+], indirect=["diff_super_net"])
 def test_diff_supernet_forward(diff_super_net):
     from aw_nas.common import get_search_space
     from aw_nas.controller import DiffController

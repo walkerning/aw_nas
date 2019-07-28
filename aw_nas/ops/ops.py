@@ -86,7 +86,7 @@ def get_op(name):
 class BNReLU(nn.Module):
     def __init__(self, C_in, C_out, affine=True):
         super(BNReLU, self).__init__()
-        assert(C_in == C_out)
+        assert C_in == C_out
         self.bn = nn.BatchNorm2d(C_out, affine=affine)
 
     def forward(self, x):
@@ -377,3 +377,36 @@ class ResFactorizedReduceBlock(nn.Module):
 
     def forward_one_step(self, context=None, inputs=None):
         raise NotImplementedError()
+
+class ChannelConcat(nn.Module):
+    @property
+    def is_elementwise(self):
+        return False
+
+    def forward(self, states):
+        return torch.cat(states, dim=1)
+
+class ElementwiseAdd(nn.Module):
+    @property
+    def is_elementwise(self):
+        return True
+
+    def forward(self, states):
+        return sum(states)
+
+class ElementwiseMean(nn.Module):
+    @property
+    def is_elementwise(self):
+        return True
+
+    def forward(self, states):
+        return sum(states) / len(states)
+
+CONCAT_OPS = {
+    "concat": ChannelConcat,
+    "sum": ElementwiseAdd,
+    "mean": ElementwiseMean
+}
+
+def get_concat_op(type_):
+    return CONCAT_OPS[type_]()
