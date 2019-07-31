@@ -104,6 +104,10 @@ class SharedNet(BaseWeightsManager, nn.Module):
     def _is_reduce(self, layer_idx):
         return self._cell_layout[layer_idx] in self._reduce_cgs
 
+    def set_device(self, device):
+        self.device = device
+        self.to(device)
+
     def forward(self, inputs, genotypes, **kwargs): #pylint: disable=arguments-differ
         if self.use_stem:
             stemed = self.stem(inputs)

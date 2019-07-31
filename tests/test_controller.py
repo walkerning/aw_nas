@@ -1,6 +1,7 @@
 from __future__ import print_function
-from aw_nas.common import get_search_space
+import os
 import pytest
+from aw_nas.common import get_search_space
 
 # ---- test controller rl ----
 def test_rl_controller():
@@ -250,3 +251,22 @@ def test_diff_controller_rollout_batch_size():
     assert rollout.sampled[0].shape == (14, 4, len(search_space.shared_primitives))
     assert rollout.logits[0].shape == (14, len(search_space.shared_primitives))
     print(rollout.genotype)
+
+# ---- test controller population ----
+def test_population_controller_random_mutation_smapler(init_population_dir, tmp_path):
+    from aw_nas.controller import PopulationController
+
+    device = "cuda"
+    # prepare a population tmp dir
+    init_dir, search_space = init_population_dir
+
+    result_population_dir = os.path.join(tmp_path, "result_population")
+    controller = PopulationController(search_space, device,
+                                      population_dirs=[init_dir],
+                                      result_population_dir=result_population_dir,
+                                      parent_pool_size=2)
+
+    population = controller.population
+    rollouts = controller.sample(3)
+    for rollout in rollouts:
+        assert str(rollout.genotype) != str(population.get_model(rollout.parent_index).genotype)

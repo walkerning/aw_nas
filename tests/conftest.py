@@ -1,3 +1,4 @@
+import os
 import pytest
 
 class MockUnderlyWriter(object):
@@ -181,7 +182,7 @@ class StubPopulation(Population):
         for ind in range(num_records):
             rollout = search_space.random_sample()
             cfg = cfg_template.create_cfg(rollout.genotype)
-            model_records[ind] = ModelRecord(rollout.genotype, cfg,
+            model_records[ind] = ModelRecord(rollout.genotype, cfg, search_space,
                                              info_path="/a_no_exist_path/{}.yaml".format(ind),
                                              checkpoint_path="/a_not_exist_path/{}".format(ind),
                                              finished=True,
@@ -189,6 +190,47 @@ class StubPopulation(Population):
                                              perfs={"acc": np.random.rand(),
                                                     "loss": np.random.uniform(0, 10)})
         super(StubPopulation, self).__init__(search_space, model_records, cfg_template)
+
+@pytest.fixture
+def init_population_dir(tmp_path, request):
+    import torch
+    from aw_nas.common import get_search_space
+    from aw_nas import utils
+    from aw_nas.main import _init_component
+
+    cfg = getattr(request, "param", {})
+    scfg = cfg.pop("search_space_cfg", {})
+    search_space = get_search_space(cls="cnn", **scfg)
+    path = utils.makedir(os.path.join(tmp_path, "init_population_dir"))
+    ckpt_dir = utils.makedir(os.path.join(tmp_path, "init_ckpt_path"))
+
+    # dump config template
+    with open(os.path.join(path, "template.yaml"), "w") as wf:
+        wf.write(sample_config)
+
+    # generate mock records, ckpts
+    num_records = cfg.get("num_records", 3)
+    cfg_template = ConfigTemplate(yaml.load(StringIO(sample_config)))
+    model_records = collections.OrderedDict()
+    for ind in range(num_records):
+        rollout = search_space.random_sample()
+        cfg = cfg_template.create_cfg(rollout.genotype)
+        ckpt_path = os.path.join(ckpt_dir, str(ind))
+        cnn_model = _init_component(
+            cfg, "final_model", search_space=search_space, device=torch.device("cpu"))
+        torch.save(cnn_model, ckpt_path)
+        model_records[ind] = ModelRecord(rollout.genotype, cfg, search_space,
+                                         checkpoint_path=ckpt_path, finished=True,
+                                         confidence=1,
+                                         perfs={"acc": np.random.rand(),
+                                                "loss": np.random.uniform(0, 10)})
+    # initialize population
+    population = Population(search_space, model_records, cfg_template)
+    # save population
+    population.save(path, 0)
+
+    # ugly: return ss for reference
+    return (path, search_space)
 
 @pytest.fixture
 def population(request):

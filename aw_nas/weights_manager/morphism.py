@@ -26,13 +26,15 @@ class MorphismWeightsManager(BaseWeightsManager):
         """
         _model_record = rollout.population.get_model(rollout.parent_index)
         _parent_model = torch.load(_model_record.checkpoint_path)
+        if not isinstance(_parent_model, dict):
+            parent_state_dict = _parent_model.state_dict()
+        else:
+            parent_state_dict = _parent_model
         # construct a new CNNGenotypeModel using new configuration
         _child_model = FinalModel.get_class_(_model_record.config["final_model_type"])(
             self.search_space, self.device,
             **_model_record.config["final_model_cfg"]
         )
-        # TODO: set the weights of child model
-        parent_state_dict = _parent_model.state_dict()
         for n, v in _child_model.named_parameters():
             if n in parent_state_dict:
                 v.data.copy_(parent_state_dict[n])
@@ -59,3 +61,6 @@ class MorphismWeightsManager(BaseWeightsManager):
     def supported_data_types(cls):
         """Return the supported data types"""
         return ["image"]
+
+    def set_device(self, device):
+        self.device = device

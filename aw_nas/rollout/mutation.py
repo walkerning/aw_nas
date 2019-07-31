@@ -5,26 +5,33 @@ Definitions of mutation-based rollout and population.
 import os
 import copy
 import glob
+import shutil
 import collections
 
+import six
 import yaml
 import numpy as np
 
+from aw_nas import utils
 from aw_nas.utils import expect
 from aw_nas.base import Component
 from aw_nas.rollout.base import BaseRollout
-from aw_nas.common import get_genotype_substr
+from aw_nas.common import get_genotype_substr, genotype_from_str
+from aw_nas.utils import logger as _logger
 
 class ConfigTemplate(dict):
     def create_cfg(self, genotype):
         cfg = copy.deepcopy(self)
         cfg["final_model_cfg"]["genotypes"] = get_genotype_substr(str(genotype))
-        return cfg
+        return dict(cfg)
 
 class ModelRecord(object):
-    def __init__(self, genotype, config, info_path, checkpoint_path, finished=False,
+    def __init__(self, genotype, config, search_space,
+                 info_path=None, checkpoint_path=None, finished=False,
                  confidence=None, perfs=None):
-        self.genotype = genotype
+        # FIXME: search space definition should be directly included in the meta info?
+        self._genotype = genotype
+        self.search_space = search_space
         # the config which is used to train this model
         self.config = config
         self.info_path = info_path
@@ -33,21 +40,77 @@ class ModelRecord(object):
         self.confidence = confidence
         self.perfs = perfs
 
+    def __repr__(self):
+        return ("ModelRecord({_genotype}, info_path={info_path}, ckpt_path={ckpt_path}, "
+                "finished={finished}, perfs={perfs}").format(
+                    _genotype=self._genotype,
+                    info_path=self.info_path, ckpt_path=self.checkpoint_path,
+                    finished=self.finished, perfs=self.perfs)
+
+    @property
+    def genotype(self):
+        return genotype_from_str(self._genotype, self.search_space)
+
+    def save(self, path):
+        meta_info = collections.OrderedDict()
+        meta_info["genotypes"] = get_genotype_substr(str(self.genotype))
+        meta_info["config"] = dict(self.config)
+        meta_info["checkpoint_path"] = self.checkpoint_path
+        meta_info["finished"] = self.finished
+        meta_info["confidence"] = self.confidence
+        meta_info["perfs"] = self.perfs
+        self.info_path = path
+        with open(path, "w") as o_stream:
+            yaml.safe_dump(meta_info, stream=o_stream, default_flow_style=False)
+
+    def save_config(self, fname):
+        with open(fname, "w") as c_f:
+            yaml.safe_dump(dict(self.config), c_f)
+
+    @classmethod
+    def init_from_file(cls, path, search_space):
+        with open(path, "r") as meta_f:
+            meta_info = yaml.safe_load(meta_f)
+        record = cls(
+            str(genotype_from_str(meta_info["genotypes"], search_space)),
+            meta_info["config"], search_space,
+            os.path.abspath(path),
+            meta_info["checkpoint_path"], finished=meta_info["finished"],
+            confidence=meta_info.get("confidence", None), perfs=meta_info["perfs"])
+        return record
+
 class Population(Component):
     """
     Model population.
     """
 
     def __init__(self, search_space, model_records, cfg_template, next_index=None):
-        super(Component, self).__init__()
+        super(Population, self).__init__(schedule_cfg=None)
         self.search_space = search_space
         self._model_records = model_records
+        self.genotype_records = collections.OrderedDict([
+            (ind, genotype_from_str(
+                record.genotype, self.search_space))
+            for ind, record in six.iteritems(self._model_records)])
         self._size = len(model_records) # _size will be adjusted along with self._model_records
         self.cfg_template = cfg_template
         if next_index is None:
             self._next_index = np.max(list(model_records.keys())) + 1
         else:
             self._next_index = next_index
+        self.start_save_index = self._next_index
+
+    def __getstate__(self):
+        state = super(Population, self).__getstate__().copy()
+        del state["genotype_records"]
+        return state
+
+    def __setstate__(self, state):
+        super(Population, self).__setstate__(state)
+        self.genotype_records = collections.OrderedDict([
+            (ind, genotype_from_str(
+                record.genotype, self.search_space))
+            for ind, record in six.iteritems(self._model_records)])
 
     @property
     def model_records(self):
@@ -68,9 +131,43 @@ class Population(Component):
     def add_model(self, model_record, index=None):
         index = self._next_index if index is None else index
         self.model_records[index] = model_record
+        self.genotype_records[index] = genotype_from_str(model_record.genotype, self.search_space)
         self._next_index += 1
         self._size += 1
         return index
+
+    def save(self, path, start_index=None):
+        """
+        Save this population to path.
+        """
+        path = utils.makedir(path) # create dir if not exists
+        backuped = 0
+        saved = 0
+        start_save_index = self.start_save_index if start_index is None else start_index
+        for ind, record in six.iteritems(self.model_records):
+            if ind < start_save_index:
+                continue
+            # save this model record
+            save_path = os.path.join(path, "{}.yaml".format(ind))
+            if os.path.exists(save_path):
+                backup_dir = utils.makedir(os.path.join(path, "overwrite_backup"))
+                backup_path = os.path.join(backup_dir, "{}.yaml".format(ind))
+                self.logger.warning("%s already exists; overwrite and backup to %s",
+                                    save_path, backup_path)
+                shutil.copyfile(save_path, backup_path)
+                backuped += 1
+            record.save(save_path)
+            saved += 1
+        self.logger.info("Saving start from index %d. %d/%d records saved "
+                         "(%d records overwrited and backuped). By default "
+                         "next save will start from index %d.",
+                         self.start_save_index, saved, len(self.model_records),
+                         backuped, self._next_index)
+        self.start_save_index = self._next_index
+        return saved
+
+    def contain_rollout(self, rollout):
+        return rollout.genotype in self.genotype_records.values()
 
     def remove_age(self, args):
         """
@@ -89,7 +186,7 @@ class Population(Component):
             self.__class__.__name__, self.size, self.search_space, self.next_index)
 
     @classmethod
-    def init_from_dirs(cls, dirs, search_space, cfg_template_file=None):
+    def init_from_dirs(cls, dirs, search_space=None, cfg_template_file=None):
         """
         Init population from directories.
 
@@ -99,9 +196,10 @@ class Population(Component):
           cfg_template_file: if not specified, default: "template.yaml" under `dirs[0]`
         Returns: Population
 
-        Under each directory, there should be multiple meta-info (yaml) files named as `<number>.yaml`,
-        each of them specificy the meta information for a model in the population, with `<number>`
-        represent its index. Note there should not be duplicate index, if there are duplicate index,
+        There should be multiple meta-info (yaml) files named as "`<number>.yaml` under each
+        directory, each of them specificy the meta information for a model in the population,
+        with `<number>` represent its index.
+        Note there should not be duplicate index, if there are duplicate index,
         rename or soft-link the files.
 
         In each meta-info file, the possible meta informations are:
@@ -117,22 +215,27 @@ class Population(Component):
         assert dirs, "No dirs specified!"
         if cfg_template_file is None:
             cfg_template_file = os.path.join(dirs[0], "template.yaml")
-        with open(cfg_template_file, "r") as cf:
-            cfg_template = ConfigTemplate(yaml.safe_load(cf))
-        self.logger.info("Read the template config from %s", cfg_template_file)
+        with open(cfg_template_file, "r") as cfg_f:
+            cfg_template = ConfigTemplate(yaml.safe_load(cfg_f))
+        _logger.getChild("population").info("Read the template config from %s", cfg_template_file)
         model_records = collections.OrderedDict()
-        for i, dir_ in enumerate(dirs):
+        if search_space is None:
+            # assume can parse search space from config template
+            from aw_nas.common import get_search_space
+            search_space = get_search_space(cfg_template["search_space_type"],
+                                            **cfg_template["search_space_cfg"])
+        for _, dir_ in enumerate(dirs):
             meta_files = glob.glob(os.path.join(dir_, "*.yaml"))
             for fname in meta_files:
+                if "template.yaml" in fname:
+                    # do not parse template.yaml
+                    continue
                 index = int(os.path.basename(fname).rsplit(".", 1)[0])
                 expect(index not in model_records,
                        "There are duplicate index: {}. rename or soft-link the files".format(index))
-                with open(fname, "r") as mf:
-                    meta_info = yaml.safe_load(mf)
-                model_records[index] = ModelRecord(
-                    meta_info["genotypes"], meta_info["config"], os.path.abspath(fname),
-                    meta_info["checkpoint_path"], finished=True,
-                    confidence=meta_info.get("confidence", None), perfs=meta_info["perfs"])
+                model_records[index] = ModelRecord.init_from_file(fname, search_space)
+        _logger.getChild("population").info("Parsed %d directories, total %d model records loaded.",
+                                            len(dirs), len(model_records))
         return Population(search_space, model_records, cfg_template)
 
 class CellMutation(object):
@@ -186,8 +289,6 @@ class MutationRollout(BaseRollout):
         self.mutations = mutations
         self.search_space = search_space
         self.candidate_net = candidate_net
-        self.model_record = None
-        # TODO: add help method to dump perfs to model record?
 
         self.arch = self.apply_mutation(
             self.search_space,
@@ -197,6 +298,17 @@ class MutationRollout(BaseRollout):
         )
 
         self._genotype = None
+        self.model_record = ModelRecord(
+            str(self.genotype),
+            self.population.cfg_template.create_cfg(self.genotype),
+            search_space,
+            perfs=self.perf)
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        if "_genotype" in state:
+            del state["_genotype"]
+        return state
 
     @classmethod
     def apply_mutation(cls, search_space, arch, mutations):
@@ -207,6 +319,19 @@ class MutationRollout(BaseRollout):
 
     def set_candidate_net(self, c_net):
         self.candidate_net = c_net
+
+    def set_ckpt_path(self, path):
+        assert self.model_record is not None
+        self.model_record.checkpoint_path = path
+
+    def set_perf(self, value, name="reward"):
+        """
+        Override: write perfs to `self.model_record` too.
+        """
+        assert self.model_record
+        self.perf[name] = value
+        if not self.model_record.perfs is self.perf:
+            self.model_record.perfs[name] = value
 
     def genotype_list(self):
         return list(self.genotype._asdict().items())
@@ -233,13 +358,13 @@ class MutationRollout(BaseRollout):
         search_space = population.search_space
         base_arch = search_space.rollout_from_genotype(
             population.get_model(parent_index).genotype).arch
-        
+
         mutations = []
         primitive_choices = collections.defaultdict(list)
         primitive_mutated = collections.defaultdict(int)
         node_choices = collections.defaultdict(list)
         node_mutated = collections.defaultdict(int)
-        for i_mu in range(num_mutations):
+        for _ in range(num_mutations):
             mutation_type = CellMutation.PRIMITIVE if np.random.rand() < primitive_prob \
                 else CellMutation.NODE
             cell = np.random.randint(low=0, high=search_space.num_cell_groups)
@@ -251,20 +376,17 @@ class MutationRollout(BaseRollout):
                     choices = primitive_choices[(cell, step, connection)]
                 else:
                     ori = base_arch[cell][1][search_space.num_node_inputs * step + connection]
-                    print("ori: ", ori)
                     num_prims = search_space._num_primitives \
                                 if not search_space.cellwise_primitives \
                                    else search_space._num_primitives_list[cell]
                     choices = list(range(num_prims))
                     choices.remove(ori)
-                    print("chocies: ", choices)
                     primitive_choices[(cell, step, connection)] = choices
                 expect(choices,
                        ("There are no non-duplicate primitive mutation available"
                         " anymore for ({}, {}, {}) after {} mutations").format(
                             cell, step, connection, primitive_mutated[(cell, step, connection)]))
                 new_choice = np.random.choice(choices)
-                print("choice: ", new_choice)
                 choices.remove(new_choice)
                 base_arch[cell][1][search_space.num_node_inputs * step + connection] = new_choice
                 primitive_mutated[(cell, step, connection)] += 1

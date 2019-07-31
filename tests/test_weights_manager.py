@@ -393,6 +393,7 @@ def test_morphism(population, tmp_path):
     new_model_record = ModelRecord(
         genotype_from_str(cfg["final_model_cfg"]["genotypes"], cnn_model.search_space),
         cfg,
+        cnn_model.search_space,
         info_path=os.path.join(tmp_path, "test.yaml"),
         checkpoint_path=os.path.join(tmp_path, "test"),
         finished=True,

@@ -9,7 +9,7 @@ import itertools
 
 import numpy as np
 
-from aw_nas import Component
+from aw_nas import Component, utils
 from aw_nas.utils.exception import expect, ConfigException
 
 
@@ -31,9 +31,10 @@ class SearchSpace(Component):
 
     def __setstate__(self, state):
         super(SearchSpace, self).__setstate__(state)
-        self.genotype_type = collections.namedtuple(self.genotype_type_name,
-                                                    self.cell_group_names +\
-                                                    [n + "_concat" for n in self.cell_group_names])
+        self.genotype_type = utils.namedtuple_with_defaults(
+            self.genotype_type_name,
+            self.cell_group_names + [n + "_concat" for n in self.cell_group_names],
+            self._default_concats)
 
     @abc.abstractmethod
     def get_num_steps(self, cell_index):
@@ -217,18 +218,18 @@ class CNNSearchSpace(SearchSpace):
         if self.concat_nodes is None and not self.loose_end:
             # For backward compatiblity, when concat all steps as output
             # specificy default concats
-            default_concats = [
+            self._default_concats = [
                 list(range(num_init_nodes, num_init_nodes + self.get_num_steps(i_cg)))
                 for i_cg in range(self.num_cell_groups)
             ]
         else:
             # concat_nodes specified or loose end
-            default_concats = []
+            self._default_concats = []
 
         self.genotype_type = utils.namedtuple_with_defaults(
             self.genotype_type_name,
             self.cell_group_names + [n + "_concat" for n in self.cell_group_names],
-            default_concats)
+            self._default_concats)
 
         # init nodes(meta arch: connect from the last `num_init_nodes` cell's output)
         self.num_init_nodes = num_init_nodes
@@ -568,10 +569,10 @@ def get_search_space(cls, **cfg):
 
 def genotype_from_str(genotype_str, search_space):
     #pylint: disable=eval-used,bare-except
+    genotype_str = str(genotype_str)
     try:
         return eval("search_space.genotype_type({})".format(genotype_str))
     except:
-        import re
         genotype_str = re.search(r".+?Genotype\((.+)\)", genotype_str).group(1)
         return eval("search_space.genotype_type({})".format(genotype_str))
 
@@ -594,7 +595,10 @@ def group_and_sort_by_to_node(cell_geno):
     return sorted(group_dct.items(), key=lambda item: item[0])
 
 def get_genotype_substr(genotypes):
-    return re.search(r".+?Genotype\((.+)\)", genotypes).group(1)
+    try:
+        return re.search(r".+?Genotype\((.+)\)", genotypes).group(1)
+    except Exception:
+        return genotypes
 
 # import all the rollouts here
 from aw_nas.rollout import ( # pylint:disable=unused-import

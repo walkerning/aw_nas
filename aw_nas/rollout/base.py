@@ -101,7 +101,8 @@ class Rollout(BaseRollout):
             num_prims = num_primitives if isinstance(num_primitives, int) else num_primitives[i_cg]
             nodes = []
             ops = []
-            for i_out in range(num_steps):
+            _num_step = num_steps if isinstance(num_steps, int) else num_steps[i_cg]
+            for i_out in range(_num_step):
                 nodes += list(np.random.randint(
                     0, high=i_out + num_init_nodes, size=num_node_inputs))
                 ops += list(np.random.randint(
@@ -143,13 +144,14 @@ class DifferentiableRollout(BaseRollout):
         """parse and get the discertized arch"""
         archs = []
         edge_probs = []
-        for cg_weight, cg_logits in zip(weights, self.logits):
+        for i_cg, (cg_weight, cg_logits) in enumerate(zip(weights, self.logits)):
             cg_probs = softmax(cg_logits)
             start = 0
             n = self.search_space.num_init_nodes
             arch = [[], []]
             edge_prob = []
-            for _ in range(self.search_space.num_steps):
+            num_steps = self.search_space.get_num_steps(i_cg)
+            for _ in range(num_steps):
                 end = start + n
                 w = cg_weight[start:end]
                 probs = cg_probs[start:end]

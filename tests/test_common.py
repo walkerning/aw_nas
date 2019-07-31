@@ -93,6 +93,17 @@ def test_mutation_rollout_random_sample(population):
         s_mutation.cell, s_mutation.mutation_type,
         s_mutation.step * ss.num_node_inputs + s_mutation.connection)
 
-def test_population():
-    # TODO
-    pass
+def test_population_init(init_population_dir):
+    from aw_nas.rollout.mutation import Population
+    from aw_nas.common import rollout_from_genotype_str
+    import glob
+
+    init_dir, search_space = init_population_dir
+    population = Population.init_from_dirs([init_dir], search_space)
+    num_records = len(glob.glob(os.path.join(init_dir, "*.yaml"))) - 1
+    assert population.size == num_records
+
+    # test `population.contain` judgement
+    rollout = rollout_from_genotype_str(str(population.get_model(0).genotype), search_space)
+    assert str(rollout.genotype) == str(population.get_model(0).genotype)
+    assert population.contain_rollout(rollout)

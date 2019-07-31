@@ -69,6 +69,10 @@ class RNNSharedNet(BaseWeightsManager, nn.Module):
         self._init_weights()
         self.to(self.device)
 
+    def set_device(self, device):
+        self.device = device
+        self.to(device)
+
     def forward(self, inputs, genotypes, hiddens, **kwargs): #pylint: disable=arguments-differ
         """
         Returns:
