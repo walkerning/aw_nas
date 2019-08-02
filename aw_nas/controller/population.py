@@ -20,6 +20,9 @@ class BaseMutationSampler(Component):
 
     def __init__(self, search_space, population, device, schedule_cfg=None):
         super(BaseMutationSampler, self).__init__(schedule_cfg)
+        self.search_space = search_space
+        self.population = population
+        self.device = device
 
     @abc.abstractmethod
     def sample_mutation(self, model_index, num_mutations=1):
@@ -37,8 +40,10 @@ class BaseMutationSampler(Component):
 class RandomMutationSampler(BaseMutationSampler):
     NAME = "random"
 
-    def __init__(self, search_space, population, device, mutate_primitive_prob=0.5, schedule_cfg=None):
-        super(RandomMutationSampler, self).__init__(search_space, population, device, schedule_cfg)
+    def __init__(self, search_space, population, device, mutate_primitive_prob=0.5,
+                 schedule_cfg=None):
+        super(RandomMutationSampler, self).__init__(search_space, population, device,
+                                                    schedule_cfg)
 
         self.mutate_primitive_prob = mutate_primitive_prob
 
@@ -130,7 +135,8 @@ class PopulationController(BaseController):
         rollouts = []
         for _ in range(n):
             parent_index = self._choose_parent()
-            rollout = self.mutation_sampler.sample_mutation(parent_index, self.num_mutations_per_child)
+            rollout = self.mutation_sampler.sample_mutation(parent_index,
+                                                            self.num_mutations_per_child)
             rollouts.append(rollout)
         return rollouts
 

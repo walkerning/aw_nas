@@ -58,14 +58,14 @@ def rnn_diff_super_net(request):
     return net
 
 @pytest.fixture
-def molphism(request):
+def morphism(request):
     cfg = getattr(request, "param", {})
     scfg = cfg.pop("search_space_cfg", {})
     from aw_nas.common import get_search_space
-    from aw_nas.weights_manager import MolphismWeightsManager
+    from aw_nas.weights_manager import MorphismWeightsManager
     search_space = get_search_space(cls="cnn", **scfg)
     device = "cuda:0"
-    net = MolphismWeightsManager(search_space, device, "mutation")
+    net = MorphismWeightsManager(search_space, device, "mutation")
     return net
 
 from aw_nas.rollout.mutation import Population

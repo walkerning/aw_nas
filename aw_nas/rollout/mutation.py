@@ -89,7 +89,7 @@ class Population(Component):
             self.__class__.__name__, self.size, self.search_space, self.next_index)
 
     @classmethod
-    def init_from_dirs(self, dirs, search_space, cfg_template_file=None):
+    def init_from_dirs(cls, dirs, search_space, cfg_template_file=None):
         """
         Init population from directories.
 
@@ -150,20 +150,28 @@ class CellMutation(object):
         self.node = modified if self.mutation_type == CellMutation.NODE else None
         self.primitive = modified if self.mutation_type == CellMutation.PRIMITIVE else None
 
+        if self.primitive:
+            self.primitive_str = search_space.cell_shared_primitives[self.cell][self.primitive] \
+                                 if search_space.cellwise_primitives \
+                                    else search_space.shared_primitives[self.primitive]
+
     def apply(self, arch):
         """
         Apply this mutation on the `arch` in place.
         """
-        arch[self.cell][self.mutation_type][self.search_space.num_node_inputs * self.step + self.connection] = self.modified
+        arch[self.cell][self.mutation_type]\
+            [self.search_space.num_node_inputs * self.step + self.connection] = self.modified
         return arch
 
     def __repr__(self):
-        return "Mutation({}, {}, {}, {}, {})".format(
+        return "Mutation({}, {}, {}, {}, {}{})".format(
             self.cell,
             self.step,
             self.connection,
             "primitive" if self.mutation_type == CellMutation.PRIMITIVE else "node",
-            self.modified
+            self.modified,
+            ", {}".format(self.primitive_str) \
+            if self.mutation_type == CellMutation.PRIMITIVE else ""
         )
 
 class MutationRollout(BaseRollout):
@@ -208,6 +216,7 @@ class MutationRollout(BaseRollout):
                                            filename,
                                            label=label,
                                            edge_labels=edge_labels)
+
     @property
     def genotype(self):
         if self._genotype is None:
@@ -242,16 +251,20 @@ class MutationRollout(BaseRollout):
                     choices = primitive_choices[(cell, step, connection)]
                 else:
                     ori = base_arch[cell][1][search_space.num_node_inputs * step + connection]
-                    num_prims = search_space._num_primitives if not search_space.cellwise_primitives \
-                        else search_space._num_primitives_list[cell]
+                    print("ori: ", ori)
+                    num_prims = search_space._num_primitives \
+                                if not search_space.cellwise_primitives \
+                                   else search_space._num_primitives_list[cell]
                     choices = list(range(num_prims))
                     choices.remove(ori)
+                    print("chocies: ", choices)
                     primitive_choices[(cell, step, connection)] = choices
                 expect(choices,
                        ("There are no non-duplicate primitive mutation available"
                         " anymore for ({}, {}, {}) after {} mutations").format(
                             cell, step, connection, primitive_mutated[(cell, step, connection)]))
                 new_choice = np.random.choice(choices)
+                print("choice: ", new_choice)
                 choices.remove(new_choice)
                 base_arch[cell][1][search_space.num_node_inputs * step + connection] = new_choice
                 primitive_mutated[(cell, step, connection)] += 1

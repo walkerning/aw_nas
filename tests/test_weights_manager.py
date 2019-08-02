@@ -337,47 +337,11 @@ def test_diff_supernet_data_parallel_backward_rolloutsize(diff_super_net):
     assert controller.cg_alphas[0].grad is not None
 # ---- End test diff_super_net ----
 
-SAMPLE_CFG_STR="""
-## ---- Component search_space ----
-# ---- Type cnn ----
-search_space_type: cnn
-search_space_cfg:
-  # Schedulable attributes: 
-  num_cell_groups: 2
-  num_init_nodes: 2
-  num_layers: 20
-  cell_layout: null
-  reduce_cell_groups:
-  - 1
-  num_steps: 4
-  num_node_inputs: 2
-  shared_primitives:
-  - none
-  - max_pool_3x3
-  - avg_pool_3x3
-  - skip_connect
-  - sep_conv_3x3
-  - sep_conv_5x5
-  - dil_conv_3x3
-  - dil_conv_5x5
-  cell_shared_primitives: null
-# ---- End Type cnn ----
-## ---- End Component search_space ----
 
-## ---- Component dataset ----
-# ---- Type cifar10 ----
-dataset_type: cifar10
-dataset_cfg:
-  # Schedulable attributes: 
-  cutout: null
-# ---- End Type cifar10 ----
-## ---- End Component dataset ----
-
-## ---- Component final_model ----
-# ---- Type cnn_final_model ----
+SAMPLE_MODEL_CFG = """
 final_model_type: cnn_final_model
 final_model_cfg:
-  genotypes: "normal_0=[('dil_conv_3x3', 0, 2)], reduce_1=[('sep_conv_3x3', 0, 2)]"
+  # Schedulable attributes: dropout_path_rate
   num_classes: 10
   init_channels: 20
   layer_channels: []
@@ -395,73 +359,67 @@ final_model_cfg:
   cell_independent_conn: false
   schedule_cfg: null
 # ---- End Type cnn_final_model ----
-## ---- End Component final_model ----
-
-## ---- Component final_trainer ----
-# ---- Type cnn_trainer ----
-final_trainer_type: cnn_trainer
-final_trainer_cfg:
-  # Schedulable attributes: 
-  epochs: 50
-  batch_size: 96
-  optimizer_type: SGD
-  optimizer_kwargs: null
-  learning_rate: 0.05
-  momentum: 0.9
-  warmup_epochs: 0
-  optimizer_scheduler:
-    T_max: 50
-    eta_min: 0.001
-    type: CosineAnnealingLR
-  weight_decay: 0.0003
-  no_bias_decay: false
-  grad_clip: 5.0
-  auxiliary_head: false
-  auxiliary_weight: 0.0
-  add_regularization: false
-  save_as_state_dict: false
-  eval_no_grad: true
-  schedule_cfg: null
-# ---- End Type cnn_trainer ----
-## ---- End Component final_trainer ----
-
-## ---- Component objective ----
-# ---- Type classification ----
-objective_type: classification
-objective_cfg:
-  # Schedulable attributes: 
-  {}
-# ---- End Type classification ----
-## ---- End Component objective ----
 """
-# ---- test molphism ----
-def test_molphism(population, molphism, tmp_path):
-    from aw_nas.rollout.mutation import MutationRollout, ConfigTemplate, ModelRecord
+# ---- test morphism ----
+
+@pytest.mark.parametrize("population", [
+    {
+        "search_space_cfg": {"num_layers": 5, "num_steps": 2,
+                             "shared_primitives": ["none", "sep_conv_3x3", "sep_conv_5x5"]}
+    }
+], indirect=["population"])
+def test_morphism(population, tmp_path):
+    from aw_nas.rollout.mutation import MutationRollout, ConfigTemplate, ModelRecord, CellMutation
     from aw_nas.final import CNNGenotypeModel
     from aw_nas.main import _init_component
-    from aw_nas.common import genotype_from_str
+    from aw_nas.common import genotype_from_str, rollout_from_genotype_str
+    from aw_nas.weights_manager import MorphismWeightsManager
 
-    cfg = yaml.safe_load(SAMPLE_CFG_STR)
-
+    cfg = yaml.safe_load(SAMPLE_MODEL_CFG)
     device = "cuda:0"
-    search_space = _init_component(cfg, "search_space")
-    dataset = _init_component(cfg, "dataset")
-    objective = _init_component(cfg, "objective", search_space=search_space)
+    search_space = population.search_space
+    genotype_str = ("normal_0=[('sep_conv_5x5', 0, 2), ('sep_conv_3x3', 1, 2), "
+                    "('sep_conv_3x3', 2, 3), ('none', 2, 3)], "
+                    "reduce_1=[('sep_conv_5x5', 0, 2), ('none', 0, 2), "
+                    "('sep_conv_5x5', 0, 3), ('sep_conv_5x5', 1, 3)]")
+    parent_rollout = rollout_from_genotype_str(genotype_str, search_space)
+    cfg["final_model_cfg"]["genotypes"] = genotype_str
     cnn_model = _init_component(cfg, "final_model", search_space=search_space,
                                 device=device)
-    trainer = _init_component(cfg, "final_trainer", device=device, dataset=dataset,
-                              model=cnn_model, gpus=[0], objective=objective)
-    trainer.save(os.path.join(tmp_path, "test"))
- 
-    parent_index = 3
-    new_model_record = ModelRecord(genotype_from_str(cfg["final_model_cfg"]["genotypes"], cnn_model.search_space), cfg,
-                                   info_path=os.path.join(tmp_path, "test.yaml"),
-                                   checkpoint_path=os.path.join(tmp_path, "test"),
-                                   finished=True,
-                                   confidence=1,
-                                   perfs={"acc": np.random.rand(),
-                                          "loss": np.random.uniform(0, 10)})
-    population.add_model(new_model_record, parent_index)
-    rollout = MutationRollout.random_sample(population, parent_index=parent_index, num_mutations=1)
-    state_dict = molphism.assemble_candidate(rollout)
-    assert state_dict == cnn_model.state_dict()
+    parent_state_dict = cnn_model.state_dict()
+    torch.save(cnn_model, os.path.join(tmp_path, "test"))
+
+    # add this record to the population
+    new_model_record = ModelRecord(
+        genotype_from_str(cfg["final_model_cfg"]["genotypes"], cnn_model.search_space),
+        cfg,
+        info_path=os.path.join(tmp_path, "test.yaml"),
+        checkpoint_path=os.path.join(tmp_path, "test"),
+        finished=True,
+        confidence=1,
+        perfs={"acc": np.random.rand(),
+               "loss": np.random.uniform(0, 10)})
+    parent_index = population.add_model(new_model_record)
+
+    mutation = CellMutation(search_space, CellMutation.PRIMITIVE, cell=0, step=0,
+                            connection=1,
+                            modified=search_space.shared_primitives.index("sep_conv_5x5"))
+    print("mutation: ", mutation)
+    rollout = MutationRollout(population, parent_index, [mutation], search_space)
+    assert rollout.genotype != cnn_model.genotypes
+    w_manager = MorphismWeightsManager(search_space, device, "mutation")
+    cand_net = w_manager.assemble_candidate(rollout)
+    child_state_dict = cand_net.state_dict()
+
+    layers = [i_layer for i_layer, cg_id in enumerate(search_space.cell_layout)
+              if cg_id == mutation.cell]
+    removed_edges = ["cells.{layer}.edge_mod.f_1_t_2-sep_conv_3x3-0".format(
+        layer=layer) for layer in layers]
+    added_edges = ["cells.{layer}.edge_mod.f_1_t_2-sep_conv_5x5-0".format(
+        layer=layer) for layer in layers]
+    for n, v in six.iteritems(child_state_dict):
+        if n not in added_edges:
+            assert n in parent_state_dict
+            assert (parent_state_dict[n].data.cpu().numpy() == v.data.cpu().numpy()).all()
+    for n in removed_edges:
+        assert n not in child_state_dict

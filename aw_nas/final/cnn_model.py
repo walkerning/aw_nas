@@ -19,8 +19,14 @@ from aw_nas.final.base import FinalModel
 from aw_nas.utils.exception import expect, ConfigException
 from aw_nas.utils.common_utils import Context
 
+def _defaultdict_1():
+    return defaultdict(dict)
+
+def _defaultdict_2():
+    return defaultdict(_defaultdict_1)
+
 def _defaultdict_3():
-    return defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
+    return defaultdict(_defaultdict_2)
 
 class AuxiliaryHead(nn.Module):
     def __init__(self, C_in, num_classes):
