@@ -74,5 +74,10 @@ final_trainer_cfg:
   schedule_cfg: null
   warmup_epochs: 0
   weight_decay: 0.0003
+  save_as_state_dict: true
 # ---- End Type cnn_trainer ----
 ## ---- End Component final_trainer ----
+
+objective_type: classification
+objective_cfg:
+  {}
