@@ -6,6 +6,7 @@ import six
 import numpy as np
 from torchvision import (datasets, transforms)
 
+from aw_nas.utils.torch_utils import Cutout
 from aw_nas.dataset.base import BaseDataset
 
 class ImageNetDataset(datasets.ImageFolder):
@@ -15,7 +16,7 @@ class ImageNetDataset(datasets.ImageFolder):
     def filter(self, num_classes=100, random_choose=False, random_seed=None, class_names=None):
         _total_classes = len(self.classes)
         if num_classes is None or num_classes == _total_classes:
-            return list(range(_total_classes))
+            return self.classes
 
         if class_names is not None:
             _samples = []
@@ -53,8 +54,11 @@ class ImageNet(BaseDataset):
     NAME = "imagenet"
 
     def __init__(self, load_train_only=False, class_name_file=None, num_sample_classes=None,
-                 random_choose=False, random_seed=123):
+                 random_choose=False, random_seed=123, color_jitter=False, cutout=None,
+                 train_crop_size=224, test_crop_size=224):
         super(ImageNet, self).__init__()
+
+        self.cutout = cutout
 
         self.load_train_only = load_train_only
         self.train_data_dir = os.path.join(self.data_dir, "train")
@@ -68,12 +72,28 @@ class ImageNet(BaseDataset):
         mean = [0.485, 0.456, 0.406]
         std = [0.229, 0.224, 0.225]
 
-        train_transform = transforms.Compose([
-            transforms.RandomResizedCrop(224),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            transforms.Normalize(mean, std),
-        ])
+        if not color_jitter:
+            train_transform = transforms.Compose([
+                transforms.RandomResizedCrop(train_crop_size),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                transforms.Normalize(mean, std),
+            ])
+        else:
+            train_transform = transforms.Compose([
+                transforms.RandomResizedCrop(train_crop_size),
+                transforms.RandomHorizontalFlip(),
+                transforms.ColorJitter(
+                    brightness=0.4,
+                    contrast=0.4,
+                    saturation=0.4,
+                    hue=0.2),
+                transforms.ToTensor(),
+                transforms.Normalize(mean, std),
+            ])
+        if self.cutout:
+            train_transform.transforms.append(Cutout(self.cutout))
+
         self.datasets["train"] = ImageNetDataset(root=self.train_data_dir,
                                                  transform=train_transform)
         self.choosen_classes = self.datasets["train"].filter(num_classes=num_sample_classes,
@@ -91,8 +111,8 @@ class ImageNet(BaseDataset):
         if not self.load_train_only:
             self.test_data_dir = os.path.join(self.data_dir, "test")
             test_transform = transforms.Compose([
-                transforms.Resize(256),
-                transforms.CenterCrop(224),
+                transforms.Resize(test_crop_size + 32),
+                transforms.CenterCrop(test_crop_size),
                 transforms.ToTensor(),
                 transforms.Normalize(mean, std)])
             self.datasets["test"] = ImageNetDataset(root=self.test_data_dir,

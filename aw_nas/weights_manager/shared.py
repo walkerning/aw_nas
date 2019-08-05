@@ -50,10 +50,21 @@ class SharedNet(BaseWeightsManager, nn.Module):
         ## initialize sub modules
         if not self.use_stem:
             c_stem = 3
+            init_strides = [1] * self._num_init
+        elif isinstance(self.use_stem, (list, tuple)):
+            self.stems = []
+            c_stem = self.stem_multiplier * self.init_channels
+            for i, stem_type in enumerate(self.use_stem):
+                c_in = 3 if i == 0 else c_stem
+                self.stems.append(ops.get_op(stem_type)(
+                    c_in, c_stem, stride=stem_stride, affine=stem_affine))
+            self.stems = nn.ModuleList(self.stems)
+            init_strides = [stem_stride] * self._num_init
         else:
             c_stem = self.stem_multiplier * self.init_channels
             self.stem = ops.get_op(self.use_stem)(3, c_stem,
                                                   stride=stem_stride, affine=stem_affine)
+            init_strides = [1] * self._num_init
 
         self.cells = nn.ModuleList()
         num_channels = self.init_channels
@@ -83,7 +94,7 @@ class SharedNet(BaseWeightsManager, nn.Module):
                             num_out_channels=_num_out_channels,
                             prev_num_channels=tuple(prev_num_channels),
                             stride=stride,
-                            prev_strides=[1] * self._num_init + strides[:i_layer],
+                            prev_strides=init_strides + strides[:i_layer],
                             use_preprocess=cell_use_preprocess,
                             **kwargs)
             prev_num_channel = cell.num_out_channel()
@@ -104,11 +115,18 @@ class SharedNet(BaseWeightsManager, nn.Module):
         return self._cell_layout[layer_idx] in self._reduce_cgs
 
     def forward(self, inputs, genotypes, **kwargs): #pylint: disable=arguments-differ
-        if self.use_stem:
-            stemed = self.stem(inputs)
-        else:
+        if not self.use_stem:
             stemed = inputs
-        states = [stemed] * self._num_init
+            states = [inputs] * self._num_init
+        elif isinstance(self.use_stem, (list, tuple)):
+            states = []
+            stemed = inputs
+            for stem in self.stems:
+                stemed = stem(stemed)
+                states.append(stemed)
+        else:
+            stemed = self.stem(inputs)
+            states = [stemed] * self._num_init
 
         for cg_idx, cell in zip(self._cell_layout, self.cells):
             genotype = genotypes[cg_idx]

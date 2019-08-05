@@ -69,6 +69,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
             # data queue configs: (surrogate, mepa, controller)
             data_portion=(0.1, 0.4, 0.5), mepa_as_surrogate=False,
             shuffle_data_before_split=True,
+            workers_per_queue=2,
             # only work for differentiable controller now
             rollout_batch_size=1,
             # only for rnn data
@@ -118,6 +119,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
 
         self.disable_step_current = disable_step_current
         self.data_portion = data_portion
+        self.workers_per_queue = workers_per_queue
         self.shuffle_data_before_split = shuffle_data_before_split
         self.mepa_as_surrogate = mepa_as_surrogate
         self.mepa_samples = mepa_samples
@@ -531,7 +533,8 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
             = utils.prepare_data_queues(self.dataset.splits(), queue_cfgs,
                                         data_type=self._data_type,
                                         drop_last=self.rollout_batch_size > 1,
-                                        shuffle=self.shuffle_data_before_split)
+                                        shuffle=self.shuffle_data_before_split,
+                                        num_workers=self.workers_per_queue)
         if mepa_as_surrogate:
             # use mepa data queue as surrogate data queue
             self.surrogate_queue = self.mepa_queue

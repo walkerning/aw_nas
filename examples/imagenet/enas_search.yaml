@@ -1,0 +1,175 @@
+rollout_type: discrete
+## ---- Component search_space ----
+# ---- Type cnn ----
+search_space_type: cnn
+search_space_cfg:
+  # Schedulable attributes: 
+  num_cell_groups: 2
+  num_init_nodes: 2
+  num_layers: 8
+  cell_layout: null
+  reduce_cell_groups:
+  - 1
+  num_steps: 4
+  num_node_inputs: 2
+  shared_primitives:
+  - none
+  - max_pool_3x3
+  - avg_pool_3x3
+  - skip_connect
+  - sep_conv_3x3
+  - sep_conv_5x5
+  - dil_conv_3x3
+  - dil_conv_5x5
+  cell_shared_primitives: null
+# ---- End Type cnn ----
+## ---- End Component search_space ----
+
+## ---- Component dataset ----
+# ---- Type imagenet ----
+dataset_type: imagenet
+dataset_cfg:
+  # Schedulable attributes: 
+  load_train_only: false
+  class_name_file: null
+  num_sample_classes: 100
+  random_choose: false
+  random_seed: 123
+# ---- End Type imagenet ----
+## ---- End Component dataset ----
+
+## ---- Component controller ----
+# ---- Type rl ----
+controller_type: rl
+controller_cfg:
+  # Schedulable attributes: 
+  rollout_type: discrete
+  mode: eval
+  independent_cell_group: false
+  controller_network_type: anchor_lstm
+  controller_network_cfg: null
+  rl_agent_type: pg
+  rl_agent_cfg: null
+  # ---- Type embed_lstm ----
+  controller_network_type: embed_lstm
+  controller_network_cfg:
+    # Schedulable attributes: softmax_temperature, force_uniform
+    num_lstm_layers: 1
+    controller_hid: 10
+    attention_hid: 10
+    softmax_temperature: null
+    tanh_constant: 1.1
+    op_tanh_reduce: 2.5
+    force_uniform: true
+    schedule_cfg: null
+  # ---- End Type embed_lstm ----
+  ## ---- Component rl_agent ----
+  # ---- Type pg ----
+  rl_agent_type: pg
+  rl_agent_cfg:
+    # Schedulable attributes: 
+    alpha: 0.999
+    gamma: 1.0
+    entropy_coeff: 0.01
+    max_grad_norm: null
+    batch_update: true
+  # ---- End Type pg ----
+  ## ---- End Component rl_agent ----
+# ---- End Type rl ----
+## ---- End Component controller ----
+
+## ---- Component evaluator ----
+# ---- Type mepa ----
+evaluator_type: mepa
+evaluator_cfg:
+  # Schedulable attributes: controller_surrogate_steps, mepa_surrogate_steps, mepa_samples
+  rollout_type: discrete
+  batch_size: 256
+  controller_surrogate_steps: 0
+  mepa_surrogate_steps: 0
+  derive_surrogate_steps: null
+  mepa_optimizer:
+    lr: 0.1
+    momentum: 0.9
+    type: SGD
+    weight_decay: 0.00003
+  mepa_scheduler:
+    eta_min: 0.0
+    T_max: 100
+    type: CosineAnnealingLR
+  surrogate_optimizer: null
+  surrogate_scheduler: null
+  surrogate_scheduler: null
+  schedule_every_batch: false
+  load_optimizer: true
+  load_scheduler: true
+  mepa_samples: 4
+  disable_step_current: false
+  data_portion:
+  - 0.0
+  - 0.8
+  - 0.2
+  mepa_as_surrogate: false
+  workers_per_queue: 8
+  shuffle_data_before_split: true
+  rollout_batch_size: 1
+  bptt_steps: 35
+  schedule_cfg: null
+# ---- End Type mepa ----
+## ---- End Component evaluator ----
+
+## ---- Component weights_manager ----
+# ---- Type supernet ----
+weights_manager_type: supernet
+weights_manager_cfg:
+  # Schedulable attributes: 
+  rollout_type: discrete
+  gpus: []
+  num_classes: 100
+  init_channels: 24
+  stem_multiplier: 1
+  max_grad_norm: 5.0
+  dropout_rate: 0.1
+  use_stem: [imagenet_stem0, relu_conv_bn_3x3]
+  stem_stride: 2
+  stem_affine: true
+  cell_use_preprocess: true
+  cell_group_kwargs: null
+  candidate_member_mask: true
+  candidate_cache_named_members: false
+  candidate_virtual_parameter_only: false
+  candidate_eval_no_grad: true
+# ---- End Type supernet ----
+## ---- End Component weights_manager ----
+
+## ---- Component objective ----
+# ---- Type classification ----
+objective_type: classification
+objective_cfg:
+  # Schedulable attributes: 
+  {}
+# ---- End Type classification ----
+## ---- End Component objective ----
+
+## ---- Component trainer ----
+# ---- Type simple ----
+trainer_type: simple
+trainer_cfg:
+  # Schedulable attributes: controller_samples, derive_samples
+  rollout_type: discrete
+  epochs: 100
+  test_every: 100
+  controller_optimizer: null
+  controller_scheduler: null
+  controller_samples: 1
+  derive_samples: 10
+  rollout_batch_size: 1
+  evaluator_steps: null
+  controller_steps: 0
+  controller_train_every: 1
+  controller_train_begin: 1001
+  interleave_controller_every: null
+  schedule_cfg: null
+# ---- End Type simple ----
+## ---- End Component trainer ----
+
