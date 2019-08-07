@@ -8,6 +8,7 @@ from __future__ import division
 
 import os
 import abc
+import signal
 import random
 import string
 from datetime import datetime
@@ -103,6 +104,7 @@ class MultiprocessDispatcher(BaseDispatcher):
         self.evaluator = evaluator
         self.req_queue = multiprocessing.Queue()
         self.ans_queue = multiprocessing.Queue()
+        self._register_signal_handler()
         for gpu_id in self.gpu_ids:
             worker_p = multiprocessing.Process(target=self._worker, args=(gpu_id,))
             self.workers.append(worker_p)
@@ -129,6 +131,18 @@ class MultiprocessDispatcher(BaseDispatcher):
                 except queue.Empty:
                     break
             return all_rollouts
+
+    def _register_signal_handler(self):
+        ori_sigint_handler = signal.getsignal(signal.SIGINT)
+        def signal_handler(sig, frame):
+            print("Receive sigint, stop sub processes...")
+            for worker_p in self.workers:
+                if worker_p is not None:
+                    print("Stoping process {}...".format(worker_p.pid))
+                    worker_p.terminate()
+            print("Stop sub processses finished.")
+            ori_sigint_handler(sig, frame)
+        signal.signal(signal.SIGINT, signal_handler)
 
 
 class AsyncTrainer(BaseTrainer):
