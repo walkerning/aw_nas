@@ -63,6 +63,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
             # whether load optimizer/scheduler when loading
             load_optimizer=True,
             load_scheduler=True,
+            strict_load_weights_manager=True,
             # mepa samples for `update_evaluator`
             mepa_samples=1,
             disable_step_current=False,
@@ -127,6 +128,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
         self.schedule_every_batch = schedule_every_batch
         self.load_optimizer = load_optimizer
         self.load_scheduler = load_scheduler
+        self.strict_load_weights_manager = strict_load_weights_manager
 
         # rnn specific configs
         self.bptt_steps = bptt_steps
@@ -419,7 +421,8 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
 
     def load(self, path):
         checkpoint = torch.load(path, map_location=torch.device("cpu"))
-        self.weights_manager.load_state_dict(checkpoint["weights_manager"])
+        self.weights_manager.load_state_dict(checkpoint["weights_manager"],
+                                             strict=self.strict_load_weights_manager)
 
         # load hidden states if exists
         if "hiddens" in checkpoint:
