@@ -237,8 +237,9 @@ def population(request):
     cfg = getattr(request, "param", {})
     init_dirs = cfg.get("init_dirs", None)
     scfg = cfg.pop("search_space_cfg", {})
+    s_type = cfg.pop("search_space_type", "cnn")
     from aw_nas.common import get_search_space
-    search_space = get_search_space(cls="cnn", **scfg)
+    search_space = get_search_space(s_type, **scfg)
     if init_dirs:
         population = Population.init_from_dirs(init_dirs, search_space)
     else:

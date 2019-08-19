@@ -36,6 +36,7 @@ def test_dense_rollout(case):
         assert getattr(genotype, "transition_{}".format(i)) == trans_c
     assert genotype_from_str(str(genotype), ss) == genotype
     print(genotype)
+    print("relative conv flops: ", ss.relative_conv_flops(case["arch"]))
 
 
 def test_construct_final_densenet():

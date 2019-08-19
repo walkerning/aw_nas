@@ -94,7 +94,7 @@ class Population(Component):
         self._size = len(model_records) # _size will be adjusted along with self._model_records
         self.cfg_template = cfg_template
         if next_index is None:
-            self._next_index = np.max(list(model_records.keys())) + 1
+            self._next_index = np.max(list(model_records.keys())) + 1 if model_records else 0
         else:
             self._next_index = next_index
         self.start_save_index = self._next_index

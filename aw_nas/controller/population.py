@@ -174,6 +174,7 @@ class PopulationController(BaseController):
     def step(self, rollouts, optimizer):
         """
         Update the performance of the rollouts into the population and assign index.
+        Call `sampler.step`.
         Remove some individuals from the population according to specific conditions
         """
         indexes = []

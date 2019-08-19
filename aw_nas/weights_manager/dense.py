@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+import numpy as np
 import torch
 
 from aw_nas.weights_manager.base import BaseWeightsManager
@@ -7,13 +8,13 @@ from aw_nas.final.base import FinalModel
 from aw_nas.utils.exception import expect, ConfigException
 from aw_nas.rollout import DenseMutation
 
-__all__ = ["DenseWeightsManager"]
+__all__ = ["DenseMorphismWeightsManager"]
 
-class DenseWeightsManager(BaseWeightsManager):
+class DenseMorphismWeightsManager(BaseWeightsManager):
     NAME = "dense"
 
     def __init__(self, search_space, device, rollout_type):
-        super(DenseWeightsManager, self).__init__(search_space, device, rollout_type)
+        super(DenseMorphismWeightsManager, self).__init__(search_space, device, rollout_type)
 
         self.search_space = search_space
         self.device = device
@@ -46,15 +47,15 @@ class DenseWeightsManager(BaseWeightsManager):
                 block_idx = int(n.split(".")[1])
                 if block_idx != _mutation.block_idx:
                     v.data.copy_(parent_state_dict[n])
-        if _mutation.mutation_type = DenseMutation.WIDER:
+        if _mutation.mutation_type == DenseMutation.WIDER:
             self.widen(rollout, _child_model, parent_state_dict, _mutation.block_idx, _mutation.miniblock_idx,\
                        _mutation.modified, 0)
-        elif _mutation.mutation_type = DenseMutation.DEEPER:
+        elif _mutation.mutation_type == DenseMutation.DEEPER:
             self.deepen(rollout, _child_model, parent_state_dict, _mutation.block_idx, _mutation.miniblock_idx)
         return _child_model
 
     def add_noise(self, tensor, noise_type='normal'):
-        if noise_type == None:
+        if noise_type is None:
             return tensor
         if noise_type == 'normal':
             std = np.std(tensor)
@@ -75,7 +76,7 @@ class DenseWeightsManager(BaseWeightsManager):
         input_channels = parent_state_dict[prefix + "conv.weight"].shape[1]
         widen_record_bc = [i for i in range(input_channels)]
         if rollout.search_space.bc_mode:
-            origin_bc =  parent_state_dict[prefix + "bc_" + widen_list[0]]
+            origin_bc = parent_state_dict[prefix + "bc_" + widen_list[0]]
             input_channels = origin_bc.shape[1]
             modified_bc_output_channels = rollout.search_space.bc_ratio * modified
             assert modified_bc_output_channels >= origin_bc.shape[0]
@@ -101,9 +102,12 @@ class DenseWeightsManager(BaseWeightsManager):
             origin_layer = prefix + widen_layer
             assert origin_layer in parent_state_dict.keys()
             if widen_layer == "conv.weight" and rollout.search_space.bc_mode:
-                child_model.state_dict()[origin_layer] = self.add_noise(parent_state_dict[origin_layer][widen_record,widen_record_bc,:,:] / magnifier_bc)
+                child_model.state_dict()[origin_layer] = self.add_noise(
+                    parent_state_dict[origin_layer][widen_record, widen_record_bc, :, :] /
+                    magnifier_bc)
             else:
-                child_model.state_dict()[origin_layer] = parent_state_dict[origin_layer][widen_record,:]
+                child_model.state_dict()[origin_layer] \
+                    = parent_state_dict[origin_layer][widen_record, :]
         miniblock_iter = miniblock_idx + 1
         if rollout.search_space.bc_mode:
             layer_name = "bc_conv.weight"
@@ -184,7 +188,7 @@ class DenseWeightsManager(BaseWeightsManager):
     @classmethod
     def supported_rollout_types(cls):
         """Return the accepted rollout-type."""
-        return ["mutation"]
+        return ["dense_mutation"]
 
     @classmethod
     def supported_data_types(cls):

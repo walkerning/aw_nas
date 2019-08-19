@@ -35,6 +35,8 @@ class DenseSearchSpace(SearchSpace):
             bc_ratio=4,
             reduction=0.5,
     ):
+        super(DenseSearchSpace, self).__init__()
+
         expect((first_ratio is None) + (stem_channel is None) == 1,
                "One and only one of `first_ratio` and `stem_channel` should be specified.",
                ConfigException)
@@ -98,14 +100,52 @@ class DenseSearchSpace(SearchSpace):
     def distance(self, arch1, arch2):
         raise NotImplementedError()
 
+    def relative_conv_flops(self, arch):
+        assert len(arch) == self.num_dense_blocks
+        flops = 0
+        last_channel = 3
+        # stem
+        if self.first_ratio is not None:
+            mean_growth = np.mean(sum(arch, []))
+            out_c = int(mean_growth * self.first_ratio)
+        else:
+            out_c = self.stem_channel
+        flops += 3 * 3 * last_channel * out_c # stem kernel size = 3
+        last_channel = out_c
+        mult = 1.
+        for i_dense, n_cs in enumerate(arch):
+            for growth in n_cs:
+                if self.bc_mode:
+                    out_c = int(self.bc_ratio * growth)
+                    flops += mult * 1 * 1 * last_channel * out_c # bc kernel size = 1
+                    input_c = out_c
+                else:
+                    input_c = last_channel
+                flops += mult * 3 * 3 * input_c * growth # kernel size = 3
+                last_channel += growth
+            if i_dense != self.num_dense_blocks - 1:
+                # avg pool 2x2
+                out_c = int(self.reduction * last_channel)
+                flops += mult * 1 * 1 * last_channel * out_c
+                last_channel = out_c
+                mult *= 0.25
+        return flops
+
 
 class DenseDiscreteRollout(Rollout):
+    NAME = "dense_discrete"
+
+    def relative_conv_flops(self):
+        return self.search_space.relative_conv_flops(self.arch)
+
     @classmethod
     def random_sample_arch(cls, *args, **kwargs):
         raise NotImplementedError()
 
 
 class DenseMutationRollout(MutationRollout):
+    NAME = "dense_mutation"
+
     @classmethod
     def random_sample(cls, population, parent_index, num_mutations=1, primitive_prob=0.5):
         """
@@ -135,7 +175,7 @@ class DenseMutation(object):
 
     def apply(self, arch):
         if self.mutation_type == DenseMutation.WIDER:
-            # if self.modified <= arch[self.block_idx][self.miniblock_idx] 
+            # if self.modified <= arch[self.block_idx][self.miniblock_idx]
             # foxfi: if modified is not bigger than the original channel?
             arch[self.block_idx][self.miniblock_idx] = self.modified
         else: # deeper

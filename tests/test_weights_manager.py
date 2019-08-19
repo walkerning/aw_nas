@@ -337,7 +337,6 @@ def test_diff_supernet_data_parallel_backward_rolloutsize(diff_super_net):
     assert controller.cg_alphas[0].grad is not None
 # ---- End test diff_super_net ----
 
-
 SAMPLE_MODEL_CFG = """
 final_model_type: cnn_final_model
 final_model_cfg:
@@ -424,3 +423,66 @@ def test_morphism(population, tmp_path):
             assert (parent_state_dict[n].data.cpu().numpy() == v.data.cpu().numpy()).all()
     for n in removed_edges:
         assert n not in child_state_dict
+ 
+DENSE_SAMPLE_MODEL_CFG = """
+final_model_type: dense_final_model
+final_model_cfg:
+  num_classes: 10
+  dropout_rate: 0.1
+  schedule_cfg: null
+"""
+
+@pytest.mark.parametrize("population", [
+    {
+        "search_space_type": "cnn_dense",
+        "search_space_cfg": {
+            "num_dense_blocks": 4
+        },
+        "num_records": 0
+    }
+], indirect=["population"])
+def test_dense_morphism_wider(population, tmp_path):
+    from aw_nas.rollout.mutation import ConfigTemplate, ModelRecord, CellMutation
+    from aw_nas.rollout.dense import DenseMutationRollout, DenseMutation
+    from aw_nas.final import DenseGenotypeModel
+    from aw_nas.main import _init_component
+    from aw_nas.common import genotype_from_str, rollout_from_genotype_str
+    from aw_nas.weights_manager import DenseMorphismWeightsManager
+
+    cfg = yaml.safe_load(DENSE_SAMPLE_MODEL_CFG)
+    device = "cuda:0"
+    search_space = population.search_space
+    genotype_str = ("stem=8, block_0=[4, 4, 4, 4, 4, 4], transition_0=16, "
+                    "block_1=[4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4], transition_1=32, "
+                    "block_2=[4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, "
+                    "4, 4, 4, 4, 4], transition_2=64, block_3=[4, 4, 4, 4, 4, 4]")
+    parent_rollout = rollout_from_genotype_str(genotype_str, search_space)
+    cfg["final_model_cfg"]["genotypes"] = genotype_str
+    cnn_model = _init_component(cfg, "final_model", search_space=search_space,
+                                device=device)
+    parent_state_dict = cnn_model.state_dict()
+    torch.save(cnn_model, os.path.join(tmp_path, "test"))
+
+    # add this record to the population
+    new_model_record = ModelRecord(
+        genotype_from_str(cfg["final_model_cfg"]["genotypes"], cnn_model.search_space),
+        cfg,
+        cnn_model.search_space,
+        info_path=os.path.join(tmp_path, "test.yaml"),
+        checkpoint_path=os.path.join(tmp_path, "test"),
+        finished=True,
+        confidence=1,
+        perfs={"acc": np.random.rand(),
+               "loss": np.random.uniform(0, 10)})
+    parent_index = population.add_model(new_model_record)
+
+    mutation = DenseMutation(search_space, DenseMutation.WIDER, block_idx=1, miniblock_idx=2,
+                             modified=8)
+    rollout = DenseMutationRollout(population, parent_index, [mutation], search_space)
+    assert rollout.genotype != cnn_model.genotypes
+    print("mutation: ", mutation)
+    print("mutated rollout: ", rollout.genotype)
+
+    w_manager = DenseMorphismWeightsManager(search_space, device, "dense_mutation")
+    cand_net = w_manager.assemble_candidate(rollout)
+    child_state_dict = cand_net.state_dict()
