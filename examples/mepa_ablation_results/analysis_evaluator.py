@@ -30,7 +30,7 @@ def _print_latex_table(control_var, search_names, display_names, caption):
     for search_name in search_names:
         numbers.append([])
         for test_step in test_steps:
-            numbers[-1] += corrs_dct[search_name + "_test{}".format(test_step)]
+            numbers[-1] += corrs_dct[search_name + "_test{}".format(test_step)][0]
     best_indexes = np.argmax(np.array(numbers), axis=0)
 
     # print header
@@ -88,6 +88,17 @@ def _plot_results(xs, corrs_list, search_names, caption, xlabel, save_name):
     print("Epoch corr plot saved to", save_name)
 
 ## ---- ablation functions ----
+def table_names(search_names, display_names="", lr="1e-2"):
+    search_names = search_names.split(",")
+    caption = "correlations (lr={})".format(lr)
+    control_var = ""
+    if not display_names:
+        display_names = [n.replace("_", "-") for n in search_names]
+    else:
+        display_names = display_names.split(",")
+    search_names = [n + "_lr{}".format(lr) for n in search_names]
+    _print_latex_table(control_var, search_names, display_names, caption)
+
 def table_epochs():
     """
     Table: Correlation - search epochs
@@ -195,7 +206,7 @@ def plot_corr_epochs():
                 label = search_name + suffix + "_lr1e-2_test0"
             else:
                 label = search_name + suffix + "_lr1e-2_test" + search_name[4]
-            for corrs, value in zip(corrs_list, corrs_dct[label]):
+            for corrs, value in zip(corrs_list, corrs_dct[label][0]):
                 corrs[-1].append(value)
 
     _plot_results(epochs, corrs_list, search_names, caption, "epoch", "plot_epochs.pdf")
@@ -204,7 +215,7 @@ def plot_corr_teststeps(mepa_steps="0,1,3,5", samples=4, epoch=40, test_lr="1e-2
     mepa_steps = [int(step) for step in mepa_steps.split(",")]
     print("plot mepa steps: ", mepa_steps)
     caption = "corr - test step (samples={} epoch={} test_lr={})".format(samples, epoch, test_lr)
-    corrs_list = [[] for _ in range(num_corrs)]
+    corrs_list = [[] for _ in range(num_corrs)] # num_plots x num_curves x num_xticks
     display_names = []
     if epoch == 20:
         epoch_str = ""
@@ -226,7 +237,7 @@ def plot_corr_teststeps(mepa_steps="0,1,3,5", samples=4, epoch=40, test_lr="1e-2
             label = "{prefix}_{samples_str}{epoch_str}{lr_str}_test{test_step}".format(
                 prefix=prefix, samples_str=samples_str, epoch_str=epoch_str,
                 lr_str=lr_str, test_step=test_step)
-            for corrs, value in zip(corrs_list, corrs_dct[label]):
+            for corrs, value in zip(corrs_list, corrs_dct[label][0]):
                 corrs[-1].append(value)
         display_names.append(prefix)
 
@@ -270,18 +281,37 @@ def plot_scatter(mepa_steps="0,1,3,5", epoch=40, samples=4, test_lr="1e-2"):
     print("Save to ", save_name)
     plt.savefig(save_name)
 
+def plot_layeraug(search_names, layers, display_names=""):
+    layers = [int(x) for x in layers.split(",")]
+    search_names = search_names.split(",")
+    caption = "correlations - surrogate layers"
+    control_var = "surrogate layers"
+    corrs_list = [corrs_dct[name] for name in search_names] # num_curves x num_xticks x num_plots
+    corrs_list = np.transpose(corrs_list, [2, 0, 1])# num_plots x num_curves x num_xticks
+    if not display_names:
+        display_names = search_names
+    else:
+        display_names = display_names.split(",")
+    assert len(display_names) == len(search_names)
+    _plot_results(layers, corrs_list, display_names, caption,
+                  "surrogate layers", "plot_layeraug.pdf")
 
 avail_ablation = {
+    "table_names": table_names,
     "table_steps": table_meta_steps,
     "table_epochs": table_epochs,
     "table_samples": table_samples,
     "plot_corr_epochs": plot_corr_epochs,
     "plot_corr_teststeps": plot_corr_teststeps,
-    "plot_scatter": plot_scatter
+    "plot_scatter": plot_scatter,
+    "plot_layeraug": plot_layeraug
 }
 ## ---- main ----
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument("-s", "--surrogate-name", default="surrogate")
+    parser.add_argument("-f", "--result-file", default="mepa_100arch_results.yaml")
+    parser.add_argument("-n", default=None, type=int, help="number of data point used")
     subparsers = parser.add_subparsers(help="Type of ablation results")
     parser.add_argument("-t", "--test-steps", default="0,1,3,5",
                         help="Test steps. only work for some ablation")
@@ -326,17 +356,25 @@ if __name__ == "__main__":
     num_corrs = len(corr_names)
 
     # ---- handling results file ----
-    accs_dct = yaml.safe_load(open("mepa_100arch_results.yaml"))
-    surrogate_accs = accs_dct.pop("surrogate")
+    accs_dct = yaml.safe_load(open(args.result_file))
+    args.surrogate_name = args.surrogate_name.split(",")
+    surrogate_accs_list = [accs_dct.pop(s_name) for s_name in args.surrogate_name]
+    if args.n:
+        surrogate_accs_list = [s_accs[:args.n] for s_accs in surrogate_accs_list]
     # print({n: len(accs) for n, accs in six.iteritems(accs_dct) if isinstance(accs, (list, tuple))})
 
     corrs_dct = {}
     for n, accs in six.iteritems(accs_dct):
+        if "surrogate" in n:
+            continue
+        if args.n:
+            accs = accs[:args.n]
         if not (isinstance(accs, (list, tuple)) and accs):
             continue
         try:
-            _corrs = [globals()[corr_name](surrogate_accs, accs) for corr_name in corr_names]
-        except TypeError:
+            _corrs = [[globals()[corr_name](s_accs, accs) for corr_name in corr_names]
+                      for s_accs in surrogate_accs_list]
+        except (ValueError, TypeError):
             print(n)
             raise
         corrs_dct[n] = _corrs
