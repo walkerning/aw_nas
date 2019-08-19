@@ -215,13 +215,19 @@ class ResNetBlock(nn.Module):
         return out, context
 
 class DenseBlock(nn.Module):
-    def __init__(self, C, C_out, stride, affine, act='relu'):
+    def __init__(self, C, C_out, stride, affine, act='relu', bc_mode=True, bc_ratio=4.0):
         super(DenseBlock, self).__init__()
         growth_rate = C_out - C
-        self.bn1 = nn.BatchNorm2d(C, affine=affine)
-        self.conv1 = nn.Conv2d(C, 4*growth_rate, kernel_size=1, bias=False)
-        self.bn2 = nn.BatchNorm2d(4*growth_rate, affine=affine)
-        self.conv2 = nn.Conv2d(4*growth_rate, growth_rate, kernel_size=3, padding=1, bias=False)
+        self.bc_mode = bc_mode
+        if bc_mode:
+            inner_c = int(bc_ratio * growth_rate)
+            self.bc_bn = nn.BatchNorm2d(C, affine=affine)
+            self.bc_conv = nn.Conv2d(C, inner_c, kernel_size=1, bias=False)
+        else:
+            inner_c = C
+        self.bn = nn.BatchNorm2d(inner_c, affine=affine)
+        self.conv = nn.Conv2d(inner_c, growth_rate, kernel_size=3, padding=1, bias=False)
+
         self.activation = F.relu
         if act == "sigmoid":
             self.activation = F.sigmoid
@@ -229,13 +235,17 @@ class DenseBlock(nn.Module):
             self.activation = F.hardtanh
 
     def forward(self, x):
-        out = self.conv1(self.activation(self.bn1(x)))
-        out = self.conv2(self.activation(self.bn2(out)))
+        if self.bc_mode:
+            out = self.bc_conv(self.activation(self.bc_bn(x)))
+        else:
+            out = x
+        out = self.conv(self.activation(self.bn(out)))
         out = torch.cat([out, x], 1)
         return out
 
 class Transition(nn.Module):
     def __init__(self, C, C_out, stride, affine, act='relu'):
+        assert stride == 2 and affine, "standard densenet use stride=2 and affine=True"
         super(Transition, self).__init__()
         self.bn = nn.BatchNorm2d(C)
         self.conv = nn.Conv2d(C, C_out, kernel_size=1, bias=False)

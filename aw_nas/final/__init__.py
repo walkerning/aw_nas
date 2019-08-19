@@ -4,3 +4,5 @@ from .cnn_model import CNNGenotypeModel
 
 from .rnn_trainer import RNNFinalTrainer
 from .rnn_model import RNNGenotypeModel
+
+from .dense import DenseGenotypeModel

@@ -10,8 +10,6 @@ from collections import OrderedDict
 import contextlib
 import six
 
-import torch
-
 from aw_nas.common import assert_rollout_type, group_and_sort_by_to_node
 from aw_nas.weights_manager.base import CandidateNet
 from aw_nas.weights_manager.shared import SharedNet, SharedCell, SharedOp

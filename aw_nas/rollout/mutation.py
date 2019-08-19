@@ -29,7 +29,6 @@ class ModelRecord(object):
     def __init__(self, genotype, config, search_space,
                  info_path=None, checkpoint_path=None, finished=False,
                  confidence=None, perfs=None):
-        # FIXME: search space definition should be directly included in the meta info?
         self._genotype = genotype
         self.search_space = search_space
         # the config which is used to train this model

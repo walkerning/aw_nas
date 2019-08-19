@@ -18,27 +18,6 @@ class SearchSpace(Component):
 
     def __init__(self):
         super(SearchSpace, self).__init__(schedule_cfg=None)
-        self.genotype_type = None
-        self.genotype_type_name = None
-        self.cell_group_names = None
-
-    # namedtuple defined not at the module top level is unpicklable
-    # remove it from the states
-    def __getstate__(self):
-        state = super(SearchSpace, self).__getstate__().copy()
-        del state["genotype_type"]
-        return state
-
-    def __setstate__(self, state):
-        super(SearchSpace, self).__setstate__(state)
-        self.genotype_type = utils.namedtuple_with_defaults(
-            self.genotype_type_name,
-            self.cell_group_names + [n + "_concat" for n in self.cell_group_names],
-            self._default_concats)
-
-    @abc.abstractmethod
-    def get_num_steps(self, cell_index):
-        pass
 
     @abc.abstractmethod
     def random_sample(self):
@@ -61,7 +40,33 @@ class SearchSpace(Component):
         pass
 
 
-class CNNSearchSpace(SearchSpace):
+class CellSearchSpace(SearchSpace):
+    def __init__(self):
+        super(CellSearchSpace, self).__init__()
+        self.genotype_type = None
+        self.genotype_type_name = None
+        self.cell_group_names = None
+
+    # namedtuple defined not at the module top level is unpicklable
+    # remove it from the states
+    def __getstate__(self):
+        state = super(CellSearchSpace, self).__getstate__().copy()
+        del state["genotype_type"]
+        return state
+
+    def __setstate__(self, state):
+        super(CellSearchSpace, self).__setstate__(state)
+        self.genotype_type = utils.namedtuple_with_defaults(
+            self.genotype_type_name,
+            self.cell_group_names + [n + "_concat" for n in self.cell_group_names],
+            self._default_concats)
+
+    @abc.abstractmethod
+    def get_num_steps(self, cell_index):
+        pass
+
+
+class CNNSearchSpace(CellSearchSpace):
     """
     A cell-based CNN search space.
 
@@ -387,7 +392,7 @@ class CNNSearchSpace(SearchSpace):
         raise NotImplementedError()
 
 
-class RNNSearchSpace(SearchSpace):
+class RNNSearchSpace(CellSearchSpace):
     NAME = "rnn"
 
     def __init__(self,
@@ -436,6 +441,7 @@ class RNNSearchSpace(SearchSpace):
 
         self.cell_group_names = ["cell"]
 
+        self._default_concats = []
         self.genotype_type_name = "RNNGenotype"
         self.genotype_type = collections.namedtuple(self.genotype_type_name,
                                                     self.cell_group_names +\
@@ -607,4 +613,10 @@ from aw_nas.rollout import ( # pylint:disable=unused-import
     Rollout,
     DifferentiableRollout,
     MutationRollout
+)
+
+from aw_nas.rollout.dense import (
+    DenseSearchSpace,
+    DenseDiscreteRollout,
+    DenseMutationRollout
 )
