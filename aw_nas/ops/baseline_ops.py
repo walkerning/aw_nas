@@ -215,10 +215,13 @@ class ResNetBlock(nn.Module):
         return out, context
 
 class DenseBlock(nn.Module):
-    def __init__(self, C, C_out, stride, affine, act='relu', bc_mode=True, bc_ratio=4.0):
+    def __init__(self, C, C_out, stride, affine, act='relu', bc_mode=True, bc_ratio=4.0,
+                 dropblock_rate=0.0):
         super(DenseBlock, self).__init__()
-        growth_rate = C_out - C
+        growth_rate = self.growth_rate = C_out - C
         self.bc_mode = bc_mode
+        self.dropblock_rate = dropblock_rate
+
         if bc_mode:
             inner_c = int(bc_ratio * growth_rate)
             self.bc_bn = nn.BatchNorm2d(C, affine=affine)
@@ -240,6 +243,12 @@ class DenseBlock(nn.Module):
         else:
             out = x
         out = self.conv(self.activation(self.bn(out)))
+        if self.training and self.dropblock_rate > 0.:
+            # optionally drop miniblock
+            keep_prob = 1. - self.dropblock_rate
+            mask = x.new(x.size(0), 1, 1, 1).bernoulli_(keep_prob)
+            out.div_(keep_prob)
+            out.mul_(mask)
         out = torch.cat([out, x], 1)
         return out
 

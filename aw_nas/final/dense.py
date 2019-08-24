@@ -17,6 +17,7 @@ class DenseGenotypeModel(FinalModel):
     def __init__(self, search_space, device, genotypes,
                  num_classes=10,
                  dropout_rate=0.0,
+                 dropblock_rate=0.0,
                  schedule_cfg=None):
         super(DenseGenotypeModel, self).__init__(schedule_cfg)
 
@@ -28,10 +29,11 @@ class DenseGenotypeModel(FinalModel):
 
         # training
         self.dropout_rate = dropout_rate
+        self.dropblock_rate = dropblock_rate
 
         self._num_blocks = self.search_space.num_dense_blocks
         # build model
-        self.stem = nn.Conv2d(3, self.genotypes[0], kernel_size=3)
+        self.stem = nn.Conv2d(3, self.genotypes[0], kernel_size=3, padding=1)
 
         self.dense_blocks = []
         self.trans_blocks = []
@@ -59,13 +61,36 @@ class DenseGenotypeModel(FinalModel):
 
         self.to(self.device)
 
+        # for flops calculation
+        self.total_flops = 0
+        self._flops_calculated = False
+        self.set_hook()
+
+    def set_hook(self):
+        for name, module in self.named_modules():
+            if "auxiliary" in name:
+                continue
+            module.register_forward_hook(self._hook_intermediate_feature)
+
+    def _hook_intermediate_feature(self, module, inputs, outputs):
+        if not self._flops_calculated:
+            if isinstance(module, nn.Conv2d):
+                self.total_flops += 2* inputs[0].size(1) * outputs.size(1) * \
+                                    module.kernel_size[0] * module.kernel_size[1] * \
+                                    outputs.size(2) * outputs.size(3) / module.groups
+            elif isinstance(module, nn.Linear):
+                self.total_flops += 2 * inputs[0].size(1) * outputs.size(1)
+        else:
+            pass
+
     def _new_dense_block(self, last_channel, growths):
         mini_blocks = []
         for growth in growths:
             out_c = last_channel + growth
             mini_blocks.append(DenseBlock(last_channel, out_c, stride=1, affine=True,
                                           bc_mode=self.search_space.bc_mode,
-                                          bc_ratio=self.search_space.bc_ratio))
+                                          bc_ratio=self.search_space.bc_ratio,
+                                          dropblock_rate=self.dropblock_rate))
             last_channel = out_c
         return nn.Sequential(*mini_blocks)
 
@@ -83,6 +108,11 @@ class DenseGenotypeModel(FinalModel):
         out = self.final_relu(self.final_bn(out))
         out = self.dropout(self.global_pooling(out))
         logits = self.classifier(out.view(out.size(0), -1))
+
+        if not self._flops_calculated:
+            self.logger.info("FLOPS: flops num = %d M", self.total_flops/1.e6)
+            self._flops_calculated = True
+
         return logits
 
     @classmethod
