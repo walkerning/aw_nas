@@ -9,7 +9,7 @@ import torch
 from aw_nas import assert_rollout_type, utils
 from aw_nas.weights_manager.base import CandidateNet
 from aw_nas.weights_manager.shared import SharedNet, SharedCell, SharedOp
-from aw_nas.utils import data_parallel
+from aw_nas.utils import data_parallel, use_params
 
 __all__ = ["DiffSubCandidateNet", "DiffSuperNet"]
 
@@ -61,6 +61,10 @@ class DiffSubCandidateNet(CandidateNet):
             arch = [torch.cat(torch.split(a, split_size, dim=1), dim=0) for a in arch]
         return data_parallel(self.super_net, (inputs, arch), self.gpus,
                              module_kwargs={"detach_arch": detach_arch})
+
+    def _forward_with_params(self, inputs, params, **kwargs): #pylint: disable=arguments-differ
+        with use_params(self.super_net, params):
+            return self.forward(inputs, **kwargs)
 
     def named_parameters(self, *args, **kwargs): #pylint: disable=arguments-differ
         return self.super_net.named_parameters(*args, **kwargs)

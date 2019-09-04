@@ -69,6 +69,10 @@ class CandidateNet(nn.Module):
         pass
 
     @abc.abstractmethod
+    def _forward_with_params(self, *args, **kwargs): #pylint: disable=arguments-differ
+        pass
+
+    @abc.abstractmethod
     def get_device(self):
         """
         Get the device of the candidate net.
@@ -83,6 +87,15 @@ class CandidateNet(nn.Module):
             self.eval()
         else:
             raise Exception("Unrecognized mode: {}".format(mode))
+
+    def forward_with_params(self, inputs, params, mode=None, **kwargs):
+        """Forward the candidate net on the data, using the parameters specified in `params`.
+        Args:
+        Returns:
+            output of the last layer.
+        """
+        self._set_mode(mode)
+        return self._forward_with_params(inputs, params, **kwargs)
 
     def forward_data(self, inputs, targets=None, mode=None, **kwargs):
         """Forward the candidate net on the data.

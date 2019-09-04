@@ -25,7 +25,7 @@ def _convert_float(x):
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--save", "-s", required=True, help="save to path")
-parser.add_argument("--type", "-t", choices=["rnn", "cnn", "pgd_robustness"],
+parser.add_argument("--type", "-t", choices=["rnn", "cnn", "pgd_robustness", "cnn_oneshot_search"],
                     default="cnn", help="the type of logs")
 
 args, fnames = parser.parse_known_args()
@@ -48,6 +48,14 @@ elif args.type == "cnn": # cnn
     valid_pattern = re.compile("valid_acc ([0-9.]+) ; valid_obj ([0-9.]+)")
     valid_obj_names = ["acc", "loss"]
     valid_ylims = [(20, 80), None]
+elif args.type == "cnn_oneshot_search":
+    train_pattern = re.compile(r"\[evaluator update\][^\n]+loss: ([0-9.]+); acc: ([0-9.]+)")
+    train_obj_names = ["loss", "acc"]
+    train_ylims = [None, (0.1, 0.9)]
+    valid_pattern = re.compile(r"TEST[^\n]+ loss: ([0-9.]+) \(mean ([0-9.]+)\); "
+                               r"acc: ([0-9.]+) \(mean ([0-9.]+)\)")
+    valid_obj_names = ["loss", "mean_loss", "acc", "mean_acc"]
+    valid_ylims = [None, None, (0.1, 0.9), (0.1, 0.9)]
 elif args.type == "pgd_robustness":
     train_pattern = re.compile("train_acc ([0-9.]+) ; train_obj ([0-9.]+)")
     train_obj_names = ["acc", "loss"]
@@ -63,7 +71,7 @@ file_train_objs_list = []
 file_valid_objs_list = []
 for fname in fnames:
     label = os.path.basename(fname)
-    if label == "train.log":
+    if label in {"train.log", "search.log"}:
         label = os.path.basename(os.path.dirname(fname))
     if "." in fname:
         label = label.rsplit(".", 1)[0]
@@ -73,8 +81,10 @@ for fname in fnames:
     valid_objs = list(zip(*_convert_float(valid_pattern.findall(content))))
     assert len(train_objs) == len(train_obj_names) and len(train_objs[0]) > 0, \
         "maybe `--type` is not correctly set?"
-    assert len(valid_objs) == len(valid_obj_names) and len(valid_objs[0]) > 0, \
-        "maybe `--type` is not correctly set?"
+    if not valid_objs:
+        valid_objs = [tuple() for _ in range(len(valid_obj_names))]
+    # assert len(valid_objs) == len(valid_obj_names) and len(valid_objs[0]) > 0, \
+    #     "maybe `--type` is not correctly set?"
     file_train_objs_list.append(train_objs)
     file_valid_objs_list.append(valid_objs)
 
