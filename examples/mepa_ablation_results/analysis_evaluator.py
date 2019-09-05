@@ -364,11 +364,15 @@ if __name__ == "__main__":
     # print({n: len(accs) for n, accs in six.iteritems(accs_dct) if isinstance(accs, (list, tuple))})
 
     corrs_dct = {}
+    ignored_dueto_n = 0
     for n, accs in six.iteritems(accs_dct):
         if "surrogate" in n:
             continue
         if args.n:
             accs = accs[:args.n]
+            if len(accs) < args.n:
+                ignored_dueto_n += 1
+                continue
         if not (isinstance(accs, (list, tuple)) and accs):
             continue
         try:
@@ -380,12 +384,13 @@ if __name__ == "__main__":
         corrs_dct[n] = _corrs
 
     print("INFO: Total {} test results loaded".format(len(corrs_dct)))
+    if ignored_dueto_n > 0:
+        print("INFO: Ignored {} records because there are not {} derived accs in the value".format(ignored_dueto_n, args.n))
 
     for n, accs in six.iteritems(accs_dct):
-        if isinstance(accs, str):
+        if isinstance(accs, str) and accs in corrs_dct:
             corrs_dct[n] = corrs_dct[accs]
             accs_dct[n] = accs_dct[accs]
-
     # ---- end handle ----
 
     args.func(*[getattr(args, name) for name in args.param_names])

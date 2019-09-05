@@ -356,6 +356,7 @@ good-names=e,
 	   ss,
 	   C_in,
 	   C_out,
+	   T_max,
            _
 
 # Include a hint for the correct naming format with invalid-name

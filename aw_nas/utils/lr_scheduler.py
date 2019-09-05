@@ -1,3 +1,4 @@
+import math
 import numpy as np
 from torch.optim.lr_scheduler import _LRScheduler
 import torch.optim.lr_scheduler
@@ -89,7 +90,30 @@ class ExpDecay(_LRScheduler):
                     base_lr * self.gamma ** ((self.last_epoch - self.start_epoch) // self.every))
                 for base_lr in self.base_lrs]
 
+class WarmupCosineAnnealingLR(_LRScheduler):
+    def __init__(self, optimizer, T_max, warmup_epochs, eta_min=0, last_epoch=-1):
+        self.T_max = T_max
+        self.eta_min = eta_min
+        self.warmup_epochs = warmup_epochs
+        super(WarmupCosineAnnealingLR, self).__init__(optimizer, last_epoch)
+
+    def get_lr(self):
+        if self.last_epoch == 0:
+            return [0. for _ in self.base_lrs]
+        if self.last_epoch <= self.warmup_epochs:
+            return [lr * float(self.last_epoch) / self.warmup_epochs for lr in self.base_lrs]
+        last_epoch = self.last_epoch - self.warmup_epochs
+        if (last_epoch - 1 - self.T_max) % (2 * self.T_max) == 0:
+            return [group['lr'] + (base_lr - self.eta_min) *
+                    (1 - math.cos(math.pi / self.T_max)) / 2
+                    for base_lr, group in
+                    zip(self.base_lrs, self.optimizer.param_groups)]
+        return [(1 + math.cos(math.pi * last_epoch / self.T_max)) /
+                (1 + math.cos(math.pi * (last_epoch - 1) / self.T_max)) *
+                (group['lr'] - self.eta_min) + self.eta_min
+                for group in self.optimizer.param_groups]
+
 def get_scheduler_cls(type_):
-    if type_ in {"CosineWithRestarts", "ExpDecay"}:
+    if type_ in {"WarmupCosineAnnealingLR", "CosineWithRestarts", "ExpDecay"}:
         return globals()[type_]
     return getattr(torch.optim.lr_scheduler, type_)

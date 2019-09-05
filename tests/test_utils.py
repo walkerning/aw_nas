@@ -98,3 +98,18 @@ def test_tensor_scheduler():
     for i in range(8):
         scheduler.step(i)
         print(tensor.item())
+
+def test_warmup_cosine_lrscheduler():
+    import numpy as np
+    import torch
+    from torch import optim
+    from aw_nas.utils.lr_scheduler import WarmupCosineAnnealingLR
+
+    params = [torch.nn.Parameter(torch.zeros(2, 3))]
+    optimizer = optim.SGD(params, 0.01)
+    scheduler = WarmupCosineAnnealingLR(optimizer, warmup_epochs=10, T_max=10)
+    expected = list(np.arange(0, 0.01, 0.001))
+    for i in range(20):
+        scheduler.step(i)
+        print(scheduler.get_lr())
+        # assert scheduler.get_lr()[0] - expected[i] < 1e-6
