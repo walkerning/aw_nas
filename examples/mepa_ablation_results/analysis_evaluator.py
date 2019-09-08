@@ -96,7 +96,7 @@ def table_names(search_names, display_names="", lr="1e-2"):
         display_names = [n.replace("_", "-") for n in search_names]
     else:
         display_names = display_names.split(",")
-    search_names = [n + "_lr{}".format(lr) for n in search_names]
+    search_names = [n + ("_lr{}".format(lr) if lr else "") for n in search_names]
     _print_latex_table(control_var, search_names, display_names, caption)
 
 def table_epochs():

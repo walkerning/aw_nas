@@ -251,10 +251,10 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
         # do some checks
         expect(len(data_portion) == 3,
                "`data_portion` should have length 3.", ConfigException)
-        if self.mepa_surrogate_steps == 0 and self.controller_surrogate_steps == 0:
-            expect(data_portion[0] == 0,
-                   "Do not waste data, set the first element of `data_portion` to 0 "
-                   "when there are not surrogate steps.", ConfigException)
+        # if self.mepa_surrogate_steps == 0 and self.controller_surrogate_steps == 0:
+        #     expect(data_portion[0] == 0,
+        #            "Do not waste data, set the first element of `data_portion` to 0 "
+        #            "when there are not surrogate steps.", ConfigException)
         if mepa_as_surrogate:
             expect(data_portion[0] == 0,
                    "`mepa_as_surrogate` is set true, will use mepa valid data as surrogate data "

@@ -275,7 +275,7 @@ class TensorScheduler(_LRScheduler):
         return self.inner_scheduler.get_lr()
 
     def step(self, epoch=None):
-        super(TensorScheduler, self).step()
+        super(TensorScheduler, self).step(epoch)
         self.tensor[:] = self.get_lr()[0]
 
 def init_tensor_scheduler(tensor, cfg):
