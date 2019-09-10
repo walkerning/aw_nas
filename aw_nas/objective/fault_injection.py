@@ -85,7 +85,7 @@ class FaultInjector(object):
 
 class FaultInjectionObjective(BaseObjective):
     NAME = "fault_injection"
-    SCHEDULABLE_ATTRS = ["fault_reward_coeff", "fault_loss_coeff", "inject_prob", "gaussian_std"]
+    SCHEDULABLE_ATTRS = ["fault_reward_coeff", "fault_loss_coeff", "latency_reward_coeff", "inject_prob", "gaussian_std"]
 
     def __init__(self, search_space,
                  fault_modes="gaussian", gaussian_std=1., inject_prob=0.001, max_value_mode=True,
@@ -97,6 +97,7 @@ class FaultInjectionObjective(BaseObjective):
                  as_evaluator_regularization=False,
                  # reward
                  fault_reward_coeff=0.2,
+                 latency_reward_coeff=0.2,
                  schedule_cfg=None):
         super(FaultInjectionObjective, self).__init__(search_space, schedule_cfg)
         assert 0. <= fault_reward_coeff <= 1.
@@ -112,6 +113,7 @@ class FaultInjectionObjective(BaseObjective):
                    "By setting `as_controller_regularization` and `as_evaluator_regularization`.",
                    ConfigException)
         self.fault_reward_coeff = fault_reward_coeff
+        self.latency_reward_coeff = latency_reward_coeff
         self.inject_propto_flops = inject_propto_flops
         if self.inject_propto_flops:
             expect(fault_modes == "fixed",
@@ -145,19 +147,26 @@ class FaultInjectionObjective(BaseObjective):
         return ["image"]
 
     def perf_names(cls):
-        return ["acc_clean", "acc_fault"]
+        return ["acc_clean", "acc_fault", "flops"]
 
     def get_reward(self, inputs, outputs, targets, cand_net):
         perfs = self.get_perfs(inputs, outputs, targets, cand_net)
-        return perfs[0] * (1 - self.fault_reward_coeff) + perfs[1] * self.fault_reward_coeff
+        return perfs[0] * (1 - self.fault_reward_coeff) + perfs[1] * self.fault_reward_coeff + perfs[2] * self.latency_reward_coeff
 
     def get_perfs(self, inputs, outputs, targets, cand_net):
         """
         Get top-1 acc.
         """
         outputs_f = cand_net.forward_one_step_callback(inputs, callback=self.inject)
+        if hasattr(cand_net, "super_net"):
+            cand_net.super_net.reset_flops()
+        cand_net.forward(inputs)
+        flops = cand_net.super_net.total_flops if hasattr(cand_net, "super_net") else cand_net.total_flops
+        if hasattr(cand_net, "super_net"):
+            cand_net.super_net._flops_calculated = True
         return float(accuracy(outputs, targets)[0]) / 100, \
-            float(accuracy(outputs_f, targets)[0]) / 100
+            float(accuracy(outputs_f, targets)[0]) / 100, \
+            1 / (flops * 1e-8)
 
     def get_loss(self, inputs, outputs, targets, cand_net,
                  add_controller_regularization=True, add_evaluator_regularization=True):

@@ -11,6 +11,7 @@ import contextlib
 import six
 
 import torch
+from torch import nn
 
 from aw_nas.common import assert_rollout_type, group_and_sort_by_to_node
 from aw_nas.weights_manager.base import CandidateNet
@@ -37,6 +38,9 @@ class SubCandidateNet(CandidateNet):
         self.virtual_parameter_only = virtual_parameter_only
         self._cached_np = None
         self._cached_nb = None
+
+        self._flops_calculated = False
+        self.total_flops = 0
 
         self.genotypes = [g[1] for g in rollout.genotype_list()]
         self.genotypes_grouped = [group_and_sort_by_to_node(g[1]) for g in rollout.genotype_list() \
@@ -222,6 +226,31 @@ class SuperNet(SharedNet):
         self.candidate_cache_named_members = candidate_cache_named_members
         self.candidate_virtual_parameter_only = candidate_virtual_parameter_only
         self.candidate_eval_no_grad = candidate_eval_no_grad
+        self.set_hook()
+        self._flops_calculated = False
+        self.total_flops = 0
+
+    def reset_flops(self):
+        self._flops_calculated = False
+        self.total_flops = 0
+
+    def set_hook(self):
+        for name, module in self.named_modules():
+            if "auxiliary" in name:
+                continue
+            module.register_forward_hook(self._hook_intermediate_feature)
+
+    def _hook_intermediate_feature(self, module, inputs, outputs):
+        if not self._flops_calculated:
+            if isinstance(module, nn.Conv2d):
+                self.total_flops += inputs[0].size(1) * outputs.size(1) * \
+                                    module.kernel_size[0] * module.kernel_size[1] * \
+                                    inputs[0].size(2) * inputs[0].size(3) / \
+                                    (module.stride[0] * module.stride[1] * module.groups)
+            elif isinstance(module, nn.Linear):
+                self.total_flops += inputs[0].size(1) * outputs.size(1)
+        else:
+            pass
 
     def sub_named_members(self, genotypes,
                           prefix="", member="parameters", check_visited=False):

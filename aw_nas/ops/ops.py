@@ -102,7 +102,7 @@ class FactorizedReduce(nn.Module):
         # just specificy one conv module here, as only C_in, kernel_size, group is used
         # for inject prob calculation every output position, this will work even though
         # not so meaningful conceptually
-        self.last_conv_module = self.convs[-1]
+        object.__setattr__(self, "last_conv_module", self.convs[-1])
 
     def forward(self, x):
         x = self.relu(x)
