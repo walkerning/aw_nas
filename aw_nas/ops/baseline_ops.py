@@ -202,15 +202,21 @@ class ResNetBlock(nn.Module):
         return out, context
 
 register_primitive("mobilenet_block_3",
-                   lambda C, C_out, stride, affine: MobileNetBlock(2, C, C_out, stride, affine))
+                   lambda C, C_out, stride, affine: MobileNetBlock(3, C, C_out, stride, affine))
 register_primitive("mobilenet_block_3_5x5",
-                   lambda C, C_out, stride, affine: MobileNetBlock(2, C, C_out, stride, affine,
+                   lambda C, C_out, stride, affine: MobileNetBlock(3, C, C_out, stride, affine,
                                                                    kernel_size=5))
+register_primitive("mobilenet_block_3_7x7",
+                   lambda C, C_out, stride, affine: MobileNetBlock(3, C, C_out, stride, affine,
+                                                                   kernel_size=7))
 register_primitive("mobilenet_block_6",
                    lambda C, C_out, stride, affine: MobileNetBlock(6, C, C_out, stride, affine))
 register_primitive("mobilenet_block_6_5x5",
                    lambda C, C_out, stride, affine: MobileNetBlock(6, C, C_out, stride, affine,
                                                                    kernel_size=5))
+register_primitive("mobilenet_block_6_7x7",
+                   lambda C, C_out, stride, affine: MobileNetBlock(6, C, C_out, stride, affine,
+                                                                   kernel_size=7))
 register_primitive("mobilenet_block_1",
                    lambda C, C_out, stride, affine: MobileNetBlock(1, C, C_out, stride, affine))
 register_primitive("resnet_block",

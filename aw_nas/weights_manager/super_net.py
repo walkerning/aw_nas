@@ -247,6 +247,7 @@ class SuperNet(SharedNet):
                                     module.kernel_size[0] * module.kernel_size[1] * \
                                     inputs[0].size(2) * inputs[0].size(3) / \
                                     (module.stride[0] * module.stride[1] * module.groups)
+                print("ic {} oc {} kernel {} {} wh {} {} stride {} {} groups {} total {}".format(inputs[0].size(1), outputs.size(1), module.kernel_size[0], module.kernel_size[1], inputs[0].size(2), inputs[0].size(3), module.stride[0], module.stride[1], module.groups, self.total_flops))
             elif isinstance(module, nn.Linear):
                 self.total_flops += inputs[0].size(1) * outputs.size(1)
         else:

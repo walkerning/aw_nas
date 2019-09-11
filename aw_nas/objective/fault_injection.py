@@ -166,7 +166,7 @@ class FaultInjectionObjective(BaseObjective):
             cand_net.super_net._flops_calculated = True
         return float(accuracy(outputs, targets)[0]) / 100, \
             float(accuracy(outputs_f, targets)[0]) / 100, \
-            1 / (flops * 1e-8)
+            1 / max(flops * 1e-6 - 180, 20)
 
     def get_loss(self, inputs, outputs, targets, cand_net,
                  add_controller_regularization=True, add_evaluator_regularization=True):
