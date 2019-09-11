@@ -19,6 +19,9 @@ from aw_nas.utils.torch_utils import accuracy
 from aw_nas.objective.base import BaseObjective
 from aw_nas.utils.exception import expect, ConfigException
 
+def _get_average_meter_defaultdict():
+    return defaultdict(utils.AverageMeter)
+
 class FaultInjector(object):
     def __init__(self, gaussian_std=1., mode="fixed"):
         self.random_inject = 0.001
@@ -123,24 +126,7 @@ class FaultInjectionObjective(BaseObjective):
         self.cls_inject_prob_avg_meters = defaultdict(lambda: defaultdict(utils.AverageMeter))
 
         self.activation_fixed_bitwidth = activation_fixed_bitwidth
-        if self.activation_fixed_bitwidth:
-            import nics_fix_pt.nn_fix as nfp
-            self.thread_local = utils.LazyThreadLocal(creator_map={
-                "fix": lambda: nfp.Activation_fix(nf_fix_params={
-                    "activation": {
-                        # auto fix
-                        "method": torch.autograd.Variable(torch.IntTensor(np.array([1])),
-                                                          requires_grad=False),
-                        # not meaningful
-                        "scale": torch.autograd.Variable(torch.IntTensor(np.array([0])),
-                                                         requires_grad=False),
-                        "bitwidth": torch.autograd.Variable(torch.IntTensor(
-                            np.array([self.activation_fixed_bitwidth])),
-                                                            requires_grad=False)
-                    }
-                })
-            })
-        self.thread_lock = threading.Lock()
+        self._init_thread_local()
 
     @classmethod
     def supported_data_types(cls):
@@ -255,7 +241,7 @@ class FaultInjectionObjective(BaseObjective):
                                  "Mean: %.4f ; Geometric mean: %.4f", cls_name,
                                  num_pos, stats[0][1], stats[0][0], stats[-1][1], stats[-1][0],
                                  mean_prob, geomean_prob)
-            self.cls_inject_prob_avg_meters = defaultdict(lambda: defaultdict(utils.AverageMeter))
+            self.cls_inject_prob_avg_meters = defaultdict(_get_average_meter_defaultdict)
 
     @property
     def inject_prob(self):
@@ -272,3 +258,34 @@ class FaultInjectionObjective(BaseObjective):
     @gaussian_std.setter
     def gaussian_std(self, value):
         self.injector.set_gaussian_std(value)
+
+    def __getstate__(self):
+        state = super(FaultInjectionObjective, self).__getstate__()
+        del state["thread_lock"]
+        if "thread_local" in state:
+            del state["thread_local"]
+        return state
+
+    def __setstate__(self, state):
+        super(FaultInjectionObjective, self).__setstate__(state)
+        self._init_thread_local()
+
+    def _init_thread_local(self):
+        if self.activation_fixed_bitwidth:
+            import nics_fix_pt.nn_fix as nfp
+            self.thread_local = utils.LazyThreadLocal(creator_map={
+                "fix": lambda: nfp.Activation_fix(nf_fix_params={
+                    "activation": {
+                        # auto fix
+                        "method": torch.autograd.Variable(torch.IntTensor(np.array([1])),
+                                                          requires_grad=False),
+                        # not meaningful
+                        "scale": torch.autograd.Variable(torch.IntTensor(np.array([0])),
+                                                         requires_grad=False),
+                        "bitwidth": torch.autograd.Variable(torch.IntTensor(
+                            np.array([self.activation_fixed_bitwidth])),
+                                                            requires_grad=False)
+                    }
+                })
+            })
+        self.thread_lock = threading.Lock()

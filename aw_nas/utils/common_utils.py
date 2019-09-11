@@ -148,7 +148,7 @@ class Ticker(object):
         cur_time = time.time()
         if self.cur_time is not None:
             elapsed = cur_time - self.cur_time
-            self.logger.debug("Ticker %s: %s: %.3f s", self.name, message, elapsed)
+            self.logger.debug("Ticker %s: %s: %.6f s", self.name, message, elapsed)
             self.total_time += elapsed
         self.cur_time = cur_time
 
