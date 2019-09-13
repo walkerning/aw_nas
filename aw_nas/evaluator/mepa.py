@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+import math
 from functools import partial
 from collections import defaultdict, OrderedDict
 
@@ -27,17 +28,23 @@ def _summary_inner_diagnostics(t_accs, t_losses, v_accs, v_losses):
     return t_acc_diffs, t_loss_diffs, v_acc_diffs, v_loss_diffs
 
 class LearnableLrOutPlaceSGD(Component, nn.Module):
-    def __init__(self, named_params, init_learning_rate, device,
-                 num_inner_steps, learnable_lr=False,
+    def __init__(self, named_params, init_learning_rate, device, num_inner_steps,
+                 learnable_lr=False, adam_beta=None, amsgrad=False, adam_eps=1e-8,
                  base_schedule_cfg=None, optimizer_cfg=None, scheduler_cfg=None,
                  max_grad_norm=None):
         nn.Module.__init__(self)
         Component.__init__(self, schedule_cfg=None)
         assert init_learning_rate > 0., 'learning_rate should be positive.'
+        expect(isinstance(adam_beta, (list, tuple)) and len(adam_beta) == 2,
+               "Bad `betas` specification for Adam optimizer")
 
+        self.device = device
         self.base_lr = torch.ones(1, device=device) * init_learning_rate
         self.num_inner_steps = num_inner_steps
         self.learnable_lr = learnable_lr
+        self.adam_beta = adam_beta
+        self.amsgrad = amsgrad
+        self.adam_eps = adam_eps
         self.max_grad_norm = max_grad_norm
 
         if learnable_lr:
@@ -46,6 +53,27 @@ class LearnableLrOutPlaceSGD(Component, nn.Module):
                 self.named_log_lrs[key.replace(".", "-")] = nn.Parameter(
                     data=torch.zeros(self.num_inner_steps),
                     requires_grad=self.learnable_lr)
+        if adam_beta:
+            self.adam_beta_tensor = torch.tensor(adam_beta).to(device)
+            self.logger.info("Use adam optimizer: betas: %s; eps: %e; amsgrad: %s",
+                             adam_beta, adam_eps, amsgrad)
+            self.named_exp_avg = {}
+            self.named_exp_avg_sq = {}
+            self.named_steps = {}
+            if amsgrad:
+                self.named_max_exp_avg_sq = {}
+            for key, param in six.iteritems(named_params):
+                key = key.replace(".", "-")
+                self.named_exp_avg[key] = torch.zeros_like(param.data)
+                self.named_exp_avg_sq[key] = torch.zeros_like(param.data)
+                self.named_steps[key] = torch.zeros([1], device=device)
+                self.register_buffer("adam_exp_avg_" + key, self.named_exp_avg[key])
+                self.register_buffer("adam_exp_avg_sq_" + key, self.named_exp_avg_sq[key])
+                self.register_buffer("adam_steps_" + key, self.named_steps[key])
+                if amsgrad:
+                    self.named_max_exp_avg_sq[key] = torch.zeros_like(param.data)
+                    self.register_buffer(
+                        "adam_max_exp_avg_sq_" + key, self.named_max_exp_avg_sq[key])
 
         self.base_schedule_cfg = base_schedule_cfg
         # init scheduler for `self.base_lr`
@@ -72,12 +100,37 @@ class LearnableLrOutPlaceSGD(Component, nn.Module):
         named_grads = dict(zip(names, grads))
         new_named_weights = dict()
         for n in named_weights:
-            if named_grads.get(n, None) is not None:
-                new_named_weights[n] = named_weights[n] - named_grads[n] * \
-                                       ((self.base_lr * \
-                                         torch.exp(
-                                             self.named_log_lrs[n.replace(".", "-")][idx_step])) \
-                                        if self.learnable_lr else self.base_lr)
+            grad = named_grads.get(n, None)
+            key = n.replace(".", "-")
+            if grad is not None:
+                lr = (self.base_lr * torch.exp(self.named_log_lrs[key][idx_step])) \
+                     if self.learnable_lr else self.base_lr
+                if not self.adam_beta:
+                    # SGD
+                    new_named_weights[n] = named_weights[n] - grad * lr
+                else:
+                    # Adam
+                    beta1, beta2 = self.adam_beta_tensor
+                    self.named_steps[key] += 1
+                    exp_avg, exp_avg_sq = self.named_exp_avg[key], self.named_exp_avg_sq[key]
+                    exp_avg.mul_(beta1).add_(1 - beta1, grad)
+                    exp_avg_sq.mul_(beta2).addcmul_(1 - beta2, grad, grad)
+                    if self.amsgrad:
+                        # Maintains the maximum of all 2nd moment running avg. till now
+                        max_exp_avg_sq = self.named_max_exp_avg_sq[key]
+                        torch.max(max_exp_avg_sq, exp_avg_sq, out=max_exp_avg_sq)
+                        # Use the max. for normalizing running avg. of gradient
+                        denom = max_exp_avg_sq.sqrt().add_(self.adam_eps)
+                    else:
+                        denom = exp_avg_sq.sqrt().add_(self.adam_eps)
+                    bias_correction1 = 1 - beta1 ** self.named_steps[key]
+                    bias_correction2 = 1 - beta2 ** self.named_steps[key]
+                    step_size = lr * math.sqrt(bias_correction2) / bias_correction1
+                    if self.learnable_lr:
+                        new_named_weights[n] = named_weights[n] - step_size * exp_avg / denom
+                    else:
+                        new_named_weights[n] = named_weights[n].addcdiv(
+                            -step_size.item(), exp_avg, denom)
             else:
                 new_named_weights[n] = named_weights[n]
         return new_named_weights
@@ -196,9 +249,9 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
                    self.weights_manager.rollout_type), ConfigException)
         # only maml plus mode support `learn_per_weight_step_lr` and `high_order` config
         if use_maml_plus:
-            expect(surrogate_optimizer is not None and surrogate_optimizer["type"] == "SGD",
-                   "maml plus mode use SGD surrogate optimizer no matter what, "
-                   "so, current `surrogate_optimizer` config will not have effects",
+            expect(surrogate_optimizer is not None and
+                   surrogate_optimizer["type"] in {"SGD", "Adam"},
+                   "maml plus mode only support SGD/Adam surrogate optimizer",
                    ConfigException)
         else:
             expect(not (learn_per_weight_step_lr or high_order or use_multi_step_loss or
@@ -290,6 +343,13 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
 
         # initialize the optimizers and schedulers
         if self.use_maml_plus:
+            adam_args = {}
+            if surrogate_optimizer["type"] == "Adam":
+                adam_args = {k: v for k, v in {
+                    "adam_beta": surrogate_optimizer["betas"],
+                    "adam_eps": surrogate_optimizer.get("eps", None),
+                    "amsgrad": surrogate_optimizer.get("amsgrad", None)
+                }.items() if v is not None}
             self.surrogate_optimizer = LearnableLrOutPlaceSGD(
                 OrderedDict(self.weights_manager.named_parameters()),
                 init_learning_rate=surrogate_optimizer["lr"],
@@ -299,7 +359,8 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
                 max_grad_norm=5.0,
                 base_schedule_cfg=surrogate_scheduler,
                 optimizer_cfg=surrogate_lr_optimizer,
-                scheduler_cfg=surrogate_lr_scheduler)
+                scheduler_cfg=surrogate_lr_scheduler,
+                **adam_args)
             self.surrogate_lr_optimizer = self.surrogate_optimizer.optimizer
             self.surrogate_lr_scheduler = self.surrogate_optimizer.scheduler
             self.surrogate_scheduler = self.surrogate_optimizer.base_scheduler
@@ -508,10 +569,10 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
                     # alter parameters other than the ones used by a candidate net due to
                     # non-zeroed grads, these changes will not affect the calculation of
                     # the candidate net as the parameters are **not** used and the changes
-                    # are reset  once surrogate steps for a candidate net are done
+                    # are reset once surrogate steps for a candidate net are done
                     pass
                 # return gradients if not update in-place
-                # here, use loop variable as closure/cell var, this is goodn for now,
+                # here, use loop variable as closure/cell var, this is good for now,
                 # as all samples are evaluated sequentially (no parallel/delayed eval)
                 gradient_func = lambda: cand_net.gradient(
                     mepa_data,
