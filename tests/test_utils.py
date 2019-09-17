@@ -113,3 +113,10 @@ def test_warmup_cosine_lrscheduler():
         scheduler.step(i)
         print(scheduler.get_lr())
         # assert scheduler.get_lr()[0] - expected[i] < 1e-6
+
+    print("2")
+    optimizer = optim.SGD(params, 0.01)
+    scheduler = WarmupCosineAnnealingLR(optimizer, warmup_epochs=10, every=10, T_max=10)
+    for i in range(20):
+        scheduler.step(i)
+        print(scheduler.get_lr())

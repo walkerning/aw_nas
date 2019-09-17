@@ -14,18 +14,29 @@ from aw_nas.base import Component
 from aw_nas.evaluator.base import BaseEvaluator
 from aw_nas.utils.exception import expect, ConfigException
 
-def _summary_inner_diagnostics(t_accs, t_losses, v_accs, v_losses):
+def _summary_inner_diagnostics(t_accs, t_losses, v_accs, v_losses, c_accs=None, c_losses=None):
     # different inner step is not supported now
     steps = len(t_accs[0])
     t_accs = np.array(t_accs).reshape((-1, steps, 2))
+    t_acc_bases = t_accs[:, :, 0]
     t_acc_diffs = t_accs[:, :, 1] - t_accs[:, :, 0]
     t_losses = np.array(t_losses).reshape((-1, steps, 2))
     t_loss_diffs = t_losses[:, :, 1] - t_losses[:, :, 0]
+
     v_accs = np.array(v_accs).reshape((-1, steps + 1))
+    v_acc_bases = v_accs[:, 0]
     v_losses = np.array(v_losses).reshape((-1, steps + 1))
     v_acc_diffs = v_accs[:, 1:] - v_accs[:, 0:1]
     v_loss_diffs = v_losses[:, 1:] - v_losses[:, 0:1]
-    return t_acc_diffs, t_loss_diffs, v_acc_diffs, v_loss_diffs
+    if c_accs is not None and c_accs:
+        c_accs = np.array(c_accs).reshape((-1, steps + 1))
+        c_acc_bases = v_accs[:, 0]
+        c_losses = np.array(c_losses).reshape((-1, steps + 1))
+        c_acc_diffs = c_accs[:, 1:] - c_accs[:, 0:1]
+        c_loss_diffs = c_losses[:, 1:] - c_losses[:, 0:1]
+        return [t_acc_diffs, t_loss_diffs, v_acc_diffs, v_loss_diffs, c_acc_diffs, c_loss_diffs],\
+            [t_acc_bases, v_acc_bases, c_acc_bases]
+    return [t_acc_diffs, t_loss_diffs, v_acc_diffs, v_loss_diffs], [t_acc_bases, v_acc_bases]
 
 class LearnableLrOutPlaceSGD(Component, nn.Module):
     def __init__(self, named_params, init_learning_rate, device, num_inner_steps,
@@ -35,8 +46,9 @@ class LearnableLrOutPlaceSGD(Component, nn.Module):
         nn.Module.__init__(self)
         Component.__init__(self, schedule_cfg=None)
         assert init_learning_rate > 0., 'learning_rate should be positive.'
-        expect(isinstance(adam_beta, (list, tuple)) and len(adam_beta) == 2,
-               "Bad `betas` specification for Adam optimizer")
+        if adam_beta is not None:
+            expect(isinstance(adam_beta, (list, tuple)) and len(adam_beta) == 2,
+                   "Bad `betas` specification for Adam optimizer")
 
         self.device = device
         self.base_lr = torch.ones(1, device=device) * init_learning_rate
@@ -222,8 +234,10 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
             learn_per_weight_step_lr=False,
             use_multi_step_loss=False,
             multi_step_loss_epochs=10,
+            multi_step_loss_start=None,
             surrogate_lr_optimizer=None, surrogate_lr_scheduler=None,
             report_inner_diagnostics=False,
+            report_cont_data_diagnostics=False,
             update_mepa_surrogate_steps=None,
             # mepa samples for `update_evaluator`
             mepa_samples=1,
@@ -293,6 +307,11 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
             expect(report_inner_diagnostics, "specify`update_mepa_surrogate_steps`"
                    "without `report_inner_diagnostics`==true is meaningless for now",
                    ConfigException)
+        if multi_step_loss_start is not None:
+            assert len(multi_step_loss_start) == self.update_mepa_surrogate_steps + 1
+            multi_step_loss_start = np.array(multi_step_loss_start)
+
+        # random mepa_surrogate_steps
         if not isinstance(self.mepa_surrogate_steps, int):
             if isinstance(self.mepa_surrogate_steps, str):
                 self.mepa_surrogate_steps = tuple(eval(self.mepa_surrogate_steps)) #pylint: disable=eval-used
@@ -315,6 +334,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
         self.learn_per_weight_step_lr = learn_per_weight_step_lr
         self.use_multi_step_loss = use_multi_step_loss
         self.multi_step_loss_epochs = multi_step_loss_epochs
+        self.multi_step_loss_start = multi_step_loss_start
         self.use_same_surrogate_data = use_same_surrogate_data
         self.mepa_as_surrogate = mepa_as_surrogate
         self.mepa_samples = mepa_samples
@@ -324,6 +344,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
         self.load_scheduler = load_scheduler
         self.strict_load_weights_manager = strict_load_weights_manager
         self.report_inner_diagnostics = report_inner_diagnostics
+        self.report_cont_data_diagnostics = report_cont_data_diagnostics
 
         # rnn specific configs
         self.bptt_steps = bptt_steps
@@ -404,10 +425,13 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
         # diagnostics
         if self.report_inner_diagnostics:
             self.diag_all_ranges = []
+            self.diag_all_ranges_base = []
             self.diag_all_inner_t_accs = []
             self.diag_all_inner_t_losses = []
             self.diag_all_inner_v_accs = []
             self.diag_all_inner_v_losses = []
+            self.diag_all_inner_c_accs = []
+            self.diag_all_inner_c_losses = []
 
     # ---- APIs ----
     @classmethod
@@ -542,6 +566,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
 
         if self.use_same_surrogate_data:
             surrogate_data_list = [next(self.surrogate_queue) for _ in range(num_surrogate_step)]
+        holdout_data = next(self.controller_queue) if self.report_cont_data_diagnostics else None
 
         for _ in range(self.mepa_samples):
             # surrogate data iterator
@@ -596,7 +621,8 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
             else: # use_maml_plus
                 gradients, opt_gradients, res = self._get_maml_plus_gradient(
                     cand_net, num_surrogate_step, train_iter=surrogate_iter,
-                    val_data=mepa_data, eval_criterions=eval_criterions)
+                    val_data=mepa_data, eval_criterions=eval_criterions,
+                    holdout_data=holdout_data)
                 for n, g_v in gradients:
                     all_gradients[n] += g_v
                     counts[n] += 1
@@ -644,6 +670,11 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
         else:
             self._scheduler_step(self.step, log=True)
 
+        if self.use_multi_step_loss:
+            self.logger.info(
+                "multi step loss: %s",
+                self._get_multi_step_loss_weights(self.update_mepa_surrogate_steps))
+
     def on_epoch_end(self, epoch):
         super(MepaEvaluator, self).on_epoch_end(epoch)
         self.weights_manager.on_epoch_end(epoch)
@@ -663,29 +694,52 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
 
         # report and reset inner diagonostics
         if self.report_inner_diagnostics:
-            diags = np.array([np.quantile(diffs, [0, 0.5, 1.0], axis=0) for diffs in
-                              _summary_inner_diagnostics(
-                                  self.diag_all_inner_t_accs,
-                                  self.diag_all_inner_t_losses,
-                                  self.diag_all_inner_v_accs,
-                                  self.diag_all_inner_v_losses
-                              )]) # 4x3xstep
-            self.diag_all_ranges.append(diags)
+            perf_diffs, perf_bases = _summary_inner_diagnostics(
+                self.diag_all_inner_t_accs,
+                self.diag_all_inner_t_losses,
+                self.diag_all_inner_v_accs,
+                self.diag_all_inner_v_losses,
+                self.diag_all_inner_c_accs,
+                self.diag_all_inner_c_losses
+            )
+            diags = np.array([np.quantile(diffs, [0, 0.5, 1.0], axis=0) for diffs in perf_diffs])
+            diags_base = [np.quantile(perf_base, [0, 0.5, 1.0], axis=0) for perf_base in perf_bases]
+            self.diag_all_ranges.append(diags) # 4/6 x 3 x step
+            self.diag_all_ranges_base.append(diags_base) # 4/6 x 3 x step
+
             str_ = ""
-            for name, diag in zip(["train data acc", "train data loss",
-                                   "valid data acc", "valid data loss"], diags):
+            # diagnostics of base accs
+            db_t = diags_base[0]
+            str_ += "\t{:16}: {}".format(
+                "train base acc", ", ".join([
+                    "{:7.3f}+-{:6.3f}".format(db_t[1, step], db_t[1, step] - db_t[0, step])
+                    for step in range(db_t.shape[1])]))
+            str_ += "\n\t{:16}: {:7.3f}+-{:6.3f}".format(
+                "valid base acc", diags_base[1][1], diags_base[1][1] - diags_base[1][0])
+            if self.report_cont_data_diagnostics:
+                str_ += "\n\t{:16}: {:7.3f}+-{:6.3f}".format(
+                    "cont base acc", diags_base[2][1], diags_base[2][1] - diags_base[2][0])
+            str_ += "\n"
+
+            # diagnostics of diffs of each inner step
+            for name, diag in zip(["train diff acc", "train diff loss",
+                                   "valid diff acc", "valid diff loss",
+                                   "cont diff acc", "cont diff loss"], diags):
                 str_ += "\t{:16}: ".format(name)
                 for step in range(diag.shape[1]):
-                    str_ += "{:.3f}+-{:.3f}".format(diag[1, step], diag[1, step] - diag[0, step])
+                    str_ += "{:7.3f}+-{:6.3f}".format(diag[1, step], diag[1, step] - diag[0, step])
                     if step < diag.shape[1] - 1:
                         str_ += ", "
                 str_ += "\n"
+
             self.logger.info("inner step diagnostics:\n%s", str_)
             # reset inner loop diagnostics every epoch
             self.diag_all_inner_t_accs = []
             self.diag_all_inner_t_losses = []
             self.diag_all_inner_v_accs = []
             self.diag_all_inner_v_losses = []
+            self.diag_all_inner_c_accs = []
+            self.diag_all_inner_c_losses = []
 
     def save(self, path):
         optimizer_states = {}
@@ -741,17 +795,16 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
 
     # ---- helper methods ----
     def _get_multi_step_loss_weights(self, surrogate_steps):
+        decay_step = self.epoch - 1
         num_w = surrogate_steps + 1
-        loss_weights = np.ones(shape=(num_w,)) * 1.0 / num_w
-        decay_rate = 1.0 / num_w / self.multi_step_loss_epochs
-        min_value_non_final = 0.03 / num_w
+        loss_weights = self.multi_step_loss_start.copy() if self.multi_step_loss_start is not None \
+                       else np.ones(shape=(num_w,)) * 1.0 / num_w
+        min_value_non_final = 0.03 / (num_w - 1)
+        decay_rate = (loss_weights[:-1] - min_value_non_final) / self.multi_step_loss_epochs
         for i in range(num_w - 1):
-            loss_weights[i] = np.maximum(loss_weights[i] - self.epoch * decay_rate,
+            loss_weights[i] = np.maximum(loss_weights[i] - decay_step * decay_rate[i],
                                          min_value_non_final)
-
-        loss_weights[-1] = np.minimum(
-            loss_weights[-1] + (self.epoch * (num_w - 1) * decay_rate),
-            1.0 - ((num_w - 1) * min_value_non_final))
+        loss_weights[-1] = 1 - np.sum(loss_weights[:-1])
 
         loss_weights = torch.Tensor(loss_weights).to(device=self.weights_manager.device)
         return loss_weights
@@ -770,7 +823,11 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
         return loss, acc
 
     def _get_maml_plus_gradient(self, cand_net, surrogate_steps, train_iter, val_data,
-                                eval_criterions=None):
+                                eval_criterions=None, holdout_data=None):
+        if holdout_data is not None:
+            holdout_data = (holdout_data[0].to(cand_net.get_device()),
+                            holdout_data[1].to(cand_net.get_device()))
+
         criterion = partial(self._mepa_loss_func, cand_net=cand_net)
         if hasattr(cand_net, "active_named_members"):
             # only get the active named parameters, other parameters
@@ -779,8 +836,9 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
                 member="parameters", check_visited=True))
         else:
             detached_copy_params = dict(cand_net.named_parameters())
-        multi_step_loss_weights = self._get_multi_step_loss_weights(
-            self.update_mepa_surrogate_steps)
+        if self.use_multi_step_loss:
+            multi_step_loss_weights = self._get_multi_step_loss_weights(
+                self.update_mepa_surrogate_steps)
         multi_step_losses = []
         use_multi_step_loss = self.use_multi_step_loss and self.epoch < self.multi_step_loss_epochs
 
@@ -790,6 +848,9 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
             diag_inner_t_losses = []
             diag_inner_v_accs = []
             diag_inner_v_losses = []
+            if holdout_data is not None:
+                diag_inner_c_accs = []
+                diag_inner_c_losses = []
 
         if self.update_mepa_surrogate_steps == 0 or self.use_multi_step_loss or \
            self.report_inner_diagnostics:
@@ -813,6 +874,12 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
                 # acc/loss on valid data before inner steps
                 diag_inner_v_accs.append(val_acc_start)
                 diag_inner_v_losses.append(val_loss_start)
+                if self.report_cont_data_diagnostics:
+                    c_loss_start, c_acc_start = self._candnet_perf_use_param(
+                        cand_net, detached_copy_params, holdout_data, criterion, self.c_hid_kwargs)
+                    c_loss_start, c_acc_start = c_loss_start.item(), c_acc_start.item()
+                    diag_inner_c_accs.append(c_acc_start)
+                    diag_inner_c_losses.append(c_loss_start)
 
         for i_step in range(surrogate_steps):
             train_data = next(train_iter)
@@ -858,6 +925,13 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
                 if self.report_inner_diagnostics:
                     diag_inner_v_losses.append(val_loss)
                     diag_inner_v_accs.append(val_acc)
+                    if self.report_cont_data_diagnostics:
+                        c_loss, c_acc = self._candnet_perf_use_param(
+                            cand_net, detached_copy_params, holdout_data, criterion,
+                            self.c_hid_kwargs)
+                        c_loss, c_acc = c_loss.item(), c_acc.item()
+                        diag_inner_c_accs.append(c_acc)
+                        diag_inner_c_losses.append(c_loss)
 
         if self.report_inner_diagnostics:
             # save diagnostics for furthur handling/reporting
@@ -865,6 +939,9 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
             self.diag_all_inner_t_losses.append(diag_inner_t_losses)
             self.diag_all_inner_v_accs.append(diag_inner_v_accs)
             self.diag_all_inner_v_losses.append(diag_inner_v_losses)
+            if self.report_cont_data_diagnostics:
+                self.diag_all_inner_c_accs.append(diag_inner_c_accs)
+                self.diag_all_inner_c_losses.append(diag_inner_c_losses)
 
         # backward the maml loss
         maml_loss = torch.sum(torch.stack(multi_step_losses))

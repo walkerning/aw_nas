@@ -91,17 +91,20 @@ class ExpDecay(_LRScheduler):
                 for base_lr in self.base_lrs]
 
 class WarmupCosineAnnealingLR(_LRScheduler):
-    def __init__(self, optimizer, T_max, warmup_epochs, eta_min=0, last_epoch=-1):
+    def __init__(self, optimizer, T_max, warmup_epochs, every=1, eta_min=0, last_epoch=-1):
         self.T_max = T_max
         self.eta_min = eta_min
         self.warmup_epochs = warmup_epochs
+        self.every = every
+        self.warmup_steps = int(self.warmup_epochs / self.every)
         super(WarmupCosineAnnealingLR, self).__init__(optimizer, last_epoch)
 
     def get_lr(self):
         if self.last_epoch == 0:
             return [0. for _ in self.base_lrs]
         if self.last_epoch <= self.warmup_epochs:
-            return [lr * float(self.last_epoch) / self.warmup_epochs for lr in self.base_lrs]
+            return [lr * float(int(self.last_epoch / self.every)) / self.warmup_steps
+                    for lr in self.base_lrs]
         last_epoch = self.last_epoch - self.warmup_epochs
         if (last_epoch - 1 - self.T_max) % (2 * self.T_max) == 0:
             return [group['lr'] + (base_lr - self.eta_min) *

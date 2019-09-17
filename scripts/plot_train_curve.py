@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-python plot_train_curves.py -s <file to save image> <log file1> <log file2> ...
+python plot_train_curves.py --type <log file type> -s <file to save image> <log file1> <...>
 
 The corresponding legend label will be set to the basename of the log file.
 """
