@@ -100,7 +100,8 @@ class FaultInjectionObjective(BaseObjective):
                  as_evaluator_regularization=False,
                  # reward
                  fault_reward_coeff=0.2,
-                 latency_reward_coeff=0.2,
+                 latency_reward_coeff=0.,
+                 calc_latency=True,
                  schedule_cfg=None):
         super(FaultInjectionObjective, self).__init__(search_space, schedule_cfg)
         assert 0. <= fault_reward_coeff <= 1.
@@ -117,6 +118,11 @@ class FaultInjectionObjective(BaseObjective):
                    ConfigException)
         self.fault_reward_coeff = fault_reward_coeff
         self.latency_reward_coeff = latency_reward_coeff
+        self.calc_latency = calc_latency
+        if not self.calc_latency:
+            expect(latency_reward_coeff == 0,
+                   "`latency_reward_coeff` must equal 0 when latency is not calculated",
+                   ConfigException)
         self.inject_propto_flops = inject_propto_flops
         if self.inject_propto_flops:
             expect(fault_modes == "fixed",
@@ -137,6 +143,8 @@ class FaultInjectionObjective(BaseObjective):
 
     def get_reward(self, inputs, outputs, targets, cand_net):
         perfs = self.get_perfs(inputs, outputs, targets, cand_net)
+        if not self.calc_latency:
+            return perfs[0] * (1 - self.fault_reward_coeff) + perfs[1] * self.fault_reward_coeff
         return perfs[0] * (1 - self.fault_reward_coeff) + perfs[1] * self.fault_reward_coeff + perfs[2] * self.latency_reward_coeff
 
     def get_perfs(self, inputs, outputs, targets, cand_net):
@@ -146,13 +154,20 @@ class FaultInjectionObjective(BaseObjective):
         outputs_f = cand_net.forward_one_step_callback(inputs, callback=self.inject)
         if hasattr(cand_net, "super_net"):
             cand_net.super_net.reset_flops()
-        cand_net.forward(inputs)
-        flops = cand_net.super_net.total_flops if hasattr(cand_net, "super_net") else cand_net.total_flops
-        if hasattr(cand_net, "super_net"):
-            cand_net.super_net._flops_calculated = True
+        if self.calc_latency:
+            cand_net.forward(inputs)
+            if isinstance(cand_net, nn.DataParallel):
+                flops = cand_net.module.total_flops
+            else:
+                flops = cand_net.super_net.total_flops if hasattr(cand_net, "super_net") else \
+                        cand_net.total_flops
+            if hasattr(cand_net, "super_net"):
+                cand_net.super_net._flops_calculated = True
+            return float(accuracy(outputs, targets)[0]) / 100, \
+                float(accuracy(outputs_f, targets)[0]) / 100, \
+                1 / max(flops * 1e-6 - 180, 20)
         return float(accuracy(outputs, targets)[0]) / 100, \
             float(accuracy(outputs_f, targets)[0]) / 100, \
-            1 / max(flops * 1e-6 - 180, 20)
 
     def get_loss(self, inputs, outputs, targets, cand_net,
                  add_controller_regularization=True, add_evaluator_regularization=True):

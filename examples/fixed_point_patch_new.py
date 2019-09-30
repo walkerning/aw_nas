@@ -79,8 +79,8 @@ def fix_params(module, original=False):
         for mod_prefix, mod in module.named_modules():
             if isinstance(mod, (nn.Conv2d, nn.Linear)):
                 to_fix = ["weight", "bias"]
-            elif isinstance(mod, nn.BatchNorm2d):
-                to_fix = ["weight", "bias", "running_mean", "running_var"]
+            # elif isinstance(mod, nn.BatchNorm2d):
+            #     to_fix = ["weight", "bias", "running_mean", "running_var"]
             else:
                 to_fix = []
             if to_fix:

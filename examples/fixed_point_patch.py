@@ -49,5 +49,6 @@ class FixedBatchNorm2d(nfp.BatchNorm2d_fix):
         super(FixedBatchNorm2d, self).__init__(*args, **kwargs)
 
 nn.Conv2d = FixedConv
-nn.BatchNorm2d = FixedBatchNorm2d
+# nn.BatchNorm2d = FixedBatchNorm2d
 nn.Linear = FixedLinear
+print("fixed-point patching nn.Conv2d, nn.Linear") #, nn.BatchNorm2d")

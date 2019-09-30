@@ -25,8 +25,10 @@ def _convert_float(x):
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--save", "-s", required=True, help="save to path")
-parser.add_argument("--type", "-t", choices=["rnn", "cnn", "pgd_robustness", "cnn_oneshot_search"],
+parser.add_argument("--type", "-t", choices=["rnn", "cnn", "pgd_robustness", "cnn_oneshot_search", "ftt"],
                     default="cnn", help="the type of logs")
+parser.add_argument("--simplify", action="store_true", help="try to simplify the legend names using "
+                    "the different part in the label")
 
 args, fnames = parser.parse_known_args()
 
@@ -64,6 +66,14 @@ elif args.type == "pgd_robustness":
                                "valid performances: acc_clean: ([0-9.]+); acc_adv: ([0-9.]+)")
     valid_obj_names = ["acc", "loss", "acc_clean", "acc_adv"]
     valid_ylims = [(30, 100), None, (0.3, 1.0), (0.3, 1.0)]
+elif args.type == "ftt":
+    train_pattern = re.compile("train_acc ([0-9.]+) ; train_obj ([0-9.]+)")
+    train_obj_names = ["acc", "loss"]
+    train_ylims = [(20, 100), None]
+    valid_pattern = re.compile("valid_acc ([0-9.]+) ; valid_obj ([0-9.]+) ; "
+                               "valid performances: acc_clean: ([0-9.]+); acc_fault: ([0-9.]+)")
+    valid_obj_names = ["acc", "loss", "acc_clean", "acc_fault"]
+    valid_ylims = [(20, 100), None, (0.2, 1.0), (0.2, 1.0)]
 
 ## --- parse logs ---
 labels = []
@@ -88,12 +98,15 @@ for fname in fnames:
     file_train_objs_list.append(train_objs)
     file_valid_objs_list.append(valid_objs)
 
-bans = [set(l.split("_")) for l in labels]
-_inds = {n: i for i, n in enumerate(labels[0].split("_"))}
-common_ban = reduce(lambda s1, s2: s1.intersection(s2), bans, bans[0])
-common_label = "_".join(sorted(common_ban, key=lambda b: _inds[b]))
-labels = [" ".join(sorted(list(s.difference(common_ban)))) for s in bans]
-labels = [fill(l, 20) if l else "--" for l in labels]
+if args.simplify:
+    bans = [set(l.split("_")) for l in labels]
+    _inds = {n: i for i, n in enumerate(labels[0].split("_"))}
+    common_ban = reduce(lambda s1, s2: s1.intersection(s2), bans, bans[0])
+    common_label = "_".join(sorted(common_ban, key=lambda b: _inds[b]))
+    labels = [" ".join(sorted(list(s.difference(common_ban)))) for s in bans]
+    labels = [fill(l, 20) if l else "--" for l in labels]
+else:
+    common_label = ""
 
 ## --- plot ---
 num_train_objs = len(train_obj_names)
