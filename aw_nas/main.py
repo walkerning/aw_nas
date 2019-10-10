@@ -242,6 +242,73 @@ def _dump(rollout, dump_mode, of):
     else:
         raise Exception("Unexpected dump_mode: {}".format(dump_mode))
 
+@main.command(help="Random sample architectures.")
+@click.argument("cfg_file", required=True, type=str)
+@click.option("-o", "--out-file", required=True, type=str,
+              help="the file to write the derived genotypes to")
+@click.option("-n", default=1, type=int,
+              help="number of architectures to derive")
+@click.option("--gpu", default=0, type=int,
+              help="the gpu to run deriving on")
+@click.option("--seed", default=None, type=int,
+              help="the random seed to run training")
+@click.option("--dump-mode", default="str", type=click.Choice(["list", "str"]))
+@click.option("--unique", default=False, type=bool, is_flag=True,
+              help="make sure rollout samples are unique")
+def random_sample(cfg_file, out_file, n, gpu, seed, dump_mode, unique):
+    LOGGER.info("CWD: %s", os.getcwd())
+    LOGGER.info("CMD: %s", " ".join(sys.argv))
+
+    setproctitle.setproctitle("awnas-random-sample cfg: {}; cwd: {}".format(cfg_file, os.getcwd()))
+
+    # set gpu
+    _set_gpu(gpu)
+    device = torch.device("cuda:{}".format(gpu) if torch.cuda.is_available() else "cpu")
+
+    # set seed
+    if seed is not None:
+        LOGGER.info("Setting random seed: %d.", seed)
+        np.random.seed(seed)
+        random.seed(seed)
+        torch.manual_seed(seed)
+
+    with open(cfg_file, "r") as f:
+        cfg = yaml.safe_load(f)
+
+    res = _init_components_from_cfg(cfg, device, evaluator_only=True)
+    ss = res[0]
+    
+    sampled = 0
+    ignored = 0
+    rollouts = []
+    genotypes = []
+            
+    while sampled < n:
+        if unique:
+            r = ss.random_sample()
+            if r.genotype in genotypes:
+                ignored += 1
+                LOGGER.info(
+                        "(ignored %d) Ignore duplicated arch", ignored)
+            else:
+                sampled += 1
+                LOGGER.info(
+                        "(choosed %d) Choose arch",
+                        sampled)
+                rollouts.append(r)
+                genotypes.append(r.genotype)
+        else:
+            r = ss.random_sample()
+            rollouts.append(r)
+            genotypes.append(r.genotype)
+
+    with open(out_file, "w") as of:
+        for i, r in enumerate(rollouts):
+            of.write("# ---- Arch {} ----\n".format(i))
+            _dump(r, dump_mode, of)
+            of.write("\n")
+
+
 @main.command(help="Sample architectures, pickle loading controller directly.")
 @click.option("--load", required=True, type=str,
               help="the file to load controller")

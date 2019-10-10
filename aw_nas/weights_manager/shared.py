@@ -21,6 +21,8 @@ class SharedNet(BaseWeightsManager, nn.Module):
                  use_stem="conv_bn_3x3", stem_stride=1, stem_affine=True,
                  preprocess_op_type=None,
                  cell_use_preprocess=True,
+                 preprocess_kernel=1,
+                 preprocess_type="relu_conv_bn",
                  cell_group_kwargs=None):
         super(SharedNet, self).__init__(search_space, device, rollout_type)
         nn.Module.__init__(self)

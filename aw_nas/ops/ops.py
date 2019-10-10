@@ -86,7 +86,7 @@ def get_op(name):
     return PRIMITVE_FACTORY[name]
 
 class FactorizedReduce(nn.Module):
-    def __init__(self, C_in, C_out, stride, kernel_size=1, affine=True):
+    def __init__(self, C_in, C_out, stride, affine=True, kernel_size=1):
         super(FactorizedReduce, self).__init__()
         self.stride = stride
         group_dim = C_out // stride
