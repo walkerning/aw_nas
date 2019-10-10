@@ -193,6 +193,7 @@ class SuperNet(SharedNet):
                  num_classes=10, init_channels=16, stem_multiplier=3,
                  max_grad_norm=5.0, dropout_rate=0.1,
                  use_stem="conv_bn_3x3", stem_stride=1, stem_affine=True,
+                 preprocess_op_type=None,
                  cell_use_preprocess=True, cell_group_kwargs=None,
                  candidate_member_mask=True, candidate_cache_named_members=False,
                  candidate_virtual_parameter_only=False, candidate_eval_no_grad=True):
@@ -218,6 +219,7 @@ class SuperNet(SharedNet):
                                        max_grad_norm=max_grad_norm, dropout_rate=dropout_rate,
                                        use_stem=use_stem, stem_stride=stem_stride,
                                        stem_affine=stem_affine,
+                                       preprocess_op_type=preprocess_op_type,
                                        cell_use_preprocess=cell_use_preprocess,
                                        cell_group_kwargs=cell_group_kwargs)
 
@@ -331,9 +333,18 @@ class DiscreteSharedCell(SharedCell):
         if cur_step < self._num_init: # `self._num_init` preprocess steps
             ind = len(context.previous_cells) - (self._num_init - cur_step)
             ind = max(ind, 0)
-            state = self.preprocess_ops[cur_step](context.previous_cells[ind])
-            context.current_cell.append(state)
-            context.last_conv_module = self.preprocess_ops[cur_step].get_last_conv_module()
+            # state = self.preprocess_ops[cur_step](context.previous_cells[ind])
+            # context.current_cell.append(state)
+            # context.last_conv_module = self.preprocess_ops[cur_step].get_last_conv_module()
+            current_op = context.next_op_index[1]
+            state, context = self.preprocess_ops[cur_step].forward_one_step(
+                context=context,
+                inputs=context.previous_cells[ind] if current_op == 0 else None)
+            if context.next_op_index[1] == 0: # this preprocess op finish, append to `current_cell`
+                assert len(context.previous_op) == 1
+                context.current_cell.append(context.previous_op[0])
+                context.previous_op = []
+                context.last_conv_module = self.preprocess_ops[cur_step].get_last_conv_module()
         elif cur_step < self._num_init + self._steps: # the following steps
             conns = genotype_grouped[cur_step - self._num_init][1]
             op_ind, current_op = context.next_op_index

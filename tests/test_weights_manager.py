@@ -70,6 +70,9 @@ def test_supernet_forward(super_net):
         }
     }, {
         "dropout_rate": 0,
+    }, {
+        "dropout_rate": 0,
+        "preprocess_op_type": "sep_conv_3x3"
     }], indirect=["super_net"])
 def test_supernet_forward_step(super_net):
     cand_net = _supernet_sample_cand(super_net)

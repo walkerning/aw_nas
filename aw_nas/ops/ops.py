@@ -86,13 +86,14 @@ def get_op(name):
     return PRIMITVE_FACTORY[name]
 
 class FactorizedReduce(nn.Module):
-    def __init__(self, C_in, C_out, stride, affine=True):
+    def __init__(self, C_in, C_out, stride, kernel_size=1, affine=True):
         super(FactorizedReduce, self).__init__()
         self.stride = stride
         group_dim = C_out // stride
 
-        self.convs = [nn.Conv2d(C_in, group_dim, kernel_size=1,
-                                stride=stride, padding=0, bias=False)\
+        padding = int((kernel_size - 1) / 2)
+        self.convs = [nn.Conv2d(C_in, group_dim, kernel_size=kernel_size,
+                                stride=stride, padding=padding, bias=False)\
                       for _ in range(stride)]
         self.convs = nn.ModuleList(self.convs)
 
