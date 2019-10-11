@@ -134,7 +134,7 @@ if INJECT:
     nn.Conv2d = RRAMFixedConv
 else:
     nn.Conv2d = FixedConv
-nn.BatchNorm2d = FixedBatchNorm2d
+#nn.BatchNorm2d = FixedBatchNorm2d
 nn.Linear = FixedLinear
 
 class CNNGenotypeModelPatch(CNNGenotypeModel):
