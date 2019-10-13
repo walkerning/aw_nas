@@ -1,6 +1,8 @@
+#pylint: disable=invalid-name
 """
 Script for patching fixed point modules.
 """
+import time
 import six
 import numpy as np
 import torch
@@ -19,6 +21,7 @@ INJECT = True
 #INJECT_PROB = 1e-1
 SAF1_RATIO = 0.163
 INJECT_STEP = 1
+MASK_THRESH = 2**3
 
 def _generate_default_fix_cfg(names, scale=0, bitwidth=8, method=0):
     return {n: {
@@ -33,6 +36,48 @@ class FixedConv(nfp.Conv2d_fix):
             ["weight", "bias"], method=FIX_METHOD, bitwidth=BITWIDTH)
         super(FixedConv, self).__init__(*args, **kwargs)
 
+def num_one(num):
+    counter = 0
+    while(num > 0):
+        counter += num % 2
+        num //= 2
+    return counter
+
+TABLE_SIZE = 1000000
+num_ones = [num_one(x) for x in range(128)]
+
+# position mask (1 indicate that error occurs at this position, 0 otherwise)
+pos_mask = [0.1**num_ones[x]*0.9**(7 - num_ones[x]) for x in range(128)]
+reg = sum(pos_mask) # should be ~ 1.0
+pos_mask = [x/reg for x in pos_mask]
+for i in range(1, len(pos_mask)):
+    pos_mask[i] += pos_mask[i - 1]
+# rescale 0~1 -> 0~TABLE_SIZE to enable quick array index access
+pos_mask = [int(x * TABLE_SIZE) for x in pos_mask]
+pos_mask_dict = []
+ind = 0
+for i in range(TABLE_SIZE):
+    if i >= pos_mask[ind]:
+        ind += 1
+    pos_mask_dict.append(ind)
+pos_mask_dict = torch.Tensor(pos_mask_dict).cuda().to(torch.int)
+# 47.83% prob no error
+
+# saf 0 or 1 (1 indicate saf1, 0 indicate saf0)
+saf_mask = [0.16**num_ones[x]*0.84**(7 - num_ones[x]) for x in range(128)]
+reg = sum(saf_mask) # should be ~ 1.0
+saf_mask = [x/reg for x in saf_mask]
+for i in range(1, len(saf_mask)):
+    saf_mask[i] += saf_mask[i - 1]
+saf_mask = [int(x * TABLE_SIZE) for x in saf_mask]
+saf_mask_dict = []
+ind = 0
+for i in range(TABLE_SIZE):
+    if i >= saf_mask[ind]:
+        ind += 1
+    saf_mask_dict.append(ind)
+saf_mask_dict = torch.Tensor(saf_mask_dict).cuda().to(torch.int)
+
 class RRAMConv(nn.Conv2d):
     def __init__(self, *args, **kwargs):
         super(RRAMConv, self).__init__(*args, **kwargs)
@@ -45,54 +90,53 @@ class RRAMConv(nn.Conv2d):
         self.inject_prob = ratio
 
     def forward(self, x):
-        inject_prob = self.inject_prob
-        if inject_prob < 1e-8:
+        if self.inject_prob < 1e-8:
             return super(RRAMConv, self).forward(x)
         param = self.weight
-        max_ = torch.max(torch.abs(param)).cpu().data
-        if self.step == 0:
-            random_tensor_pos = param.new(param.size())\
-						.random_(0, int(100. /  inject_prob))
-            random_tensor_neg = param.new(param.size())\
-						.random_(0, int(100. /  inject_prob))
-            scale = torch.ceil(torch.log(
-                torch.max(torch.max(torch.abs(param)),
+        # param_size = param.shape[0]*param.shape[1]*param.shape[2]*param.shape[3]
+        # max_ = torch.max(torch.abs(param)).cpu().data
+        # scale = torch.ceil(torch.log(
+        #        torch.max(max_, torch.tensor(1e-5).float())) / np.log(2.)).to(param.device)
+        scale = torch.ceil(torch.log(
+            torch.max(torch.max(torch.abs(param)),
                       torch.tensor(1e-5).float().to(param.device))) / np.log(2.))
-            step = torch.pow(torch.autograd.Variable(torch.FloatTensor([2.]).to(param.device),
-                                                 requires_grad=False),
-                         (scale.float() - 7.))
-            fault_ind_saf1_pos = (random_tensor_pos < 100.*SAF1_RATIO)
-            fault_ind_saf1_neg = (random_tensor_neg < 100.*SAF1_RATIO)
-            #TODO: avoid this casting
-            fault_ind_saf0_pos = ((random_tensor_pos > 100.*SAF1_RATIO).to(torch.int) + (random_tensor_pos < 100).to(torch.int) + (param > 0).to(torch.int)) == 3
-            fault_ind_saf0_neg = ((random_tensor_neg > 100.*SAF1_RATIO).to(torch.int) + (random_tensor_neg < 100).to(torch.int) + (param < 0).to(torch.int)) == 3
-            random_tensor_pos.zero_()
-            random_tensor_neg.zero_()
-            random_tensor_pos[fault_ind_saf1_pos] = max_
-            random_tensor_pos[fault_ind_saf0_pos] = -param[fault_ind_saf0_pos]
-            random_tensor_neg[fault_ind_saf1_neg] = -max_
-            random_tensor_neg[fault_ind_saf0_neg] = -param[fault_ind_saf0_neg]
-        else:
-            random_tensor_pos = self.random_tensor_pos
-            random_tensor_neg = self.random_tensor_neg
-        self.step += 1
-        if self.step >= INJECT_STEP:
-            self.step = 0
-        param = param + random_tensor_pos
-        param.clamp_(min=-max_, max=max_)
-        param = param + random_tensor_neg
-        param.clamp_(min=-max_, max=max_)
+        step = torch.pow(torch.autograd.Variable(torch.FloatTensor([2.]).to(param.device),
+                                                 requires_grad=False), (scale.float() - 7.))
+        # random_tensor_pos = torch.multinomial(pos_mask, param_size, True)\
+        #                          .reshape(param.shape).to(torch.int).to(param.device)
+        # random_tensor_neg = torch.multinomial(pos_mask, param_size, True)\
+        #                          .reshape(param.shape).to(torch.int).to(param.device)
+        # saf_pos = torch.multinomial(saf_mask, param_size, True)\
+        #                .reshape(param.shape).to(torch.int).to(param.device)
+        # saf_neg = torch.multinomial(saf_mask, param_size, True)\
+        #                .reshape(param.shape).to(torch.int).to(param.device)
+        random_tensor_pos = pos_mask_dict[param.new(param.size()).random_(0, TABLE_SIZE)\
+                                          .to(torch.long)]\
+                            .reshape(param.shape).to(torch.int).to(param.device)
+        random_tensor_neg = pos_mask_dict[param.new(param.size()).random_(0, TABLE_SIZE)\
+                                          .to(torch.long)]\
+                            .reshape(param.shape).to(torch.int).to(param.device)
+        saf_pos = saf_mask_dict[param.new(param.size()).random_(0, TABLE_SIZE).to(torch.long)]\
+                  .reshape(param.shape).to(torch.int).to(param.device)
+        saf_neg = saf_mask_dict[param.new(param.size()).random_(0, TABLE_SIZE).to(torch.long)]\
+                  .reshape(param.shape).to(torch.int).to(param.device)
+        param_int = (param / step).to(torch.int)
+        param_pos = torch.zeros(param_int.shape).to(param.device).to(torch.int)
+        param_neg = torch.zeros(param_int.shape).to(param.device).to(torch.int)
+        param_pos[param_int > 0] = param_int[param_int > 0]
+        param_neg[param_int < 0] = -param_int[param_int < 0]
+        param_pos = saf_pos & random_tensor_pos | param_pos & (~random_tensor_pos)
+        param_neg = saf_neg & random_tensor_neg | param_neg & (~random_tensor_neg)
+        new_param_int = param_pos - param_neg
+        new_param = new_param_int.to(torch.float) * step
 
         # for masked bp
         normal_mask = torch.ones_like(param)
-        normal_mask[fault_ind_saf1_pos] = 0
-        normal_mask[fault_ind_saf1_neg] = 0
-        normal_mask[fault_ind_saf0_pos] = 0
-        normal_mask[fault_ind_saf0_neg] = 0
+        normal_mask[torch.abs(new_param_int - param_int) > MASK_THRESH] = 0
         masked = normal_mask * param
         param = (param - masked).detach() + masked
 
-        object.__setattr__(self, "weight", param)
+        object.__setattr__(self, "weight", new_param)
         out = super(RRAMConv, self).forward(x)
         return out
 
@@ -134,7 +178,7 @@ if INJECT:
     nn.Conv2d = RRAMFixedConv
 else:
     nn.Conv2d = FixedConv
-# nn.BatchNorm2d = FixedBatchNorm2d
+#nn.BatchNorm2d = FixedBatchNorm2d
 nn.Linear = FixedLinear
 
 class CNNGenotypeModelPatch(CNNGenotypeModel):
