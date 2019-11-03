@@ -1,10 +1,10 @@
-import copy
-import numpy as np
 import os
+
 import six
 import yaml
-import torch
 import pytest
+import torch
+import numpy as np
 
 # ---- test super_net ----
 def _cnn_data(device="cuda", batch_size=2):
@@ -536,7 +536,7 @@ objective_cfg:
         "search_space_type": "cnn_dense",
         "search_space_cfg": {
             "num_dense_blocks": 4,
-			"stem_channel": 8,
+            "stem_channel": 8,
             "first_ratio": None,
         },
         "num_records": 0,
@@ -584,9 +584,11 @@ def test_dense_morphism_wider(population, tmp_path):
 
     w_manager = DenseMorphismWeightsManager(search_space, device, "dense_mutation")
     cand_net = w_manager.assemble_candidate(rollout)
+    cand_net.eval()
     child_state_dict = cand_net.state_dict()
     data = _cnn_data()
     logits = cand_net.forward(data[0])
     origin_net = torch.load(rollout.population.get_model(rollout.parent_index).checkpoint_path)
+    origin_net.eval()
     logits_ori = origin_net.forward(data[0])
     assert (logits - logits_ori).abs().mean() < 1e-6
