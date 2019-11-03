@@ -176,8 +176,8 @@ from six import StringIO
 from aw_nas.rollout.mutation import ConfigTemplate, ModelRecord
 
 class StubPopulation(Population):
-    def __init__(self, search_space, num_records=3):
-        cfg_template = ConfigTemplate(yaml.load(StringIO(sample_config)))
+    def __init__(self, search_space, num_records=3, config_template=sample_config):
+        cfg_template = ConfigTemplate(yaml.load(StringIO(config_template)))
         model_records = collections.OrderedDict()
         for ind in range(num_records):
             rollout = search_space.random_sample()
@@ -238,11 +238,13 @@ def population(request):
     init_dirs = cfg.get("init_dirs", None)
     scfg = cfg.pop("search_space_cfg", {})
     s_type = cfg.pop("search_space_type", "cnn")
+    cfg_template = cfg.pop("cfg_template", sample_config)
     from aw_nas.common import get_search_space
     search_space = get_search_space(s_type, **scfg)
     if init_dirs:
         population = Population.init_from_dirs(init_dirs, search_space)
     else:
-        population = StubPopulation(search_space, num_records=cfg.get("num_records", 3))
+        population = StubPopulation(search_space, num_records=cfg.get("num_records", 3),
+                  config_template=cfg_template)
     return population
         

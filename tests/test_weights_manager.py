@@ -425,20 +425,64 @@ def test_morphism(population, tmp_path):
         assert n not in child_state_dict
  
 DENSE_SAMPLE_MODEL_CFG = """
+search_space_type: cnn_dense
+search_space_cfg:
+  num_dense_blocks: 4
+  stem_channel: 8
+  first_ratio: null
+dataset_type: cifar10
+dataset_cfg:
+  cutout: null
 final_model_type: dense_final_model
 final_model_cfg:
   num_classes: 10
   dropout_rate: 0.1
   schedule_cfg: null
+final_trainer_type: cnn_trainer
+final_trainer_cfg:
+  # Schedulable attributes:
+  epochs: 50
+  batch_size: 96
+  optimizer_type: SGD
+  optimizer_kwargs: null
+  learning_rate: 0.05
+  momentum: 0.9
+  warmup_epochs: 0
+  optimizer_scheduler:
+    T_max: 50
+    eta_min: 0.001
+    type: CosineAnnealingLR
+  weight_decay: 0.0003
+  no_bias_decay: false
+  grad_clip: 5.0
+  auxiliary_head: false
+  auxiliary_weight: 0.0
+  add_regularization: false
+  save_as_state_dict: false
+  eval_no_grad: true
+  schedule_cfg: null
+# ---- End Type cnn_trainer ----
+## ---- End Component final_trainer ----
+
+## ---- Component objective ----
+# ---- Type classification ----
+objective_type: classification
+objective_cfg:
+  # Schedulable attributes: 
+  {}
+# ---- End Type classification ----
 """
 
 @pytest.mark.parametrize("population", [
     {
         "search_space_type": "cnn_dense",
         "search_space_cfg": {
-            "num_dense_blocks": 4
+            "num_dense_blocks": 4,
+			"stem_channel": 8,
+            "first_ratio": None,
         },
-        "num_records": 0
+        "num_records": 0,
+        "cfg_template": DENSE_SAMPLE_MODEL_CFG,
     }
 ], indirect=["population"])
 def test_dense_morphism_wider(population, tmp_path):
@@ -448,7 +492,6 @@ def test_dense_morphism_wider(population, tmp_path):
     from aw_nas.main import _init_component
     from aw_nas.common import genotype_from_str, rollout_from_genotype_str
     from aw_nas.weights_manager import DenseMorphismWeightsManager
-
     cfg = yaml.safe_load(DENSE_SAMPLE_MODEL_CFG)
     device = "cuda:0"
     search_space = population.search_space
@@ -476,13 +519,16 @@ def test_dense_morphism_wider(population, tmp_path):
                "loss": np.random.uniform(0, 10)})
     parent_index = population.add_model(new_model_record)
 
-    mutation = DenseMutation(search_space, DenseMutation.WIDER, block_idx=1, miniblock_idx=2,
+    mutation = DenseMutation(search_space, DenseMutation.WIDER, block_idx=1, miniblock_idx=0,
                              modified=8)
     rollout = DenseMutationRollout(population, parent_index, [mutation], search_space)
     assert rollout.genotype != cnn_model.genotypes
-    print("mutation: ", mutation)
-    print("mutated rollout: ", rollout.genotype)
 
     w_manager = DenseMorphismWeightsManager(search_space, device, "dense_mutation")
     cand_net = w_manager.assemble_candidate(rollout)
     child_state_dict = cand_net.state_dict()
+    data = _cnn_data()
+    logits = cand_net.forward(data[0])
+    origin_net = torch.load(rollout.population.get_model(rollout.parent_index).checkpoint_path)
+    logits_ori = origin_net.forward(data[0])
+    assert (logits - logits_ori).abs().mean() < 1e-6
