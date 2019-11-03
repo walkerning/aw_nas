@@ -1,3 +1,4 @@
+import copy
 import numpy as np
 import os
 import six
@@ -216,6 +217,63 @@ def test_supernet_data_parallel_gradient(super_net):
     logits = cand_net.forward_data(data[0], mode="eval")
     assert logits.shape == (batch_size, 10)
     _ = cand_net.gradient(data, mode="train")
+
+def test_use_params():
+    from aw_nas.ops import SepConv
+    from aw_nas.utils.torch_utils import use_params
+
+    sep_conv_1 = SepConv(3, 10, 3, 1, 1, affine=True).cuda()
+    sep_conv_2 = SepConv(3, 10, 3, 1, 1, affine=True).cuda()
+    parameters_1 = dict(sep_conv_1.named_parameters())
+    parameters_2 = dict(sep_conv_2.named_parameters())
+
+    # random init params
+    for n in parameters_1:
+        parameters_1[n].data.random_()
+        parameters_2[n].data.random_()
+    for n in parameters_1:
+        assert (parameters_1[n] - parameters_2[n]).abs().mean() > 1e-4
+    batch_size = 2
+    inputs = _cnn_data(batch_size=batch_size)[0]
+
+    # use train mode, do not use bn running statistics
+    sep_conv_1.train()
+    sep_conv_2.train()
+    conv1_res = sep_conv_1(inputs)
+    conv2_res = sep_conv_2(inputs)
+    assert (conv1_res != conv2_res).any()
+    with use_params(sep_conv_1, parameters_2):
+        conv1_useparams_res = sep_conv_1(inputs)
+    assert (conv1_useparams_res == conv2_res).all()
+    for n, new_param in sep_conv_1.named_parameters():
+        assert (new_param == parameters_1[n]).all()
+
+def test_candidate_forward_with_params(super_net):
+    cand_net = _supernet_sample_cand(super_net)
+    batch_size = 2
+    data = _cnn_data(batch_size=batch_size)
+
+    old_params = {n: p.clone() for n, p in
+                  cand_net.active_named_members("parameters", check_visited=True)}
+    print("num active params: ", len(old_params))
+    # random init
+    new_params = {n: torch.autograd.Variable(p.new(p.size()).normal_(), requires_grad=True) for n, p in
+                  cand_net.active_named_members("parameters", check_visited=True)}
+    res = torch.sum(cand_net.forward_with_params(data[0], new_params, mode="train"))
+
+    # assert set back to original params
+    for name, new_value in cand_net.named_parameters():
+        if name in old_params:
+            assert (new_value == old_params[name]).all()
+
+    try:
+        torch.autograd.grad(
+            res, list(dict(cand_net.active_named_members("parameters", check_visited=True)).values()), retain_graph=True)
+    except Exception:
+        print("should raise!")
+    else:
+        assert False, "Should raise, as new params are used"
+    torch.autograd.grad(res, list(new_params.values()))
 
 # ---- End test super_net ----
 

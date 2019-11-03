@@ -31,6 +31,7 @@ final_trainer_cfg:
   schedule_cfg: null
   warmup_epochs: 0
   weight_decay: 0.0003
+  save_as_state_dict: true
 final_trainer_type: cnn_trainer
 search_space_cfg:
   cell_layout: null
@@ -51,3 +52,6 @@ search_space_cfg:
   - dil_conv_3x3
   - dil_conv_5x5
 search_space_type: cnn
+objective_type: classification
+objective_cfg:
+  {}

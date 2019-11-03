@@ -38,6 +38,7 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                  auxiliary_head=False, auxiliary_weight=0.4,
                  add_regularization=False,
                  save_as_state_dict=False,
+                 workers_per_queue=2,
                  eval_no_grad=True,
                  schedule_cfg=None):
         super(CNNFinalTrainer, self).__init__(schedule_cfg)
@@ -76,9 +77,11 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
         _splits = self.dataset.splits()
 
         self.train_queue = torch.utils.data.DataLoader(
-            _splits["train"], batch_size=batch_size, shuffle=True, pin_memory=True, num_workers=2)
+            _splits["train"], batch_size=batch_size, shuffle=True, pin_memory=True,
+            num_workers=workers_per_queue)
         self.valid_queue = torch.utils.data.DataLoader(
-            _splits["test"], batch_size=batch_size, shuffle=False, pin_memory=True, num_workers=2)
+            _splits["test"], batch_size=batch_size, shuffle=False, pin_memory=True,
+            num_workers=workers_per_queue)
 
         if self.model is not None:
             self.optimizer = self._init_optimizer()

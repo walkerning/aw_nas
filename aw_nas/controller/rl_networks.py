@@ -406,6 +406,18 @@ class EmbedControlNet(BaseLSTM):
 
         self.reset_parameters()
 
+    def __getstate__(self):
+        state = super(EmbedControlNet, self).__getstate__()
+        del state["static_inputs"]
+        del state["static_hidden"]
+        return state
+
+    def __setstate__(self, state):
+        super(EmbedControlNet, self).__setstate__(state)
+        # reset these two cache dict
+        self.static_inputs = utils.keydefaultdict(self._get_default_inputs)
+        self.static_hidden = utils.keydefaultdict(self._get_default_hidden)
+
     def forward_node(self, inputs, hidden, node_idx):
         hx, cx = self.stack_lstm(inputs, hidden)
 

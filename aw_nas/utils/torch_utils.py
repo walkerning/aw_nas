@@ -1,3 +1,6 @@
+from contextlib import contextmanager
+from functools import partial
+
 import six
 import numpy as np
 import torch
@@ -5,6 +8,7 @@ from torch import optim
 from torch.autograd import Variable
 import torch.nn.functional as F
 import torch.utils.data
+from torch.optim.lr_scheduler import _LRScheduler
 
 from aw_nas.utils.exception import expect
 from aw_nas.utils.lr_scheduler import get_scheduler_cls
@@ -75,6 +79,20 @@ def submodule_named_members(module, member, prefix, not_include=tuple()):
         for n, v in _func(prefix=prefix+mod_name):
             yield n, v
 
+def substitute_params(module, params, prefix=""):
+    prefix = (prefix + ".") if prefix else ""
+    for n in module._parameters:
+        if prefix + n in params:
+            module._parameters[n] = params[prefix + n]
+
+@contextmanager
+def use_params(module, params):
+    backup_params = dict(module.named_parameters())
+    for mod_prefix, mod in module.named_modules():
+        substitute_params(mod, params, prefix=mod_prefix)
+    yield
+    for mod_prefix, mod in module.named_modules():
+        substitute_params(mod, backup_params, prefix=mod_prefix)
 
 ## --- dataset ---
 class SimpleDataset(torch.utils.data.Dataset):
@@ -134,7 +152,8 @@ class InfIterator(six.Iterator):
 def get_inf_iterator(iterable, callback):
     return InfIterator(iterable, [callback])
 
-def prepare_data_queues(splits, queue_cfg_lst, data_type="image", drop_last=False):
+def prepare_data_queues(splits, queue_cfg_lst, data_type="image", drop_last=False,
+                        shuffle=True, num_workers=2):
     """
     Further partition the dataset splits, prepare different data queues.
 
@@ -146,7 +165,8 @@ def prepare_data_queues(splits, queue_cfg_lst, data_type="image", drop_last=Fals
     dset_splits = splits
     dset_sizes = {n: len(d) for n, d in six.iteritems(dset_splits)}
     dset_indices = {n: list(range(size)) for n, size in dset_sizes.items()}
-    [np.random.shuffle(indices) for indices in dset_indices.values()]
+    if shuffle:
+        [np.random.shuffle(indices) for indices in dset_indices.values()]
     used_portions = {n: 0. for n in splits}
     queues = []
     for cfg in queue_cfg_lst: # all the queues interleave sub-dataset
@@ -166,11 +186,11 @@ def prepare_data_queues(splits, queue_cfg_lst, data_type="image", drop_last=Fals
             kwargs = {
                 "batch_size": batch_size,
                 "pin_memory": True,
-                "num_workers": 2,
+                "num_workers": num_workers,
                 "sampler": torch.utils.data.SubsetRandomSampler(
                     indices[int(size*used_portion):int(size*(used_portion+portion))]),
                 "drop_last": drop_last,
-                "timeout": 5
+                "timeout": 10
             }
             queue = get_inf_iterator(torch.utils.data.DataLoader(
                 dset_splits[split], **kwargs), callback)
@@ -234,6 +254,34 @@ def init_scheduler(optimizer, cfg):
         return sch_cls(optimizer, **cfg)
     return None
 
+# def _new_step_tensor(scheduler, epoch=None):
+#     scheduler.ori_step(epoch)
+#     scheduler.scheduled_tensor[:] = scheduler.get_lr()[0]
+
+# def _patch_step_tensor(scheduler, tensor):
+#     scheduler.ori_step = scheduler.step
+#     scheduler.scheduled_tensor = tensor
+#     scheduler.step = _new_step_tensor.__get__(scheduler)
+
+class TensorScheduler(_LRScheduler):
+    def __init__(self, tensor, inner_scheduler_cfg, last_epoch=-1):
+        mock_optimizer = torch.optim.SGD([torch.zeros(1)], lr=tensor.item())
+        self.tensor = tensor
+        scheduler_cls = get_scheduler_cls(inner_scheduler_cfg.pop("type"))
+        self.inner_scheduler = scheduler_cls(mock_optimizer, **inner_scheduler_cfg)
+        super(TensorScheduler, self).__init__(mock_optimizer, last_epoch)
+
+    def get_lr(self):
+        return self.inner_scheduler.get_lr()
+
+    def step(self, epoch=None):
+        super(TensorScheduler, self).step()
+        self.tensor[:] = self.get_lr()[0]
+
+def init_tensor_scheduler(tensor, cfg):
+    if cfg is not None:
+        return TensorScheduler(tensor, cfg)
+    return None
 
 ## --- misc helpers ---
 def get_variable(inputs, device, **kwargs):

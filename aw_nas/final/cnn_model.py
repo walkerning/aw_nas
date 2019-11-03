@@ -40,7 +40,8 @@ class AuxiliaryHead(nn.Module):
             nn.ReLU(inplace=True),
             nn.Conv2d(128, 768, 2, bias=False),
             nn.BatchNorm2d(768),
-            nn.ReLU(inplace=True)
+            nn.ReLU(inplace=True),
+            nn.AdaptiveAvgPool2d((1, 1))
         )
         self.classifier = nn.Linear(768, num_classes)
 
@@ -48,6 +49,29 @@ class AuxiliaryHead(nn.Module):
         inputs = self.features(inputs)
         inputs = self.classifier(inputs.view(inputs.size(0), -1))
         return inputs
+
+class AuxiliaryHeadImageNet(nn.Module):
+    def __init__(self, C_in, num_classes):
+        """assuming input size 14x14"""
+        super(AuxiliaryHeadImageNet, self).__init__()
+        self.features = nn.Sequential(
+            nn.ReLU(inplace=True),
+            nn.AvgPool2d(5, stride=2, padding=0, count_include_pad=False),
+            nn.Conv2d(C_in, 128, 1, bias=False),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(128, 768, 2, bias=False),
+            nn.BatchNorm2d(768),
+            nn.ReLU(inplace=True),
+            nn.AdaptiveAvgPool2d((1, 1))
+        )
+        self.classifier = nn.Linear(768, num_classes)
+
+    def forward(self, x):
+        x = self.features(x)
+        x = self.classifier(x.view(x.size(0), -1))
+        return x
+
 
 class CNNGenotypeModel(FinalModel):
     NAME = "cnn_final_model"
@@ -104,10 +128,21 @@ class CNNGenotypeModel(FinalModel):
         ## initialize sub modules
         if not self.use_stem:
             c_stem = 3
+            init_strides = [1] * self._num_init
+        elif isinstance(self.use_stem, (list, tuple)):
+            self.stems = []
+            c_stem = self.stem_multiplier * self.init_channels
+            for i, stem_type in enumerate(self.use_stem):
+                c_in = 3 if i == 0 else c_stem
+                self.stems.append(ops.get_op(stem_type)(
+                    c_in, c_stem, stride=stem_stride, affine=stem_affine))
+            self.stems = nn.ModuleList(self.stems)
+            init_strides = [stem_stride] * self._num_init
         else:
             c_stem = self.stem_multiplier * self.init_channels
             self.stem = ops.get_op(self.use_stem)(3, c_stem,
                                                   stride=stem_stride, affine=stem_affine)
+            init_strides = [1] * self._num_init
 
         self.cells = nn.ModuleList()
         num_channels = self.init_channels
@@ -149,7 +184,7 @@ class CNNGenotypeModel(FinalModel):
                                    num_out_channels=num_out_channels,
                                    prev_num_channels=tuple(prev_num_channels),
                                    stride=stride,
-                                   prev_strides=[1] * self._num_init + strides[:i_layer],
+                                   prev_strides=init_strides + strides[:i_layer],
                                    use_preprocess=cell_use_preprocess,
                                    pool_batchnorm=cell_pool_batchnorm,
                                    independent_conn=cell_independent_conn,
@@ -163,8 +198,12 @@ class CNNGenotypeModel(FinalModel):
             self.cells.append(cell)
 
             if i_layer == (2 * self._num_layers) // 3 and self.auxiliary_head:
-                self.auxiliary_net = AuxiliaryHead(prev_num_channels[-1],
-                                                   num_classes, **(auxiliary_cfg or {}))
+                if auxiliary_head == "imagenet":
+                    self.auxiliary_net = AuxiliaryHeadImageNet(
+                        prev_num_channels[-1], num_classes, **(auxiliary_cfg or {}))
+                else:
+                    self.auxiliary_net = AuxiliaryHead(
+                        prev_num_channels[-1], num_classes, **(auxiliary_cfg or {}))
 
         self.global_pooling = nn.AdaptiveAvgPool2d(1)
         if self.dropout_rate and self.dropout_rate > 0:
@@ -199,11 +238,18 @@ class CNNGenotypeModel(FinalModel):
             pass
 
     def forward(self, inputs): #pylint: disable=arguments-differ
-        if self.use_stem:
-            stemed = self.stem(inputs)
-        else:
+        if not self.use_stem:
             stemed = inputs
-        states = [stemed] * self._num_init
+            states = [inputs] * self._num_init
+        elif isinstance(self.use_stem, (list, tuple)):
+            states = []
+            stemed = inputs
+            for stem in self.stems:
+                stemed = stem(stemed)
+                states.append(stemed)
+        else:
+            stemed = self.stem(inputs)
+            states = [stemed] * self._num_init
 
         for layer_idx, cell in enumerate(self.cells):
             states.append(cell(states, self.dropout_path_rate))

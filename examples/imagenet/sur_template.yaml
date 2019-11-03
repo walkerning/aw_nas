@@ -6,7 +6,7 @@ search_space_cfg:
   cell_layout: null
   num_cell_groups: 2
   num_init_nodes: 2
-  num_layers: 20
+  num_layers: 8 # less layers
   num_node_inputs: 2
   num_steps: 4
   reduce_cell_groups:
@@ -24,12 +24,20 @@ search_space_cfg:
 ## ---- End Component search_space ----
 
 ## ---- Component dataset ----
-# ---- Type cifar10 ----
-dataset_type: cifar10
+# ---- Type imagenet ----
+dataset_type: imagenet
 dataset_cfg:
   # Schedulable attributes: 
+  load_train_only: false
+  class_name_file: null
+  num_sample_classes: null
+  random_choose: false
+  random_seed: 123
   cutout: 16
-# ---- End Type cifar10 ----
+  color_jitter: true
+  train_crop_size: 299
+  test_crop_size: 331
+# ---- End Type imagenet ----
 ## ---- End Component dataset ----
 
 ## ---- Component final_model ----
@@ -39,18 +47,21 @@ final_model_cfg:
   # Schedulable attributes: dropout_path_rate
   # genotypes:
   auxiliary_cfg: null
-  auxiliary_head: True
+  auxiliary_head: false
   dropout_path_rate: 0.2
-  dropout_rate: 0.1
-  init_channels: 36
-  num_classes: 10
+  dropout_rate: 0.0
+  init_channels: 24 # less channels
+  num_classes: 1000
   schedule_cfg:
     dropout_path_rate:
       type: add
       start: 0
       every: 1
-      step: 0.000333 # 0.2/600
-  stem_multiplier: 3
+      step: 0.002 # 0.2/100
+  stem_multiplier: 1
+  use_stem: [imagenet_stem0, relu_conv_bn_3x3]
+  stem_stride: 2
+  stem_affine: true
 # ---- End Type cnn_genotype ----
 ## ---- End Component final_model ----
 
@@ -59,25 +70,26 @@ final_model_cfg:
 final_trainer_type: cnn_trainer
 final_trainer_cfg:
   # Schedulable attributes: 
-  auxiliary_head: true
-  auxiliary_weight: 0.4
-  batch_size: 128
-  epochs: 600
+  auxiliary_head: false
+  auxiliary_weight: 0.0
+  batch_size: 256
+  epochs: 100 # less epochs
   grad_clip: 5.0
-  learning_rate: 0.05
+  learning_rate: 0.1
   momentum: 0.9
   no_bias_decay: false
   optimizer_scheduler:
-    eta_min: 0.001
-    T_max: 600
+    eta_min: 0.0
+    T_max: 100
     type: CosineAnnealingLR
   schedule_cfg: null
-  warmup_epochs: 0
-  weight_decay: 0.0003
+  warmup_epochs: 5
+  weight_decay: 0.00003
   save_as_state_dict: true
+  workers_per_queue: 8
 # ---- End Type cnn_trainer ----
 ## ---- End Component final_trainer ----
 
 objective_type: classification
 objective_cfg:
-  {}
+  label_smooth: 0.1

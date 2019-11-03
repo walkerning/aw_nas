@@ -6,10 +6,97 @@ from collections import defaultdict, OrderedDict
 import six
 import numpy as np
 import torch
+from torch import nn
 
 from aw_nas import utils
+from aw_nas.base import Component
 from aw_nas.evaluator.base import BaseEvaluator
 from aw_nas.utils.exception import expect, ConfigException
+
+
+class LearnableLrOutPlaceSGD(Component, nn.Module):
+    def __init__(self, named_params, init_learning_rate, device,
+                 num_inner_steps, learnable_lr=False,
+                 base_schedule_cfg=None, optimizer_cfg=None, scheduler_cfg=None,
+                 max_grad_norm=None):
+        nn.Module.__init__(self)
+        Component.__init__(self, schedule_cfg=None)
+        assert init_learning_rate > 0., 'learning_rate should be positive.'
+
+        self.base_lr = torch.ones(1, device=device) * init_learning_rate
+        self.num_inner_steps = num_inner_steps
+        self.learnable_lr = learnable_lr
+        self.max_grad_norm = max_grad_norm
+
+        if learnable_lr:
+            self.named_log_lrs = nn.ParameterDict()
+            for key, _ in six.iteritems(named_params):
+                self.named_log_lrs[key.replace(".", "-")] = nn.Parameter(
+                    data=torch.zeros(self.num_inner_steps),
+                    requires_grad=self.learnable_lr)
+
+        self.base_schedule_cfg = base_schedule_cfg
+        # init scheduler for `self.base_lr`
+        self.base_scheduler = utils.init_tensor_scheduler(self.base_lr, base_schedule_cfg)
+
+        # init optimzier/scheduler for optionally learnable relative `exp(self.named_log_lrs)`
+        self.optimizer = utils.init_optimizer(self.parameters(), optimizer_cfg)
+        # NOTE: scheduler.step will be called in mepa evaluator
+        self.scheduler = utils.init_scheduler(self.optimizer, scheduler_cfg)
+        self.to(device)
+
+    def step(self, loss, named_weights, idx_step, high_order, allow_unused=False):
+        """
+        Update parameters out-of-place, using SGD rule.
+        Args:
+          named_weights (dict): name to parameters dict
+          idx_step (int): the index of the inner step
+          high_order (bool): if true, will create graph when computing the gradient for updates,
+              the high-order gradients will backward through these gradients to named_weights too.
+        """
+        names, weights = zip(*list(named_weights.items()))
+        grads = torch.autograd.grad(loss, weights, create_graph=high_order,
+                                    allow_unused=allow_unused)
+        named_grads = dict(zip(names, grads))
+        new_named_weights = dict()
+        for n in named_weights:
+            if named_grads.get(n, None) is not None:
+                new_named_weights[n] = named_weights[n] - named_grads[n] * \
+                                       ((self.base_lr * \
+                                         torch.exp(
+                                             self.named_log_lrs[n.replace(".", "-")][idx_step])) \
+                                        if self.learnable_lr else self.base_lr)
+            else:
+                new_named_weights[n] = named_weights[n]
+        return new_named_weights
+
+    def update(self, gradients):
+        assert self.learnable_lr
+
+        self.zero_grad()
+        named_params = dict(self.named_parameters())
+        for k, grad in gradients:
+            named_params[k].grad = grad
+        if self.max_grad_norm is not None:
+            # clip the gradients
+            torch.nn.utils.clip_grad_norm_(self.parameters(), self.max_grad_norm)
+        # apply the gradients
+        self.optimizer.step()
+
+    def on_epoch_start(self, epoch):
+        self.logger.info("surrogate base lr: %.5f", self.base_lr)
+        if self.learnable_lr:
+            all_log_lrs = np.array([v.detach().cpu().numpy() for v in self.named_log_lrs.values()])
+            min_log_lrs = np.min(all_log_lrs, axis=0)
+            max_log_lrs = np.max(all_log_lrs, axis=0)
+            self.logger.info(
+                "relative surrogate lr: %s",
+                "\n\t".join([
+                    "step %d: %.4f (log %.4f) - %.4f (log %.4f)" % \
+                    (i, np.exp(min_log_lr), min_log_lr,
+                     np.exp(max_log_lr), max_log_lr)
+                    for i, (min_log_lr, max_log_lr) in enumerate(zip(min_log_lrs, max_log_lrs))]))
+
 
 class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attributes
     """
@@ -60,11 +147,25 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
             },
             surrogate_optimizer={"type": "SGD", "lr": 0.001}, surrogate_scheduler=None,
             schedule_every_batch=False,
+            # whether load optimizer/scheduler when loading
+            load_optimizer=True,
+            load_scheduler=True,
+            strict_load_weights_manager=True,
+            # advance meta learning configuration
+            use_maml_plus=False,
+            high_order=False,
+            learn_per_weight_step_lr=False,
+            use_multi_step_loss=False,
+            multi_step_loss_epochs=10,
+            surrogate_lr_optimizer=None, surrogate_lr_scheduler=None,
             # mepa samples for `update_evaluator`
             mepa_samples=1,
             disable_step_current=False,
+            use_same_surrogate_data=False,
             # data queue configs: (surrogate, mepa, controller)
             data_portion=(0.1, 0.4, 0.5), mepa_as_surrogate=False,
+            shuffle_data_before_split=True,
+            workers_per_queue=2,
             # only work for differentiable controller now
             rollout_batch_size=1,
             # only for rnn data
@@ -79,6 +180,17 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
                "check the configuration. ({}/{})".format(
                    self.rollout_type,
                    self.weights_manager.rollout_type), ConfigException)
+        # only maml plus mode support `learn_per_weight_step_lr` and `high_order` config
+        if use_maml_plus:
+            expect(surrogate_optimizer is not None and surrogate_optimizer["type"] == "SGD",
+                   "maml plus mode use SGD surrogate optimizer no matter what, "
+                   "so, current `surrogate_optimizer` config will not have effects",
+                   ConfigException)
+        else:
+            expect(not (learn_per_weight_step_lr or high_order or use_multi_step_loss),
+                   "only maml plus mode support `learn_per_weight_step_lr` "
+                   ", `high_order` or `use_multi_step_loss` config",
+                   ConfigException)
 
         self._data_type = self.dataset.data_type()
         self._device = self.weights_manager.device
@@ -107,6 +219,8 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
             expect(isinstance(self.mepa_surrogate_steps, (list, tuple)),
                    "`mepa_surrogate_steps` must be an integer, or a list/tuple, "
                    "or a string eval to a list/tuple", ConfigException)
+            expect(not use_multi_step_loss, "When `use_multi_step_loss` is true, "
+                   "cannot use random sampled surrogate steps", ConfigException)
 
         self.logger.info("mepa surrogate steps: %s; controller surrogate steps: %s; "
                          "derive surrogate steps: %s", self.mepa_surrogate_steps,
@@ -114,10 +228,21 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
 
         self.disable_step_current = disable_step_current
         self.data_portion = data_portion
+        self.workers_per_queue = workers_per_queue
+        self.shuffle_data_before_split = shuffle_data_before_split
+        self.use_maml_plus = use_maml_plus
+        self.high_order = high_order
+        self.learn_per_weight_step_lr = learn_per_weight_step_lr
+        self.use_multi_step_loss = use_multi_step_loss
+        self.multi_step_loss_epochs = multi_step_loss_epochs
+        self.use_same_surrogate_data = use_same_surrogate_data
         self.mepa_as_surrogate = mepa_as_surrogate
         self.mepa_samples = mepa_samples
         self.rollout_batch_size = rollout_batch_size
         self.schedule_every_batch = schedule_every_batch
+        self.load_optimizer = load_optimizer
+        self.load_scheduler = load_scheduler
+        self.strict_load_weights_manager = strict_load_weights_manager
 
         # rnn specific configs
         self.bptt_steps = bptt_steps
@@ -136,13 +261,30 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
                    "set the first element of `data_portion` to 0.", ConfigException)
 
         # initialize the optimizers and schedulers
-        self.surrogate_optimizer = utils.init_optimizer(self.weights_manager.parameters(),
-                                                        surrogate_optimizer)
+        if self.use_maml_plus:
+            self.surrogate_optimizer = LearnableLrOutPlaceSGD(
+                OrderedDict(self.weights_manager.named_parameters()),
+                init_learning_rate=surrogate_optimizer["lr"],
+                device=self.weights_manager.device,
+                num_inner_steps=self.mepa_surrogate_steps,
+                learnable_lr=self.learn_per_weight_step_lr,
+                max_grad_norm=5.0,
+                base_schedule_cfg=surrogate_scheduler,
+                optimizer_cfg=surrogate_lr_optimizer,
+                scheduler_cfg=surrogate_lr_scheduler)
+            self.surrogate_lr_optimizer = self.surrogate_optimizer.optimizer
+            self.surrogate_lr_scheduler = self.surrogate_optimizer.scheduler
+            self.surrogate_scheduler = self.surrogate_optimizer.base_scheduler
+        else:
+            self.surrogate_lr_optimizer = None
+            self.surrogate_lr_scheduler = None
+            self.surrogate_optimizer = utils.init_optimizer(self.weights_manager.parameters(),
+                                                            surrogate_optimizer)
+            self.surrogate_scheduler = utils.init_scheduler(self.surrogate_optimizer,
+                                                            surrogate_scheduler)
+
         self.mepa_optimizer = utils.init_optimizer(self.weights_manager.parameters(),
                                                    mepa_optimizer)
-
-        self.surrogate_scheduler = utils.init_scheduler(self.surrogate_optimizer,
-                                                        surrogate_scheduler)
         self.mepa_scheduler = utils.init_scheduler(self.mepa_optimizer,
                                                    mepa_scheduler)
 
@@ -282,7 +424,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
         Nothing to be done.
         """
 
-    def update_evaluator(self, controller):
+    def update_evaluator(self, controller): #pylint: disable=too-many-branches
         """
         Training meta parameter of the `weights_manager` (shared super network).
         """
@@ -290,6 +432,8 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
         mepa_data = utils.to_device(mepa_data, self._device)
 
         all_gradients = defaultdict(float)
+        if self.learn_per_weight_step_lr:
+            all_opt_gradients = defaultdict(float)
         counts = defaultdict(int)
         report_stats = []
 
@@ -299,7 +443,14 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
         else:
             num_surrogate_step = self.mepa_surrogate_steps
 
+        if self.use_same_surrogate_data:
+            surrogate_data_list = [next(self.surrogate_queue) for _ in range(num_surrogate_step)]
+
         for _ in range(self.mepa_samples):
+            # surrogate data iterator
+            surrogate_iter = iter(surrogate_data_list) if self.use_same_surrogate_data \
+                             else self.surrogate_queue
+
             # sample rollout
             rollout = controller.sample(batch_size=self.rollout_batch_size)[0]
 
@@ -310,36 +461,65 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
             eval_criterions = [self._scalar_reward_func] + self._report_loss_funcs
             eval_criterions = [partial(func, cand_net=cand_net) for func in eval_criterions]
 
-            # if update in-place, here zero all the grads of weights_manager
-            if self.mepa_step_current:
-                self.weights_manager.zero_grad()
-            # return gradients if not update in-place
-            # here, use loop variable as closure/cell var, this is goodn for now,
-            # as all samples are evaluated sequentially (no parallel/delayed eval)
-            gradient_func = lambda: cand_net.gradient(
-                mepa_data,
-                criterion=partial(self._mepa_loss_func, cand_net=cand_net),
-                eval_criterions=eval_criterions,
-                mode="train",
-                return_grads=not self.mepa_step_current,
-                **self.m_hid_kwargs
-            )
+            if not self.use_maml_plus:
+                if self.mepa_step_current:
+                    # if update in-place, here zero all the grads of weights_manager
+                    self.weights_manager.zero_grad()
+                else:
+                    # otherwise, the meta parameters are updated using
+                    # `wm.step(gradients, optimizer)`, do not need to zero grads
+                    # During surrogate/inner steps, although the optimizer might
+                    # alter parameters other than the ones used by a candidate net due to
+                    # non-zeroed grads, these changes will not affect the calculation of
+                    # the candidate net as the parameters are **not** used and the changes
+                    # are reset  once surrogate steps for a candidate net are done
+                    pass
+                # return gradients if not update in-place
+                # here, use loop variable as closure/cell var, this is goodn for now,
+                # as all samples are evaluated sequentially (no parallel/delayed eval)
+                gradient_func = lambda: cand_net.gradient(
+                    mepa_data,
+                    criterion=partial(self._mepa_loss_func, cand_net=cand_net),
+                    eval_criterions=eval_criterions,
+                    mode="train",
+                    return_grads=not self.mepa_step_current,
+                    **self.m_hid_kwargs
+                )
 
-            # run surrogate steps and evalaute on queue
-            gradients, res = self._run_surrogate_steps(gradient_func, cand_net,
-                                                       num_surrogate_step,
-                                                       phase="mepa_update")
+                # run surrogate steps and evalaute on queue
+                gradients, res = self._run_surrogate_steps(gradient_func, cand_net,
+                                                           num_surrogate_step,
+                                                           phase="mepa_update",
+                                                           queue=surrogate_iter)
 
-            if not self.mepa_step_current:
+                if not self.mepa_step_current:
+                    for n, g_v in gradients:
+                        all_gradients[n] += g_v
+                        counts[n] += 1
+            else: # use_maml_plus
+                gradients, opt_gradients, res = self._get_maml_plus_gradient(
+                    cand_net, num_surrogate_step, train_iter=surrogate_iter,
+                    val_data=mepa_data, eval_criterions=eval_criterions)
                 for n, g_v in gradients:
                     all_gradients[n] += g_v
                     counts[n] += 1
+                if self.learn_per_weight_step_lr:
+                    for n, g_v in opt_gradients:
+                        all_opt_gradients[n] += g_v
+
+            # record stats of this arch
             report_stats.append(res)
 
         if self.schedule_every_batch:
             # schedule learning rate every evaluator step
             self._scheduler_step(self.step)
         self.step += 1
+
+        if self.learn_per_weight_step_lr:
+            # maml plus mode, update surrogate optimizer
+            all_opt_gradients = {k: v / self.mepa_samples
+                                 for k, v in six.iteritems(all_opt_gradients)}
+            self.surrogate_optimizer.update(all_opt_gradients.items())
 
         # average the gradients and update the meta parameters
         if not self.mepa_step_current:
@@ -358,6 +538,8 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
         super(MepaEvaluator, self).on_epoch_start(epoch)
         self.weights_manager.on_epoch_start(epoch)
         self.objective.on_epoch_start(epoch)
+        if self.use_maml_plus:
+            self.surrogate_optimizer.on_epoch_start(epoch)
 
         if not self.schedule_every_batch:
             # scheduler step is 0-based, epoch of aw_nas components is 1-based
@@ -369,6 +551,8 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
         super(MepaEvaluator, self).on_epoch_end(epoch)
         self.weights_manager.on_epoch_end(epoch)
         self.objective.on_epoch_end(epoch)
+        if self.use_maml_plus:
+            self.surrogate_optimizer.on_epoch_end(epoch)
 
         # optionally write tensorboard info
         if not self.writer.is_none():
@@ -383,7 +567,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
     def save(self, path):
         optimizer_states = {}
         scheduler_states = {}
-        for compo_name in ["mepa", "surrogate"]:
+        for compo_name in ["mepa", "surrogate", "surrogate_lr"]:
             optimizer = getattr(self, compo_name + "_optimizer")
             if optimizer is not None:
                 optimizer_states[compo_name] = optimizer.state_dict()
@@ -410,7 +594,8 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
 
     def load(self, path):
         checkpoint = torch.load(path, map_location=torch.device("cpu"))
-        self.weights_manager.load_state_dict(checkpoint["weights_manager"])
+        self.weights_manager.load_state_dict(checkpoint["weights_manager"],
+                                             strict=self.strict_load_weights_manager)
 
         # load hidden states if exists
         if "hiddens" in checkpoint:
@@ -421,10 +606,10 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
         scheduler_states = checkpoint["schedulers"]
         for compo_name in ["mepa", "surrogate"]:
             optimizer = getattr(self, compo_name + "_optimizer")
-            if optimizer is not None:
+            if self.load_optimizer and optimizer is not None and compo_name in optimizer_states:
                 optimizer.load_state_dict(optimizer_states[compo_name])
             scheduler = getattr(self, compo_name + "_scheduler")
-            if scheduler is not None:
+            if self.load_scheduler and scheduler is not None and compo_name in scheduler_states:
                 scheduler.load_state_dict(scheduler_states[compo_name])
 
         # call `on_epoch_start` for scheduled values
@@ -432,13 +617,90 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
         self.on_epoch_start(checkpoint["epoch"])
 
     # ---- helper methods ----
-    def _run_surrogate_steps(self, func, cand_net, surrogate_steps, phase, update_metric=True):
+    def _get_multi_step_loss_weights(self, surrogate_steps):
+        loss_weights = np.ones(shape=(surrogate_steps,)) * 1.0 / surrogate_steps
+        decay_rate = 1.0 / surrogate_steps / self.multi_step_loss_epochs
+        min_value_non_final = 0.03 / surrogate_steps
+        for i in range(surrogate_steps - 1):
+            loss_weights[i] = np.maximum(loss_weights[i] - self.epoch * decay_rate,
+                                         min_value_non_final)
+
+        loss_weights[-1] = np.minimum(
+            loss_weights[-1] + (self.epoch * (surrogate_steps - 1) * decay_rate),
+            1.0 - ((surrogate_steps - 1) * min_value_non_final))
+
+        loss_weights = torch.Tensor(loss_weights).to(device=self.weights_manager.device)
+        return loss_weights
+
+    def _get_maml_plus_gradient(self, cand_net, surrogate_steps, train_iter, val_data,
+                                eval_criterions=None):
+        criterion = partial(self._mepa_loss_func, cand_net=cand_net)
+        if hasattr(cand_net, "active_named_members"):
+            # only get the active named parameters, other parameters
+            # will not be used or updated by surrogate steps on this candidate net
+            detached_copy_params = dict(cand_net.active_named_members(
+                member="parameters", check_visited=True))
+        else:
+            detached_copy_params = dict(cand_net.named_parameters())
+        multi_step_loss_weights = self._get_multi_step_loss_weights(surrogate_steps)
+        multi_step_losses = []
+        for i_step in range(surrogate_steps):
+            train_data = next(train_iter)
+            train_data = (train_data[0].to(cand_net.get_device()),
+                          train_data[1].to(cand_net.get_device()))
+            outputs = cand_net.forward_with_params(
+                train_data[0], params=detached_copy_params, **self.s_hid_kwargs, mode="train")
+            loss = criterion(train_data[0], outputs, train_data[1])
+            detached_copy_params = self.surrogate_optimizer.step(
+                loss, detached_copy_params, i_step, self.high_order)
+            if self.use_multi_step_loss and self.epoch < self.multi_step_loss_epochs:
+                val_outputs = cand_net.forward_with_params(
+                    val_data[0], params=detached_copy_params, **self.m_hid_kwargs, mode="train")
+                val_loss = criterion(val_data[0], val_outputs, val_data[1])
+                multi_step_losses.append(multi_step_loss_weights[i_step] * val_loss)
+            else:
+                if i_step == surrogate_steps - 1:
+                    # foxfi: for now, use batch mean instead of running statistics for all calc
+                    val_outputs = cand_net.forward_with_params(
+                        val_data[0], params=detached_copy_params, **self.m_hid_kwargs, mode="train")
+                    val_loss = criterion(val_data[0], val_outputs, val_data[1])
+                    multi_step_losses.append(val_loss)
+
+        # backward the maml loss
+        maml_loss = torch.sum(torch.stack(multi_step_losses))
+        cand_net.zero_grad()
+        if self.learn_per_weight_step_lr:
+            self.surrogate_optimizer.zero_grad()
+        maml_loss.backward()
+
+        # collect gradients of cand_net
+        grads = [(k, v.grad.clone()) for k, v in cand_net.named_parameters()\
+                 if v.grad is not None]
+
+        # collect gradients of surrogate optimizer
+        if self.learn_per_weight_step_lr:
+            optimizer_grads = [(k, v.grad.clone())
+                               for k, v in self.surrogate_optimizer.named_parameters()\
+                               if v.grad is not None]
+        else:
+            optimizer_grads = None
+
+        if eval_criterions:
+            eval_res = utils.flatten_list([c(val_data[0], val_outputs, val_data[1])
+                                           for c in eval_criterions])
+            return grads, optimizer_grads, eval_res
+        return grads, optimizer_grads
+
+    def _run_surrogate_steps(self, func, cand_net, surrogate_steps, phase,
+                             update_metric=True, queue=None):
         if surrogate_steps <= 0:
             return func()
 
+        surrogate_queue = self.surrogate_queue if queue is None else queue
+
         with cand_net.begin_virtual():
             results = cand_net.train_queue(
-                self.surrogate_queue,
+                surrogate_queue,
                 optimizer=self.surrogate_optimizer,
                 criterion=partial(self._mepa_loss_func, cand_net=cand_net),
                 eval_criterions=[partial(loss_func, cand_net=cand_net) \
@@ -523,7 +785,9 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
         self.surrogate_queue, self.mepa_queue, self.controller_queue\
             = utils.prepare_data_queues(self.dataset.splits(), queue_cfgs,
                                         data_type=self._data_type,
-                                        drop_last=self.rollout_batch_size > 1)
+                                        drop_last=self.rollout_batch_size > 1,
+                                        shuffle=self.shuffle_data_before_split,
+                                        num_workers=self.workers_per_queue)
         if mepa_as_surrogate:
             # use mepa data queue as surrogate data queue
             self.surrogate_queue = self.mepa_queue
@@ -558,6 +822,9 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
         if self.surrogate_scheduler is not None:
             self.surrogate_scheduler.step(step)
             lr_str += "surrogate LR: {:.5f};".format(self.surrogate_scheduler.get_lr()[0])
+        if self.surrogate_lr_scheduler is not None:
+            self.surrogate_lr_scheduler.step(step)
+            lr_str += "surrogate lr LR: {:.5f};".format(self.surrogate_lr_scheduler.get_lr()[0])
         if log and lr_str:
             self.logger.info("Schedule step %3d: %s", step, lr_str)
 

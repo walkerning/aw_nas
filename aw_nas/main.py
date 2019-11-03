@@ -257,7 +257,11 @@ def _dump(rollout, dump_mode, of):
 @click.option("--seed", default=None, type=int,
               help="the random seed to run training")
 @click.option("--dump-mode", default="str", type=click.Choice(["list", "str"]))
-def sample(load, out_file, n, save_plot, gpu, seed, dump_mode):
+@click.option("--prob-thresh", default=None, type=float,
+              help="only return rollout with bigger prob than this threshold")
+@click.option("--unique", default=False, type=bool, is_flag=True,
+              help="make sure rollout samples are unique")
+def sample(load, out_file, n, save_plot, gpu, seed, dump_mode, prob_thresh, unique):
     LOGGER.info("CWD: %s", os.getcwd())
     LOGGER.info("CMD: %s", " ".join(sys.argv))
 
@@ -284,7 +288,35 @@ def sample(load, out_file, n, save_plot, gpu, seed, dump_mode):
     # then set the device
     controller.set_device(device)
 
-    rollouts = controller.sample(n)
+    if prob_thresh or unique:
+        sampled = 0
+        ignored = 0
+        rollouts = []
+        genotypes = []
+        while sampled < n:
+            rollout_cands = controller.sample(n - sampled)
+            for r in rollout_cands:
+                assert "log_probs" in r.info
+                log_prob = np.array([utils.get_numpy(cg_lp) for cg_lp in r.info["log_probs"]]).sum()
+                if np.exp(log_prob) < prob_thresh:
+                    ignored += 1
+                    LOGGER.info(
+                        "(ignored %d) Ignore arch prob %.3e (< %.3e)",
+                        ignored, np.exp(log_prob), prob_thresh)
+                elif r.genotype in genotypes:
+                    ignored += 1
+                    LOGGER.info(
+                        "(ignored %d) Ignore duplicated arch", ignored)
+                else:
+                    sampled += 1
+                    LOGGER.info(
+                        "(choosed %d) Choose arch prob %.3e (>= %.3e)",
+                        sampled, np.exp(log_prob), prob_thresh)
+                    rollouts.append(r)
+                    genotypes.append(r.genotype)
+    else:
+        rollouts = controller.sample(n)
+
     with open(out_file, "w") as of:
         for i, r in enumerate(rollouts):
             if save_plot is not None:
@@ -292,7 +324,12 @@ def sample(load, out_file, n, save_plot, gpu, seed, dump_mode):
                     filename=os.path.join(save_plot, str(i)),
                     label="Derive {}".format(i)
                 )
-            of.write("# ---- Arch {} ----\n".format(i))
+            if "log_probs" in r.info:
+                log_prob = np.array([utils.get_numpy(cg_lp) for cg_lp in r.info["log_probs"]]).sum()
+                of.write("# ---- Arch {} log_prob: {:.3f} prob: {:.3e} ----\n".format(
+                    i, log_prob, np.exp(log_prob)))
+            else:
+                of.write("# ---- Arch {} ----\n".format(i))
             _dump(r, dump_mode, of)
             of.write("\n")
 

@@ -84,3 +84,17 @@ def test_cache_results():
     assert A.method.cache_hit_and_miss == [2, 2]
     a.method(x_1, 2) # called
     assert A.method.cache_hit_and_miss == [2, 3]
+
+def test_tensor_scheduler():
+    import torch
+    from aw_nas.utils.torch_utils import init_tensor_scheduler
+    tensor = torch.ones(1) * 0.1
+    cfg = {
+        "type": "CosineAnnealingLR",
+        "T_max": 5,
+        "eta_min": 0.
+    }
+    scheduler = init_tensor_scheduler(tensor, cfg)
+    for i in range(8):
+        scheduler.step(i)
+        print(tensor.item())

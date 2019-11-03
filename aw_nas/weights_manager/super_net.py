@@ -13,7 +13,7 @@ import six
 from aw_nas.common import assert_rollout_type, group_and_sort_by_to_node
 from aw_nas.weights_manager.base import CandidateNet
 from aw_nas.weights_manager.shared import SharedNet, SharedCell, SharedOp
-from aw_nas.utils import data_parallel
+from aw_nas.utils import data_parallel, use_params
 
 __all__ = ["SubCandidateNet", "SuperNet"]
 
@@ -54,18 +54,18 @@ class SubCandidateNet(CandidateNet):
         as different SubCandidateNet share the same set of SuperNet weights.
         """
 
-        w_clone = {k: v.clone() for k, v in self.named_parameters()}
+        w_clone = {k: v.clone() for k, v in self.super_net.named_parameters()}
         if not self.virtual_parameter_only:
-            buffer_clone = {k: v.clone() for k, v in self.named_buffers()}
+            buffer_clone = {k: v.clone() for k, v in self.super_net.named_buffers()}
 
         yield
 
-        for n, v in self.named_parameters():
+        for n, v in self.super_net.named_parameters():
             v.data.copy_(w_clone[n])
         del w_clone
 
         if not self.virtual_parameter_only:
-            for n, v in self.named_buffers():
+            for n, v in self.super_net.named_buffers():
                 v.data.copy_(buffer_clone[n])
             del buffer_clone
 
@@ -80,6 +80,10 @@ class SubCandidateNet(CandidateNet):
             return self._forward(inputs)
         # return data_parallel(self.super_net, (inputs, self.genotypes_grouped), self.gpus)
         return data_parallel(self, (inputs,), self.gpus, module_kwargs={"single": True})
+
+    def _forward_with_params(self, inputs, params, **kwargs): #pylint: disable=arguments-differ
+        with use_params(self.super_net, params):
+            return self.forward(inputs, **kwargs)
 
     def forward_one_step(self, context, inputs=None):
         """

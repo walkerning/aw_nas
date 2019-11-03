@@ -64,6 +64,15 @@ PRIMITVE_FACTORY = {
     "conv_3x3" : lambda C, C_out, stride, affine: nn.Conv2d(C, C_out, 3, stride, 1),
     "bn_relu" : lambda C, C_out, stride, affine: BNReLU(C, C_out, affine),
 
+    # imagenet stem
+    "imagenet_stem0": lambda C, C_out, stride, affine: nn.Sequential(
+        nn.Conv2d(3, C_out // 2, kernel_size=3, stride=2, padding=1, bias=False),
+        nn.BatchNorm2d(C_out // 2),
+        nn.ReLU(inplace=True),
+        nn.Conv2d(C_out // 2, C_out, 3, stride=2, padding=1, bias=False),
+        nn.BatchNorm2d(C_out)
+    ),
+
     # activations
     "tanh": lambda **kwargs: nn.Tanh(),
     "relu": lambda **kwargs: nn.ReLU(),
