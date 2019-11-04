@@ -123,7 +123,7 @@ class DiffSuperNet(SharedNet):
 
 class DiffSharedCell(SharedCell):
     def num_out_channel(self):
-        return self.num_out_channels * self.search_space.num_steps
+        return self.num_out_channels * self._steps
 
     def forward(self, inputs, arch, detach_arch=True): #pylint: disable=arguments-differ
         assert self._num_init == len(inputs)
@@ -138,7 +138,7 @@ class DiffSharedCell(SharedCell):
             new_state = sum(act_lst)
             offset += len(states)
             states.append(new_state)
-        return torch.cat(states[-self.search_space.num_steps:], dim=1)
+        return torch.cat(states[-self._steps:], dim=1)
 
 
 class DiffSharedOp(SharedOp):

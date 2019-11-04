@@ -1,6 +1,7 @@
 from __future__ import print_function
-from aw_nas.common import get_search_space
+import os
 import pytest
+from aw_nas.common import get_search_space
 
 # ---- test controller rl ----
 def test_rl_controller():
@@ -98,6 +99,41 @@ def test_controller_network_cellwise_primitives(case):
     arch, log_probs, entropies, (hx, cx) = net_shared.sample(batch_size, cell_index=1)
     assert all(np.max(single_arch[1]) <= 2 for single_arch in arch)
 
+@pytest.mark.parametrize("case", [
+    {"type": "anchor_lstm"},
+    {"type": "embed_lstm"}
+])
+def test_controller_network_cellwise_num_steps(case):
+    import numpy as np
+    from aw_nas.controller.rl_networks import BaseRLControllerNet
+    from aw_nas.utils.exception import NasException
+    search_space = get_search_space(cls="cnn", num_cell_groups=2,
+                                    num_steps=[3,6])
+
+    device = "cuda"
+    cls = BaseRLControllerNet.get_class_(case["type"])
+    net0 = cls(search_space, device, cell_index=0)
+    net1 = cls(search_space, device, cell_index=1)
+
+    batch_size = 3
+    arch, log_probs, entropies, (hx, cx) = net0.sample(batch_size)
+    assert len(hx) == net0.num_lstm_layers
+    assert len(cx) == net0.num_lstm_layers
+    assert hx[0].shape == (batch_size, net0.controller_hid)
+    assert len(arch) == batch_size
+    num_actions = len(arch[0][0]) + len(arch[0][1])
+    assert log_probs.shape == (batch_size, num_actions)
+    assert entropies.shape == (batch_size, num_actions)
+    assert len(arch[0][0]) == search_space.num_node_inputs * 3
+
+    batch_size = 3
+    arch, log_probs, entropies, (hx, cx) = net1.sample(batch_size)
+    assert len(arch[0][0]) == search_space.num_node_inputs * 6
+
+    with pytest.raises(NasException):
+        # cannot use shared network when search space have cellwise `num_steps`
+        _ = cls(search_space, device, cell_index=None)
+
 def test_rl_agent_ppo():
     import numpy as np
     import torch
@@ -186,6 +222,23 @@ def test_diff_controller_cellwise_primitives():
                                                                           "skip_connect"])
     print(rollout.genotype)
 
+def test_diff_controller_cellwise_num_steps():
+    from aw_nas.controller import DiffController
+
+    num_steps = [4, 6]
+    num_cell_groups = len(num_steps)
+    search_space = get_search_space(cls="cnn", num_cell_groups=num_cell_groups,
+                                    num_steps=num_steps)
+    device = "cuda"
+    controller = DiffController(search_space, device)
+    for i, num_step in enumerate(num_steps):
+        assert controller.cg_alphas[i].shape[0] == \
+            num_step * (num_step - 1) / 2 + search_space.num_init_nodes * num_step
+
+    rollout = controller.sample(1)[0]
+    assert isinstance(rollout.genotype, search_space.genotype_type)
+    print(rollout.genotype)
+
 def test_diff_controller_rollout_batch_size():
     import numpy as np
     from aw_nas.controller import DiffController
@@ -198,3 +251,22 @@ def test_diff_controller_rollout_batch_size():
     assert rollout.sampled[0].shape == (14, 4, len(search_space.shared_primitives))
     assert rollout.logits[0].shape == (14, len(search_space.shared_primitives))
     print(rollout.genotype)
+
+# ---- test controller population ----
+def test_population_controller_random_mutation_smapler(init_population_dir, tmp_path):
+    from aw_nas.controller import PopulationController
+
+    device = "cuda"
+    # prepare a population tmp dir
+    init_dir, search_space = init_population_dir
+
+    result_population_dir = os.path.join(tmp_path, "result_population")
+    controller = PopulationController(search_space, device,
+                                      population_dirs=[init_dir],
+                                      result_population_dir=result_population_dir,
+                                      parent_pool_size=2)
+
+    population = controller.population
+    rollouts = controller.sample(3)
+    for rollout in rollouts:
+        assert str(rollout.genotype) != str(population.get_model(rollout.parent_index).genotype)

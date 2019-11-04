@@ -10,8 +10,6 @@ from collections import OrderedDict
 import contextlib
 import six
 
-import torch
-
 from aw_nas.common import assert_rollout_type, group_and_sort_by_to_node
 from aw_nas.weights_manager.base import CandidateNet
 from aw_nas.weights_manager.shared import SharedNet, SharedCell, SharedOp
@@ -38,9 +36,14 @@ class SubCandidateNet(CandidateNet):
         self._cached_np = None
         self._cached_nb = None
 
-        self.genotypes = [g[1] for g in rollout.genotype_list()]
-        self.genotypes_grouped = [group_and_sort_by_to_node(g[1]) for g in rollout.genotype_list() \
-                                  if "concat" not in g[0]]
+        genotype_list = rollout.genotype_list()
+        self.genotypes = [g[1] for g in genotype_list]
+        self.genotypes_grouped = list(zip(
+            [group_and_sort_by_to_node(conns)
+             for conns in self.genotypes[:self.search_space.num_cell_groups]],
+            self.genotypes[self.search_space.num_cell_groups:]))
+        # self.genotypes_grouped = [group_and_sort_by_to_node(g[1]) for g in \
+        #                           if "concat" not in g[0]]
 
     @contextlib.contextmanager
     def begin_virtual(self):
@@ -90,7 +93,9 @@ class SubCandidateNet(CandidateNet):
         return self.super_net.forward_one_step(context, inputs, self.genotypes_grouped)
 
     def plot_arch(self):
-        return self.super_net.search_space.plot_arch(self.genotypes)
+        return self.super_net.search_space.plot_arch(list(zip(
+            self.cell_group_names + [n + "_concat" for n in self.cell_group_names],
+            self.genotypes)))
 
     def named_parameters(self, prefix="", recurse=True): #pylint: disable=arguments-differ
         if self.member_mask:
@@ -164,8 +169,9 @@ class SubCandidateNet(CandidateNet):
         callback(context.last_state, context)
 
         # forward the cells
-        for _ in range(0, self.search_space.num_layers):
-            num_steps = self.search_space.num_steps + self.search_space.num_init_nodes + 1
+        for i_layer in range(0, self.search_space.num_layers):
+            num_steps = self.search_space.get_layer_num_steps(i_layer) + \
+                        self.search_space.num_init_nodes + 1
             for _ in range(num_steps):
                 while True: # call `forward_one_step` until this step ends
                     _, context = self.forward_one_step(context)
@@ -225,6 +231,9 @@ class SuperNet(SharedNet):
 
     def sub_named_members(self, genotypes,
                           prefix="", member="parameters", check_visited=False):
+        conns, concat_nodes = genotypes[:self.search_space.num_cell_groups], \
+                              genotypes[self.search_space.num_cell_groups:]
+
         prefix = prefix + ("." if prefix else "")
 
         # the common modules that will be forwarded by every candidate
@@ -241,7 +250,7 @@ class SuperNet(SharedNet):
             visited = set()
             cell_idxes = [len(self.cells)-1]
             depend_nodes_lst = [{edge[1] for edge in genotype}.intersection(range(self._num_init))\
-                                for genotype in genotypes]
+                                for genotype in conns]
             while cell_idxes:
                 cell_idx = cell_idxes.pop()
                 visited.update([cell_idx])
@@ -257,8 +266,9 @@ class SuperNet(SharedNet):
 
         for cell_idx in sorted(visited):
             cell = self.cells[cell_idx]
-            genotype = genotypes[self._cell_layout[cell_idx]]
-            for n, v in cell.sub_named_members(genotype,
+            genotype = conns[self._cell_layout[cell_idx]]
+            for n, v in cell.sub_named_members((genotype,
+                                                concat_nodes[self._cell_layout[cell_idx]]),
                                                prefix=prefix + "cells.{}".format(cell_idx),
                                                member=member,
                                                check_visited=check_visited):
@@ -279,23 +289,24 @@ class SuperNet(SharedNet):
 
 class DiscreteSharedCell(SharedCell):
     def num_out_channel(self):
-        return self.num_out_channels * self.search_space.num_steps
+        return self.num_out_channels * self._out_multipler
 
     def forward(self, inputs, genotype_grouped): #pylint: disable=arguments-differ
+        conns_grouped, concat_nodes = genotype_grouped
         assert self._num_init == len(inputs)
         if self.use_preprocess:
             states = [op(_input) for op, _input in zip(self.preprocess_ops, inputs)]
         else:
             states = [s for s in inputs]
 
-        for to_, connections in genotype_grouped:
+        for to_, connections in conns_grouped:
             state_to_ = 0.
             for op_type, from_, _ in connections:
                 out = self.edges[from_][to_](states[from_], op_type)
                 state_to_ = state_to_ + out
             states.append(state_to_)
 
-        return torch.cat(states[-self.search_space.num_steps:], dim=1)
+        return self.concat_op([states[ind] for ind in concat_nodes])
 
     def forward_one_step(self, context, genotype_grouped):
         to_ = cur_step = context.next_step_index[1]
@@ -305,7 +316,8 @@ class DiscreteSharedCell(SharedCell):
             state = self.preprocess_ops[cur_step](context.previous_cells[ind])
             context.current_cell.append(state)
         elif cur_step < self._num_init + self._steps: # the following steps
-            conns = genotype_grouped[cur_step - self._num_init][1]
+            conns_grouped = genotype_grouped[0]
+            conns = conns_grouped[cur_step - self._num_init][1]
             op_ind, current_op = context.next_op_index
             if op_ind == len(conns):
                 # all connections added to context.previous_ops, sum them up
@@ -319,22 +331,25 @@ class DiscreteSharedCell(SharedCell):
                     inputs=context.current_cell[from_] if current_op == 0 else None,
                     op_type=op_type)
         else: # final concat
-            state = torch.cat(context.current_cell[-self.search_space.num_steps:], dim=1)
+            concat_nodes = genotype_grouped[1]
+            state = self.concat_op([context.current_cell[ind] for ind in concat_nodes])
             context.current_cell = []
             context.previous_cells.append(state)
         return state, context
 
     def sub_named_members(self, genotype,
                           prefix="", member="parameters", check_visited=False):
+        conns, _ = genotype
+
         prefix = prefix + ("." if prefix else "")
-        all_from = {edge[1] for edge in genotype}
+        all_from = {edge[1] for edge in conns}
         for i, pre_op in enumerate(self.preprocess_ops):
             if not check_visited or i in all_from:
                 for n, v in getattr(pre_op, "named_" + member)\
                     (prefix=prefix+"preprocess_ops."+str(i)):
                     yield n, v
 
-        for op_type, from_, to_ in genotype:
+        for op_type, from_, to_ in conns:
             edge_share_op = self.edges[from_][to_]
             for n, v in edge_share_op.sub_named_members(
                     op_type,

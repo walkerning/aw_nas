@@ -26,6 +26,11 @@ class BaseWeightsManager(Component):
         self.rollout_type = rollout_type
 
     @abc.abstractmethod
+    def set_device(self, device):
+        """Set the device of the weights manager"""
+        pass
+
+    @abc.abstractmethod
     def assemble_candidate(self, rollout):
         """Assemble a candidate net using rollout.
         """

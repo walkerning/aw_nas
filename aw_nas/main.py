@@ -10,6 +10,7 @@ import sys
 import random
 import shutil
 import functools
+import multiprocessing as mp
 
 import click
 import yaml
@@ -143,7 +144,7 @@ def _set_gpu(gpu):
              help="The awnas NAS framework command line interface. "
              "Use `AWNAS_LOG_LEVEL` environment variable to modify the log level.")
 def main():
-    pass
+    mp.set_start_method("spawn")
 
 
 # ---- Search, Sample, Derive using trainer ----

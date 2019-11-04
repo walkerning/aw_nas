@@ -19,6 +19,9 @@ class BaseEvaluator(Component):
                ConfigException) # supported rollout types
         self.rollout_type = rollout_type
 
+    def set_device(self, device):
+        self.weights_manager.set_device(device)
+
     @utils.abstractclassmethod
     def supported_data_types(cls):
         """

@@ -1,8 +1,10 @@
-import copy
-import numpy as np
+import os
+
 import six
-import torch
+import yaml
 import pytest
+import torch
+import numpy as np
 
 # ---- test super_net ----
 def _cnn_data(device="cuda", batch_size=2):
@@ -20,8 +22,11 @@ def _supernet_sample_cand(net):
     return cand_net
 
 
-@pytest.mark.parametrize("super_net", [{"candidate_member_mask": False}],
-                         indirect=["super_net"])
+@pytest.mark.parametrize("super_net", [
+    {"candidate_member_mask": False},
+    {"search_space_cfg": {"concat_op": "sum"},
+     "candidate_member_mask": False}
+], indirect=["super_net"])
 def test_supernet_assemble_nomask(super_net):
     net = super_net
     cand_net = _supernet_sample_cand(net)
@@ -49,12 +54,17 @@ def test_supernet_assemble(super_net):
     assert len(s_b_names.intersection(c_b_names)) == len(c_b_names)
     # names = sorted(set(c_names).difference([g[0] for g in grads]))
 
+@pytest.mark.parametrize("super_net", [
+    {},
+    {"search_space_cfg": {"num_steps": [2, 4]}},
+    {"search_space_cfg": {"concat_op": "sum"}},
+    {"search_space_cfg": {"loose_end": True, "concat_op": "mean"}},
+], indirect=["super_net"])
 def test_supernet_forward(super_net):
     # test forward
     cand_net = _supernet_sample_cand(super_net)
 
     data = _cnn_data()
-
     logits = cand_net.forward_data(data[0], mode="eval")
     assert logits.shape[-1] == 10
 
@@ -268,6 +278,9 @@ def test_candidate_forward_with_params(super_net):
 # ---- End test super_net ----
 
 # ---- Test diff_super_net ----
+@pytest.mark.parametrize("diff_super_net", [
+    {"search_space_cfg": {"num_steps": [2, 4]}}
+], indirect=["diff_super_net"])
 def test_diff_supernet_forward(diff_super_net):
     from aw_nas.common import get_search_space
     from aw_nas.controller import DiffController
@@ -381,3 +394,201 @@ def test_diff_supernet_data_parallel_backward_rolloutsize(diff_super_net):
     loss.backward()
     assert controller.cg_alphas[0].grad is not None
 # ---- End test diff_super_net ----
+
+SAMPLE_MODEL_CFG = """
+final_model_type: cnn_final_model
+final_model_cfg:
+  # Schedulable attributes: dropout_path_rate
+  num_classes: 10
+  init_channels: 20
+  layer_channels: []
+  stem_multiplier: 3
+  dropout_rate: 0.1
+  dropout_path_rate: 0.2
+  auxiliary_head: false
+  auxiliary_cfg: null
+  use_stem: conv_bn_3x3
+  stem_stride: 1
+  stem_affine: true
+  cell_use_preprocess: true
+  cell_pool_batchnorm: false
+  cell_group_kwargs: null
+  cell_independent_conn: false
+  schedule_cfg: null
+# ---- End Type cnn_final_model ----
+"""
+# ---- test morphism ----
+
+@pytest.mark.parametrize("population", [
+    {
+        "search_space_cfg": {"num_layers": 5, "num_steps": 2,
+                             "shared_primitives": ["none", "sep_conv_3x3", "sep_conv_5x5"]}
+    }
+], indirect=["population"])
+def test_morphism(population, tmp_path):
+    from aw_nas.rollout.mutation import MutationRollout, ConfigTemplate, ModelRecord, CellMutation
+    from aw_nas.final import CNNGenotypeModel
+    from aw_nas.main import _init_component
+    from aw_nas.common import genotype_from_str, rollout_from_genotype_str
+    from aw_nas.weights_manager import MorphismWeightsManager
+
+    cfg = yaml.safe_load(SAMPLE_MODEL_CFG)
+    device = "cuda:0"
+    search_space = population.search_space
+    genotype_str = ("normal_0=[('sep_conv_5x5', 0, 2), ('sep_conv_3x3', 1, 2), "
+                    "('sep_conv_3x3', 2, 3), ('none', 2, 3)], "
+                    "reduce_1=[('sep_conv_5x5', 0, 2), ('none', 0, 2), "
+                    "('sep_conv_5x5', 0, 3), ('sep_conv_5x5', 1, 3)]")
+    parent_rollout = rollout_from_genotype_str(genotype_str, search_space)
+    cfg["final_model_cfg"]["genotypes"] = genotype_str
+    cnn_model = _init_component(cfg, "final_model", search_space=search_space,
+                                device=device)
+    parent_state_dict = cnn_model.state_dict()
+    torch.save(cnn_model, os.path.join(tmp_path, "test"))
+
+    # add this record to the population
+    new_model_record = ModelRecord(
+        genotype_from_str(cfg["final_model_cfg"]["genotypes"], cnn_model.search_space),
+        cfg,
+        cnn_model.search_space,
+        info_path=os.path.join(tmp_path, "test.yaml"),
+        checkpoint_path=os.path.join(tmp_path, "test"),
+        finished=True,
+        confidence=1,
+        perfs={"acc": np.random.rand(),
+               "loss": np.random.uniform(0, 10)})
+    parent_index = population.add_model(new_model_record)
+
+    mutation = CellMutation(search_space, CellMutation.PRIMITIVE, cell=0, step=0,
+                            connection=1,
+                            modified=search_space.shared_primitives.index("sep_conv_5x5"))
+    print("mutation: ", mutation)
+    rollout = MutationRollout(population, parent_index, [mutation], search_space)
+    assert rollout.genotype != cnn_model.genotypes
+    w_manager = MorphismWeightsManager(search_space, device, "mutation")
+    cand_net = w_manager.assemble_candidate(rollout)
+    child_state_dict = cand_net.state_dict()
+
+    layers = [i_layer for i_layer, cg_id in enumerate(search_space.cell_layout)
+              if cg_id == mutation.cell]
+    removed_edges = ["cells.{layer}.edge_mod.f_1_t_2-sep_conv_3x3-0".format(
+        layer=layer) for layer in layers]
+    added_edges = ["cells.{layer}.edge_mod.f_1_t_2-sep_conv_5x5-0".format(
+        layer=layer) for layer in layers]
+    for n, v in six.iteritems(child_state_dict):
+        if n not in added_edges:
+            assert n in parent_state_dict
+            assert (parent_state_dict[n].data.cpu().numpy() == v.data.cpu().numpy()).all()
+    for n in removed_edges:
+        assert n not in child_state_dict
+ 
+DENSE_SAMPLE_MODEL_CFG = """
+search_space_type: cnn_dense
+search_space_cfg:
+  num_dense_blocks: 4
+  stem_channel: 8
+  first_ratio: null
+dataset_type: cifar10
+dataset_cfg:
+  cutout: null
+final_model_type: dense_final_model
+final_model_cfg:
+  num_classes: 10
+  dropout_rate: 0.1
+  schedule_cfg: null
+final_trainer_type: cnn_trainer
+final_trainer_cfg:
+  # Schedulable attributes:
+  epochs: 50
+  batch_size: 96
+  optimizer_type: SGD
+  optimizer_kwargs: null
+  learning_rate: 0.05
+  momentum: 0.9
+  warmup_epochs: 0
+  optimizer_scheduler:
+    T_max: 50
+    eta_min: 0.001
+    type: CosineAnnealingLR
+  weight_decay: 0.0003
+  no_bias_decay: false
+  grad_clip: 5.0
+  auxiliary_head: false
+  auxiliary_weight: 0.0
+  add_regularization: false
+  save_as_state_dict: false
+  eval_no_grad: true
+  schedule_cfg: null
+# ---- End Type cnn_trainer ----
+## ---- End Component final_trainer ----
+
+## ---- Component objective ----
+# ---- Type classification ----
+objective_type: classification
+objective_cfg:
+  # Schedulable attributes: 
+  {}
+# ---- End Type classification ----
+"""
+
+@pytest.mark.parametrize("population", [
+    {
+        "search_space_type": "cnn_dense",
+        "search_space_cfg": {
+            "num_dense_blocks": 4,
+            "stem_channel": 8,
+            "first_ratio": None,
+        },
+        "num_records": 0,
+        "cfg_template": DENSE_SAMPLE_MODEL_CFG,
+    }
+], indirect=["population"])
+def test_dense_morphism_wider(population, tmp_path):
+    from aw_nas.rollout.mutation import ConfigTemplate, ModelRecord, CellMutation
+    from aw_nas.rollout.dense import DenseMutationRollout, DenseMutation
+    from aw_nas.final import DenseGenotypeModel
+    from aw_nas.main import _init_component
+    from aw_nas.common import genotype_from_str, rollout_from_genotype_str
+    from aw_nas.weights_manager import DenseMorphismWeightsManager
+    cfg = yaml.safe_load(DENSE_SAMPLE_MODEL_CFG)
+    device = "cuda:0"
+    search_space = population.search_space
+    genotype_str = ("stem=8, block_0=[4, 4, 4, 4, 4, 4], transition_0=16, "
+                    "block_1=[4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4], transition_1=32, "
+                    "block_2=[4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, "
+                    "4, 4, 4, 4, 4], transition_2=64, block_3=[4, 4, 4, 4, 4, 4]")
+    parent_rollout = rollout_from_genotype_str(genotype_str, search_space)
+    cfg["final_model_cfg"]["genotypes"] = genotype_str
+    cnn_model = _init_component(cfg, "final_model", search_space=search_space,
+                                device=device)
+    parent_state_dict = cnn_model.state_dict()
+    torch.save(cnn_model, os.path.join(tmp_path, "test"))
+
+    # add this record to the population
+    new_model_record = ModelRecord(
+        genotype_from_str(cfg["final_model_cfg"]["genotypes"], cnn_model.search_space),
+        cfg,
+        cnn_model.search_space,
+        info_path=os.path.join(tmp_path, "test.yaml"),
+        checkpoint_path=os.path.join(tmp_path, "test"),
+        finished=True,
+        confidence=1,
+        perfs={"acc": np.random.rand(),
+               "loss": np.random.uniform(0, 10)})
+    parent_index = population.add_model(new_model_record)
+
+    mutation = DenseMutation(search_space, DenseMutation.WIDER, block_idx=1, miniblock_idx=0,
+                             modified=8)
+    rollout = DenseMutationRollout(population, parent_index, [mutation], search_space)
+    assert rollout.genotype != cnn_model.genotypes
+
+    w_manager = DenseMorphismWeightsManager(search_space, device, "dense_mutation")
+    cand_net = w_manager.assemble_candidate(rollout)
+    cand_net.eval()
+    child_state_dict = cand_net.state_dict()
+    data = _cnn_data()
+    logits = cand_net.forward(data[0])
+    origin_net = torch.load(rollout.population.get_model(rollout.parent_index).checkpoint_path)
+    origin_net.eval()
+    logits_ori = origin_net.forward(data[0])
+    assert (logits - logits_ori).abs().mean() < 1e-6
