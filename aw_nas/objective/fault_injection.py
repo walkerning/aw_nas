@@ -124,10 +124,10 @@ class FaultInjectionObjective(BaseObjective):
                    "`latency_reward_coeff` must equal 0 when latency is not calculated",
                    ConfigException)
         self.inject_propto_flops = inject_propto_flops
-        if self.inject_propto_flops:
-            expect(fault_modes == "fixed",
-                   "When `inject_propto_flops` is True, must use the bit-flip fault mode `fixed`",
-                   ConfigException)
+        #if self.inject_propto_flops:
+        #    expect(fault_modes == "fixed",
+        #           "When `inject_propto_flops` is True, must use the bit-flip fault mode `fixed`",
+        #           ConfigException)
         self.inject_prob_avg_meters = defaultdict(utils.AverageMeter)
         self.cls_inject_prob_avg_meters = defaultdict(lambda: defaultdict(utils.AverageMeter))
 

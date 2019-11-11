@@ -221,8 +221,6 @@ class SuperNet(SharedNet):
                                        stem_affine=stem_affine,
                                        preprocess_op_type=preprocess_op_type,
                                        cell_use_preprocess=cell_use_preprocess,
-                                       preprocess_kernel=preprocess_kernel,
-                                       preprocess_type=preprocess_type,
                                        cell_group_kwargs=cell_group_kwargs)
 
         # candidate net with/without parameter mask

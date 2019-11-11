@@ -181,8 +181,6 @@ class CNNGenotypeModel(FinalModel):
                                    preprocess_op_type=preprocess_op_type,
                                    pool_batchnorm=cell_pool_batchnorm,
                                    independent_conn=cell_independent_conn,
-                                   preprocess_kernel=preprocess_kernel,
-                                   preprocess_type=preprocess_type,
                                    **kwargs)
             prev_num_channels.append(num_out_channels * self._out_multiplier)
             prev_num_channels = prev_num_channels[1:]

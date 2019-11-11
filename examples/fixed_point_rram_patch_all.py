@@ -147,7 +147,7 @@ class CNNGenotypeModelPatch(CNNGenotypeModel):
                  dropout_rate=0.1, dropout_path_rate=0.2,
                  auxiliary_head=False, auxiliary_cfg=None,
                  use_stem="conv_bn_3x3", stem_stride=1, stem_affine=True,
-                 cell_use_preprocess=True, preprocess_kernel=1, preprocess_type="relu_conv_bn",
+                 cell_use_preprocess=True, preprocess_op_type=None,
                  cell_pool_batchnorm=False, cell_group_kwargs=None,
                  cell_independent_conn=False,
                  schedule_cfg=None):
@@ -155,7 +155,7 @@ class CNNGenotypeModelPatch(CNNGenotypeModel):
                  num_classes, init_channels, layer_channels, stem_multiplier, dropout_rate,
                  dropout_path_rate, auxiliary_head, auxiliary_cfg, 
                  use_stem, stem_stride, stem_affine,
-                 cell_use_preprocess, preprocess_kernel, preprocess_type, cell_pool_batchnorm, cell_group_kwargs,
+                 preprocess_op_type, cell_use_preprocess, cell_pool_batchnorm, cell_group_kwargs,
                  cell_independent_conn, schedule_cfg)
 
     def set_saf_ratio(self, ratio):
@@ -187,7 +187,7 @@ class SuperNetPatch(SuperNet):
                  num_classes=10, init_channels=16, stem_multiplier=3,
                  max_grad_norm=5.0, dropout_rate=0.1,
                  use_stem="conv_bn_3x3", stem_stride=1, stem_affine=True,
-                 cell_use_preprocess=True, preprocess_kernel=1, preprocess_type="relu_conv_bn", cell_group_kwargs=None,
+                 cell_use_preprocess=True, preprocess_op_type=None, cell_group_kwargs=None,
                  candidate_member_mask=True, candidate_cache_named_members=False,
                  candidate_virtual_parameter_only=False, candidate_eval_no_grad=True):
         super(SuperNetPatch, self).__init__(search_space, device, rollout_type,
@@ -198,8 +198,7 @@ class SuperNetPatch(SuperNet):
                                        use_stem=use_stem, stem_stride=stem_stride,
                                        stem_affine=stem_affine,
                                        cell_use_preprocess=cell_use_preprocess,
-                                       preprocess_kernel=preprocess_kernel,
-                                       preprocess_type=preprocess_type,
+                                       preprocess_op_type=preprocess_op_type,
                                        cell_group_kwargs=cell_group_kwargs,
                                        candidate_member_mask=candidate_member_mask, candidate_cache_named_members=candidate_cache_named_members,
                                        candidate_virtual_parameter_only=candidate_virtual_parameter_only, candidate_eval_no_grad=candidate_eval_no_grad)

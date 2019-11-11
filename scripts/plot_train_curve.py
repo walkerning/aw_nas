@@ -73,18 +73,22 @@ elif args.type == "ftt":
     valid_pattern = re.compile("valid_acc ([0-9.]+) ; valid_obj ([0-9.]+) ; "
                                "valid performances: acc_clean: ([0-9.]+); acc_fault: ([0-9.]+)")
     valid_obj_names = ["acc", "loss", "acc_clean", "acc_fault"]
-    valid_ylims = [(20, 100), None, (0.2, 1.0), (0.2, 1.0)]
+    valid_ylims = [(20, 100), None, (0.0, 1.0), (0.0, 1.0)]
 
 ## --- parse logs ---
 labels = []
 file_train_objs_list = []
 file_valid_objs_list = []
 for fname in fnames:
-    label = os.path.basename(fname)
-    if label in {"train.log", "search.log"}:
-        label = os.path.basename(os.path.dirname(fname))
-    if "." in fname:
-        label = label.rsplit(".", 1)[0]
+    cur_p = fname
+    while 1:
+        label = os.path.basename(cur_p)
+        if "." in label:
+            label = label.rsplit(".", 1)[0]
+        if label in {"train", "search"}:
+            cur_p = os.path.dirname(cur_p)
+        else:
+            break
     labels.append(label)
     content = open(fname, "r").read().strip()
     train_objs = list(zip(*_convert_float(train_pattern.findall(content))))

@@ -656,7 +656,7 @@ class RNNSearchSpace(SearchSpace):
             graph.edge(str(i), "h_{t}", fillcolor="gray")
 
         graph.render(filename, view=False)
-        return [(genotypes[0][0], filename + ".png")]
+        return [(genotypes[0][0], filename + ".{}".format(plot_format))]
 
     def distance(self, arch1, arch2):
         raise NotImplementedError()

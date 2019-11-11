@@ -120,6 +120,7 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                                        "sub-network is not actually active, "
                                        "and this genotype might not be so effective.")
                                       .format(len(missing_keys)))
+                    self.logger.error(str(missing_keys))
                 self.model.load_state_dict(checkpoint, strict=False)
             self.logger.info("param size = %f M",
                              utils.count_parameters(self.model)/1.e6)
@@ -215,6 +216,8 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
         self.save(os.path.join(self.train_dir, "final"))
 
     def evaluate_split(self, split):
+        if len(self.gpus) >= 2:
+            self._forward_once_for_flops(self.model)
         assert split in {"train", "test"}
         if split == "test":
             queue = self.valid_queue
