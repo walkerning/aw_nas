@@ -107,6 +107,8 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                 # load state dict
                 checkpoint = torch.load(load_state_dict, map_location=torch.device("cpu"))
                 extra_keys = set(checkpoint.keys()).difference(set(self.model.state_dict().keys()))
+                if extra_keys:
+                    self.logger.error(str(extra_keys))
                 assert not extra_keys, "Extra keys in checkpoint! Make sure the genotype match"
                 missing_keys = {key for key in set(self.model.state_dict().keys())\
                                 .difference(checkpoint.keys()) \
