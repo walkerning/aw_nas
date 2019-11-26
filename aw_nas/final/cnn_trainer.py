@@ -104,26 +104,7 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
         else:
             assert self.model is not None
             if load_state_dict is not None:
-                # load state dict
-                checkpoint = torch.load(load_state_dict, map_location=torch.device("cpu"))
-                extra_keys = set(checkpoint.keys()).difference(set(self.model.state_dict().keys()))
-                if extra_keys:
-                    self.logger.error(str(extra_keys))
-                assert not extra_keys, "Extra keys in checkpoint! Make sure the genotype match"
-                missing_keys = {key for key in set(self.model.state_dict().keys())\
-                                .difference(checkpoint.keys()) \
-                                if "auxiliary" not in key}
-                if missing_keys:
-                    self.logger.error(("{} missing keys will not be loaded! Check your genotype, "
-                                       "This should be due to you're using the state dict dumped by"
-                                       " `awnas eval-arch --save-state-dict` in an old version, "
-                                       "and your genotype actually skip some "
-                                       "cells, which might means, many parameters of your "
-                                       "sub-network is not actually active, "
-                                       "and this genotype might not be so effective.")
-                                      .format(len(missing_keys)))
-                    self.logger.error(str(missing_keys))
-                self.model.load_state_dict(checkpoint, strict=False)
+                self._load_state_dict(load_state_dict)
             self.logger.info("param size = %f M",
                              utils.count_parameters(self.model)/1.e6)
             self._parallelize()
@@ -156,7 +137,11 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
     def load(self, path):
         # load the model
         m_path = os.path.join(path, "model.pt") if os.path.isdir(path) else path
-        self.model = torch.load(m_path, map_location=torch.device("cpu"))
+        if not os.path.exists(m_path):
+            m_path = os.path.join(path, "model_state.pt")
+            self._load_state_dict(m_path)
+        else:
+            self.model = torch.load(m_path, map_location=torch.device("cpu"))
         self.model.to(self.device)
         self._parallelize()
         log_strs = ["model from {}".format(m_path)]
@@ -235,6 +220,28 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
     @classmethod
     def supported_data_types(cls):
         return ["image"]
+
+    def _load_state_dict(self, path):
+        # load state dict
+        checkpoint = torch.load(path, map_location=torch.device("cpu"))
+        extra_keys = set(checkpoint.keys()).difference(set(self.model.state_dict().keys()))
+        if extra_keys:
+            self.logger.error(str(extra_keys))
+        assert not extra_keys, "Extra keys in checkpoint! Make sure the genotype match"
+        missing_keys = {key for key in set(self.model.state_dict().keys())\
+                        .difference(checkpoint.keys()) \
+                        if "auxiliary" not in key}
+        if missing_keys:
+            self.logger.error(("{} missing keys will not be loaded! Check your genotype, "
+                               "This should be due to you're using the state dict dumped by"
+                               " `awnas eval-arch --save-state-dict` in an old version, "
+                               "and your genotype actually skip some "
+                               "cells, which might means, many parameters of your "
+                               "sub-network is not actually active, "
+                               "and this genotype might not be so effective.")
+                              .format(len(missing_keys)))
+            self.logger.error(str(missing_keys))
+        self.model.load_state_dict(checkpoint, strict=False)
 
     def _parallelize(self):
         if len(self.gpus) >= 2:
