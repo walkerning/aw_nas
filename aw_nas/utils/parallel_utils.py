@@ -175,7 +175,21 @@ def data_parallel(module, inputs, device_ids=None, output_device=None, dim=0, mo
     outputs = parallel_apply(replicas, inputs, module_kwargs, used_device_ids)
     return gather(outputs, output_device, dim)
 
+class _WrapperModule(torch.nn.Module):
+    def __init__(self, inner_module):
+        super(_WrapperModule, self).__init__()
+        self.inner_module = inner_module
+
+    def forward(self, inputs, callback):
+        return self.inner_module.forward_one_step_callback(inputs, callback)
+
 class DataParallel(_DataParallel):
     def replicate(self, module, device_ids):
         replicas = replicate(module, device_ids, not torch.is_grad_enabled())
         return replicas
+
+    def forward_one_step_callback(self, inputs, callback):
+        _wrapper_module = _WrapperModule(self.module)
+        return data_parallel(_wrapper_module, inputs, device_ids=self.device_ids,
+                             output_device=self.output_device,
+                             dim=self.dim, module_kwargs={"callback": callback})

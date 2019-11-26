@@ -27,15 +27,18 @@ class CosineWithRestarts(_LRScheduler):  # pylint: disable=protected-access
                  t_0,
                  eta_min=0.,
                  last_epoch=-1,
-                 factor=1.):
+                 factor=1.,
+                 base_lr_factor=1.):
         self.t_max = t_0
         self.eta_min = eta_min
         self.factor = factor
+        self.base_lr_factor = base_lr_factor
         self._last_restart = 0
         self._cycle_counter = 0
         self._cycle_factor = 1.
         self._updated_cycle_len = t_0
         self._initialized = False
+        self._base_lrs = None
         super(CosineWithRestarts, self).__init__(optimizer, last_epoch)
 
     def get_lr(self):
@@ -46,7 +49,8 @@ class CosineWithRestarts(_LRScheduler):  # pylint: disable=protected-access
         # for the first epoch.
         if not self._initialized:
             self._initialized = True
-            return self.base_lrs
+            self._base_lrs = self.base_lrs
+            return self._base_lrs
         step = self.last_epoch
         self._cycle_counter = step - self._last_restart
         lrs = [
@@ -57,7 +61,7 @@ class CosineWithRestarts(_LRScheduler):  # pylint: disable=protected-access
                     self._updated_cycle_len
                 ) + 1
             )
-            for lr in self.base_lrs
+            for lr in self._base_lrs
         ]
         if self._cycle_counter != 0 and self._cycle_counter % self._updated_cycle_len == 0:
             # Adjust the cycle length.
@@ -65,6 +69,7 @@ class CosineWithRestarts(_LRScheduler):  # pylint: disable=protected-access
             self._cycle_counter = 0
             self._updated_cycle_len = int(self._cycle_factor * self.t_max)
             self._last_restart = step
+            self._base_lrs = [lr * self.base_lr_factor for lr in self._base_lrs]
         return lrs
 
 class ExpDecay(_LRScheduler):

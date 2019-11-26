@@ -11,6 +11,7 @@ import contextlib
 import six
 
 import torch
+from torch import nn
 
 from aw_nas.common import assert_rollout_type, group_and_sort_by_to_node
 from aw_nas.weights_manager.base import CandidateNet
@@ -37,6 +38,9 @@ class SubCandidateNet(CandidateNet):
         self.virtual_parameter_only = virtual_parameter_only
         self._cached_np = None
         self._cached_nb = None
+
+        self._flops_calculated = False
+        self.total_flops = 0
 
         self.genotypes = [g[1] for g in rollout.genotype_list()]
         self.genotypes_grouped = [group_and_sort_by_to_node(g[1]) for g in rollout.genotype_list() \
@@ -189,6 +193,7 @@ class SuperNet(SharedNet):
                  num_classes=10, init_channels=16, stem_multiplier=3,
                  max_grad_norm=5.0, dropout_rate=0.1,
                  use_stem="conv_bn_3x3", stem_stride=1, stem_affine=True,
+                 preprocess_op_type=None,
                  cell_use_preprocess=True, cell_group_kwargs=None,
                  candidate_member_mask=True, candidate_cache_named_members=False,
                  candidate_virtual_parameter_only=False, candidate_eval_no_grad=True):
@@ -214,6 +219,7 @@ class SuperNet(SharedNet):
                                        max_grad_norm=max_grad_norm, dropout_rate=dropout_rate,
                                        use_stem=use_stem, stem_stride=stem_stride,
                                        stem_affine=stem_affine,
+                                       preprocess_op_type=preprocess_op_type,
                                        cell_use_preprocess=cell_use_preprocess,
                                        cell_group_kwargs=cell_group_kwargs)
 
@@ -222,6 +228,31 @@ class SuperNet(SharedNet):
         self.candidate_cache_named_members = candidate_cache_named_members
         self.candidate_virtual_parameter_only = candidate_virtual_parameter_only
         self.candidate_eval_no_grad = candidate_eval_no_grad
+        self.set_hook()
+        self._flops_calculated = False
+        self.total_flops = 0
+
+    def reset_flops(self):
+        self._flops_calculated = False
+        self.total_flops = 0
+
+    def set_hook(self):
+        for name, module in self.named_modules():
+            if "auxiliary" in name:
+                continue
+            module.register_forward_hook(self._hook_intermediate_feature)
+
+    def _hook_intermediate_feature(self, module, inputs, outputs):
+        if not self._flops_calculated:
+            if isinstance(module, nn.Conv2d):
+                self.total_flops += inputs[0].size(1) * outputs.size(1) * \
+                                    module.kernel_size[0] * module.kernel_size[1] * \
+                                    inputs[0].size(2) * inputs[0].size(3) / \
+                                    (module.stride[0] * module.stride[1] * module.groups)
+            elif isinstance(module, nn.Linear):
+                self.total_flops += inputs[0].size(1) * outputs.size(1)
+        else:
+            pass
 
     def sub_named_members(self, genotypes,
                           prefix="", member="parameters", check_visited=False):
@@ -302,8 +333,18 @@ class DiscreteSharedCell(SharedCell):
         if cur_step < self._num_init: # `self._num_init` preprocess steps
             ind = len(context.previous_cells) - (self._num_init - cur_step)
             ind = max(ind, 0)
-            state = self.preprocess_ops[cur_step](context.previous_cells[ind])
-            context.current_cell.append(state)
+            # state = self.preprocess_ops[cur_step](context.previous_cells[ind])
+            # context.current_cell.append(state)
+            # context.last_conv_module = self.preprocess_ops[cur_step].get_last_conv_module()
+            current_op = context.next_op_index[1]
+            state, context = self.preprocess_ops[cur_step].forward_one_step(
+                context=context,
+                inputs=context.previous_cells[ind] if current_op == 0 else None)
+            if context.next_op_index[1] == 0: # this preprocess op finish, append to `current_cell`
+                assert len(context.previous_op) == 1
+                context.current_cell.append(context.previous_op[0])
+                context.previous_op = []
+                context.last_conv_module = self.preprocess_ops[cur_step].get_last_conv_module()
         elif cur_step < self._num_init + self._steps: # the following steps
             conns = genotype_grouped[cur_step - self._num_init][1]
             op_ind, current_op = context.next_op_index

@@ -7,6 +7,8 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
+import numpy as np
+
 def avg_pool_3x3(C, C_out, stride, affine):
     assert C == C_out
     return nn.AvgPool2d(3, stride=stride, padding=1, count_include_pad=False)
@@ -33,8 +35,16 @@ PRIMITVE_FACTORY = {
       else FactorizedReduce(C, C_out, stride=stride, affine=affine),
     "sep_conv_3x3" : lambda C, C_out, stride, affine: SepConv(C, C_out,
                                                               3, stride, 1, affine=affine),
+    "sep_conv_3x3_exp3" : lambda C, C_out, stride, affine: SepConv(C, C_out,
+                                                              3, stride, 1, affine=affine, expansion=3),
+    "sep_conv_3x3_exp6" : lambda C, C_out, stride, affine: SepConv(C, C_out,
+                                                              3, stride, 1, affine=affine, expansion=6),
     "sep_conv_5x5" : lambda C, C_out, stride, affine: SepConv(C, C_out,
                                                               5, stride, 2, affine=affine),
+    "sep_conv_5x5_exp3" : lambda C, C_out, stride, affine: SepConv(C, C_out,
+                                                              5, stride, 2, affine=affine, expansion=6),
+    "sep_conv_5x5_exp6" : lambda C, C_out, stride, affine: SepConv(C, C_out,
+                                                              5, stride, 2, affine=affine, expansion=6),
     "sep_conv_7x7" : lambda C, C_out, stride, affine: SepConv(C, C_out,
                                                               7, stride, 3, affine=affine),
     "dil_conv_3x3" : lambda C, C_out, stride, affine: DilConv(C, C_out,
@@ -56,6 +66,7 @@ PRIMITVE_FACTORY = {
     "conv_bn_relu_5x5" : lambda C, C_out, stride, affine: ConvBNReLU(C, C_out,
                                                                      5, stride, 2, affine=affine),
     "conv_1x1" : lambda C, C_out, stride, affine: nn.Conv2d(C, C_out, 1, stride, 0),
+    "inspect_block" : lambda C, C_out, stride, affine: inspectBlock(C, C_out, stride, affine=affine),
 
     # imagenet stem
     "imagenet_stem0": lambda C, C_out, stride, affine: nn.Sequential(
@@ -86,18 +97,24 @@ def get_op(name):
     return PRIMITVE_FACTORY[name]
 
 class FactorizedReduce(nn.Module):
-    def __init__(self, C_in, C_out, stride, affine=True):
+    def __init__(self, C_in, C_out, stride, affine=True, kernel_size=1):
         super(FactorizedReduce, self).__init__()
         self.stride = stride
         group_dim = C_out // stride
 
-        self.convs = [nn.Conv2d(C_in, group_dim, kernel_size=1,
-                                stride=stride, padding=0, bias=False)\
+        padding = int((kernel_size - 1) / 2)
+        self.convs = [nn.Conv2d(C_in, group_dim, kernel_size=kernel_size,
+                                stride=stride, padding=padding, bias=False)\
                       for _ in range(stride)]
         self.convs = nn.ModuleList(self.convs)
 
         self.relu = nn.ReLU(inplace=False)
         self.bn = nn.BatchNorm2d(C_out, affine=affine)
+
+        # just specificy one conv module here, as only C_in, kernel_size, group is used
+        # for inject prob calculation every output position, this will work even though
+        # not so meaningful conceptually
+        object.__setattr__(self, "last_conv_module", self.convs[-1])
 
     def forward(self, x):
         x = self.relu(x)
@@ -108,6 +125,16 @@ class FactorizedReduce(nn.Module):
         out = torch.cat([conv(x[:, :, i:, i:]) for i, conv in enumerate(self.convs)], dim=1)
         out = self.bn(out)
         return out
+
+class DoubleConnect(nn.Module):
+
+    def __init__(self, C_in, C_out, kernel_size, stride, padding, affine=True, relu=True):
+        super(DoubleConnect, self).__init__()
+        self.path1 = ReLUConvBN(C_in, C_out, kernel_size, stride=stride, padding=padding, affine=affine)
+        self.path2 = ReLUConvBN(C_in, C_out, kernel_size, stride=stride, padding=padding, affine=affine)
+
+    def forward(self, x):
+        return self.path1(x) + self.path2(x)
 
 
 class ConvBNReLU(nn.Module):
@@ -170,18 +197,18 @@ class DilConv(nn.Module):
 
 class SepConv(nn.Module):
 
-    def __init__(self, C_in, C_out, kernel_size, stride, padding, affine=True):
+    def __init__(self, C_in, C_out, kernel_size, stride, padding, affine=True, expansion=1):
         super(SepConv, self).__init__()
         self.op = nn.Sequential(
             nn.ReLU(inplace=False),
             nn.Conv2d(C_in, C_in, kernel_size=kernel_size, stride=stride,
                       padding=padding, groups=C_in, bias=False),
-            nn.Conv2d(C_in, C_in, kernel_size=1, padding=0, bias=False),
-            nn.BatchNorm2d(C_in, affine=affine),
+            nn.Conv2d(C_in, C_in*expansion, kernel_size=1, padding=0, bias=False),
+            nn.BatchNorm2d(C_in*expansion, affine=affine),
             nn.ReLU(inplace=False),
-            nn.Conv2d(C_in, C_in, kernel_size=kernel_size, stride=1,
+            nn.Conv2d(C_in*expansion, C_in*expansion, kernel_size=kernel_size, stride=1,
                       padding=padding, groups=C_in, bias=False),
-            nn.Conv2d(C_in, C_out, kernel_size=1, padding=0, bias=False),
+            nn.Conv2d(C_in*expansion, C_out, kernel_size=1, padding=0, bias=False),
             nn.BatchNorm2d(C_out, affine=affine),
         )
 
@@ -225,6 +252,9 @@ def forward_one_step(self, context=None, inputs=None):
             context.current_op = []
         else:
             context.current_op.append(inputs)
+        last_mod = self._modules[str(self._conv_mod_inds[op_ind])]
+        context.last_conv_module = last_mod if isinstance(last_mod, nn.Conv2d) \
+            else self._modules[str(self._conv_mod_inds[op_ind]-1)]
     elif op_ind == self._num_convs:
         for mod_ind in range(self._conv_mod_inds[-1]+1, modules_num):
             inputs = self._modules[str(mod_ind)](inputs)
@@ -239,10 +269,34 @@ def stub_forward_one_step(self, context=None, inputs=None):
     assert not inputs is None and not context is None
     state = self.forward(inputs)
     context.previous_op.append(state)
+    if isinstance(self, nn.Conv2d):
+        context.last_conv_module = self
     return state, context
 
 nn.Sequential.forward_one_step = forward_one_step
 nn.Module.forward_one_step = stub_forward_one_step
+
+def get_last_conv_module(self):
+    if hasattr(self, "last_conv_module"):
+        return self.last_conv_module
+
+    # in some cases, can auto induce the last conv module
+    if isinstance(self, nn.Conv2d):
+        return self
+    if isinstance(self, nn.Sequential):
+        for mod in reversed(self._modules.values()):
+            if isinstance(mod, nn.Conv2d):
+                return mod
+        return None
+    if not self._modules:
+        return None
+    if len(self._modules) == 1:
+        only_sub_mod = list(self._modules.values())[0]
+        return get_last_conv_module(only_sub_mod)
+    raise Exception("Cannot auto induce the last conv module of mod {}, "
+                    "Specificy `last_conv_module` attribute!`".format(self))
+
+nn.Module.get_last_conv_module = get_last_conv_module
 
 class Identity(nn.Module):
 
@@ -263,6 +317,26 @@ class Zero(nn.Module):
         if self.stride == 1:
             return x.mul(0.)
         return x[:, :, ::self.stride, ::self.stride].mul(0.)
+
+
+class inspectBlock(torch.nn.Module):
+    def __init__(self, C_in, C_out, stride, affine=True):
+        super(inspectBlock, self).__init__()
+        self.op1 = ReLUConvBN(C_in, C_out, kernel_size=3, stride=stride,
+                      padding=1, affine=affine)
+        self.op2 = ReLUConvBN(C_in, C_out, kernel_size=1, stride=stride,
+                       padding=0, affine=affine)
+        self.op3 = SepConv(C_in, C_out, kernel_size=3, stride=stride,
+                       padding=1, affine=affine) 
+
+    def forward(self, x):
+        rand_ = np.random.random()
+        if rand_ < 1./3.:
+            return self.op1(x)
+        if rand_ < 2./3.:
+            return self.op2(x)
+        return self.op3(x)
+
 
 # ---- added for rnn ----
 # from https://github.com/carpedm20/ENAS-pytorch

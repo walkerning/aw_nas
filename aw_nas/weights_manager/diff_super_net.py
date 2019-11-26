@@ -93,6 +93,7 @@ class DiffSuperNet(SharedNet):
                  num_classes=10, init_channels=16, stem_multiplier=3,
                  max_grad_norm=5.0, dropout_rate=0.1,
                  use_stem="conv_bn_3x3", stem_stride=1, stem_affine=True,
+                 preprocess_op_type=None,
                  cell_use_preprocess=True, cell_group_kwargs=None,
                  candidate_virtual_parameter_only=False,
                  candidate_eval_no_grad=True):
@@ -104,6 +105,7 @@ class DiffSuperNet(SharedNet):
             stem_multiplier=stem_multiplier,
             max_grad_norm=max_grad_norm, dropout_rate=dropout_rate,
             use_stem=use_stem, stem_stride=stem_stride, stem_affine=stem_affine,
+            preprocess_op_type=preprocess_op_type,
             cell_use_preprocess=cell_use_preprocess,
             cell_group_kwargs=cell_group_kwargs)
 

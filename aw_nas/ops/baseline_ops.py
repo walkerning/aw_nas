@@ -21,6 +21,7 @@ class VggBlock(nn.Module):
             assert inputs is not None
             out = self.conv_bn(inputs)
             context.current_op.append(out)
+            context.last_conv_module = self.conv_bn[0]
         elif op_ind == 1:
             out = self.pool(F.relu(context.current_op[-1]))
             context.previous_op.append(out)
@@ -31,7 +32,7 @@ class VggBlock(nn.Module):
         return out, context
 
 class MobileNetBlock(nn.Module):
-    def __init__(self, expansion, C, C_out, stride, affine):
+    def __init__(self, expansion, C, C_out, stride, affine, kernel_size=3):
         super(MobileNetBlock, self).__init__()
         C_inner = self.C_inner = int(expansion * C)
         self.stride = stride
@@ -40,9 +41,10 @@ class MobileNetBlock(nn.Module):
                                kernel_size=1, stride=1,
                                padding=0, bias=False)
         self.bn1 = nn.BatchNorm2d(C_inner, affine=affine)
+        padding = int((kernel_size - 1) / 2)
         self.conv2 = nn.Conv2d(C_inner, C_inner,
-                               kernel_size=3, stride=stride,
-                               padding=1, groups=C_inner, bias=False)
+                               kernel_size=kernel_size, stride=stride,
+                               padding=padding, groups=C_inner, bias=False)
         self.bn2 = nn.BatchNorm2d(C_inner, affine=affine)
         self.conv3 = nn.Conv2d(C_inner, C_out,
                                kernel_size=1, stride=1, padding=0, bias=False)
@@ -72,9 +74,11 @@ class MobileNetBlock(nn.Module):
             context.current_op.append(inputs) # save inputs
             out = self.bn1(self.conv1(inputs))
             context.current_op.append(out)
+            context.last_conv_module = self.conv1
         elif op_ind == 2:
             out = self.bn2(self.conv2(F.relu(context.current_op[-1])))
             context.current_op.append(out)
+            context.last_conv_module = self.conv2
         elif op_ind == 3:
             out = self.bn3(self.conv3(F.relu(context.current_op[-1])))
             context.current_op.append(out)
@@ -82,14 +86,17 @@ class MobileNetBlock(nn.Module):
                 # return out
                 context.previous_op.append(out)
                 context.current_op = []
+                context.last_conv_module = self.conv3
             elif not self.has_conv_shortcut:
                 # return out + shortcut
                 context.previous_op.append(out + self.shortcut(context.current_op[0]))
+                context.last_conv_module = self.conv3
                 context.current_op = []
         elif op_ind == 4:
             # has_conv_shortcut
             out = self.shortcut(context.current_op[0])
             context.current_op.append(out)
+            context.last_conv_module = self.shortcut[0]
         elif op_ind == 5:
             out = context.current_op[-1] + context.current_op[-2]
             context.previous_op.append(out)
@@ -152,6 +159,7 @@ class ResNetBlockSplit(nn.Module):
 class ResNetBlock(nn.Module):
     def __init__(self, C, C_out, stride, affine):
         super(ResNetBlock, self).__init__()
+        self.stride = stride
         self.op_1 = ConvBNReLU(C, C_out,
                                3, stride, 1, affine=affine, relu=False)
         self.op_2 = ConvBNReLU(C_out, C_out,
@@ -173,21 +181,42 @@ class ResNetBlock(nn.Module):
             context.current_op.append(inputs) # save inputs
             out = self.op_1(inputs)
             context.current_op.append(out)
+            context.last_conv_module = self.op_1.op[0]
         elif op_ind == 2:
             out = self.op_2(F.relu(context.current_op[-1]))
-            out_skip = self.skip_op(context.current_op[0]) # inputs
-            out = out + out_skip
             context.current_op.append(out)
+            context.last_conv_module = self.op_2.op[0]
+        elif op_ind == 3:
+            out = self.skip_op(context.current_op[0]) # inputs
+            context.current_op.append(out)
+            if self.stride == 1: # skip connection is just identity
+                context.flag_inject(False)
+            else:
+                context.last_conv_module = self.skip_op.op[0]
         else:
-            assert op_ind == 3
-            out = F.relu(context.current_op[-1])
+            assert op_ind == 4
+            out = F.relu(context.current_op[-1] + context.current_op[-2])
             context.current_op = []
             context.previous_op.append(out)
             context.flag_inject(False)
         return out, context
 
+register_primitive("mobilenet_block_3",
+                   lambda C, C_out, stride, affine: MobileNetBlock(3, C, C_out, stride, affine))
+register_primitive("mobilenet_block_3_5x5",
+                   lambda C, C_out, stride, affine: MobileNetBlock(3, C, C_out, stride, affine,
+                                                                   kernel_size=5))
+register_primitive("mobilenet_block_3_7x7",
+                   lambda C, C_out, stride, affine: MobileNetBlock(3, C, C_out, stride, affine,
+                                                                   kernel_size=7))
 register_primitive("mobilenet_block_6",
                    lambda C, C_out, stride, affine: MobileNetBlock(6, C, C_out, stride, affine))
+register_primitive("mobilenet_block_6_5x5",
+                   lambda C, C_out, stride, affine: MobileNetBlock(6, C, C_out, stride, affine,
+                                                                   kernel_size=5))
+register_primitive("mobilenet_block_6_7x7",
+                   lambda C, C_out, stride, affine: MobileNetBlock(6, C, C_out, stride, affine,
+                                                                   kernel_size=7))
 register_primitive("mobilenet_block_1",
                    lambda C, C_out, stride, affine: MobileNetBlock(1, C, C_out, stride, affine))
 register_primitive("resnet_block",

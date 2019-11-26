@@ -77,6 +77,7 @@ class CNNGenotypeModel(FinalModel):
                  dropout_rate=0.1, dropout_path_rate=0.2,
                  auxiliary_head=False, auxiliary_cfg=None,
                  use_stem="conv_bn_3x3", stem_stride=1, stem_affine=True,
+                 preprocess_op_type=None,
                  cell_use_preprocess=True,
                  cell_pool_batchnorm=False, cell_group_kwargs=None,
                  cell_independent_conn=False,
@@ -177,6 +178,7 @@ class CNNGenotypeModel(FinalModel):
                                    stride=stride,
                                    prev_strides=init_strides + strides[:i_layer],
                                    use_preprocess=cell_use_preprocess,
+                                   preprocess_op_type=preprocess_op_type,
                                    pool_batchnorm=cell_pool_batchnorm,
                                    independent_conn=cell_independent_conn,
                                    **kwargs)
@@ -270,6 +272,7 @@ class CNNGenotypeModel(FinalModel):
                 stemed = inputs
             context = Context(self._num_init, self._num_layers,
                               previous_cells=[stemed], current_cell=[])
+            context.last_conv_module = self.stem.get_last_conv_module()
             return stemed, context
 
         cur_cell_ind, _ = context.next_step_index
@@ -314,8 +317,8 @@ class CNNGenotypeModel(FinalModel):
 
 class CNNGenotypeCell(nn.Module):
     def __init__(self, search_space, genotype_grouped, layer_index, num_channels, num_out_channels,
-                 prev_num_channels, stride, prev_strides, use_preprocess, pool_batchnorm,
-                 independent_conn, **op_kwargs):
+                 prev_num_channels, stride, prev_strides, use_preprocess, preprocess_op_type,
+                 pool_batchnorm, independent_conn, **op_kwargs):
         super(CNNGenotypeCell, self).__init__()
         self.search_space = search_space
         self.genotype_grouped = genotype_grouped
@@ -325,6 +328,7 @@ class CNNGenotypeCell(nn.Module):
         self.num_out_channels = num_out_channels
         self.layer_index = layer_index
         self.use_preprocess = use_preprocess
+        self.preprocess_op_type = preprocess_op_type
         self.pool_batchnorm = pool_batchnorm
         self.independent_conn = independent_conn
         self.op_kwargs = op_kwargs
@@ -338,23 +342,31 @@ class CNNGenotypeCell(nn.Module):
         prev_strides.insert(0, 1)
         prev_strides = reversed(prev_strides[:len(prev_num_channels)])
         for prev_c, prev_s in zip(prev_num_channels, prev_strides):
+            print("cin: {}, cout: {}, stride: {}".format(prev_c, num_channels, prev_s))
             if not self.use_preprocess:
                 # stride/channel not handled!
                 self.preprocess_ops.append(ops.Identity())
                 continue
-            if prev_s > 1:
-                # need skip connection, and is not the connection from the input image
-                preprocess = ops.FactorizedReduce(C_in=prev_c,
-                                                  C_out=num_channels,
-                                                  stride=prev_s,
-                                                  affine=True)
-            else: # prev_c == _steps * num_channels or inputs
-                preprocess = ops.ReLUConvBN(C_in=prev_c,
-                                            C_out=num_channels,
-                                            kernel_size=1,
-                                            stride=1,
-                                            padding=0,
-                                            affine=True)
+            if self.preprocess_op_type is not None:
+                # specificy other preprocess op
+                preprocess = ops.get_op(self.preprocess_op_type)(C=prev_c,
+                                                                 C_out=num_channels,
+                                                                 stride=prev_s,
+                                                                 affine=False)
+            else:
+                if prev_s > 1:
+                    # need skip connection, and is not the connection from the input image
+                    preprocess = ops.FactorizedReduce(C_in=prev_c,
+                                                      C_out=num_channels,
+                                                      stride=prev_s,
+                                                      affine=True)
+                else: # prev_c == _steps * num_channels or inputs
+                    preprocess = ops.ReLUConvBN(C_in=prev_c,
+                                                C_out=num_channels,
+                                                kernel_size=1,
+                                                stride=1,
+                                                padding=0,
+                                                affine=True)
             self.preprocess_ops.append(preprocess)
         assert len(self.preprocess_ops) == self._num_init
 
@@ -404,8 +416,18 @@ class CNNGenotypeCell(nn.Module):
         if cur_step < self._num_init: # `self._num_init` preprocess steps
             ind = len(context.previous_cells) - (self._num_init - cur_step)
             ind = max(ind, 0)
-            state = self.preprocess_ops[cur_step](context.previous_cells[ind])
-            context.current_cell.append(state)
+            # state = self.preprocess_ops[cur_step](context.previous_cells[ind])
+            # context.current_cell.append(state)
+            # context.last_conv_module = self.preprocess_ops[cur_step].get_last_conv_module()
+            current_op = context.next_op_index[1]
+            state, context = self.preprocess_ops[cur_step].forward_one_step(
+                context=context,
+                inputs=context.previous_cells[ind] if current_op == 0 else None)
+            if context.next_op_index[1] == 0: # this preprocess op finish, append to `current_cell`
+                assert len(context.previous_op) == 1
+                context.current_cell.append(context.previous_op[0])
+                context.previous_op = []
+                context.last_conv_module = self.preprocess_ops[cur_step].get_last_conv_module()
         elif cur_step < self._num_init + self._steps: # the following steps
             conns = self.genotype_grouped[cur_step - self._num_init][1]
             op_ind, current_op = context.next_op_index

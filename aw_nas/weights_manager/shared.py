@@ -19,7 +19,10 @@ class SharedNet(BaseWeightsManager, nn.Module):
                  num_classes=10, init_channels=16, stem_multiplier=3,
                  max_grad_norm=5.0, dropout_rate=0.1,
                  use_stem="conv_bn_3x3", stem_stride=1, stem_affine=True,
+                 preprocess_op_type=None,
                  cell_use_preprocess=True,
+                 preprocess_kernel=1,
+                 preprocess_type="relu_conv_bn",
                  cell_group_kwargs=None):
         super(SharedNet, self).__init__(search_space, device, rollout_type)
         nn.Module.__init__(self)
@@ -96,6 +99,7 @@ class SharedNet(BaseWeightsManager, nn.Module):
                             stride=stride,
                             prev_strides=init_strides + strides[:i_layer],
                             use_preprocess=cell_use_preprocess,
+                            preprocess_op_type=preprocess_op_type,
                             **kwargs)
             prev_num_channel = cell.num_out_channel()
             prev_num_channels.append(prev_num_channel)
@@ -148,6 +152,7 @@ class SharedNet(BaseWeightsManager, nn.Module):
                 stemed = inputs
             context = Context(self._num_init, self._num_layers,
                               previous_cells=[stemed], current_cell=[])
+            context.last_conv_module = self.stem.get_last_conv_module()
             return stemed, context
 
         cur_cell_ind, _ = context.next_step_index
@@ -195,7 +200,8 @@ class SharedNet(BaseWeightsManager, nn.Module):
 
 class SharedCell(nn.Module):
     def __init__(self, op_cls, search_space, layer_index, num_channels, num_out_channels,
-                 prev_num_channels, stride, prev_strides, use_preprocess, **op_kwargs):
+                 prev_num_channels, stride, prev_strides, use_preprocess, preprocess_op_type,
+                 **op_kwargs):
         super(SharedCell, self).__init__()
         self.search_space = search_space
         self.stride = stride
@@ -204,6 +210,7 @@ class SharedCell(nn.Module):
         self.num_out_channels = num_out_channels
         self.layer_index = layer_index
         self.use_preprocess = use_preprocess
+        self.preprocess_op_type = preprocess_op_type
         self.op_kwargs = op_kwargs
 
         self._steps = self.search_space.num_steps
@@ -225,19 +232,26 @@ class SharedCell(nn.Module):
                 # stride/channel not handled!
                 self.preprocess_ops.append(ops.Identity())
                 continue
-            if prev_s > 1:
-                # need skip connection, and is not the connection from the input image
-                preprocess = ops.FactorizedReduce(C_in=prev_c,
-                                                  C_out=num_channels,
-                                                  stride=prev_s,
-                                                  affine=False)
-            else: # prev_c == _steps * num_channels or inputs
-                preprocess = ops.ReLUConvBN(C_in=prev_c,
-                                            C_out=num_channels,
-                                            kernel_size=1,
-                                            stride=1,
-                                            padding=0,
-                                            affine=False)
+            if self.preprocess_op_type is not None:
+                # specificy other preprocess op
+                preprocess = ops.get_op(self.preprocess_op_type)(C=prev_c,
+                                                                 C_out=num_channels,
+                                                                 stride=prev_s,
+                                                                 affine=False)
+            else:
+                if prev_s > 1:
+                    # need skip connection, and is not the connection from the input image
+                    preprocess = ops.FactorizedReduce(C_in=prev_c,
+                                                      C_out=num_channels,
+                                                      stride=prev_s,
+                                                      affine=False)
+                else: # prev_c == _steps * num_channels or inputs
+                    preprocess = ops.ReLUConvBN(C_in=prev_c,
+                                                C_out=num_channels,
+                                                kernel_size=1,
+                                                stride=1,
+                                                padding=0,
+                                                affine=False)
             self.preprocess_ops.append(preprocess)
         assert len(self.preprocess_ops) == self._num_init
 

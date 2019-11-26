@@ -72,7 +72,7 @@ final_trainer_cfg:
   momentum: 0.9
   no_bias_decay: false
   optimizer_scheduler:
-    eta_min: 0.001
+    eta_min: 0.0001
     T_max: 100
     type: CosineAnnealingLR
   schedule_cfg: null

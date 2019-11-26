@@ -70,6 +70,9 @@ def test_supernet_forward(super_net):
         }
     }, {
         "dropout_rate": 0,
+    }, {
+        "dropout_rate": 0,
+        "preprocess_op_type": "sep_conv_3x3"
     }], indirect=["super_net"])
 def test_supernet_forward_step(super_net):
     cand_net = _supernet_sample_cand(super_net)
@@ -111,6 +114,43 @@ def test_supernet_forward_step(super_net):
     logits_straight_forward = cand_net.forward_data(data[0])
     logits = cand_net.forward_one_step_callback(data[0], lambda s, c: None)
     assert (logits == logits_straight_forward).all()
+
+def test_context_last_conv_module():
+    from aw_nas.ops import DilConv, SepConv, ResNetBlock
+    from aw_nas.utils.common_utils import Context
+    data = _cnn_data()
+    dil_conv = DilConv(3, 16, 3, 1, 1, 1).to("cuda")
+    context = Context(0, 1, use_stem=False)
+    _, context = dil_conv.forward_one_step(context=context, inputs=data[0])
+    assert context.last_conv_module is dil_conv.op[1]
+    _, context = dil_conv.forward_one_step(context=context)
+    assert context.last_conv_module is dil_conv.op[2]
+
+    context = Context(0, 1, use_stem=False)
+    sep_conv = SepConv(3, 16, 3, 1, 1).to("cuda")
+    _, context = sep_conv.forward_one_step(context=context, inputs=data[0])
+    assert context.last_conv_module is sep_conv.op[1]
+    for expected_ind in [2, 5, 6]:
+        _, context = sep_conv.forward_one_step(context=context)
+        assert context.last_conv_module is sep_conv.op[expected_ind]
+
+    context = Context(0, 1, use_stem=False)
+    res_block = ResNetBlock(3, 3, 1, True).to("cuda")
+    out_0 = res_block(data[0])
+    for i, expected_mod in enumerate([res_block.op_1.op[0], res_block.op_2.op[0], None, None]):
+        state, context = res_block.forward_one_step(context=context, inputs=data[0] if i == 0 else None)
+        assert context.last_conv_module is expected_mod
+    assert (state == out_0).all()
+
+    context = Context(0, 1, use_stem=False)
+    res_block_stride = ResNetBlock(3, 16, 2, True).to("cuda")
+    out_0 = res_block_stride(data[0])
+    for i, expected_mod in enumerate(
+            [res_block_stride.op_1.op[0], res_block_stride.op_2.op[0], res_block_stride.skip_op.op[0], None]):
+        state, context = res_block_stride.forward_one_step(context=context, inputs=data[0] if i == 0 else None)
+        assert context.last_conv_module is expected_mod
+    assert (state == out_0).all()
+
 
 @pytest.mark.parametrize("test_id",
                          range(5))
