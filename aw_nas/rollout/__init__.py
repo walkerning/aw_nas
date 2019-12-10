@@ -19,6 +19,10 @@ from aw_nas.rollout.dense import (
     DenseMutation,
     DenseDiscreteRollout
 )
+from aw_nas.rollout.mnasnet import (
+    MNasNetOFASearchSpace,
+    MNasNetOFARollout
+)
 
 def assert_rollout_type(type_name):
     expect(type_name in BaseRollout.all_classes_(),
