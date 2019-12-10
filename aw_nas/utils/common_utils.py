@@ -9,7 +9,7 @@ import shutil
 import inspect
 import functools
 import collections
-from collections import OrderedDict
+from collections import OrderedDict, namedtuple
 from contextlib import contextmanager
 import six
 
@@ -245,6 +245,13 @@ def get_default_argspec(func):
     return list(reversed(list(zip(reversed(sig.args),
                                   reversed(sig.defaults)))))
 
+def namedtuple_with_defaults(name, fields, defaults):
+    if sys.version_info.major == 3 and sys.version_info.minor >= 7:
+        return namedtuple(name, fields, defaults)
+    type_ = namedtuple(name, fields)
+    if defaults:
+        type_.__new__.__defaults__ = tuple(defaults)
+    return type_
 
 ## --- text utils ---
 def add_text_prefix(text, prefix):

@@ -1,204 +1,16 @@
 """
-Definitions that will be used by multiple components
+Search space and some search space related utils.
 """
 
+import re
 import abc
 import collections
 import itertools
-import six
 
 import numpy as np
 
 from aw_nas import Component, utils
-from aw_nas.utils import RegistryMeta, softmax
 from aw_nas.utils.exception import expect, ConfigException
-from aw_nas.utils import logger as _logger
-
-def assert_rollout_type(type_name):
-    expect(type_name in BaseRollout.all_classes_(),
-           "rollout type {} not registered yet".format(type_name))
-    return type_name
-
-@six.add_metaclass(RegistryMeta)
-class BaseRollout(object):
-    """
-    Rollout is the interface object that is passed through all the components.
-    """
-    REGISTRY = "rollout"
-
-    def __init__(self):
-        self.perf = collections.OrderedDict()
-        self._logger = None
-
-    @property
-    def logger(self):
-        # logger should be a mixin class. but i'll leave it as it is...
-        if self._logger is None:
-            self._logger = _logger.getChild(self.__class__.__name__)
-        return self._logger
-
-    @abc.abstractmethod
-    def set_candidate_net(self, c_net):
-        pass
-
-    @abc.abstractmethod
-    def plot_arch(self, filename, label="", edge_labels=None):
-        pass
-
-    def get_perf(self, name="reward"):
-        return self.perf.get(name, None)
-
-    def set_perf(self, value, name="reward"):
-        self.perf[name] = value
-
-    def set_perfs(self, perfs):
-        for n, v in perfs.items():
-            self.set_perf(v, name=n)
-
-class Rollout(BaseRollout):
-    """Discrete rollout"""
-    NAME = "discrete"
-
-    def __init__(self, arch, info, search_space, candidate_net=None):
-        super(Rollout, self).__init__()
-
-        self.arch = arch
-        self.info = info
-        self.search_space = search_space
-        self.candidate_net = candidate_net
-
-        self._genotype = None # calc when need
-
-    def set_candidate_net(self, c_net):
-        self.candidate_net = c_net
-
-    def plot_arch(self, filename, label="", edge_labels=None):
-        return self.search_space.plot_arch(self.genotype_list(),
-                                           filename,
-                                           label=label,
-                                           edge_labels=edge_labels)
-
-    def genotype_list(self):
-        return list(self.genotype._asdict().items())
-
-    @property
-    def genotype(self):
-        if self._genotype is None:
-            self._genotype = self.search_space.genotype(self.arch)
-        return self._genotype
-
-    def __repr__(self):
-        _info = ",".join(self.info.keys()) if isinstance(self.info, dict) else self.info
-        return ("Rollout(search_space={sn}, arch={arch}, info=<{info}>, "
-                "candidate_net={cn}, perf={perf})").format(sn=self.search_space.NAME,
-                                                           arch=self.arch,
-                                                           info=_info,
-                                                           cn=self.candidate_net,
-                                                           perf=self.perf)
-
-    @classmethod
-    def random_sample_arch(cls, num_cell_groups, num_steps,
-                           num_init_nodes, num_node_inputs, num_primitives):
-        """
-        random sample
-        """
-        arch = []
-        for i_cg in range(num_cell_groups):
-            num_prims = num_primitives if isinstance(num_primitives, int) else num_primitives[i_cg]
-            nodes = []
-            ops = []
-            for i_out in range(num_steps):
-                nodes += list(np.random.randint(
-                    0, high=i_out + num_init_nodes, size=num_node_inputs))
-                ops += list(np.random.randint(
-                    0, high=num_prims, size=num_node_inputs))
-            arch.append((nodes, ops))
-        return arch
-
-class DifferentiableRollout(BaseRollout):
-    """Rollout based on differentiable relaxation"""
-    NAME = "differentiable"
-    def __init__(self, arch, sampled, logits, search_space, candidate_net=None):
-        super(DifferentiableRollout, self).__init__()
-
-        self.arch = arch
-        self.sampled = sampled # softmax-relaxed sample
-        self.logits = logits
-        self.search_space = search_space
-        self.candidate_net = candidate_net
-
-        self._genotype = None # calc when need
-        self._discretized_arch = None # calc when need
-        self._edge_probs = None # calc when need
-
-    def set_candidate_net(self, c_net):
-        self.candidate_net = c_net
-
-    def plot_arch(self, filename, label="", edge_labels=None):
-        if edge_labels is None:
-            edge_labels = self.discretized_arch_and_prob[1]
-        return self.search_space.plot_arch(self.genotype_list(),
-                                           filename,
-                                           label=label,
-                                           edge_labels=edge_labels)
-
-    def genotype_list(self):
-        return list(self.genotype._asdict().items())
-
-    def parse(self, weights):
-        """parse and get the discertized arch"""
-        archs = []
-        edge_probs = []
-        for cg_weight, cg_logits in zip(weights, self.logits):
-            cg_probs = softmax(cg_logits)
-            start = 0
-            n = self.search_space.num_init_nodes
-            arch = [[], []]
-            edge_prob = []
-            for _ in range(self.search_space.num_steps):
-                end = start + n
-                w = cg_weight[start:end]
-                probs = cg_probs[start:end]
-                edges = sorted(range(n), key=lambda node_id: -max(w[node_id])) #pylint: disable=cell-var-from-loop
-                edges = edges[:self.search_space.num_node_inputs]
-                arch[0] += edges # from nodes
-                op_lst = [np.argmax(w[edge]) for edge in edges] # ops
-                edge_prob += ["{:.3f}".format(probs[edge][op_id]) \
-                              for edge, op_id in zip(edges, op_lst)]
-                arch[1] += op_lst
-                n += 1
-                start = end
-            archs.append(arch)
-            edge_probs.append(edge_prob)
-        return archs, edge_probs
-
-    @property
-    def discretized_arch_and_prob(self):
-        if self._discretized_arch is None:
-            if self.arch[0].ndimension() == 2:
-                self._discretized_arch, self._edge_probs = self.parse(self.sampled)
-            else:
-                assert self.arch[0].ndimension() == 3
-                self.logger.warning("Rollout batch size > 1, use logits instead of samples"
-                                    "to parse the discretized arch.")
-                # if multiple arch samples per step is used, (2nd dim of sampled/arch is
-                # batch_size dim). use softmax(logits) to parse discretized arch
-                self._discretized_arch, self._edge_probs = \
-                                        self.parse(utils.softmax(utils.get_numpy(self.logits)))
-        return self._discretized_arch, self._edge_probs
-
-    @property
-    def genotype(self):
-        if self._genotype is None:
-            self._genotype = self.search_space.genotype(self.discretized_arch_and_prob[0])
-        return self._genotype
-
-    def __repr__(self):
-        return ("DifferentiableRollout(search_space={sn}, arch={arch}, "
-                "candidate_net={cn}, perf={perf})").format(sn=self.search_space.NAME,
-                                                           arch=self.arch,
-                                                           cn=self.candidate_net,
-                                                           perf=self.perf)
 
 
 class SearchSpace(Component):
@@ -206,20 +18,6 @@ class SearchSpace(Component):
 
     def __init__(self):
         super(SearchSpace, self).__init__(schedule_cfg=None)
-        self.genotype_type = None
-        self.genotype_type_name = None
-        self.cell_group_names = None
-
-    # namedtuple defined not at the module top level is unpicklable
-    # remove it from the states
-    def __getstate__(self):
-        state = super(SearchSpace, self).__getstate__().copy()
-        del state["genotype_type"]
-        return state
-
-    def __setstate__(self, state):
-        super(SearchSpace, self).__setstate__(state)
-        self.genotype_type = collections.namedtuple(self.genotype_type_name, self.cell_group_names)
 
     @abc.abstractmethod
     def random_sample(self):
@@ -242,7 +40,33 @@ class SearchSpace(Component):
         pass
 
 
-class CNNSearchSpace(SearchSpace):
+class CellSearchSpace(SearchSpace):
+    def __init__(self):
+        super(CellSearchSpace, self).__init__()
+        self.genotype_type = None
+        self.genotype_type_name = None
+        self.cell_group_names = None
+
+    # namedtuple defined not at the module top level is unpicklable
+    # remove it from the states
+    def __getstate__(self):
+        state = super(CellSearchSpace, self).__getstate__().copy()
+        del state["genotype_type"]
+        return state
+
+    def __setstate__(self, state):
+        super(CellSearchSpace, self).__setstate__(state)
+        self.genotype_type = utils.namedtuple_with_defaults(
+            self.genotype_type_name,
+            self.cell_group_names + [n + "_concat" for n in self.cell_group_names],
+            self._default_concats)
+
+    @abc.abstractmethod
+    def get_num_steps(self, cell_index):
+        pass
+
+
+class CNNSearchSpace(CellSearchSpace):
     """
     A cell-based CNN search space.
 
@@ -294,6 +118,10 @@ class CNNSearchSpace(SearchSpace):
                  reduce_cell_groups=(1,),
                  # cell arch
                  num_steps=4, num_node_inputs=2,
+                 # concat for output
+                 concat_op="concat",
+                 concat_nodes=None,
+                 loose_end=False,
                  shared_primitives=(
                      "none",
                      "max_pool_3x3",
@@ -316,6 +144,16 @@ class CNNSearchSpace(SearchSpace):
 
         # primitive single-operand operations
         self.shared_primitives = shared_primitives
+
+        # for now, fixed `concat_op` will not be in the rollout
+        self.concat_op = concat_op
+
+        self.concat_nodes = concat_nodes
+        self.loose_end = loose_end
+        if loose_end:
+            expect(self.concat_nodes is None,
+                   "When `loose_end` is given, `concat_nodes` will be automatically determined, "
+                   "should not be explicitly specified.", ConfigException)
 
         ## overall structure/meta-arch: how to arrange cells
         # number of cell groups, different cell groups has different structure
@@ -370,12 +208,42 @@ class CNNSearchSpace(SearchSpace):
             self.cellwise_primitives = False
             self._num_primitives = len(self.shared_primitives)
 
+        # check concat node
+        if self.concat_nodes is not None:
+            if isinstance(self.concat_nodes[0], int):
+                # same concat node specification for every cell groups
+                _concat_nodes = [self.concat_nodes] * self.num_cell_groups
+            for i_cg in range(self.num_cell_groups):
+                _num_steps = self.get_num_steps(i_cg)
+                expect(np.max(_concat_nodes[i_cg]) < num_init_nodes + _num_steps,
+                       "`concat_nodes` {} should be in range(0, {}+{}) for cell group {}"\
+                       .format(_concat_nodes[i_cg], num_init_nodes, _num_steps, i_cg))
+
         self.genotype_type_name = "CNNGenotype"
-        self.genotype_type = collections.namedtuple(self.genotype_type_name,
-                                                    self.cell_group_names)
+        if self.concat_nodes is None and not self.loose_end:
+            # For backward compatiblity, when concat all steps as output
+            # specificy default concats
+            self._default_concats = [
+                list(range(num_init_nodes, num_init_nodes + self.get_num_steps(i_cg)))
+                for i_cg in range(self.num_cell_groups)
+            ]
+        else:
+            # concat_nodes specified or loose end
+            self._default_concats = []
+
+        self.genotype_type = utils.namedtuple_with_defaults(
+            self.genotype_type_name,
+            self.cell_group_names + [n + "_concat" for n in self.cell_group_names],
+            self._default_concats)
 
         # init nodes(meta arch: connect from the last `num_init_nodes` cell's output)
         self.num_init_nodes = num_init_nodes
+
+    def get_layer_num_steps(self, layer_index):
+        return self.get_num_steps(self.cell_layout[layer_index])
+
+    def get_num_steps(self, cell_index):
+        return self.num_steps if isinstance(self.num_steps, int) else self.num_steps[cell_index]
 
     def random_sample(self):
         """
@@ -402,24 +270,42 @@ class CNNSearchSpace(SearchSpace):
         expect(len(arch) == self.num_cell_groups)
 
         genotype_list = []
+        concat_list = []
         for i_cg, cg_arch in enumerate(arch):
             genotype = []
+            used_end = set()
             nodes, ops = cg_arch
-            for i_out in range(self.num_steps):
+            num_steps = self.get_num_steps(i_cg)
+            for i_out in range(num_steps):
                 for i_in in range(self.num_node_inputs):
                     idx = i_out * self.num_node_inputs + i_in
+                    from_ = int(nodes[idx])
+                    used_end.add(from_)
                     genotype.append((self.cell_shared_primitives[i_cg][ops[idx]],
-                                     int(nodes[idx]), int(i_out + self.num_init_nodes)))
+                                     from_, int(i_out + self.num_init_nodes)))
             genotype_list.append(genotype)
-        return self.genotype_type(**dict(zip(self.cell_group_names,
-                                             genotype_list)))
+            if self.loose_end:
+                concat = [i for i in range(self.num_init_nodes, num_steps + self.num_init_nodes)
+                          if i not in used_end]
+            else:
+                concat = list(range(self.num_init_nodes, num_steps + self.num_init_nodes))
+            concat_list.append(concat)
+        kwargs = dict(itertools.chain(
+            zip(self.cell_group_names, genotype_list),
+            zip([n + "_concat" for n in self.cell_group_names], concat_list)
+        ))
+        return self.genotype_type(**kwargs)
 
     def rollout_from_genotype(self, genotype):
         genotype_list = list(genotype._asdict().values())
+        assert len(genotype_list) == 2 * self.num_cell_groups
+        conn_list = genotype_list[:self.num_cell_groups]
+
         arch = []
-        for i_cg, cell_geno in enumerate(genotype_list):
+        for i_cg, cell_geno in enumerate(conn_list):
             nodes, ops = [], []
-            for i_out in range(self.num_steps):
+            num_steps = self.get_num_steps(i_cg)
+            for i_out in range(num_steps):
                 for i_in in range(self.num_node_inputs):
                     conn = cell_geno[i_out * self.num_node_inputs + i_in]
                     ops.append(self.cell_shared_primitives[i_cg].index(conn[0]))
@@ -428,9 +314,11 @@ class CNNSearchSpace(SearchSpace):
             arch.append(cg_arch)
         return Rollout(arch, {}, self)
 
-    def plot_cell(self, genotype, filename,
+    def plot_cell(self, genotype_concat, filename, cell_index,
                   label="", edge_labels=None, plot_format="png"):
         """Plot a cell to `filename` on disk."""
+
+        genotype, concat = genotype_concat
 
         from graphviz import Digraph
 
@@ -454,9 +342,10 @@ class CNNSearchSpace(SearchSpace):
                       for i_in in range(self.num_init_nodes)]
         [graph.node(node_name, fillcolor="darkseagreen2") for node_name in node_names]
 
-        for i in range(self.num_steps):
+        num_steps = self.get_num_steps(cell_index)
+        for i in range(num_steps):
             graph.node(str(i), fillcolor="lightblue")
-        node_names += [str(i) for i in range(self.num_steps)]
+        node_names += [str(i) for i in range(num_steps)]
 
         for i, (op_type, from_, to_) in enumerate(genotype):
             if op_type == "none":
@@ -470,8 +359,12 @@ class CNNSearchSpace(SearchSpace):
 
 
         graph.node("c_{k}", fillcolor="palegoldenrod")
-        for i in range(self.num_steps):
-            graph.edge(str(i), "c_{k}", fillcolor="gray")
+        for node in concat:
+            if node < self.num_init_nodes:
+                from_ = "c_{k-" + str(self.num_init_nodes - node) + "}"
+            else:
+                from_ = str(node - self.num_init_nodes)
+            graph.edge(from_, "c_{k}", fillcolor="gray")
 
         graph.render(filename, view=False)
 
@@ -483,8 +376,11 @@ class CNNSearchSpace(SearchSpace):
         if edge_labels is None:
             edge_labels = [None] * self.num_cell_groups
         fnames = []
-        for e_label, (cg_n, cg_geno) in zip(edge_labels, genotypes):
-            fname = self.plot_cell(cg_geno, filename+"-"+cg_n,
+        for i_cg, (e_label, (cg_n, cg_geno)) in enumerate(zip(edge_labels,
+                                                              genotypes[:self.num_cell_groups])):
+            fname = self.plot_cell((cg_geno, genotypes[self.num_cell_groups + i_cg][1]),
+                                   filename+"-"+cg_n,
+                                   cell_index=i_cg,
                                    label=cg_n + " " + label,
                                    edge_labels=e_label,
                                    plot_format=plot_format)
@@ -496,7 +392,7 @@ class CNNSearchSpace(SearchSpace):
         raise NotImplementedError()
 
 
-class RNNSearchSpace(SearchSpace):
+class RNNSearchSpace(CellSearchSpace):
     NAME = "rnn"
 
     def __init__(self,
@@ -517,6 +413,8 @@ class RNNSearchSpace(SearchSpace):
         ## inner-cell
         # number of nodes in every cell
         self.num_steps = num_steps
+        assert isinstance(self.num_steps, int), \
+            "RNN Searchspace not support multple cell group for now"
 
         # number of input nodes for every node in the cell
         self.num_node_inputs = num_node_inputs
@@ -543,10 +441,17 @@ class RNNSearchSpace(SearchSpace):
 
         self.cell_group_names = ["cell"]
 
+        self._default_concats = []
         self.genotype_type_name = "RNNGenotype"
         self.genotype_type = collections.namedtuple(self.genotype_type_name,
                                                     self.cell_group_names +\
                                                     [n + "_concat" for n in self.cell_group_names])
+
+    def get_layer_num_steps(self, layer_index):
+        pass
+
+    def get_num_steps(self, cell_index):
+        return self.num_steps if isinstance(self.num_steps, int) else self.num_steps[cell_index]
 
     def random_sample(self):
         """
@@ -607,7 +512,8 @@ class RNNSearchSpace(SearchSpace):
             arch.append(cg_arch)
         return Rollout(arch, {}, self)
 
-    def plot_arch(self, genotypes, filename, label="", edge_labels=None, plot_format="png"): #pylint: disable=arguments-differ
+    def plot_arch(self, genotypes, filename,
+                  label="", edge_labels=None, plot_format="png"): #pylint: disable=arguments-differ
         """Plot an architecture to files on disk"""
         expect(len(genotypes) == 2 and self.num_cell_groups == 1,
                "Current RNN search space only support one cell group")
@@ -640,6 +546,7 @@ class RNNSearchSpace(SearchSpace):
         graph.edge("h_{t-1}", "0", fillcolor="gray")
 
         _steps = self.num_steps
+        # _steps = self.get_num_steps(cell_index)
         for i in range(1, 1 + _steps):
             graph.node(str(i), fillcolor="lightblue")
 
@@ -668,10 +575,10 @@ def get_search_space(cls, **cfg):
 
 def genotype_from_str(genotype_str, search_space):
     #pylint: disable=eval-used,bare-except
+    genotype_str = str(genotype_str)
     try:
         return eval("search_space.genotype_type({})".format(genotype_str))
     except:
-        import re
         genotype_str = re.search(r".+?Genotype\((.+)\)", genotype_str).group(1)
         return eval("search_space.genotype_type({})".format(genotype_str))
 
@@ -692,3 +599,24 @@ def group_and_sort_by_to_node(cell_geno):
     for conn in cell_geno:
         group_dct[conn[2]].append(conn)
     return sorted(group_dct.items(), key=lambda item: item[0])
+
+def get_genotype_substr(genotypes):
+    try:
+        return re.search(r".+?Genotype\((.+)\)", genotypes).group(1)
+    except Exception:
+        return genotypes
+
+# import all the rollouts here
+from aw_nas.rollout import ( # pylint:disable=unused-import
+    assert_rollout_type,
+    BaseRollout,
+    Rollout,
+    DifferentiableRollout,
+    MutationRollout
+)
+
+from aw_nas.rollout.dense import (
+    DenseSearchSpace,
+    DenseDiscreteRollout,
+    DenseMutationRollout
+)

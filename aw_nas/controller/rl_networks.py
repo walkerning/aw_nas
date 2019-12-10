@@ -70,8 +70,14 @@ class BaseLSTM(BaseRLControllerNet):
                 self._primitives = list(_primitives.keys())
                 self._cell_primitive_indexes = [[_primitives[name] for name in csp] \
                                                 for csp in self.search_space.cell_shared_primitives]
+            self._num_steps = self.search_space.num_steps
+            expect(isinstance(self._num_steps, int),
+                   "Shared RL network do not support using different steps in "
+                   "different cell groups")
         else:
             self._primitives = self.search_space.cell_shared_primitives[self.cell_index]
+            self._num_steps = self.search_space.get_num_steps(self.cell_index)
+
         self._num_primitives = len(self._primitives)
 
         self.lstm = nn.ModuleList()
@@ -87,6 +93,7 @@ class BaseLSTM(BaseRLControllerNet):
         hx, cx = self.stack_lstm(inputs, hidden)
         if self.cell_index is not None or not self.search_space.cellwise_primitives or \
            tuple(self._cell_primitive_indexes[cell_index]) == tuple(range(self._num_primitives)):
+            # cell_index is not None: this network is not shared
             logits = self.w_op_soft(hx[-1])
         else:
             # choose subset of op/primitive weight
@@ -280,7 +287,7 @@ class AnchorControlNet(BaseLSTM):
             anchors_w_1.append(self.anchor_attn(hx[-1]))
 
         # begin sample
-        for idx in range(self.search_space.num_steps):
+        for idx in range(self._num_steps):
             # for every step, sample `self.search_space.num_node_inputs` input nodes and ops
             # from nodes
             for _ in range(self.search_space.num_node_inputs):
@@ -380,7 +387,7 @@ class EmbedControlNet(BaseLSTM):
         self.static_hidden = utils.keydefaultdict(self._get_default_hidden)
         self.op_emb = nn.Embedding(self._num_primitives, self.controller_hid)
         _n_node_input = self.search_space.num_init_nodes +\
-                        self.search_space.num_steps - 1
+                        self._num_steps - 1
         self.node_emb = nn.Embedding(_n_node_input, self.controller_hid)
 
         ## Attention mapping
@@ -449,7 +456,7 @@ class EmbedControlNet(BaseLSTM):
             hidden = prev_hidden
 
         # begin sample
-        for idx in range(self.search_space.num_steps):
+        for idx in range(self._num_steps):
             # for every step, sample `self.search_space.num_node_inputs` input nodes and ops
             # from nodes
             for _ in range(self.search_space.num_node_inputs):

@@ -1,3 +1,4 @@
+import torch
 from torch import nn
 import torch.nn.functional as F
 from aw_nas.ops import register_primitive, ConvBNReLU, Identity
@@ -32,10 +33,12 @@ class VggBlock(nn.Module):
         return out, context
 
 class MobileNetBlock(nn.Module):
-    def __init__(self, expansion, C, C_out, stride, affine, kernel_size=3):
+    def __init__(self, expansion, C, C_out, stride, affine, kernel_size=3, relu6=False):
         super(MobileNetBlock, self).__init__()
         C_inner = self.C_inner = int(expansion * C)
         self.stride = stride
+        self.relu6 = relu6
+        self.activation = F.relu6 if self.relu6 else F.relu
 
         self.conv1 = nn.Conv2d(C, C_inner,
                                kernel_size=1, stride=1,
@@ -61,13 +64,14 @@ class MobileNetBlock(nn.Module):
             )
 
     def forward(self, inputs):
-        out = F.relu(self.bn1(self.conv1(inputs)))
-        out = F.relu(self.bn2(self.conv2(out)))
+        out = self.activation(self.bn1(self.conv1(inputs)))
+        out = self.activation(self.bn2(self.conv2(out)))
         out = self.bn3(self.conv3(out))
         out = out + self.shortcut(inputs) if self.stride == 1 else out
         return out
 
     def forward_one_step(self, context=None, inputs=None):
+        activation = F.relu6 if self.relu6 else F.relu
         _, op_ind = context.next_op_index
         if op_ind == 0:
             assert inputs is not None
@@ -76,11 +80,11 @@ class MobileNetBlock(nn.Module):
             context.current_op.append(out)
             context.last_conv_module = self.conv1
         elif op_ind == 2:
-            out = self.bn2(self.conv2(F.relu(context.current_op[-1])))
+            out = self.bn2(self.conv2(activation(context.current_op[-1])))
             context.current_op.append(out)
             context.last_conv_module = self.conv2
         elif op_ind == 3:
-            out = self.bn3(self.conv3(F.relu(context.current_op[-1])))
+            out = self.bn3(self.conv3(activation(context.current_op[-1])))
             context.current_op.append(out)
             if not self.stride == 1:
                 # return out
@@ -107,8 +111,9 @@ class MobileNetBlock(nn.Module):
         return out, context
 
 class ResNetBlockSplit(nn.Module):
-    def __init__(self, C, C_out, stride, affine):
+    def __init__(self, C, C_out, stride, affine, act='relu'):
         super(ResNetBlockSplit, self).__init__()
+        self.act = act
         self.op_1_1 = ConvBNReLU(C, C_out,
                                  3, stride, 1, affine=affine, relu=False)
         self.op_1_2 = ConvBNReLU(C, C_out,
@@ -122,12 +127,22 @@ class ResNetBlockSplit(nn.Module):
                                                                  affine=affine, relu=False)
 
     def forward(self, inputs):
-        inner = F.relu(self.op_1_1(inputs) + self.op_1_2(inputs))
+        activation == F.relu
+        if self.act == 'hardtanh':
+            activation = F.hardtanh
+        elif self.act == 'sigmoid':
+            activation = F.sigmoid
+        inner = activation(self.op_1_1(inputs) + self.op_1_2(inputs))
         out = self.op_2_1(inner) + self.op_2_2(inner)
         out_skip = self.skip_op(inputs)
-        return F.relu(out + out_skip)
+        return activation(out + out_skip)
 
     def forward_one_step(self, context=None, inputs=None):
+        activation == F.relu
+        if self.act == 'hardtanh':
+            activation = F.hardtanh
+        elif self.act == 'sigmoid':
+            activation = F.sigmoid
         _, op_ind = context.next_op_index
         if op_ind == 0:
             assert inputs is not None
@@ -138,7 +153,7 @@ class ResNetBlockSplit(nn.Module):
             out = self.op_1_2(context.current_op[0])
             context.current_op.append(out)
         elif op_ind == 3:
-            out = F.relu(context.current_op[-1] + context.current_op[-2])
+            out = activation(context.current_op[-1] + context.current_op[-2])
             context.current_op.append(out)
             context.flag_inject(False)
         elif op_ind == 4:
@@ -150,31 +165,44 @@ class ResNetBlockSplit(nn.Module):
         else:
             assert op_ind == 6
             skip_out = self.skip_op(context.current_op[0])
-            out = F.relu(context.current_op[-1] + context.current_op[-2] + skip_out)
+            out = activation(context.current_op[-1] + context.current_op[-2] + skip_out)
             context.current_op = []
             context.previous_op.append(out)
             context.flag_inject(False)
         return out, context
 
 class ResNetBlock(nn.Module):
-    def __init__(self, C, C_out, stride, affine):
+    def __init__(self, C, C_out, stride, affine, kernel_size=3, act="relu"):
         super(ResNetBlock, self).__init__()
         self.stride = stride
+        padding = int((kernel_size - 1) / 2)
+        self.act = act
+        self.activation = F.relu
+        if self.act == 'hardtanh':
+            self.activation = F.hardtanh
+        elif self.act == 'sigmoid':
+            self.activation = F.sigmoid
+
         self.op_1 = ConvBNReLU(C, C_out,
-                               3, stride, 1, affine=affine, relu=False)
+                               kernel_size, stride, padding, affine=affine, relu=False)
         self.op_2 = ConvBNReLU(C_out, C_out,
-                               3, 1, 1, affine=affine, relu=False)
+                               kernel_size, 1, padding, affine=affine, relu=False)
         self.skip_op = Identity() if stride == 1 else ConvBNReLU(C, C_out,
                                                                  1, stride, 0,
                                                                  affine=affine, relu=False)
 
     def forward(self, inputs):
-        inner = F.relu(self.op_1(inputs))
+        inner = self.activation(self.op_1(inputs))
         out = self.op_2(inner)
         out_skip = self.skip_op(inputs)
-        return F.relu(out + out_skip)
+        return self.activation(out + out_skip)
 
     def forward_one_step(self, context=None, inputs=None):
+        activation = F.relu
+        if self.act == 'hardtanh':
+            activation = F.hardtanh
+        elif self.act == 'sigmoid':
+            activation = F.sigmoid
         _, op_ind = context.next_op_index
         if op_ind == 0:
             assert inputs is not None
@@ -195,34 +223,113 @@ class ResNetBlock(nn.Module):
                 context.last_conv_module = self.skip_op.op[0]
         else:
             assert op_ind == 4
-            out = F.relu(context.current_op[-1] + context.current_op[-2])
+            out = activation(context.current_op[-1] + context.current_op[-2])
             context.current_op = []
             context.previous_op.append(out)
             context.flag_inject(False)
         return out, context
 
-register_primitive("mobilenet_block_3",
-                   lambda C, C_out, stride, affine: MobileNetBlock(3, C, C_out, stride, affine))
-register_primitive("mobilenet_block_3_5x5",
-                   lambda C, C_out, stride, affine: MobileNetBlock(3, C, C_out, stride, affine,
-                                                                   kernel_size=5))
-register_primitive("mobilenet_block_3_7x7",
-                   lambda C, C_out, stride, affine: MobileNetBlock(3, C, C_out, stride, affine,
-                                                                   kernel_size=7))
+
+class DenseBlock(nn.Module):
+    def __init__(self, C, C_out, stride, affine, act='relu', bc_mode=True, bc_ratio=4.0,
+                 dropblock_rate=0.0):
+        super(DenseBlock, self).__init__()
+        growth_rate = self.growth_rate = C_out - C
+        self.bc_mode = bc_mode
+        self.dropblock_rate = dropblock_rate
+
+        if bc_mode:
+            inner_c = int(bc_ratio * growth_rate)
+            self.bc_bn = nn.BatchNorm2d(C, affine=affine)
+            self.bc_conv = nn.Conv2d(C, inner_c, kernel_size=1, bias=False)
+        else:
+            inner_c = C
+        self.bn = nn.BatchNorm2d(inner_c, affine=affine)
+        self.conv = nn.Conv2d(inner_c, growth_rate, kernel_size=3, padding=1, bias=False)
+
+        self.activation = F.relu
+        if act == "sigmoid":
+            self.activation = F.sigmoid
+        elif act == "hardtanh":
+            self.activation = F.hardtanh
+
+    def forward(self, x):
+        if self.bc_mode:
+            out = self.bc_conv(self.activation(self.bc_bn(x)))
+        else:
+            out = x
+        out = self.conv(self.activation(self.bn(out)))
+        if self.training and self.dropblock_rate > 0.:
+            # optionally drop miniblock
+            keep_prob = 1. - self.dropblock_rate
+            mask = x.new(x.size(0), 1, 1, 1).bernoulli_(keep_prob)
+            out.div_(keep_prob)
+            out.mul_(mask)
+        out = torch.cat([out, x], 1)
+        return out
+
+class Transition(nn.Module):
+    def __init__(self, C, C_out, stride, affine, act='relu'):
+        assert stride == 2 and affine, "standard densenet use stride=2 and affine=True"
+        super(Transition, self).__init__()
+        self.bn = nn.BatchNorm2d(C)
+        self.conv = nn.Conv2d(C, C_out, kernel_size=1, bias=False)
+        self.activation = F.relu
+        if act == "sigmoid":
+            self.activation = F.sigmoid
+        elif act == "hardtanh":
+            self.activation = F.hardtanh
+
+    def forward(self, x):
+        out = self.conv(self.activation(self.bn(x)))
+        out = F.avg_pool2d(out, 2)
+        return out
+
+register_primitive("mobilenet_block_6_relu6",
+                   lambda C, C_out, stride, affine: MobileNetBlock(6, C, C_out,
+                                                                   stride, affine, True))
+register_primitive("mobilenet_block_1_relu6",
+                   lambda C, C_out, stride, affine: MobileNetBlock(1, C, C_out, stride,
+                                                                   affine, True))
 register_primitive("mobilenet_block_6",
                    lambda C, C_out, stride, affine: MobileNetBlock(6, C, C_out, stride, affine))
 register_primitive("mobilenet_block_6_5x5",
-                   lambda C, C_out, stride, affine: MobileNetBlock(6, C, C_out, stride, affine,
-                                                                   kernel_size=5))
-register_primitive("mobilenet_block_6_7x7",
-                   lambda C, C_out, stride, affine: MobileNetBlock(6, C, C_out, stride, affine,
-                                                                   kernel_size=7))
+                   lambda C, C_out, stride, affine: MobileNetBlock(6, C, C_out, stride, affine, 5))
+register_primitive("mobilenet_block_3",
+                   lambda C, C_out, stride, affine: MobileNetBlock(3, C, C_out, stride, affine))
+register_primitive("mobilenet_block_3_5x5",
+                   lambda C, C_out, stride, affine: MobileNetBlock(3, C, C_out, stride, affine, 5))
 register_primitive("mobilenet_block_1",
                    lambda C, C_out, stride, affine: MobileNetBlock(1, C, C_out, stride, affine))
+
+register_primitive("resnet_block_1x1",
+                   lambda C, C_out, stride, affine: ResNetBlock(C, C_out, stride, affine=affine,
+                                                                kernel_size=1))
 register_primitive("resnet_block",
                    lambda C, C_out, stride, affine: ResNetBlock(C, C_out, stride, affine=affine))
+register_primitive("resnet_block_5x5",
+                   lambda C, C_out, stride, affine: ResNetBlock(C, C_out, stride, affine=affine,
+                                                                kernel_size=5))
 register_primitive("resnet_block_split",
                    lambda C, C_out, stride, affine: ResNetBlockSplit(C, C_out,
                                                                      stride, affine=affine))
+register_primitive("resnet_block_hardtanh",
+                   lambda C, C_out, stride, affine: ResNetBlock(C, C_out, stride, affine=affine,
+                                                                act='hardtanh'))
+register_primitive("resnet_block_split_hardtanh",
+                   lambda C, C_out, stride, affine: ResNetBlockSplit(C, C_out,
+                                                                     stride, affine=affine,
+                                                                     act='hardtanh'))
+register_primitive("resnet_block_sigmoid",
+                   lambda C, C_out, stride, affine: ResNetBlock(C, C_out, stride, affine=affine,
+                                                                act='sigmoid'))
+register_primitive("resnet_block_split_sigmoid",
+                   lambda C, C_out, stride, affine: ResNetBlockSplit(C, C_out,
+                                                                     stride, affine=affine,
+                                                                     act='sigmoid'))
 register_primitive("vgg_block",
                    lambda C, C_out, stride, affine: VggBlock(C, C_out, stride, affine=affine))
+register_primitive("dense_block",
+                   lambda C, C_out, stride, affine: DenseBlock(C, C_out, stride, affine=affine))
+register_primitive("dense_reduce_block",
+                   lambda C, C_out, stride, affine: Transition(C, C_out, stride, affine=affine))

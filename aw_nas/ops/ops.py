@@ -33,26 +33,31 @@ PRIMITVE_FACTORY = {
     "max_pool_3x3" : max_pool_3x3,
     "skip_connect" : lambda C, C_out, stride, affine: Identity() if stride == 1 \
       else FactorizedReduce(C, C_out, stride=stride, affine=affine),
-    "sep_conv_3x3" : lambda C, C_out, stride, affine: SepConv(C, C_out,
-                                                              3, stride, 1, affine=affine),
-    "sep_conv_3x3_exp3" : lambda C, C_out, stride, affine: SepConv(C, C_out,
-                                                              3, stride, 1, affine=affine, expansion=3),
-    "sep_conv_3x3_exp6" : lambda C, C_out, stride, affine: SepConv(C, C_out,
-                                                              3, stride, 1, affine=affine, expansion=6),
-    "sep_conv_5x5" : lambda C, C_out, stride, affine: SepConv(C, C_out,
-                                                              5, stride, 2, affine=affine),
-    "sep_conv_5x5_exp3" : lambda C, C_out, stride, affine: SepConv(C, C_out,
-                                                              5, stride, 2, affine=affine, expansion=6),
-    "sep_conv_5x5_exp6" : lambda C, C_out, stride, affine: SepConv(C, C_out,
-                                                              5, stride, 2, affine=affine, expansion=6),
-    "sep_conv_7x7" : lambda C, C_out, stride, affine: SepConv(C, C_out,
-                                                              7, stride, 3, affine=affine),
-    "dil_conv_3x3" : lambda C, C_out, stride, affine: DilConv(C, C_out,
-                                                              3, stride, 2, 2, affine=affine),
-    "dil_conv_5x5" : lambda C, C_out, stride, affine: DilConv(C, C_out,
-                                                              5, stride, 4, 2, affine=affine),
+    "res_reduce_block": lambda C, C_out, stride, affine: ResFactorizedReduceBlock(
+        C, C_out, stride=stride, affine=affine),
+
+    "sep_conv_3x3" : lambda C, C_out, stride, affine: SepConv(
+        C, C_out, 3, stride, 1, affine=affine),
+    "sep_conv_3x3_exp3" : lambda C, C_out, stride, affine: SepConv(
+        C, C_out, 3, stride, 1, affine=affine, expansion=3),
+    "sep_conv_3x3_exp6" : lambda C, C_out, stride, affine: SepConv(
+        C, C_out, 3, stride, 1, affine=affine, expansion=6),
+    "sep_conv_5x5" : lambda C, C_out, stride, affine: SepConv(
+        C, C_out, 5, stride, 2, affine=affine),
+    "sep_conv_5x5_exp3" : lambda C, C_out, stride, affine: SepConv(
+        C, C_out, 5, stride, 2, affine=affine, expansion=6),
+    "sep_conv_5x5_exp6" : lambda C, C_out, stride, affine: SepConv(
+        C, C_out, 5, stride, 2, affine=affine, expansion=6),
+    "sep_conv_7x7" : lambda C, C_out, stride, affine: SepConv(
+        C, C_out, 7, stride, 3, affine=affine),
+    "dil_conv_3x3" : lambda C, C_out, stride, affine: DilConv(
+        C, C_out, 3, stride, 2, 2, affine=affine),
+    "dil_conv_5x5" : lambda C, C_out, stride, affine: DilConv(
+        C, C_out, 5, stride, 4, 2, affine=affine),
     "conv_7x1_1x7" : conv_7x1_1x7,
 
+    "relu_conv_bn_1x1" : lambda C, C_out, stride, affine: ReLUConvBN(C, C_out,
+                                                                     1, stride, 0, affine=affine),
     "relu_conv_bn_3x3" : lambda C, C_out, stride, affine: ReLUConvBN(C, C_out,
                                                                      3, stride, 1, affine=affine),
     "relu_conv_bn_5x5" : lambda C, C_out, stride, affine: ReLUConvBN(C, C_out,
@@ -66,7 +71,10 @@ PRIMITVE_FACTORY = {
     "conv_bn_relu_5x5" : lambda C, C_out, stride, affine: ConvBNReLU(C, C_out,
                                                                      5, stride, 2, affine=affine),
     "conv_1x1" : lambda C, C_out, stride, affine: nn.Conv2d(C, C_out, 1, stride, 0),
-    "inspect_block" : lambda C, C_out, stride, affine: inspectBlock(C, C_out, stride, affine=affine),
+    "inspect_block" : lambda C, C_out, stride, affine: inspectBlock(C, C_out, stride,
+                                                                    affine=affine),
+    "conv_3x3" : lambda C, C_out, stride, affine: nn.Conv2d(C, C_out, 3, stride, 1),
+    "bn_relu" : lambda C, C_out, stride, affine: BNReLU(C, C_out, affine),
 
     # imagenet stem
     "imagenet_stem0": lambda C, C_out, stride, affine: nn.Sequential(
@@ -95,6 +103,15 @@ def get_op(name):
     assert name in PRIMITVE_FACTORY, \
         "{} not registered, use `register_primitive` to register primitive op".format(name)
     return PRIMITVE_FACTORY[name]
+
+class BNReLU(nn.Module):
+    def __init__(self, C_in, C_out, affine=True):
+        super(BNReLU, self).__init__()
+        assert C_in == C_out
+        self.bn = nn.BatchNorm2d(C_out, affine=affine)
+
+    def forward(self, x):
+        return F.relu(self.bn(x))
 
 class FactorizedReduce(nn.Module):
     def __init__(self, C_in, C_out, stride, affine=True, kernel_size=1):
@@ -323,11 +340,11 @@ class inspectBlock(torch.nn.Module):
     def __init__(self, C_in, C_out, stride, affine=True):
         super(inspectBlock, self).__init__()
         self.op1 = ReLUConvBN(C_in, C_out, kernel_size=3, stride=stride,
-                      padding=1, affine=affine)
+                              padding=1, affine=affine)
         self.op2 = ReLUConvBN(C_in, C_out, kernel_size=1, stride=stride,
-                       padding=0, affine=affine)
+                              padding=0, affine=affine)
         self.op3 = SepConv(C_in, C_out, kernel_size=3, stride=stride,
-                       padding=1, affine=affine) 
+                           padding=1, affine=affine)
 
     def forward(self, x):
         rand_ = np.random.random()
@@ -421,3 +438,59 @@ class LockedDropout(nn.Module):
         mask = m.div_(1 - dropout)
         mask = mask.expand_as(x)
         return mask * x
+
+class ResFactorizedReduceBlock(nn.Module):
+    def __init__(self, C, C_out, stride, affine):
+        super(ResFactorizedReduceBlock, self).__init__()
+        kernel_size = 1
+        padding = int((kernel_size - 1) / 2)
+        self.op_1 = ReLUConvBN(
+            C, C_out, kernel_size, stride,
+            padding, affine=affine) if stride == 1 \
+            else FactorizedReduce(C, C_out, stride=stride, affine=affine)
+        self.op_2 = ReLUConvBN(C_out, C_out,
+                               kernel_size, 1, padding, affine=affine)
+        self.skip_op = Identity() if stride == 1 and C == C_out else \
+                       ConvBNReLU(C, C_out, 1, stride, 0, affine=affine)
+
+    def forward(self, inputs):
+        inner = self.op_1(inputs)
+        out = self.op_2(inner)
+        out_skip = self.skip_op(inputs)
+        return out + out_skip
+
+    def forward_one_step(self, context=None, inputs=None):
+        raise NotImplementedError()
+
+class ChannelConcat(nn.Module):
+    @property
+    def is_elementwise(self):
+        return False
+
+    def forward(self, states):
+        return torch.cat(states, dim=1)
+
+class ElementwiseAdd(nn.Module):
+    @property
+    def is_elementwise(self):
+        return True
+
+    def forward(self, states):
+        return sum(states)
+
+class ElementwiseMean(nn.Module):
+    @property
+    def is_elementwise(self):
+        return True
+
+    def forward(self, states):
+        return sum(states) / len(states)
+
+CONCAT_OPS = {
+    "concat": ChannelConcat,
+    "sum": ElementwiseAdd,
+    "mean": ElementwiseMean
+}
+
+def get_concat_op(type_):
+    return CONCAT_OPS[type_]()

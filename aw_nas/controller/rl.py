@@ -19,6 +19,7 @@ class RLController(BaseController, nn.Module):
 
     def __init__(self, search_space, device, rollout_type="discrete",
                  mode="eval", independent_cell_group=False,
+                 condition_hidden_cell_groups=False,
                  controller_network_type="anchor_lstm", controller_network_cfg=None,
                  rl_agent_type="pg", rl_agent_cfg=None):
         """
@@ -39,6 +40,7 @@ class RLController(BaseController, nn.Module):
 
         self.device = device
         self.independent_cell_group = independent_cell_group
+        self.condition_hidden_cell_groups = condition_hidden_cell_groups
 
         # handle cell groups here
         self.controllers = []
@@ -48,6 +50,7 @@ class RLController(BaseController, nn.Module):
         cn_cls = BaseRLControllerNet.get_class_(controller_network_type)
         num_cnet = self.search_space.num_cell_groups if self.independent_cell_group else 1
         self.controllers = [cn_cls(self.search_space, self.device,
+
                                    cell_index=i if self.independent_cell_group else None,
                                    **controller_network_cfg) for i in range(num_cnet)]
         self.agents = [BaseRLAgent.get_class_(rl_agent_type)(cnet, **rl_agent_cfg)\
@@ -87,7 +90,7 @@ class RLController(BaseController, nn.Module):
             arch, lprob, ent, hidden = self.controllers[cn_idx].sample(batch_size=n,
                                                                        prev_hidden=hidden,
                                                                        cell_index=i_cg)
-            hidden = None if self.independent_cell_group else hidden
+            hidden = hidden if self.condition_hidden_cell_groups else None
             arch_lst.append(arch)
             log_probs_lst.append(lprob)
             entropies_lst.append(ent)
