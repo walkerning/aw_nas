@@ -6,12 +6,15 @@ from torch import nn
 from aw_nas.utils.torch_utils import accuracy
 from aw_nas.objective.base import BaseObjective
 
-class ClassificationObjective(BaseObjective):
-    NAME = "classification"
+class OFAClassificationObjective(BaseObjective):
+    NAME = "ofa_classification"
 
-    def __init__(self, search_space, label_smooth=None):
-        super(ClassificationObjective, self).__init__(search_space)
+    SCHEDULABLE_ATTRS = ["soft_loss_coeff"]
+
+    def __init__(self, search_space, label_smooth=None, soft_loss_coeff=1.0, schedule_cfg=None):
+        super(OFAClassificationObjective, self).__init__(search_space, schedule_cfg)
         self.label_smooth = label_smooth
+        self.soft_loss_coeff = soft_loss_coeff
         self._criterion = nn.CrossEntropyLoss() if not self.label_smooth \
                           else CrossEntropyLabelSmooth(self.label_smooth)
 

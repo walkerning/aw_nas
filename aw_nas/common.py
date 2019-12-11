@@ -16,8 +16,8 @@ from aw_nas.utils.exception import expect, ConfigException
 class SearchSpace(Component):
     REGISTRY = "search_space"
 
-    def __init__(self):
-        super(SearchSpace, self).__init__(schedule_cfg=None)
+    def __init__(self, schedule_cfg=None):
+        super(SearchSpace, self).__init__(schedule_cfg)
 
     @abc.abstractmethod
     def random_sample(self):

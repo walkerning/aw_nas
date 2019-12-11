@@ -14,7 +14,7 @@ import torch
 from torch import nn
 
 from aw_nas.common import assert_rollout_type, group_and_sort_by_to_node
-from aw_nas.weights_manager.base import CandidateNet
+from aw_nas.weights_manager.base import CandidateNet, BaseWeightsManager
 from aw_nas.weights_manager.shared import SharedNet, SharedCell, SharedOp
 from aw_nas.utils import data_parallel, use_params
 from aw_nas.ops import *
@@ -80,17 +80,18 @@ class MobileCell(MobileNetBlock):
         out = super(MobileCell, self).forward(inputs)
         return out
 
-class MNasNetSupernet(nn.Module):
+class MNasNetSupernet(BaseWeightsManager, nn.Module):
     """
     A Mnasnet super network
     """
     NAME = "mnasnet_supernet"
 
-    def __init__(self, search_space, device, rollout_type='mnasnet',
+    def __init__(self, search_space, device, rollout_type='mnasnet_ofa',
                  blocks=[6, 6, 6, 6, 6, 6], stride=[2, 2, 2, 1, 2, 1],
                  expansion=[6, 6, 6, 6, 6, 6], channels=[16, 24, 40, 80, 96, 192, 320],
                  num_classes=10, gpus=tuple()):
-        super(MNasNetSupernet, self).__init__()
+        super(MNasNetSupernet, self).__init__(search_space, device, rollout_type)
+        nn.Module.__init__(self)
         self.search_space = search_space
         self.device = device
         self.rollout_type = rollout_type
@@ -181,8 +182,35 @@ class MNasNetSupernet(nn.Module):
 
     @classmethod
     def supported_rollout_types(cls):
-        return [assert_rollout_type("mnasnet")]
+        return [assert_rollout_type("mnasnet_ofa")]
 
+    @classmethod
+    def supported_data_types(cls):
+        return ["image"]
+
+    def save(self, path):
+        torch.save({"epoch": self.epoch,
+                    "state_dict": self.state_dict()}, path)
+
+    def load(self, path):
+        checkpoint = torch.load(path, map_location=torch.device("cpu"))
+        self.load_state_dict(checkpoint["state_dict"])
+        self.on_epoch_start(checkpoint["epoch"])
+
+    def step(self, gradients, optimizer):
+        self.zero_grad() # clear all gradients
+        named_params = dict(self.named_parameters())
+        for k, grad in gradients:
+            named_params[k].grad = grad
+        # apply the gradients
+        optimizer.step()
+
+    def step_current_gradients(self, optimizer):
+        optimizer.step()
+
+    def set_device(self, device):
+        self.device = device
+        self.to(device)
 
 class MNasNetCandidateNet(CandidateNet):
     """

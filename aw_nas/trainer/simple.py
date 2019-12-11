@@ -138,10 +138,11 @@ class SimpleTrainer(BaseTrainer):
                                     suggested, self.evaluator_steps)
 
         # init controller optimizer and scheduler
-        self.controller_optimizer = utils.init_optimizer(self.controller.parameters(),
-                                                         controller_optimizer)
-        self.controller_scheduler = utils.init_scheduler(self.controller_optimizer,
-                                                         controller_scheduler)
+        if self.rollout_type != "mnasnet_ofa":
+            self.controller_optimizer = utils.init_optimizer(self.controller.parameters(),
+                                                             controller_optimizer)
+            self.controller_scheduler = utils.init_scheduler(self.controller_optimizer,
+                                                             controller_scheduler)
 
         # states and other help attributes
         self.last_epoch = 0
@@ -223,7 +224,7 @@ class SimpleTrainer(BaseTrainer):
     # ---- APIs ----
     @classmethod
     def supported_rollout_types(cls):
-        return ["discrete", "differentiable"]
+        return ["discrete", "differentiable", "mnasnet_ofa"]
 
     def train(self): #pylint: disable=too-many-branches
         assert self.is_setup, "Must call `trainer.setup` method before calling `trainer.train`."
@@ -399,7 +400,7 @@ class SimpleTrainer(BaseTrainer):
 
     def on_epoch_start(self, epoch):
         super(SimpleTrainer, self).on_epoch_start(epoch)
-        if self.controller_scheduler is not None:
+        if self.rollout_type != "mnasnet_ofa" and self.controller_scheduler is not None:
             self.controller_scheduler.step(epoch-1)
             self.logger.info("Epoch %3d: controller LR: %.5f", epoch,
                              self.controller_scheduler.get_lr()[0])

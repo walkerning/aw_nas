@@ -22,16 +22,18 @@ from aw_nas.utils import logger as _logger
 class MNasNetOFASearchSpace(SearchSpace):
     NAME = "mnasnet_ofa"
 
+    SCHEDULABLE_ATTRS = ["width_choice", "depth_choice"]
+
     def __init__(self, width_choice=[4,5,6], depth_choice=[4,5,6],
-                 num_cells=6, num_channels=[6,6,6,6,6,6]):
-        super(MNasNetOFASearchSpace, self).__init__()
+                 num_cell_groups=6, num_channels=[6,6,6,6,6,6], schedule_cfg=None):
+        super(MNasNetOFASearchSpace, self).__init__(schedule_cfg)
         self.genotype_type_name = "MnasnetOFAGenotype"
         self.block_names = sum(
-            [["cell_{}".format(i) for i in range(num_cells)]] + \
-            [["cell_{}_block_{}".format(i, j) for j in range(num_channels[i])] for i in range(num_cells)], [])
+            [["cell_{}".format(i) for i in range(num_cell_groups)]] + \
+            [["cell_{}_block_{}".format(i, j) for j in range(num_channels[i])] for i in range(num_cell_groups)], [])
         self.genotype_type = utils.namedtuple_with_defaults(
             self.genotype_type_name, self.block_names, [])
-        self.num_cells = num_cells
+        self.num_cell_groups = num_cell_groups
         self.num_channels = num_channels
         self.width_choice = width_choice
         self.depth_choice = depth_choice
@@ -60,7 +62,7 @@ class MNasNetOFASearchSpace(SearchSpace):
 
     def random_sample(self):
         return MNasNetOFARollout(MNasNetOFARollout.random_sample_arch(
-               self.num_channels, self.num_cells,
+               self.num_channels, self.num_cell_groups,
                self.width_choice, self.depth_choice), info={}, search_space=self)
 
     def distance(self, arch1, arch2):
@@ -88,9 +90,9 @@ class MNasNetOFARollout(Rollout):
         return self.channel
 
     @classmethod
-    def random_sample_arch(cls, num_channels, num_cells, width_choice, depth_choice):
+    def random_sample_arch(cls, num_channels, num_cell_groups, width_choice, depth_choice):
         arch = []
-        arch += [list(np.random.choice(depth_choice, size=num_cells))]
+        arch += [list(np.random.choice(depth_choice, size=num_cell_groups))]
         arch += [list(np.random.choice(width_choice, size=sum(num_channels)))]
         return arch
             
