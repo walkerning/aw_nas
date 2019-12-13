@@ -45,7 +45,7 @@ class OFAClassificationObjective(BaseObjective):
         """
         loss = self._criterion(outputs, targets)
         if self.soft_loss_coeff > 0:
-            outputs_all = cand_net.forward_all(inputs)
+            outputs_all = cand_net.super_net.forward_all(inputs)
             loss_soft = SoftCrossEntropy()
             soft = loss_soft(outputs, outputs_all)
             loss += soft * self.soft_loss_coeff
