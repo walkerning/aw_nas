@@ -344,7 +344,7 @@ class SimpleTrainer(BaseTrainer):
         other_perfs = {n: [r.perf[n] for r in rollouts] for n in rollouts[0].perf}
 
         save_path = self._save_path("rollout/cell")
-        if save_path is not None:
+        if self.rollout_type != "mnasnet_ofa" and save_path is not None:
             # NOTE: If `train_dir` is None, the image will not be saved to tensorboard too
             fnames = rollouts[idx].plot_arch(save_path, label="epoch {}".format(self.epoch))
             if not self.writer.is_none():

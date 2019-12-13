@@ -75,7 +75,7 @@ class OFAController(BaseController):
     def step(self):
         pass
 
-    def summary(self):
+    def summary(self, *args, **kargs):
         pass
 
     @classmethod
