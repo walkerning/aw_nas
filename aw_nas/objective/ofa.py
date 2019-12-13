@@ -51,6 +51,10 @@ class OFAClassificationObjective(BaseObjective):
             loss += soft * self.soft_loss_coeff
         return loss
 
+    def on_epoch_start(self, epoch):
+        super(OFAClassificationObjective, self).on_epoch_start(epoch)
+        self.search_space.on_epoch_start(epoch)
+
 class SoftCrossEntropy(nn.Module):
     def __init__(self):
         super(SoftCrossEntropy, self).__init__()

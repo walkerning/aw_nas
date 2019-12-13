@@ -87,7 +87,7 @@ class MNasNetSupernet(BaseWeightsManager, nn.Module):
     NAME = "mnasnet_supernet"
 
     def __init__(self, search_space, device, rollout_type='mnasnet_ofa',
-                 blocks=[6, 6, 6, 6, 6, 6], stride=[2, 2, 2, 1, 2, 1],
+                 blocks=[6, 6, 6, 6, 6, 6], stride=[1, 2, 2, 1, 2, 1],
                  expansion=[6, 6, 6, 6, 6, 6], channels=[16, 24, 40, 80, 96, 192, 320],
                  num_classes=10, gpus=tuple()):
         super(MNasNetSupernet, self).__init__(search_space, device, rollout_type)
@@ -104,7 +104,7 @@ class MNasNetSupernet(BaseWeightsManager, nn.Module):
         self.expansion = expansion
         self.channels = channels
         self.cells = []
-        self.sep_stem = nn.Sequential(nn.Conv2d(3, 32, kernel_size=3, stride=2, padding=1),
+        self.sep_stem = nn.Sequential(nn.Conv2d(3, 32, kernel_size=3, stride=1, padding=1),
                               nn.BatchNorm2d(32),
                               nn.ReLU(),
                               nn.Conv2d(32, 32, kernel_size=3, stride=1, padding=1, groups=32),

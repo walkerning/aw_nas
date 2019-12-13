@@ -340,7 +340,6 @@ def get_schedule_value(schedule, epoch):
     """
     See docstring of `check_schedule_cfg` for details.
     """
-
     type_ = schedule["type"]
     if type_ == "value":
         ind = list(np.where(epoch < np.array(schedule["boundary"]))[0])

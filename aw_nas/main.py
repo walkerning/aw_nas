@@ -59,7 +59,7 @@ def _init_components_from_cfg(cfg, device, evaluator_only=False, controller_only
     """
     Initialize components using configuration.
     Order:
-    `search_space`, `controller`, `dataset`, `weights_manager`, `objective`, `evaluator`, `trainer`
+    `search_space`, `dataset`, `weights_manager`, `objective`, `evaluator`, `controller`, `trainer`
     """
     rollout_type = cfg["rollout_type"]
     if not from_controller:

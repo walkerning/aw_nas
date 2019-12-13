@@ -58,7 +58,7 @@ class MNasNetOFASearchSpace(SearchSpace):
             genotype_list, {}, self)      
 
     def plot_arch(self, genotypes, filename, label, **kwargs):
-        raise NotImplementedError()
+        pass
 
     def random_sample(self):
         return MNasNetOFARollout(MNasNetOFARollout.random_sample_arch(
@@ -66,7 +66,7 @@ class MNasNetOFASearchSpace(SearchSpace):
                self.width_choice, self.depth_choice), info={}, search_space=self)
 
     def distance(self, arch1, arch2):
-        raise NotImplementedError()
+        pass
 
 class MNasNetOFARollout(Rollout):
     NAME = "mnasnet_ofa"
