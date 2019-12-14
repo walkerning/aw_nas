@@ -49,7 +49,7 @@ evaluator_cfg:
   load_optimizer: false
   load_scheduler: false
   rollout_type: mnasnet_ofa
-  batch_size: 128
+  batch_size: 64
   controller_surrogate_steps: 0
   # derive_surrogate_steps: 0
   mepa_surrogate_steps: 0

@@ -2,6 +2,7 @@
 
 import torch
 from torch import nn
+import torch.nn.functional as F
 
 from aw_nas.utils.torch_utils import accuracy
 from aw_nas.objective.base import BaseObjective
@@ -59,10 +60,10 @@ class SoftCrossEntropy(nn.Module):
     def __init__(self):
         super(SoftCrossEntropy, self).__init__()
 
-    def forward(self, inptus, targets):
+    def forward(self, inputs, targets):
         log_likelihood = -F.log_softmax(inputs, dim=1)
-        sample_num, class_num = target.shape
-        loss = torch.sum(torch.mul(log_likelihood, target)) / sample_num
+        sample_num, class_num = targets.shape
+        loss = torch.sum(torch.mul(log_likelihood, targets)) / sample_num
         return loss
 
 class CrossEntropyLabelSmooth(nn.Module):
