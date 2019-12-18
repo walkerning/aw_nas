@@ -123,6 +123,30 @@ class SharedNet(BaseWeightsManager, nn.Module):
         self.device = device
         self.to(device)
 
+    def forward_all(self, inputs): #pylint: disable=arguments-differ
+        if not self.use_stem:
+            stemed = inputs
+            states = [inputs] * self._num_init
+        elif isinstance(self.use_stem, (list, tuple)):
+            states = []
+            stemed = inputs
+            for stem in self.stems:
+                stemed = stem(stemed)
+                states.append(stemed)
+        else:
+            stemed = self.stem(inputs)
+            states = [stemed] * self._num_init
+
+        for cg_idx, cell in zip(self._cell_layout, self.cells):
+            states.append(cell.forward_all(states))
+            states = states[1:]
+
+        out = self.global_pooling(states[-1])
+        out = self.dropout(out)
+        logits = self.classifier(out.view(out.size(0), -1))
+        return logits
+
+
     def forward(self, inputs, genotypes, **kwargs): #pylint: disable=arguments-differ
         if not self.use_stem:
             stemed = inputs

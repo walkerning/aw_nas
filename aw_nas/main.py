@@ -132,7 +132,7 @@ def _set_gpu(gpu):
     if gpu is None:
         return
     if torch.cuda.is_available():
-        torch.cuda.set_device(gpu)
+        torch.cuda.set_device('cuda:{}'.format(gpu))
         cudnn.benchmark = True
         cudnn.enabled = True
         LOGGER.info('GPU device = %d' % gpu)
@@ -766,6 +766,78 @@ def gen_final_sample_config(out_file, data_type):
             out_f.write(utils.component_sample_config_str(comp_name, prefix="# ",
                                                           filter_funcs=filter_funcs))
             out_f.write("\n")
+"""
+@main.command(help="Generate a caffemodel from config.")
+@click.argument("cfg_file", required=True, type=str)
+@click.option("--gpu", default=0, type=int,
+              help="the gpu to run generating on")
+@click.option("--out_file_name", default="wm", type=str,
+              help="the filename of outputs")
+def gen_caffemodel(cfg_file, gpu, out_file_name):
+    # set gpu
+    _set_gpu(gpu)
+    device = torch.device("cuda:{}".format(gpu) if torch.cuda.is_available() else "cpu")
+
+    # load components config
+    LOGGER.info("Loading configuration files.")
+    with open(cfg_file, "r") as f:
+        cfg = yaml.safe_load(f)
+
+    # initialize components
+    LOGGER.info("Initializing components.")
+    weights_manager = _init_components_from_cfg(cfg, device)[2]
+    inputs = torch.autograd.Variable(torch.ones([1, 3, 32, 32])).to(device)
+    import pytorch_to_caffe
+    pytorch_to_caffe.trans_net(weights_manager, inputs, 'weights_manager')
+    pytorch_to_caffe.save_prototxt("{}.prototxt".format(out_file_name))
+    pytorch_to_caffe.save_caffemodel("{}.caffemodel".format(out_file_name))
+"""
+
+# ---- Train, Test using final_trainer ----
+@main.command(help="Train an architecture.")
+@click.argument("cfg_file", required=True, type=str)
+@click.option("--gpus", default="0", type=str,
+              help="the gpus to run training on, split by single comma")
+@click.option("--out_file_name", default="wm", type=str,
+              help="the filename of outputs")
+def gen_caffemodel(cfg_file, gpus, out_file_name):
+    # set gpu
+    gpu_list = [int(g) for g in gpus.split(",")]
+    if not gpu_list:
+        _set_gpu(None)
+        device = "cpu"
+    else:
+        _set_gpu(gpu_list[0])
+        device = torch.device("cuda:{}".format(gpu_list[0]) if torch.cuda.is_available() else "cpu")
+
+   # load components config
+    LOGGER.info("Loading configuration files.")
+    with open(cfg_file, "r") as f:
+        cfg = yaml.safe_load(f)
+
+    # initialize components
+    LOGGER.info("Initializing components.")
+    search_space = _init_component(cfg, "search_space")
+    whole_dataset = _init_component(cfg, "dataset")
+
+    _data_type = whole_dataset.data_type()
+    if _data_type == "sequence":
+        # get the num_tokens
+        num_tokens = whole_dataset.vocab_size
+        LOGGER.info("Dataset %s: vocabulary size: %d", whole_dataset.NAME, num_tokens)
+        model = _init_component(cfg, "final_model",
+                                search_space=search_space,
+                                device=device,
+                                num_tokens=num_tokens)
+    else:
+        model = _init_component(cfg, "final_model",
+                                search_space=search_space,
+                                device=device)
+    inputs = torch.autograd.Variable(torch.ones([1, 3, 32, 32])).to(device)
+    import pytorch_to_caffe
+    pytorch_to_caffe.trans_net(model, inputs, 'weights_manager')
+    pytorch_to_caffe.save_prototxt("{}.prototxt".format(out_file_name))
+    pytorch_to_caffe.save_caffemodel("{}.caffemodel".format(out_file_name))
 
 
 if __name__ == "__main__":

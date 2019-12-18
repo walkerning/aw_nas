@@ -324,6 +324,24 @@ class DiscreteSharedCell(SharedCell):
     def num_out_channel(self):
         return self.num_out_channels * self._out_multipler
 
+    def forward_all(self, inputs): #pylint: disable=arguments-differ
+        assert self._num_init == len(inputs)
+        if self.use_preprocess:
+            states = [op(_input) for op, _input in zip(self.preprocess_ops, inputs)]
+        else:
+            states = [s for s in inputs]
+        
+        for i_step in range(self._steps):
+            to_ = i_step + self._num_init
+            state_to_ = 0
+            for from_ in range(to_):
+                for op_type in self._primitives:
+                    out = self.edges[from_][to_](states[from_], op_type)
+                    state_to_ = state_to_ + out
+            states.append(state_to_)
+
+        return self.concat_op([states[ind] for ind in concat_nodes])
+
     def forward(self, inputs, genotype_grouped): #pylint: disable=arguments-differ
         conns_grouped, concat_nodes = genotype_grouped
         assert self._num_init == len(inputs)

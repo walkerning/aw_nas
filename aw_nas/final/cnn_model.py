@@ -414,9 +414,8 @@ class CNNGenotypeCell(nn.Module):
         states = [op(_input) for op, _input in zip(self.preprocess_ops, inputs)]
 
         _num_conn = defaultdict(int)
-        for to_, connections in self.conns_grouped:
-            state_to_ = 0.
-            for op_type, from_, _ in connections:
+        for id1, (to_, connections) in enumerate(self.conns_grouped):
+            for id2, (op_type, from_, _) in enumerate(connections):
                 conn_ind = 0 if not self.independent_conn else _num_conn[(from_, to_, op_type)]
                 op = self.edges[from_][to_][op_type][conn_ind]
                 _num_conn[(from_, to_, op_type)] += 1
@@ -424,7 +423,10 @@ class CNNGenotypeCell(nn.Module):
                 if self.training and dropout_path_rate > 0:
                     if not isinstance(op, ops.Identity):
                         out = utils.drop_path(out, dropout_path_rate)
-                state_to_ = state_to_ + out
+                if id1 == 0 and id2 == 0:
+                    state_to_ = out
+                else:
+                    state_to_ = state_to_ + out
             states.append(state_to_)
 
         return self.concat_op([states[ind] for ind in self.concat_nodes])
