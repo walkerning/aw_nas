@@ -388,17 +388,18 @@ def _batch_norm(raw,input, running_mean, running_var, weight=None, bias=None,
     top_blobs = log.add_blobs([x], name='batch_norm_blob')
     layer1 = caffe_net.Layer_param(name=layer_name1, type='BatchNorm',
                                    bottom=bottom_blobs, top=top_blobs)
-    layer1.batch_norm_param(use_global_stats=0,eps=eps)
-    log.cnet.add_layer(layer1)
-    """
+    
     if weight is not None and bias is not None:
-        layer_name2 = log.add_layer(name='bn_scale')
-        layer2 = caffe_net.Layer_param(name=layer_name2, type='Scale',
-                                       bottom=top_blobs, top=top_blobs)
-        layer2.param.scale_param.bias_term = True
-        layer2.add_data(weight.cpu().data.numpy(), bias.cpu().data.numpy())
-        log.cnet.add_layer(layer2)
-    """
+        layer1.add_data(weight.cpu().data.numpy(), bias.cpu().data.numpy())
+    if running_mean is not None and running_var is not None:
+        layer1.batch_norm_param(use_global_stats=0,eps=eps)
+        running_mean_clone = running_mean.clone()
+        running_var_clone = running_var.clone()
+        layer1.add_data(running_mean_clone.cpu().numpy(), running_var_clone.cpu().numpy())
+    else:
+        layer1.batch_norm_param(use_global_stats=1,eps=eps)
+    layer1.add_data(np.array([1.0]))
+    log.cnet.add_layer(layer1)
     return x
 
 def _instance_norm(raw, input, running_mean=None, running_var=None, weight=None,
