@@ -152,7 +152,6 @@ class CandidateNet(nn.Module):
         if zero_grads:
             self.zero_grad()
         loss.backward()
-
         if not return_grads:
             grads = None
         else:

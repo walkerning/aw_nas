@@ -143,7 +143,9 @@ class SimpleTrainer(BaseTrainer):
                                                              controller_optimizer)
             self.controller_scheduler = utils.init_scheduler(self.controller_optimizer,
                                                              controller_scheduler)
-
+        else:
+            self.controller_optimizer = None
+            self.controller_scheduler = None
         # states and other help attributes
         self.last_epoch = 0
         self.epoch = 0

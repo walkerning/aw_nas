@@ -16,6 +16,7 @@ class OFAClassificationObjective(BaseObjective):
         super(OFAClassificationObjective, self).__init__(search_space, schedule_cfg)
         self.label_smooth = label_smooth
         self.soft_loss_coeff = soft_loss_coeff
+        self.loss_soft = SoftCrossEntropy()
         self._criterion = nn.CrossEntropyLoss() if not self.label_smooth \
                           else CrossEntropyLabelSmooth(self.label_smooth)
 
@@ -46,10 +47,10 @@ class OFAClassificationObjective(BaseObjective):
         """
         loss = self._criterion(outputs, targets)
         if self.soft_loss_coeff > 0:
-            outputs_all = cand_net.super_net.forward_all(inputs)
-            loss_soft = SoftCrossEntropy()
-            soft = loss_soft(outputs, outputs_all)
-            loss += soft * self.soft_loss_coeff
+            outputs_all = cand_net.super_net.forward_all(inputs).detach()
+            soft = self.loss_soft(outputs, outputs_all)
+            loss2 = loss + soft * self.soft_loss_coeff
+            return loss2
         return loss
 
     def on_epoch_start(self, epoch):
@@ -62,8 +63,9 @@ class SoftCrossEntropy(nn.Module):
 
     def forward(self, inputs, targets):
         log_likelihood = -F.log_softmax(inputs, dim=1)
+        likelihood = F.softmax(targets, dim=1)
         sample_num, class_num = targets.shape
-        loss = torch.sum(torch.mul(log_likelihood, targets)) / sample_num
+        loss = torch.sum(torch.mul(log_likelihood, likelihood)) / sample_num
         return loss
 
 class CrossEntropyLabelSmooth(nn.Module):

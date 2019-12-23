@@ -25,58 +25,41 @@ class MobileCell(MobileNetBlock):
     def __init__(self, expansion, C, C_out, stride, affine, kernel_size=3):
         super(MobileCell, self).__init__(expansion, C, C_out, stride, affine, kernel_size)
         self.expansion = expansion
+        self.norms = []
+        self.mask = torch.ones([self.conv2.weight.shape[0]]).detach()
 
     def forward_rollout(self, inputs, rollout, ind_i, ind_j):
-        self.conv1.weight.data = self.conv1.state_dict()['weight']
-        if "bias" in self.conv1.state_dict().keys():
-            self.conv1.bias.data = self.conv1.state_dict()['bias']
-        self.conv2.weight.data = self.conv2.state_dict()['weight']
-        if "bias" in self.conv2.state_dict().keys():
-            self.conv2.bias.data = self.conv2.state_dict()['bias']
-        self.conv3.weight.data = self.conv3.state_dict()['weight']
-        if "bias" in self.conv3.state_dict().keys():
-            self.conv3.bias.data = self.conv3.state_dict()['bias']
-        self.bn1.weight.data = self.bn1.state_dict()['weight']
-        self.bn1.bias.data = self.bn1.state_dict()['bias']
-        self.bn2.weight.data = self.bn2.state_dict()['weight']
-        self.bn2.bias.data = self.bn2.state_dict()['bias']
         if self.conv1.weight.shape[1] * rollout.width[ind_i][ind_j]\
             < self.conv2.weight.shape[0]:
             weights = self.conv2.weight
-            norms = {}
-            for i in range(weights.shape[0]):
-                norm = 0
-                for c in range(weights.shape[1]):
-                    for h in range(weights.shape[2]):
-                        for w in range(weights.shape[3]):
-                            norm += abs(weights[i, c, h, w])
-                norms[i] = norm
-            norms = sorted(norms.items(), key=lambda x:x[1])
-            cut_channels = [norms[i][0] for i in\
-                range(weights.shape[0] - self.conv1.weight.shape[1] *\
-                rollout.width[ind_i][ind_j])]
-            mask = torch.ones([weights.shape[0]]).to(weights.device)
-            mask[cut_channels] = 0
-            weights = weights * mask.view([-1, 1, 1, 1])
-            object.__setattr__(self.conv2, "weight", weights)
-            if "bias" in self.conv2.state_dict().keys():
-                bias = self.conv2.bias * mask
-                object.__setattr__(self.conv2, "bias", bias)
-            weights = self.bn2.weight * mask
-            bias = self.bn2.bias * mask
-            object.__setattr__(self.bn2, "weight", weights)
-            object.__setattr__(self.bn2, "bias", bias)
-            weights = self.conv1.weight * mask.view([-1, 1, 1, 1])
-            object.__setattr__(self.conv1, "weight", weights)
-            if "bias" in self.conv1.state_dict().keys():
-                bias = self.conv1.bias * mask
-                object.__setattr__(self.conv1, "bias", bias)
-            weights = self.bn1.weight * mask
-            bias = self.bn1.bias * mask
-            object.__setattr__(self.bn1, "weight", weights)
-            object.__setattr__(self.bn1, "bias", bias)
-            weights = self.conv3.weight * mask.view([1, -1, 1, 1])
-            object.__setattr__(self.conv3, "weight", weights)
+            self.mask = self.mask.to(weights.device)
+            if len(self.norms) == 0:
+                norms = {}
+                for i in range(weights.shape[0]):
+                    norm = 0
+                    for c in range(weights.shape[1]):
+                        for h in range(weights.shape[2]):
+                            for w in range(weights.shape[3]):
+                                norm += abs(weights[i, c, h, w])
+                    norms[i] = norm
+                self.norms = sorted(norms.items(), key=lambda x:x[1])
+                cut_channels = [self.norms[i][0] for i in\
+                    range(weights.shape[0] - self.conv1.weight.shape[1] *\
+                    rollout.width[ind_i][ind_j])]
+                self.mask[cut_channels] = 0
+
+            for n, param in self.named_parameters():
+                new_param = param
+                if n in ["conv1.weight", "conv2.weight"]:
+                    new_param = param * self.mask.view([-1, 1, 1, 1])
+                elif n in ["bn1.weight", "bn1.bias", "conv1.bias", "conv2.bias", "bn2.weight", "bn2.bias"]:
+                    new_param = param * self.mask
+                elif n == "conv3.weight":
+                    new_param = param * self.mask.view([1, -1, 1, 1])
+                else:
+                    continue
+                object.__setattr__(self, n, new_param)
+
         out = super(MobileCell, self).forward(inputs)
         return out
 
