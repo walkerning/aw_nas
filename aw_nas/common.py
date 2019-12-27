@@ -612,7 +612,8 @@ from aw_nas.rollout import ( # pylint:disable=unused-import
     BaseRollout,
     Rollout,
     DifferentiableRollout,
-    MutationRollout
+    MutationRollout,
+    CompareRollout
 )
 
 from aw_nas.rollout.dense import (

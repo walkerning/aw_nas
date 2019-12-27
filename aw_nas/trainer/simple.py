@@ -138,10 +138,14 @@ class SimpleTrainer(BaseTrainer):
                                     suggested, self.evaluator_steps)
 
         # init controller optimizer and scheduler
-        self.controller_optimizer = utils.init_optimizer(self.controller.parameters(),
-                                                         controller_optimizer)
-        self.controller_scheduler = utils.init_scheduler(self.controller_optimizer,
-                                                         controller_scheduler)
+        if controller_optimizer:
+            self.controller_optimizer = utils.init_optimizer(self.controller.parameters(),
+                                                             controller_optimizer)
+            self.controller_scheduler = utils.init_scheduler(self.controller_optimizer,
+                                                             controller_scheduler)
+        else:
+            self.controller_optimizer = None
+            self.controller_scheduler = None
 
         # states and other help attributes
         self.last_epoch = 0
@@ -223,7 +227,7 @@ class SimpleTrainer(BaseTrainer):
     # ---- APIs ----
     @classmethod
     def supported_rollout_types(cls):
-        return ["discrete", "differentiable"]
+        return ["discrete", "differentiable", "compare"]
 
     def train(self): #pylint: disable=too-many-branches
         assert self.is_setup, "Must call `trainer.setup` method before calling `trainer.train`."
