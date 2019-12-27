@@ -1006,7 +1006,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
 
     def _init_criterions(self, rollout_type):
         # criterion and forward keyword arguments for evaluating rollout in `evaluate_rollout`
-        if rollout_type == "discrete":
+        if rollout_type == "discrete" or rollout_type == "mnasnet_ofa":
             self._reward_func = self.objective.get_reward
             self._reward_kwargs = {}
             self._scalar_reward_func = self._reward_func

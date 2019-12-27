@@ -13,11 +13,11 @@ search_space_cfg:
   schedule_cfg:
     width_choice:
       type: value
-      boundary: [1, 30, 60]
+      boundary: [1, 60, 120]
       value: [[6], [6,5,4], [6,5,4,3,2]]
     depth_choice:
       type: value
-      boundary: [1, 90, 120]
+      boundary: [1, 180, 240]
       value: [[6], [6,5,4], [6,5,4,3,2]]
 # ---- End Type mnsanet_ofa ----
 ## ---- End Component search_space ----
@@ -60,7 +60,7 @@ evaluator_cfg:
     weight_decay: 0.0001
   mepa_scheduler:
     eta_min: 0.0
-    T_max: 100
+    T_max: 500
     type: CosineAnnealingLR
   surrogate_optimizer: null
   surrogate_scheduler: null
@@ -90,7 +90,7 @@ objective_cfg:
   schedule_cfg:
     soft_loss_coeff:
       type: value
-      boundary: [1, 30]
+      boundary: [1, 60]
       value: [0.0, 1.0]
   soft_loss_coeff: 0.0
 
@@ -100,7 +100,7 @@ trainer_type: simple
 trainer_cfg:
   # Schedulable attributes: controller_samples, derive_samples
   rollout_type: mnasnet_ofa
-  epochs: 100
+  epochs: 500
   test_every: 10
   controller_scheduler: null
   controller_samples: 1
