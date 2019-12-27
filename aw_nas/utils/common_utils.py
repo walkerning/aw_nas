@@ -246,7 +246,9 @@ def get_default_argspec(func):
                                   reversed(sig.defaults)))))
 
 def namedtuple_with_defaults(name, fields, defaults):
-    if sys.version_info.major == 3 and sys.version_info.minor >= 7:
+    if sys.version_info.major == 3 and (
+            sys.version_info.minor > 7 or
+            (sys.version_info.minor == 7 and sys.version_info.micro >= 6)):
         return namedtuple(name, fields, defaults)
     type_ = namedtuple(name, fields)
     if defaults:
