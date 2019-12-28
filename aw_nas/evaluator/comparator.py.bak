@@ -7,15 +7,6 @@ import scipy.sparse as sp
 import torch.nn.functional as F
 from aw_nas import utils
 
-
-def get_variable(inputs, device, **kwargs):
-	if type(inputs) in [list, np.ndarray]:
-		inputs = torch.tensor(inputs)
-		# TODO: Variable is deprecated
-		out = Variable(inputs.to(device), **kwargs)
-		return out
-
-
 def sparse_mx_to_torch_sparse_tensor(sparse_mx):
 	"""Convert a scipy sparse matrix to a torch sparse tensor."""
 	sparse_mx = sparse_mx.tocoo().astype(np.float32)
@@ -105,9 +96,9 @@ class GCNComparator(object):
 			else:
 				op1_list.append(op)
 		assert len(op0_list) == len(op1_list), 'inconsistent size between op0_list and op1_list'
-		init_node_list = get_variable(list(range(0, 2, 1)), self.device, requires_grad=False)
-		op0_list = get_variable(op0_list, self.device, requires_grad=False)
-		op1_list = get_variable(op1_list, self.device, requires_grad=False)
+		init_node_list = utils.get_variable(list(range(0, 2, 1)), self.device, requires_grad=False)
+		op0_list = utils.get_variable(op0_list, self.device, requires_grad=False)
+		op1_list = utils.get_variable(op1_list, self.device, requires_grad=False)
 		emb_init_node = self.init_node_emb(init_node_list)
 		emb_op0 = self.op_emb(op0_list)
 		emb_op1 = self.op_emb(op1_list)
@@ -128,7 +119,7 @@ class GCNComparator(object):
 		print(arch)
 		adj = sp.coo_matrix((np.ones(f_nodes.shape[0]), (t_nodes, f_nodes)), shape=(num_node, num_node), dtype=np.float32)
 		adj = adj.multiply(adj > 0)
-		# build symmetric adjacency matrix
+		# build symmetric adjacency matrix for undirected graph
 		# adj = adj + adj.T.multiply(adj.T > adj) - adj.multiply(adj.T > adj)
 		adj = sparse_mx_to_torch_sparse_tensor(adj)
 		return adj
