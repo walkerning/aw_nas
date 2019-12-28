@@ -97,3 +97,8 @@ class ArchNetworkEvaluator(BaseEvaluator):
 
     def load(self, path):
         self.arch_network.load("{}-arch_network".format(path))
+
+    def on_epoch_start(self, epoch):
+        super(ArchNetworkEvaluator, self).on_epoch_start(epoch)
+        self.arch_network.on_epoch_start(epoch)
+        self.guide_evaluator.on_epoch_start(epoch)
