@@ -46,6 +46,7 @@ class CellSearchSpace(SearchSpace):
         self.genotype_type = None
         self.genotype_type_name = None
         self.cell_group_names = None
+        self._default_concats = None
 
     # namedtuple defined not at the module top level is unpicklable
     # remove it from the states
