@@ -34,7 +34,7 @@ MAX_EDGES = 9
 class NasBench101SearchSpace(SearchSpace):
     NAME = "nasbench-101"
 
-    def __init__(self, multi_fidelity=False):
+    def __init__(self, multi_fidelity=False, load_nasbench=True):
         self.ops_choices = [
             "conv1x1-bn-relu",
             "conv3x3-bn-relu",
@@ -43,6 +43,7 @@ class NasBench101SearchSpace(SearchSpace):
         self.ops_choice_to_idx = {choice: i for i, choice in enumerate(self.ops_choices)}
 
         self.multi_fidelity = multi_fidelity
+        self.load_nasbench = load_nasbench
         self.num_vertices = VERTICES
         self.max_edges = MAX_EDGES
         self.num_possible_edges = self.num_vertices * (self.num_vertices - 1) // 2
@@ -50,7 +51,8 @@ class NasBench101SearchSpace(SearchSpace):
         self.num_ops = self.num_vertices - 2 # 5
         self.idx = np.triu_indices(self.num_vertices, k=1)
 
-        self._init_nasbench()
+        if self.load_nasbench:
+            self._init_nasbench()
 
     def __getstate__(self):
         state = super(NasBench101SearchSpace, self).__getstate__().copy()
@@ -59,7 +61,8 @@ class NasBench101SearchSpace(SearchSpace):
 
     def __setstate__(self, state):
         super(NasBench101SearchSpace, self).__setstate__(state)
-        self._init_nasbench()
+        if self.load_nasbench:
+            self._init_nasbench()
 
     # ---- APIs ----
     def random_sample(self):

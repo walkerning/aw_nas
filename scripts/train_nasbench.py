@@ -41,19 +41,29 @@ class NasBench101Dataset(Dataset):
 
 def train(train_loader, model, epoch):
     objs = utils.AverageMeter()
+    n_diff_pairs_meter = utils.AverageMeter()
     model.train()
     for step, (archs, accs) in enumerate(train_loader):
+        n = len(archs)
         if args.compare:
-            archs_1, archs_2, better_lst = zip(*[(archs[i], archs[j], accs[j] > accs[i])
-                                                 for i in range(len(archs)) for j in range(i)
-                                                 if np.abs(accs[j] - accs[i]) > args.compare_threshold])
+            archs_1, archs_2, better_lst = zip(*[
+                (archs[i], archs[j], accs[j] > accs[i])
+                for i in range(len(archs)) for j in range(i)
+                if np.abs(accs[j] - accs[i]) > args.compare_threshold])
+            n_diff_pairs = len(better_lst)
+            n_diff_pairs_meter.update(float(n_diff_pairs))
             loss = model.update_compare(archs_1, archs_2, better_lst)
+            objs.update(loss, n_diff_pairs)
         else:
             loss = model.update_predict(archs, accs)
-        n = len(archs)
-        objs.update(loss, n)
+            objs.update(loss, n)
         if step % args.report_freq == 0:
-            logging.info("train {:03d} [{:03d}/{:03d}] {:.4f}".format(epoch, step, len(train_loader), objs.avg))
+            n_pair_per_batch = (args.batch_size * (args.batch_size - 1)) // 2
+            logging.info("train {:03d} [{:03d}/{:03d}] {:.4f} {}".format(
+                epoch, step, len(train_loader), objs.avg,
+                "n difference pairs: {:.3f} ({:.1f}/{:3d})".format(
+                    n_diff_pairs_meter.avg / n_pair_per_batch,
+                    n_diff_pairs_meter.avg, n_pair_per_batch) if args.compare else ""))
     return objs.avg
 
 def valid(val_loader, model):
@@ -70,28 +80,28 @@ def valid(val_loader, model):
 
 parser = argparse.ArgumentParser()
 parser.add_argument("cfg_file")
-parser.add_argument('--gpu', type=int, default=0, help='gpu device id')
+parser.add_argument("--gpu", type=int, default=0, help="gpu device id")
 parser.add_argument("--epochs", default=100, type=int)    
 parser.add_argument("--batch-size", default=128, type=int)
 parser.add_argument("--num-workers", default=4, type=int)
 parser.add_argument("--report_freq", default=100, type=int)
 parser.add_argument("--compare", default=False, action="store_true")
-parser.add_argument("--compare-threshold", default=0., type=float)
+parser.add_argument("--compare-threshold", default=0.01, type=float)
 parser.add_argument("--eval-batch-size", default=None, type=int)
 parser.add_argument("--seed", default=None, type=int)
 args = parser.parse_args()
 
 # cuda
-log_format = '%(asctime)s %(message)s'
+log_format = "%(asctime)s %(message)s"
 logging.basicConfig(stream=sys.stdout, level=logging.INFO,
-                    format=log_format, datefmt='%m/%d %I:%M:%S %p')
+                    format=log_format, datefmt="%m/%d %I:%M:%S %p")
 if torch.cuda.is_available():
     torch.cuda.set_device(args.gpu)
     cudnn.benchmark = True
     cudnn.enabled = True
-    logging.info('GPU device = %d' % args.gpu)
+    logging.info("GPU device = %d" % args.gpu)
 else:
-    logging.info('no GPU available, use CPU!!')
+    logging.info("no GPU available, use CPU!!")
 
 if args.seed is not None:
     if torch.cuda.is_available():

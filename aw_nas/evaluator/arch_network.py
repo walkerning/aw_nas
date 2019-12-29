@@ -69,7 +69,7 @@ class LSTMArchEmbedder(ArchEmbedder):
         self.rnn = nn.LSTM(input_size=self.op_embedding_size + self.node_embedding_size,
                            hidden_size=self.hidden_size, num_layers=self.num_layers,
                            batch_first=True, dropout=dropout_ratio)
-        self._one_param = next(self.parameters())
+        object.__setattr__(self, "_one_param", next(self.parameters()))
 
         # calculate out dim
         self.out_dim = self.hidden_size
@@ -171,7 +171,7 @@ class GCNArchEmbedder(ArchEmbedder):
 
         self.out_dim = self.search_space.num_cell_groups * in_dim
 
-        self._one_param = next(self.parameters())
+        object.__setattr__(self, "_one_param", next(self.parameters()))
 
     def get_adj_sparse(self, arch):
         return self._get_adj_sparse(arch, self._num_init_nodes,
@@ -335,7 +335,7 @@ class PointwiseComparator(ArchNetwork, nn.Module):
         # init optimizer and scheduler
         self.optimizer = utils.init_optimizer(self.parameters(), optimizer)
         self.scheduler = utils.init_scheduler(self.optimizer, scheduler)
-        self._one_param = next(self.parameters())
+        object.__setattr__(self, "_one_param", next(self.parameters()))
 
     def predict(self, arch):
         score = torch.sigmoid(self.mlp(self.arch_embedder(arch))).squeeze()
@@ -356,6 +356,7 @@ class PointwiseComparator(ArchNetwork, nn.Module):
         mse_loss = F.mse_loss(
             scores.squeeze(),
             torch.tensor(labels).to(self._one_param.device))
+        self.optimizer.zero_grad()
         mse_loss.backward()
         self.optimizer.step()
         return mse_loss.item()
@@ -392,18 +393,17 @@ class PointwiseComparator(ArchNetwork, nn.Module):
                                  .to(self._one_param.device) - 1
             zero_ = torch.tensor(0., dtype=torch.float32, device=self._one_param.device)
             pair_loss = torch.mean(torch.max(zero_, self.compare_margin - better_pm * (s_2 - s_1)))
+        self.optimizer.zero_grad()
         pair_loss.backward()
         self.optimizer.step()
         # return pair_loss.item(), s_1, s_2
         return pair_loss.item()
 
     def save(self, path):
-        self.arch_embedder.save("{}-embedder".format(path))
-        torch.save(self.mlp, "{}-mlp".format(path))
+        torch.save(self.state_dict(), path)
 
     def load(self, path):
-        self.arch_embedder.load("{}-embedder".format(path))
-        self.mlp = torch.load("{}-mlp".format(path))
+        self.load_state_dict(torch.load(path))
 
     def on_epoch_start(self, epoch):
         super(PointwiseComparator, self).on_epoch_start(epoch)
