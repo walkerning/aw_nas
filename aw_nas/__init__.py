@@ -29,5 +29,7 @@ from aw_nas import objective
 from aw_nas import trainer
 from aw_nas import final
 
+from aw_nas import btcs
+
 from .plugin import _reload_plugins, AwnasPlugin
 _reload_plugins()

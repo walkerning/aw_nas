@@ -9,6 +9,9 @@ import random
 import collections
 
 import numpy as np
+import torch
+from torch import nn
+import torch.nn.functional as F
 
 from nasbench import api
 from nasbench.lib import graph_util
@@ -20,6 +23,8 @@ from aw_nas.rollout.base import BaseRollout
 from aw_nas.controller.base import BaseController
 from aw_nas.evaluator.base import BaseEvaluator
 from aw_nas.rollout.compare import CompareRollout
+from aw_nas.evaluator.arch_network import ArchEmbedder
+from aw_nas.utils import DenseGraphConvolution
 
 VERTICES = 7
 MAX_EDGES = 9
@@ -352,3 +357,67 @@ class NasBench101Evaluator(BaseEvaluator):
 
     def load(self, path):
         pass
+
+class NasBench101ArchEmbedder(ArchEmbedder):
+    NAME = "nb101-gcn"
+
+    def __init__(self, search_space, embedding_dim=48, hid_dim=48, gcn_out_dims=[128, 128],
+                 dropout=0., schedule_cfg=None):
+        super(NasBench101ArchEmbedder, self).__init__(schedule_cfg)
+
+        self.search_space = search_space
+
+        # configs
+        self.embedding_dim = embedding_dim
+        self.hid_dim = hid_dim
+        self.gcn_out_dims = gcn_out_dims
+        self.dropout = dropout
+        self.verticies = self.search_space.num_vertices
+        self.num_op_choices = self.search_space.num_op_choices
+
+        self.input_op_emb = nn.Embedding(1, self.embedding_dim)
+        self.output_op_emb = torch.zeros((1, self.embedding_dim)) # zero is ok
+
+        self.op_emb = nn.Embedding(self.num_op_choices, self.embedding_dim)
+        self.x_hidden = nn.Linear(self.embedding_dim, self.hid_dim)
+
+        # init graph convolutions
+        self.gcns = []
+        in_dim = self.hid_dim
+        for dim in self.gcn_out_dims:
+            self.gcns.append(DenseGraphConvolution(in_dim, dim))
+            in_dim = dim
+        self.gcns = nn.ModuleList(self.gcns)
+        self.num_gcn_layers = len(self.gcns)
+        self.out_dim = in_dim
+
+        self._one_param = next(self.parameters())
+
+    def embed_and_transform_arch(self, archs):
+        adjs = torch.tensor([arch[0].T for arch in archs],
+                            device=self._one_param.device, dtype=torch.float32)
+        op_inds = torch.tensor([arch[1] for arch in archs],
+                               device=self._one_param.device, dtype=torch.long)
+        node_embs = self.op_emb(op_inds) # (batch_size, vertices - 2, emb_dim)
+        b_size = node_embs.shape[0]
+        node_embs = torch.cat((self.input_op_emb.weight.unsqueeze(0).repeat([b_size, 1, 1]),
+                               node_embs, self.output_op_emb.unsqueeze(0).repeat([b_size, 1, 1])),
+                              dim=1)
+        x = self.x_hidden(node_embs)
+        # x: (batch_size, vertices, hid_dim)
+        return adjs, x
+
+    def forward(self, archs):
+        # adjs: (batch_size, vertices, vertices)
+        # x: (batch_size, vertices, hid_dim)
+        adjs, x = self.embed_and_transform_arch(archs)
+        y = x
+        for i_layer, gcn in enumerate(self.gcns):
+            y = gcn(y, adjs)
+            if i_layer != self.num_gcn_layers - 1:
+                y = F.relu(y)
+            y = F.dropout(y, self.dropout, training=self.training)
+        # y: (batch_size, vertices, gcn_out_dims[-1])
+        y = y[:, 1:, :] # do not keep the inputs node embedding
+        y = torch.mean(y, dim=1) # average across nodes (bs, god)
+        return y

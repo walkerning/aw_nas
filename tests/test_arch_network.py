@@ -59,5 +59,5 @@ def test_arch_comparator():
     assert len(compare_res) == batch_size
 
     # update
-    comparator.update_predict(list(zip(archs_1, [0.1, 0.3, 0.4, 0.9])))
-    comparator.update_compare(list(zip(archs_1, archs_2, [0.1, 0.3, 0.4, 0.9])))
+    comparator.update_predict(archs_1, [0.1, 0.3, 0.4, 0.9])
+    comparator.update_compare(archs_1, archs_2, [0.1, 0.3, 0.4, 0.9])

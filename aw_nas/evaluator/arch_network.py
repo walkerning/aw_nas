@@ -3,7 +3,6 @@ Networks that take architectures as inputs.
 """
 
 import abc
-import math
 
 import numpy as np
 import scipy.sparse as sp
@@ -13,6 +12,7 @@ import torch.nn.functional as F
 
 from aw_nas import utils
 from aw_nas.base import Component
+from aw_nas.utils import DenseGraphConvolution
 
 __all__ = ["PointwiseComparator"]
 
@@ -116,44 +116,6 @@ class LSTMArchEmbedder(ArchEmbedder):
 #         ("Error importing module pygcn: {}\n"
 #          "Should install the pygcn package for graph convolution").format(e))
 
-class GraphConvolution(nn.Module):
-    """
-    Simple GCN layer, similar to https://arxiv.org/abs/1609.02907
-    Reference:
-    https://github.com/tkipf/pygcn/blob/88c6676b2ab98b04bf3bef96b46ea037ebb07b12/pygcn/layers.py
-    Dense matrix multiply for batching
-    """
-
-    def __init__(self, in_features, out_features, bias=True):
-        super(GraphConvolution, self).__init__()
-        self.in_features = in_features
-        self.out_features = out_features
-        self.weight = nn.Parameter(torch.FloatTensor(in_features, out_features))
-        if bias:
-            self.bias = nn.Parameter(torch.FloatTensor(out_features))
-        else:
-            self.register_parameter('bias', None)
-        self.reset_parameters()
-
-    def reset_parameters(self):
-        stdv = 1. / math.sqrt(self.weight.size(1))
-        self.weight.data.uniform_(-stdv, stdv)
-        if self.bias is not None:
-            self.bias.data.uniform_(-stdv, stdv)
-
-    def forward(self, inputs, adj):
-        support = torch.matmul(inputs, self.weight)
-        output = torch.matmul(adj, support)
-        if self.bias is not None:
-            return output + self.bias
-        else:
-            return output
-
-    def __repr__(self):
-        return self.__class__.__name__ + ' (' \
-               + str(self.in_features) + ' -> ' \
-               + str(self.out_features) + ')'
-
 def sparse_mx_to_torch_sparse_tensor(sparse_mx):
     """Convert a scipy sparse matrix to a torch sparse tensor."""
     sparse_mx = sparse_mx.tocoo().astype(np.float32)
@@ -202,21 +164,24 @@ class GCNArchEmbedder(ArchEmbedder):
         self.gcns = []
         in_dim = self.op_hid
         for dim in self.gcn_out_dims:
-            self.gcns.append(GraphConvolution(in_dim, dim))
+            self.gcns.append(DenseGraphConvolution(in_dim, dim))
             in_dim = dim
         self.gcns = nn.ModuleList(self.gcns)
+        self.num_gcn_layers = len(self.gcns)
 
         self.out_dim = self.search_space.num_cell_groups * in_dim
 
         self._one_param = next(self.parameters())
 
     def get_adj_sparse(self, arch):
-        return self._get_adj_sparse(arch, self._num_init_nodes, self._num_node_inputs, self._num_nodes)
+        return self._get_adj_sparse(arch, self._num_init_nodes,
+                                    self._num_node_inputs, self._num_nodes)
 
     def get_adj_dense(self, arch):
-        return self._get_adj_dense(arch, self._num_init_nodes, self._num_node_inputs, self._num_nodes)
+        return self._get_adj_dense(arch, self._num_init_nodes,
+                                   self._num_node_inputs, self._num_nodes)
 
-    def _get_adj_sparse(self, arch, num_init_nodes, num_node_inputs, num_nodes):
+    def _get_adj_sparse(self, arch, num_init_nodes, num_node_inputs, num_nodes): #pylint: disable=no-self-use
         """
         :param arch: previous_nodes, e.g. [1, 0, 0, 1, 2, 0, 4, 4],
             0, 1 is the previous init nodes
@@ -233,7 +198,7 @@ class GCNArchEmbedder(ArchEmbedder):
         adj = sparse_mx_to_torch_sparse_tensor(adj)
         return adj
 
-    def _get_adj_dense(self, arch, num_init_nodes, num_node_inputs, num_nodes):
+    def _get_adj_dense(self, arch, num_init_nodes, num_node_inputs, num_nodes): #pylint: disable=no-self-use
         """
         get dense adjecent matrix, could be batched
         :param arch: previous_nodes, e.g. [1, 0, 0, 1, 2, 0, 4, 4],
@@ -314,8 +279,10 @@ class GCNArchEmbedder(ArchEmbedder):
         # x: (batch_size, num_cell_groups, num_nodes, op_hid)
         adjs, x = self.embed_and_transform_arch(archs)
         y = x
-        for gcn in self.gcns:
-            y = F.relu(gcn(y, adjs))
+        for i_layer, gcn in enumerate(self.gcns):
+            y = gcn(y, adjs)
+            if i_layer != self.num_gcn_layers - 1:
+                y = F.relu(y)
             y = F.dropout(y, self.dropout, training=self.training)
         # y: (batch_size, num_cell_groups, num_nodes, gcn_out_dims[-1])
         y = y[:, :, 2:, :] # do not keep the init node embedding
@@ -371,34 +338,48 @@ class PointwiseComparator(ArchNetwork, nn.Module):
         self._one_param = next(self.parameters())
 
     def predict(self, arch):
-        score = torch.sigmoid(self.mlp(self.arch_embedder(arch)))
+        score = torch.sigmoid(self.mlp(self.arch_embedder(arch))).squeeze()
         return score
 
-    def update_predict(self, predict_lst):
+    def update_predict_rollouts(self, rollouts, labels):
+        archs = [r.arch for r in rollouts]
+        return self.update_predict(archs, labels)
+
+    def update_predict_list(self, predict_lst):
         # use MSE regression loss to step
-        scores = self.mlp(self.arch_embedder([item[0] for item in predict_lst]))
+        archs = [item[0] for item in predict_lst]
+        labels = [item[1] for item in predict_lst]
+        return self.update_predict(archs, labels)
+
+    def update_predict(self, archs, labels):
+        scores = self.mlp(self.arch_embedder(archs))
         mse_loss = F.mse_loss(
             scores.squeeze(),
-            torch.tensor([item[1] for item in predict_lst]).to(self._one_param.device))
+            torch.tensor(labels).to(self._one_param.device))
         mse_loss.backward()
         self.optimizer.step()
         return mse_loss.item()
 
     def compare(self, arch_1, arch_2):
         # pointwise score and comparen
-        s_1 = self.mlp(self.arch_embedder(arch_1))
-        s_2 = self.mlp(self.arch_embedder(arch_2))
+        s_1 = self.mlp(self.arch_embedder(arch_1)).squeeze()
+        s_2 = self.mlp(self.arch_embedder(arch_2)).squeeze()
         return torch.sigmoid(s_2 - s_1)
 
-    def update_compare(self, compare_lst):
+    def update_compare_rollouts(self, compare_rollouts, better_labels):
+        arch_1, arch_2 = zip(*[(r.rollout_1.arch, r.rollout_2.arch) for r in compare_rollouts])
+        return self.update_compare(arch_1, arch_2, better_labels)
+
+    def update_compare_list(self, compare_lst):
         # use binary classification loss to step
         arch_1, arch_2, better_labels = zip(*compare_lst)
-        # criterion = nn.BCELoss()
-        # pair_loss = criterion(compare_score, better_labels)
+        return self.update_compare(arch_1, arch_2, better_labels)
+
+    def update_compare(self, arch_1, arch_2, better_labels):
         if self.compare_loss_type == "binary_cross_entropy":
             compare_score = self.compare(arch_1, arch_2)
             pair_loss = F.binary_cross_entropy(
-                compare_score.squeeze(),
+                compare_score,
                 torch.tensor(better_labels).to(self._one_param.device))
         elif self.compare_loss_type == "margin_linear":
             # in range (0, 1) to make the `compare_margin` meaningful
@@ -425,4 +406,3 @@ class PointwiseComparator(ArchNetwork, nn.Module):
         if self.scheduler is not None:
             self.scheduler.step(epoch - 1)
             self.logger.info("Epoch %3d: lr: %.5f", epoch, self.scheduler.get_lr()[0])
-

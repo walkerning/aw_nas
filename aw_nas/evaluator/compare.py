@@ -75,13 +75,11 @@ class ArchNetworkEvaluator(BaseEvaluator):
         rollouts = self.guide_evaluator.evaluate_rollouts(rollouts, is_training=True)
 
         if self.rollout_type == "compare":
-            self.arch_network.update_compare([
-                (r.rollout_1.arch, r.rollout_2.arch, r.perf["compare_result"])
-                for r in rollouts])
+            self.arch_network.update_compare_rollouts(
+                rollouts, [r.perf["compare_result"] for r in rollouts])
         elif self.rollout_type == "discrete":
-            self.arch_network.update_predict([
-                (r.arch, r.perf["reward"])
-                for r in rollouts])
+            self.arch_network.update_predict_rollouts(
+                rollouts, [r.perf["reward"] for r in rollouts])
 
         # TODO: return stats
         return OrderedDict()
