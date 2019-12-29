@@ -22,6 +22,7 @@ from aw_nas.common import SearchSpace
 from aw_nas.rollout.base import BaseRollout
 from aw_nas.controller.base import BaseController
 from aw_nas.evaluator.base import BaseEvaluator
+from aw_nas.trainer.base import BaseTrainer
 from aw_nas.rollout.compare import CompareRollout
 from aw_nas.evaluator.arch_network import ArchEmbedder
 from aw_nas.utils import DenseGraphConvolution
@@ -376,7 +377,9 @@ class NasBench101ArchEmbedder(ArchEmbedder):
         self.num_op_choices = self.search_space.num_op_choices
 
         self.input_op_emb = nn.Embedding(1, self.embedding_dim)
-        self.output_op_emb = torch.zeros((1, self.embedding_dim)) # zero is ok
+        # zero is ok
+        self.output_op_emb = nn.Parameter(torch.zeros((1, self.embedding_dim)),
+                                          requires_grad=False)
 
         self.op_emb = nn.Embedding(self.num_op_choices, self.embedding_dim)
         self.x_hidden = nn.Linear(self.embedding_dim, self.hid_dim)
@@ -421,3 +424,33 @@ class NasBench101ArchEmbedder(ArchEmbedder):
         y = y[:, 1:, :] # do not keep the inputs node embedding
         y = torch.mean(y, dim=1) # average across nodes (bs, god)
         return y
+
+
+# class NasBench101Trainer(BaseTrainer):
+#     NAME = "nasbench-101"
+
+#     def __init__(self, controller, evaluator, rollout_type,
+#                  epochs=100,
+#                  schedule_cfg=None):
+#         super(NasBench101Trainer, self).__init__(controller, evaluator, rollout_type, schedule_cfg)
+
+#         self.search_space = controller.search_space
+
+#     @classmethod
+#     def supported_rollout_types(cls):
+#         return ["nasbench-101", "compare"]
+
+#     def train(self):
+#         pass
+
+#     def test(self):
+#         pass
+
+#     def derive(self, n, steps=None):
+#         pass
+
+#     def save(self, path):
+#         pass
+
+#     def load(self, path):
+#         pass

@@ -352,7 +352,7 @@ class PointwiseComparator(ArchNetwork, nn.Module):
         return self.update_predict(archs, labels)
 
     def update_predict(self, archs, labels):
-        scores = self.mlp(self.arch_embedder(archs))
+        scores = torch.sigmoid(self.mlp(self.arch_embedder(archs)))
         mse_loss = F.mse_loss(
             scores.squeeze(),
             torch.tensor(labels).to(self._one_param.device))
@@ -377,7 +377,10 @@ class PointwiseComparator(ArchNetwork, nn.Module):
 
     def update_compare(self, arch_1, arch_2, better_labels):
         if self.compare_loss_type == "binary_cross_entropy":
-            compare_score = self.compare(arch_1, arch_2)
+            # compare_score = self.compare(arch_1, arch_2)
+            s_1 = self.mlp(self.arch_embedder(arch_1)).squeeze()
+            s_2 = self.mlp(self.arch_embedder(arch_2)).squeeze()
+            compare_score = torch.sigmoid(s_2 - s_1)
             pair_loss = F.binary_cross_entropy(
                 compare_score,
                 torch.tensor(better_labels).to(self._one_param.device))
@@ -391,6 +394,7 @@ class PointwiseComparator(ArchNetwork, nn.Module):
             pair_loss = torch.mean(torch.max(zero_, self.compare_margin - better_pm * (s_2 - s_1)))
         pair_loss.backward()
         self.optimizer.step()
+        # return pair_loss.item(), s_1, s_2
         return pair_loss.item()
 
     def save(self, path):
