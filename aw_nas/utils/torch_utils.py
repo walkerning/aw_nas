@@ -102,8 +102,11 @@ class DenseGraphConvolution(nn.Module):
     Dense matrix multiply for batching
     """
 
-    def __init__(self, in_features, out_features, bias=True):
+    def __init__(self, in_features, out_features, plus_I=False, normalize=False, bias=True):
         super(DenseGraphConvolution, self).__init__()
+
+        self.plus_I = plus_I
+        self.normalize = normalize
         self.in_features = in_features
         self.out_features = out_features
         self.weight = nn.Parameter(torch.FloatTensor(in_features, out_features))
@@ -120,8 +123,66 @@ class DenseGraphConvolution(nn.Module):
             self.bias.data.uniform_(-stdv, stdv)
 
     def forward(self, inputs, adj):
+        if self.plus_I:
+            adj_aug = adj + torch.eye(adj.shape[-1], device=adj.device).unsqueeze(0)
+            if self.normalize:
+                degree_invsqrt = 1. / adj_aug.sum(dim=-1).float().sqrt()
+                degree_norm = degree_invsqrt.unsqueeze(2) * degree_invsqrt.unsqueeze(1)
+                adj_aug = degree_norm * adj_aug
+        else:
+            adj_aug = adj
         support = torch.matmul(inputs, self.weight)
-        output = torch.matmul(adj, support)
+        output = torch.matmul(adj_aug, support)
+        if self.bias is not None:
+            return output + self.bias
+        else:
+            return output
+
+    def __repr__(self):
+        return self.__class__.__name__ + ' (' \
+               + str(self.in_features) + ' -> ' \
+               + str(self.out_features) + ')'
+
+class DenseGraphFlow(nn.Module):
+
+    def __init__(self, in_features, out_features, op_emb_dim,
+                 has_attention=True, plus_I=False, normalize=False, bias=True):
+        super(DenseGraphFlow, self).__init__()
+
+        self.plus_I = plus_I
+        self.normalize = normalize
+        self.in_features = in_features
+        self.out_features = out_features
+        self.op_emb_dim = op_emb_dim
+        self.weight = nn.Parameter(torch.FloatTensor(in_features, out_features))
+        if has_attention:
+            self.op_attention = nn.Linear(op_emb_dim, out_features)
+        else:
+            assert self.op_emb_dim == self.out_features
+            self.op_attention = nn.Identity()
+        if bias:
+            self.bias = nn.Parameter(torch.FloatTensor(out_features))
+        else:
+            self.register_parameter('bias', None)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        stdv = 1. / math.sqrt(self.weight.size(1))
+        self.weight.data.uniform_(-stdv, stdv)
+        if self.bias is not None:
+            self.bias.data.uniform_(-stdv, stdv)
+
+    def forward(self, inputs, adj, op_emb):
+        if self.plus_I:
+            adj_aug = adj + torch.eye(adj.shape[-1], device=adj.device).unsqueeze(0)
+            if self.normalize:
+                degree_invsqrt = 1. / adj_aug.sum(dim=-1).float().sqrt()
+                degree_norm = degree_invsqrt.unsqueeze(2) * degree_invsqrt.unsqueeze(1)
+                adj_aug = degree_norm * adj_aug
+        else:
+            adj_aug = adj
+        support = torch.matmul(inputs, self.weight)
+        output = torch.sigmoid(self.op_attention(op_emb)) * torch.matmul(adj_aug, support) + support
         if self.bias is not None:
             return output + self.bias
         else:

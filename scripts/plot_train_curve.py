@@ -25,7 +25,8 @@ def _convert_float(x):
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--save", "-s", required=True, help="save to path")
-parser.add_argument("--type", "-t", choices=["rnn", "cnn", "pgd_robustness", "cnn_oneshot_search", "ftt"],
+parser.add_argument("--type", "-t", choices=[
+    "rnn", "cnn", "pgd_robustness", "cnn_oneshot_search", "ftt", "nasbench"],
                     default="cnn", help="the type of logs")
 parser.add_argument("--simplify", action="store_true", help="try to simplify the legend names using "
                     "the different part in the label")
@@ -74,6 +75,14 @@ elif args.type == "ftt":
                                "valid performances: acc_clean: ([0-9.]+); acc_fault: ([0-9.]+)")
     valid_obj_names = ["acc", "loss", "acc_clean", "acc_fault"]
     valid_ylims = [(20, 100), None, (0.0, 1.0), (0.0, 1.0)]
+elif args.type == "nasbench":
+    train_pattern = re.compile("train loss ([0-9.]+)")
+    train_obj_names = ["loss"]
+    train_ylims = [None, None]
+    valid_pattern = re.compile("Epoch [ 0-9]+: kendall tau ([0-9.]+)")
+    valid_obj_names = ["kendall tau"]
+    valid_ylims = [None, None]
+
 
 ## --- parse logs ---
 labels = []
@@ -91,8 +100,16 @@ for fname in fnames:
             break
     labels.append(label)
     content = open(fname, "r").read().strip()
-    train_objs = list(zip(*_convert_float(train_pattern.findall(content))))
-    valid_objs = list(zip(*_convert_float(valid_pattern.findall(content))))
+    train_data = _convert_float(train_pattern.findall(content))
+    valid_data = _convert_float(valid_pattern.findall(content))
+    if len(train_obj_names) == 1:
+        train_objs = [train_data]
+    else:
+        train_objs = list(zip(*train_data))
+    if len(valid_obj_names) == 1:
+        valid_objs = [valid_data]
+    else:
+        valid_objs = list(zip(*valid_data))
     assert len(train_objs) == len(train_obj_names) and len(train_objs[0]) > 0, \
         "maybe `--type` is not correctly set?"
     if not valid_objs:

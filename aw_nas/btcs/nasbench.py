@@ -25,7 +25,7 @@ from aw_nas.evaluator.base import BaseEvaluator
 from aw_nas.trainer.base import BaseTrainer
 from aw_nas.rollout.compare import CompareRollout
 from aw_nas.evaluator.arch_network import ArchEmbedder
-from aw_nas.utils import DenseGraphConvolution
+from aw_nas.utils import DenseGraphConvolution, DenseGraphFlow
 
 VERTICES = 7
 MAX_EDGES = 9
@@ -366,7 +366,7 @@ class NasBench101ArchEmbedder(ArchEmbedder):
     NAME = "nb101-gcn"
 
     def __init__(self, search_space, embedding_dim=48, hid_dim=48, gcn_out_dims=[128, 128],
-                 dropout=0., schedule_cfg=None):
+                 gcn_kwargs=None, dropout=0., schedule_cfg=None):
         super(NasBench101ArchEmbedder, self).__init__(schedule_cfg)
 
         self.search_space = search_space
@@ -391,13 +391,13 @@ class NasBench101ArchEmbedder(ArchEmbedder):
         self.gcns = []
         in_dim = self.hid_dim
         for dim in self.gcn_out_dims:
-            self.gcns.append(DenseGraphConvolution(in_dim, dim))
+            self.gcns.append(DenseGraphConvolution(in_dim, dim, **(gcn_kwargs or {})))
             in_dim = dim
         self.gcns = nn.ModuleList(self.gcns)
         self.num_gcn_layers = len(self.gcns)
         self.out_dim = in_dim
 
-        self._one_param = next(self.parameters())
+        object.__setattr__(self, "_one_param", next(self.parameters()))
 
     def embed_and_transform_arch(self, archs):
         adjs = torch.tensor([arch[0].T for arch in archs],
@@ -420,6 +420,105 @@ class NasBench101ArchEmbedder(ArchEmbedder):
         y = x
         for i_layer, gcn in enumerate(self.gcns):
             y = gcn(y, adjs)
+            if i_layer != self.num_gcn_layers - 1:
+                y = F.relu(y)
+            y = F.dropout(y, self.dropout, training=self.training)
+        # y: (batch_size, vertices, gcn_out_dims[-1])
+        y = y[:, 1:, :] # do not keep the inputs node embedding
+        y = torch.mean(y, dim=1) # average across nodes (bs, god)
+        return y
+
+
+class NasBench101FlowArchEmbedder(ArchEmbedder):
+    NAME = "nb101-flow"
+
+    def __init__(self, search_space, op_embedding_dim=48,
+                 node_embedding_dim=48, hid_dim=96, gcn_out_dims=[128, 128],
+                 share_op_attention=False,
+                 other_node_zero=False, gcn_kwargs=None,
+                 dropout=0., schedule_cfg=None):
+        super(NasBench101FlowArchEmbedder, self).__init__(schedule_cfg)
+
+        self.search_space = search_space
+
+        # configs
+        self.op_embedding_dim = op_embedding_dim
+        self.node_embedding_dim = node_embedding_dim
+        self.hid_dim = hid_dim
+        self.gcn_out_dims = gcn_out_dims
+        self.dropout = dropout
+        self.share_op_attention = share_op_attention
+        self.vertices = self.search_space.num_vertices
+        self.num_op_choices = self.search_space.num_op_choices
+
+        self.input_node_emb = nn.Embedding(1, self.node_embedding_dim)
+        # Maybe separate output node?
+        self.other_node_emb = nn.Parameter(
+            torch.zeros(1, self.node_embedding_dim),
+            requires_grad=not other_node_zero)
+        # self.middle_node_emb = nn.Parameter(torch.zeros((1, self.embedding_dim)),
+        #                                     requires_grad=False)
+        # # zero is ok
+        # self.output_node_emb = nn.Parameter(torch.zeros((1, self.embedding_dim)),
+        #                                     requires_grad=False)
+
+        # the last embedding is the output op emb
+        self.input_op_emb = nn.Parameter(torch.zeros(1, self.op_embedding_dim), requires_grad=False)
+        self.op_emb = nn.Embedding(self.num_op_choices, self.op_embedding_dim)
+        self.output_op_emb = nn.Embedding(1, self.op_embedding_dim)
+
+        self.x_hidden = nn.Linear(self.node_embedding_dim, self.hid_dim)
+
+        if self.share_op_attention:
+            assert len(np.unique(self.gcn_out_dims)) == 1, \
+                "If share op attention, all the gcn-flow layers should have the same dimension"
+            self.op_attention = nn.Linear(self.op_embedding_dim, self.gcn_out_dims[0])
+
+        # init graph convolutions
+        self.gcns = []
+        in_dim = self.hid_dim
+        for dim in self.gcn_out_dims:
+            self.gcns.append(DenseGraphFlow(
+                in_dim, dim, self.op_embedding_dim if not self.share_op_attention else dim,
+                has_attention=not self.share_op_attention, **(gcn_kwargs or {})))
+            in_dim = dim
+        self.gcns = nn.ModuleList(self.gcns)
+        self.num_gcn_layers = len(self.gcns)
+        self.out_dim = in_dim
+
+        object.__setattr__(self, "_one_param", next(self.parameters()))
+
+    def embed_and_transform_arch(self, archs):
+        adjs = torch.tensor([arch[0].T for arch in archs],
+                            device=self._one_param.device, dtype=torch.float32)
+        op_inds = torch.tensor([arch[1] for arch in archs],
+                               device=self._one_param.device, dtype=torch.long)
+        op_embs = self.op_emb(op_inds) # (batch_size, vertices - 2, op_emb_dim)
+        b_size = op_embs.shape[0]
+        # the input one should not be relevant
+        op_embs = torch.cat(
+            (self.input_op_emb.unsqueeze(0).repeat([b_size, 1, 1]),
+             op_embs,
+             self.output_op_emb.weight.unsqueeze(0).repeat([b_size, 1, 1])),
+            dim=1)
+        node_embs = torch.cat(
+            (self.input_node_emb.weight.unsqueeze(0).repeat([b_size, 1, 1]),
+             self.other_node_emb.unsqueeze(0).repeat([b_size, self.vertices - 1, 1])),
+            dim=1)
+        x = self.x_hidden(node_embs)
+        # x: (batch_size, vertices, hid_dim)
+        return adjs, x, op_embs
+
+    def forward(self, archs):
+        # adjs: (batch_size, vertices, vertices)
+        # x: (batch_size, vertices, hid_dim)
+        # op_emb: (batch_size, vertices, emb_dim)
+        adjs, x, op_emb = self.embed_and_transform_arch(archs)
+        if self.share_op_attention:
+            op_emb = self.op_attention(op_emb)
+        y = x
+        for i_layer, gcn in enumerate(self.gcns):
+            y = gcn(y, adjs, op_emb)
             if i_layer != self.num_gcn_layers - 1:
                 y = F.relu(y)
             y = F.dropout(y, self.dropout, training=self.training)

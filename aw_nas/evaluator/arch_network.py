@@ -130,6 +130,7 @@ class GCNArchEmbedder(ArchEmbedder):
 
     def __init__(self, search_space,
                  op_dim=48, op_hid=48, gcn_out_dims=[128, 128],
+                 gcn_kwargs=None,
                  dropout=0.,
                  schedule_cfg=None):
         super(GCNArchEmbedder, self).__init__(schedule_cfg)
@@ -164,7 +165,7 @@ class GCNArchEmbedder(ArchEmbedder):
         self.gcns = []
         in_dim = self.op_hid
         for dim in self.gcn_out_dims:
-            self.gcns.append(DenseGraphConvolution(in_dim, dim))
+            self.gcns.append(DenseGraphConvolution(in_dim, dim, **(gcn_kwargs or {})))
             in_dim = dim
         self.gcns = nn.ModuleList(self.gcns)
         self.num_gcn_layers = len(self.gcns)
@@ -387,8 +388,10 @@ class PointwiseComparator(ArchNetwork, nn.Module):
                 torch.tensor(better_labels).to(self._one_param.device))
         elif self.compare_loss_type == "margin_linear":
             # in range (0, 1) to make the `compare_margin` meaningful
-            s_1 = self.predict(arch_1)
-            s_2 = self.predict(arch_2)
+            # s_1 = self.predict(arch_1)
+            # s_2 = self.predict(arch_2)
+            s_1 = self.mlp(self.arch_embedder(arch_1)).squeeze()
+            s_2 = self.mlp(self.arch_embedder(arch_2)).squeeze()
             better_pm = 2 * torch.tensor(np.array(better_labels, dtype=np.float32))\
                                  .to(self._one_param.device) - 1
             zero_ = torch.tensor(0., dtype=torch.float32, device=self._one_param.device)
