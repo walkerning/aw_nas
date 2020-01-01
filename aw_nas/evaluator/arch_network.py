@@ -70,7 +70,6 @@ class LSTMArchEmbedder(ArchEmbedder):
         self.rnn = nn.LSTM(input_size=self.op_embedding_size + self.node_embedding_size,
                            hidden_size=self.hidden_size, num_layers=self.num_layers,
                            batch_first=True, dropout=dropout_ratio)
-        object.__setattr__(self, "_one_param", next(self.parameters()))
 
         # calculate out dim
         self.out_dim = self.hidden_size
@@ -82,7 +81,7 @@ class LSTMArchEmbedder(ArchEmbedder):
                 archs = np.expand_dims(archs, 0)
             else:
                 assert archs.ndim == 4
-            archs = torch.tensor(archs).to(self._one_param.device)
+            archs = self.node_emb.weight.new(archs).long()
 
         # embedding nodes
         # (batch_size, num_cell_groups, num_node_inputs * num_steps, node_embedding_size)
@@ -173,8 +172,6 @@ class GCNArchEmbedder(ArchEmbedder):
 
         self.out_dim = self.search_space.num_cell_groups * in_dim
 
-        object.__setattr__(self, "_one_param", next(self.parameters()))
-
     def get_adj_sparse(self, arch):
         return self._get_adj_sparse(arch, self._num_init_nodes,
                                     self._num_node_inputs, self._num_nodes)
@@ -243,11 +240,12 @@ class GCNArchEmbedder(ArchEmbedder):
         # archs[:, :, 0, :]: (batch_size, num_cell_groups, num_node_inputs * num_steps)
         b_size, n_cg, _, n_edge = archs.shape
         adjs = self.get_adj_dense(archs[:, :, 0, :].reshape([-1, n_edge]))
-        adjs = adjs.reshape([b_size, n_cg, adjs.shape[1], adjs.shape[2]]).to(self._one_param.device)
+        adjs = adjs.reshape([b_size, n_cg, adjs.shape[1], adjs.shape[2]]).to(
+            self.op_emb.weight.device)
         # (batch_size, num_cell_groups, num_nodes, num_nodes)
 
         # embedding ops
-        op_inds = torch.tensor(archs[:, :, 1, :]).to(self._one_param.device)
+        op_inds = torch.tensor(archs[:, :, 1, :]).to(self.op_emb.weight.device)
         op_embs = self.op_emb(op_inds)
         # (batch_size, num_cell_groups, num_node_inputs * num_steps, op_dim)
 
@@ -340,7 +338,6 @@ class PointwiseComparator(ArchNetwork, nn.Module):
         # init optimizer and scheduler
         self.optimizer = utils.init_optimizer(self.parameters(), optimizer)
         self.scheduler = utils.init_scheduler(self.optimizer, scheduler)
-        object.__setattr__(self, "_one_param", next(self.parameters()))
 
     def predict(self, arch):
         score = torch.sigmoid(self.mlp(self.arch_embedder(arch))).squeeze()
@@ -359,8 +356,7 @@ class PointwiseComparator(ArchNetwork, nn.Module):
     def update_predict(self, archs, labels):
         scores = torch.sigmoid(self.mlp(self.arch_embedder(archs)))
         mse_loss = F.mse_loss(
-            scores.squeeze(),
-            torch.tensor(labels).to(self._one_param.device))
+            scores.squeeze(), scores.new(labels))
         self.optimizer.zero_grad()
         mse_loss.backward()
         self.optimizer.step()
@@ -388,17 +384,15 @@ class PointwiseComparator(ArchNetwork, nn.Module):
             s_2 = self.mlp(self.arch_embedder(arch_2)).squeeze()
             compare_score = torch.sigmoid(s_2 - s_1)
             pair_loss = F.binary_cross_entropy(
-                compare_score,
-                torch.tensor(better_labels, dtype=torch.float32).to(self._one_param.device))
+                compare_score, compare_score.new(better_labels))
         elif self.compare_loss_type == "margin_linear":
             # in range (0, 1) to make the `compare_margin` meaningful
             # s_1 = self.predict(arch_1)
             # s_2 = self.predict(arch_2)
             s_1 = self.mlp(self.arch_embedder(arch_1)).squeeze()
             s_2 = self.mlp(self.arch_embedder(arch_2)).squeeze()
-            better_pm = 2 * torch.tensor(np.array(better_labels, dtype=np.float32))\
-                                 .to(self._one_param.device) - 1
-            zero_ = torch.tensor(0., dtype=torch.float32, device=self._one_param.device)
+            better_pm = 2 * s_1.new(np.array(better_labels, dtype=np.float32)) - 1
+            zero_ = s_1.new([0.])
             pair_loss = torch.mean(torch.max(zero_, self.compare_margin - better_pm * (s_2 - s_1)))
         self.optimizer.zero_grad()
         pair_loss.backward()
@@ -440,6 +434,8 @@ class PairwiseComparator(ArchNetwork, nn.Module):
                  compare_loss_type="margin_linear",
                  compare_margin=0.01,
                  pairing_method="concat",
+                 sorting_residue_worse_thresh=100,
+                 sorting_residue_better_thresh=100,
                  schedule_cfg=None):
         # [optional] arch reconstruction loss (arch_decoder_type/cfg)
         super(PairwiseComparator, self).__init__(schedule_cfg)
@@ -455,6 +451,8 @@ class PairwiseComparator(ArchNetwork, nn.Module):
                "pairing method {} not supported".format(pairing_method),
                ConfigException)
         self.pairing_method = pairing_method
+        self.sorting_residue_worse_thresh = sorting_residue_worse_thresh
+        self.sorting_residue_better_thresh = sorting_residue_better_thresh
 
         self.search_space = search_space
         ae_cls = ArchEmbedder.get_class_(arch_embedder_type)
@@ -475,23 +473,23 @@ class PairwiseComparator(ArchNetwork, nn.Module):
         # init optimizer and scheduler
         self.optimizer = utils.init_optimizer(self.parameters(), optimizer)
         self.scheduler = utils.init_scheduler(self.optimizer, scheduler)
-        object.__setattr__(self, "_one_param", next(self.parameters()))
 
     def compare(self, arch_1, arch_2):
         emb_1 = self.arch_embedder(arch_1)
         emb_2 = self.arch_embedder(arch_2)
         if self.pairing_method == "concat":
             emb = torch.cat((emb_1, emb_2), dim=-1)
-            score = torch.sigmoid(self.mlp(emb).squeeze())
+            score = torch.sigmoid(self.mlp(emb))
             emb = torch.cat((emb_2, emb_1), dim=-1)
-            score += 1 - torch.sigmoid(self.mlp(emb).squeeze())
+            score += 1 - torch.sigmoid(self.mlp(emb))
             score /= 2
         elif self.pairing_method == "diff":
             emb = torch.cat((emb_1, emb_2 - emb_1), dim=-1)
-            score = torch.sigmoid(self.mlp(emb).squeeze())
+            score = torch.sigmoid(self.mlp(emb))
             emb = torch.cat((emb_2, emb_1 - emb_2), dim=-1)
-            score += 1 - torch.sigmoid(self.mlp(emb).squeeze())
-        return score
+            score += 1 - torch.sigmoid(self.mlp(emb))
+            score /= 2
+        return score.squeeze(-1)
 
     def _cmp_for_sorted(self, x, y):
         score = self.compare([x], [y]).item()
@@ -511,12 +509,11 @@ class PairwiseComparator(ArchNetwork, nn.Module):
             score = torch.sigmoid(mlp_out)
             pair_loss = F.binary_cross_entropy(
                 score,
-                torch.tensor(better_labels, dtype=torch.float32).to(self._one_param.device))
+                score.new(better_labels))
         elif self.compare_loss_type == "margin_linear":
             score = torch.sigmoid(mlp_out)
-            better_pm = 2 * torch.tensor(np.array(better_labels, dtype=np.float32))\
-                                 .to(self._one_param.device) - 1
-            zero_ = torch.tensor(0., dtype=torch.float32, device=self._one_param.device)
+            better_pm = 2 * score.new(np.array(better_labels, dtype=np.float32)) - 1
+            zero_ = score.new([0.])
             pair_loss = torch.mean(torch.max(zero_, self.compare_margin - \
                                              better_pm * (2 * score - 1)))
         return pair_loss
@@ -544,15 +541,54 @@ class PairwiseComparator(ArchNetwork, nn.Module):
         self.optimizer.step()
         return pair_loss.item()
 
-    def argsort_list(self, archs):
-        # TODO: implement q-sort with random pivots
-        #       and the compares could be batched easily...
-        num_arch = len(archs)
-        indexes = list(range(num_arch))
-        import functools
-        return sorted(
-            indexes, key=functools.cmp_to_key(
-                lambda ind1, ind2: self._cmp_for_sorted(archs[ind1], archs[ind2])))
+    def compare_with_batchsize(self, arch, archs, batch_size):
+        cur_ind = 0
+        num_archs = len(archs)
+        all_scores = np.zeros(0)
+        while cur_ind < num_archs:
+            end_ind = min(num_archs, cur_ind + batch_size)
+            b_size = end_ind - cur_ind
+            all_scores = np.concatenate((
+                all_scores, self.compare([arch for _ in range(b_size)],
+                                         archs[cur_ind:end_ind]).detach().cpu().numpy()))
+            cur_ind = end_ind
+        return all_scores
+
+    def argsort_list(self, archs, batch_size, indexes=None):
+        # q-sort with random pivots
+        # the compares could be batched easily
+        archs = np.array(archs)
+        if indexes is None:
+            indexes = np.arange(len(archs))
+            # this random shuffle would influence the final sequence
+            np.random.shuffle(indexes)
+        # choose a pivot
+        pivot_ind = indexes[0]
+        scores = self.compare_with_batchsize(
+            archs[pivot_ind], archs[indexes[1:]], batch_size=batch_size)
+        # could use partition, but i think this is not the bottleneck
+        sorted_inds = np.argsort(scores)
+        sep_inds = np.where(scores[sorted_inds] > 0.5)[0]
+        if len(sep_inds) == 0:
+            sep_ind = len(indexes)
+        else:
+            # the first index that is better than archs[pivot_ind]
+            sep_ind = sep_inds[0]
+        # indexes of the archs that are worse than archs[pivot_ind]
+        worse_inds = indexes[1:][sorted_inds[:sep_ind]]
+        # indexes of the archs that are better than archs[pivot_ind]
+        better_inds = indexes[1:][sorted_inds[sep_ind:]]
+        if len(worse_inds) > self.sorting_residue_worse_thresh:
+            # swap the first index with the middle index (possibly uniform seperate)
+            worse_inds[0], worse_inds[len(worse_inds) // 2] \
+                = worse_inds[len(worse_inds) // 2], worse_inds[0]
+            worse_inds = self.argsort_list(archs, batch_size, indexes=worse_inds)
+        if len(better_inds) > self.sorting_residue_better_thresh:
+            # swap the first index with the middle index (possibly uniform seperate)
+            better_inds[0], better_inds[len(better_inds) // 2] \
+                = better_inds[len(better_inds) // 2], better_inds[0]
+            better_inds = self.argsort_list(archs, batch_size, indexes=better_inds)
+        return np.concatenate((worse_inds, [pivot_ind], better_inds))
 
     def save(self, path):
         torch.save(self.state_dict(), path)

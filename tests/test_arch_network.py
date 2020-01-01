@@ -61,3 +61,35 @@ def test_arch_comparator():
     # update
     comparator.update_predict(archs_1, [0.1, 0.3, 0.4, 0.9])
     comparator.update_compare(archs_1, archs_2, [0.1, 0.3, 0.4, 0.9])
+
+@pytest.mark.parametrize("case", [
+    {"pairing_method": "concat"},
+    {"pairing_method": "diff"}
+])
+def test_pairwise_arch_comparator(case):
+    from aw_nas.common import get_search_space
+    from aw_nas.evaluator.arch_network import PairwiseComparator
+    search_space = get_search_space(cls="cnn")
+    device = "cuda"
+    comparator = PairwiseComparator(search_space, **case)
+    comparator.to(device)
+
+    batch_size = 4
+    archs_1 = [search_space.random_sample().arch for _ in range(batch_size)]
+    archs_2 = [search_space.random_sample().arch for _ in range(batch_size)]
+
+    # forward
+    before_inds = comparator.argsort_list(archs_1 + archs_2, batch_size=2)
+    print(before_inds)
+    before_res = comparator.compare(archs_1, archs_2)
+    assert len(before_res) == batch_size
+    print("[before] compare res: ", before_res)
+
+    # update
+    for _ in range(20):
+        comparator.update_compare(archs_1, archs_2, [0, 1, 1, 1])
+    after_inds = comparator.argsort_list(archs_1 + archs_2, batch_size=2)
+    print(after_inds)
+    after_res = comparator.compare(archs_1, archs_2)
+    assert len(after_res) == batch_size
+    print("[after] compare res: ", after_res)

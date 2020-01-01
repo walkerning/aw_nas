@@ -397,13 +397,9 @@ class NasBench101ArchEmbedder(ArchEmbedder):
         self.num_gcn_layers = len(self.gcns)
         self.out_dim = in_dim
 
-        object.__setattr__(self, "_one_param", next(self.parameters()))
-
     def embed_and_transform_arch(self, archs):
-        adjs = torch.tensor([arch[0].T for arch in archs],
-                            device=self._one_param.device, dtype=torch.float32)
-        op_inds = torch.tensor([arch[1] for arch in archs],
-                               device=self._one_param.device, dtype=torch.long)
+        adjs = self.input_op_emb.weight.new([arch[0].T for arch in archs])
+        op_inds = self.input_op_emb.weight.new([arch[1] for arch in archs]).long()
         node_embs = self.op_emb(op_inds) # (batch_size, vertices - 2, emb_dim)
         b_size = node_embs.shape[0]
         node_embs = torch.cat((self.input_op_emb.weight.unsqueeze(0).repeat([b_size, 1, 1]),
@@ -486,13 +482,9 @@ class NasBench101FlowArchEmbedder(ArchEmbedder):
         self.num_gcn_layers = len(self.gcns)
         self.out_dim = in_dim
 
-        object.__setattr__(self, "_one_param", next(self.parameters()))
-
     def embed_and_transform_arch(self, archs):
-        adjs = torch.tensor([arch[0].T for arch in archs],
-                            device=self._one_param.device, dtype=torch.float32)
-        op_inds = torch.tensor([arch[1] for arch in archs],
-                               device=self._one_param.device, dtype=torch.long)
+        adjs = self.input_op_emb.new([arch[0].T for arch in archs])
+        op_inds = self.input_op_emb.new([arch[1] for arch in archs]).long()
         op_embs = self.op_emb(op_inds) # (batch_size, vertices - 2, op_emb_dim)
         b_size = op_embs.shape[0]
         # the input one should not be relevant

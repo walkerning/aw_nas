@@ -93,6 +93,7 @@ def train(train_loader, model, epoch, args):
 def pairwise_valid(val_loader, model, seed=None):
     if seed is not None:
         random.seed(seed)
+        np.random.seed(seed)
     model.eval()
     true_accs = []
     all_archs = []
@@ -102,9 +103,7 @@ def pairwise_valid(val_loader, model, seed=None):
 
     num_valid = len(true_accs)
     pseudo_scores = np.zeros(num_valid)
-    indexes = model.argsort_list(all_archs)
-    import ipdb
-    ipdb.set_trace()
+    indexes = model.argsort_list(all_archs, batch_size=512)
     pseudo_scores[indexes] = np.arange(num_valid)
 
     corr = stats.kendalltau(true_accs, pseudo_scores).correlation
@@ -117,7 +116,7 @@ def valid(val_loader, model, args):
                  for pv_seed in getattr(
                          args, "pairwise_valid_seeds", [1, 12, 123]
                  )]
-        # TODO: use q-sort with random pivot ourselves?
+        print("pairwise: ", corrs)
         return np.mean(corrs)
 
     model.eval()
@@ -132,7 +131,7 @@ def valid(val_loader, model, args):
     return corr
 
 def main(argv):
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(prog="train_nasbench_pkl.py")
     parser.add_argument("cfg_file")
     parser.add_argument("--gpu", type=int, default=0, help="gpu device id")
     parser.add_argument("--num-workers", default=4, type=int)
@@ -140,13 +139,6 @@ def main(argv):
     parser.add_argument("--seed", default=None, type=int)
     parser.add_argument("--train-dir", required=True)
     parser.add_argument("--save-every", default=10, type=int)
-    # parser.add_argument("--train-ratio", default=None, type=float)
-    # parser.add_argument("--epochs", default=100, type=int)
-    # parser.add_argument("--batch-size", default=512, type=int)
-    # parser.add_argument("--compare", default=False, action="store_true")
-    # parser.add_argument("--compare-threshold", default=0.01, type=float)
-    # parser.add_argument("--max-compare-ratio", default=4, type=int)
-    # parser.add_argument("--choose-pair-criterion", default="random", choices=["diff", "random"])
     args = parser.parse_args(argv)
 
     # log
@@ -226,8 +218,8 @@ def main(argv):
 
     logging.info("Config: %s", cfg)
 
-    model_cls = ArchNetwork.get_class_(cfg.get("arch_network_type",
-                                           "pointwise_comparator"))
+    arch_network_type = cfg.get("arch_network_type", "pointwise_comparator")
+    model_cls = ArchNetwork.get_class_(arch_network_type)
     model = model_cls(search_space, **cfg.pop("arch_network_cfg"))
     model.to(device)
 
@@ -252,8 +244,16 @@ def main(argv):
         collate_fn=lambda items: list(zip(*items)))
 
     # init test
-    corr = valid(val_loader, model, args)
-    logging.info("INIT: kendall tau {:.4f}".format(corr))
+    if not arch_network_type == "pairwise_comparator":
+        # the comparison-based `argsort_list` would be very slow
+        # if the partial order is totally violated, cauz in this case 
+        # the score is far from meaningful to be utilized to get relative balanced split.
+        # for now, we omit the initial correlation testing in this pairwise case
+        # 3~4 s for pointwise. How about stop evaluate small segments, which is
+        # not efficient, e.g. when len(inds) < N just do not do recursion.
+        # threshold 1: 450s; threshold 50: 70s; threshold 100: 60s
+        corr = valid(val_loader, model, args)
+        logging.info("INIT: kendall tau {:.4f}".format(corr))
 
     for i_epoch in range(1, args.epochs + 1):
         avg_loss = train(train_loader, model, i_epoch, args)
