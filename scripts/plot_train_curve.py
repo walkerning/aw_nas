@@ -28,8 +28,9 @@ parser.add_argument("--save", "-s", required=True, help="save to path")
 parser.add_argument("--type", "-t", choices=[
     "rnn", "cnn", "pgd_robustness", "cnn_oneshot_search", "ftt", "nasbench"],
                     default="cnn", help="the type of logs")
-parser.add_argument("--simplify", action="store_true", help="try to simplify the legend names using "
-                    "the different part in the label")
+parser.add_argument("--simplify", action="store_true",
+                    help=("try to simplify the legend names using "
+                          "the different part in the label"))
 
 args, fnames = parser.parse_known_args()
 
@@ -133,7 +134,7 @@ else:
 num_train_objs = len(train_obj_names)
 num_valid_objs = len(valid_obj_names)
 num_cols = max(num_train_objs, num_valid_objs)
-fig = plt.figure(figsize=(2*(num_cols+1), 5))
+fig = plt.figure(figsize=(3*(num_cols+1), 5))
 gs = gridspec.GridSpec(nrows=2, ncols=(num_cols+1), width_ratios=[3]*num_cols + [2])
 
 # valid

@@ -20,7 +20,7 @@ from nasbench import api
 
 from aw_nas import utils
 from aw_nas.common import get_search_space
-from aw_nas.evaluator.arch_network import PointwiseComparator
+from aw_nas.evaluator.arch_network import ArchNetwork
 
 
 class NasBench101Dataset(Dataset):
@@ -36,47 +36,44 @@ class NasBench101Dataset(Dataset):
     def __getitem__(self, idx):
         data = self.data[idx]
         if self.minus is not None:
-            data = (data[0], data[1] - self.minus)
+            data = (data[0], data[1] - self.minus, data[2] - self.minus)
         if self.div is not None:
-            data = (data[0], data[1] / self.div)
+            data = (data[0], data[1] / self.div, data[2] / self.div)
         return data
 
 def train(train_loader, model, epoch, args):
     objs = utils.AverageMeter()
     n_diff_pairs_meter = utils.AverageMeter()
     model.train()
-    for step, (archs, accs) in enumerate(train_loader):
+    for step, (archs, f_accs, h_accs) in enumerate(train_loader):
         n = len(archs)
+        if getattr(args, "use_half", False):
+            accs = h_accs
+        else:
+            accs = f_accs
         if args.compare:
-            n_max_pairs = args.max_compare_ratio * n
-            acc_diff = np.array(accs)[:, None] - np.array(accs)
-            acc_abs_diff_matrix = np.triu(np.abs(acc_diff), 1)
-            ex_thresh_inds = np.where(acc_abs_diff_matrix > args.compare_threshold)
-            ex_thresh_num = len(ex_thresh_inds[0])
-            if ex_thresh_num > n_max_pairs:
-                if args.choose_pair_criterion == "diff":
-                    keep_inds = np.argpartition(acc_abs_diff_matrix[ex_thresh_inds], -n_max_pairs)[-n_max_pairs:]
-                elif args.choose_pair_criterion == "random":
-                    keep_inds = np.random.choice(np.arange(ex_thresh_num), n_max_pairs, replace=False)
-                ex_thresh_inds = (ex_thresh_inds[0][keep_inds], ex_thresh_inds[1][keep_inds])
-            archs = np.array(archs)
-            archs_1, archs_2, better_lst = archs[ex_thresh_inds[1]], archs[ex_thresh_inds[0]], (acc_diff > 0)[ex_thresh_inds]
-            # # this list comprehension spend more than 3 times than `update_compare`
-            # pairs, abs_diff = zip(*[
-            #     ((archs[i], archs[j], accs[j] > accs[i]), acc_diff_matrix[j, i])
-            #     for i in range(len(archs)) for j in range(i)
-            #     if acc_diff_matrix[j, i] > args.compare_threshold])
-            # if len(pairs) > n_max_pairs:
-            #     if args.choose_pair_criterion == "random":
-            #         pairs = list(np.random.choice(pairs, size=n_max_pairs, replace=False))
-            #     elif args.choose_pair_criterion == "diff":
-            #         inds = np.argpartition(abs_diff, -n_max_pairs)[-n_max_pairs:]
-            #         pairs = [pairs[ind] for ind in inds]
-            # archs_1, archs_2, better_lst = zip(*pairs)
-            # archs_1, archs_2, better_lst = zip(*[
-            #     (archs[i], archs[j], accs[j] > accs[i])
-            #     for i in range(len(archs)) for j in range(i)
-            #     if np.abs(accs[j] - accs[i]) > args.compare_threshold])
+            if getattr(args, "compare_split", False):
+                n_pairs = len(archs) // 2
+                accs = np.array(accs)
+                acc_diff_lst = accs[n_pairs:2*n_pairs] - accs[:n_pairs]
+                keep_inds = np.where(np.abs(acc_diff_lst) > args.compare_threshold)[0]
+                better_lst = (np.array(accs[n_pairs:2*n_pairs] - accs[:n_pairs]) > 0)[keep_inds]
+                archs_1 = np.array(archs[:n_pairs])[keep_inds]
+                archs_2 = np.array(archs[n_pairs:2*n_pairs])[keep_inds]
+            else:
+                n_max_pairs = int(args.max_compare_ratio * n)
+                acc_diff = np.array(accs)[:, None] - np.array(accs)
+                acc_abs_diff_matrix = np.triu(np.abs(acc_diff), 1)
+                ex_thresh_inds = np.where(acc_abs_diff_matrix > args.compare_threshold)
+                ex_thresh_num = len(ex_thresh_inds[0])
+                if ex_thresh_num > n_max_pairs:
+                    if args.choose_pair_criterion == "diff":
+                        keep_inds = np.argpartition(acc_abs_diff_matrix[ex_thresh_inds], -n_max_pairs)[-n_max_pairs:]
+                    elif args.choose_pair_criterion == "random":
+                        keep_inds = np.random.choice(np.arange(ex_thresh_num), n_max_pairs, replace=False)
+                    ex_thresh_inds = (ex_thresh_inds[0][keep_inds], ex_thresh_inds[1][keep_inds])
+                archs = np.array(archs)
+                archs_1, archs_2, better_lst = archs[ex_thresh_inds[1]], archs[ex_thresh_inds[0]], (acc_diff > 0)[ex_thresh_inds]
             n_diff_pairs = len(better_lst)
             n_diff_pairs_meter.update(float(n_diff_pairs))
             loss = model.update_compare(archs_1, archs_2, better_lst)
@@ -93,11 +90,40 @@ def train(train_loader, model, epoch, args):
                     n_diff_pairs_meter.avg, n_pair_per_batch) if args.compare else ""))
     return objs.avg
 
-def valid(val_loader, model):
+def pairwise_valid(val_loader, model, seed=None):
+    if seed is not None:
+        random.seed(seed)
+    model.eval()
+    true_accs = []
+    all_archs = []
+    for step, (archs, accs, _) in enumerate(val_loader):
+        all_archs += list(archs)
+        true_accs += list(accs)
+
+    num_valid = len(true_accs)
+    pseudo_scores = np.zeros(num_valid)
+    indexes = model.argsort_list(all_archs)
+    import ipdb
+    ipdb.set_trace()
+    pseudo_scores[indexes] = np.arange(num_valid)
+
+    corr = stats.kendalltau(true_accs, pseudo_scores).correlation
+    return corr
+
+def valid(val_loader, model, args):
+    if not callable(getattr(model, "predict", None)):
+        assert callable(getattr(model, "compare", None))
+        corrs = [pairwise_valid(val_loader, model, pv_seed)
+                 for pv_seed in getattr(
+                         args, "pairwise_valid_seeds", [1, 12, 123]
+                 )]
+        # TODO: use q-sort with random pivot ourselves?
+        return np.mean(corrs)
+
     model.eval()
     all_scores = []
     true_accs = []
-    for step, (archs, accs) in enumerate(val_loader):
+    for step, (archs, accs, _) in enumerate(val_loader):
         scores = list(model.predict(archs).cpu().data.numpy())
         all_scores += scores
         true_accs += list(accs)
@@ -114,6 +140,7 @@ def main(argv):
     parser.add_argument("--seed", default=None, type=int)
     parser.add_argument("--train-dir", required=True)
     parser.add_argument("--save-every", default=10, type=int)
+    # parser.add_argument("--train-ratio", default=None, type=float)
     # parser.add_argument("--epochs", default=100, type=int)
     # parser.add_argument("--batch-size", default=512, type=int)
     # parser.add_argument("--compare", default=False, action="store_true")
@@ -156,26 +183,32 @@ def main(argv):
     if not os.path.exists("./nasbench_7v.pkl"):
         # init nasbench search space, might take several minutes
         search_space = get_search_space("nasbench-101")
-        fixed_statistics = list(search_space.nasbench.fixed_statistics.values())
-        fixed_statistics = [stat for stat in fixed_statistics if stat["module_adjacency"].shape[0] == 7] # FIXME: temporary
+        # sort according to hash, direct group without using get_metrics_from_spec
+        fixed_statistics = list(search_space.nasbench.fixed_statistics.items())
+        # only handle archs with 7 nodes for efficient batching
+        fixed_statistics = [stat for stat in fixed_statistics
+                            if stat[1]["module_adjacency"].shape[0] == 7]
         logging.info("Number of arch data: {}".format(len(fixed_statistics)))
         valid_ratio = 0.1
         num_valid = int(len(fixed_statistics) * valid_ratio)
         train_data = []
-        for f_metric in fixed_statistics[:-num_valid]:
+        for key, f_metric in fixed_statistics[:-num_valid]:
             arch = (f_metric["module_adjacency"], search_space.op_to_idx(f_metric["module_operations"]))
-            spec = api.ModelSpec(f_metric["module_adjacency"], f_metric["module_operations"])
-            metrics = search_space.nasbench.get_metrics_from_spec(spec)
-            valid_acc = np.mean([metrics[1][108][i]["final_validation_accuracy"] for i in range(3)])
-            train_data.append((arch, valid_acc))
+            metrics = search_space.nasbench.computed_statistics[key]
+            valid_acc = np.mean([metrics[108][i]["final_validation_accuracy"] for i in range(3)])
+            half_valid_acc = np.mean([metrics[108][i]["halfway_validation_accuracy"]
+                                      for i in range(3)])
+            train_data.append((arch, valid_acc, half_valid_acc))
 
         valid_data = []
-        for f_metric in fixed_statistics[-num_valid:]:
+        for key, f_metric in fixed_statistics[-num_valid:]:
             arch = (f_metric["module_adjacency"], search_space.op_to_idx(f_metric["module_operations"]))
-            spec = api.ModelSpec(f_metric["module_adjacency"], f_metric["module_operations"])
-            metrics = search_space.nasbench.get_metrics_from_spec(spec)
-            valid_acc = np.mean([metrics[1][108][i]["final_validation_accuracy"] for i in range(3)])
-            valid_data.append((arch, valid_acc))
+            metrics = search_space.nasbench.computed_statistics[key]
+            valid_acc = np.mean([metrics[108][i]["final_validation_accuracy"] for i in range(3)])
+            half_valid_acc = np.mean([metrics[108][i]["halfway_validation_accuracy"]
+                                      for i in range(3)])
+            valid_data.append((arch, valid_acc, half_valid_acc))
+
         with open("nasbench_7v.pkl", "wb") as wf:
             pickle.dump(train_data, wf)
         with open("nasbench_7v_valid.pkl", "wb") as wf:
@@ -193,13 +226,20 @@ def main(argv):
 
     logging.info("Config: %s", cfg)
 
-    model = PointwiseComparator(search_space, **cfg.pop("arch_network_cfg"))
+    model_cls = ArchNetwork.get_class_(cfg.get("arch_network_type",
+                                           "pointwise_comparator"))
+    model = model_cls(search_space, **cfg.pop("arch_network_cfg"))
     model.to(device)
 
     args.__dict__.update(cfg)
     logging.info("Combined args: %s", args)
 
     # init nasbench data loaders
+    if hasattr(args, "train_ratio") and args.train_ratio is not None:
+        _num = len(train_data)
+        train_data = train_data[:int(_num * args.train_ratio)]
+        logging.info("Train dataset ratio: %.3f", args.train_ratio)
+    logging.info("Number of architectures: train: %d; valid: %d", len(train_data), len(valid_data))
     train_data = NasBench101Dataset(train_data, minus=cfg.get("dataset_minus", None),
                                     div=cfg.get("dataset_div", None))
     valid_data = NasBench101Dataset(valid_data, minus=cfg.get("dataset_minus", None),
@@ -212,13 +252,13 @@ def main(argv):
         collate_fn=lambda items: list(zip(*items)))
 
     # init test
-    corr = valid(val_loader, model)
+    corr = valid(val_loader, model, args)
     logging.info("INIT: kendall tau {:.4f}".format(corr))
 
     for i_epoch in range(1, args.epochs + 1):
         avg_loss = train(train_loader, model, i_epoch, args)
         logging.info("Train: Epoch {:3d}: train loss {:.4f}".format(i_epoch, avg_loss))
-        corr = valid(val_loader, model)
+        corr = valid(val_loader, model, args)
         logging.info("Valid: Epoch {:3d}: kendall tau {:.4f}".format(i_epoch, corr))
         if i_epoch % args.save_every == 0:
             save_path = os.path.join(args.train_dir, "{}.ckpt".format(i_epoch))

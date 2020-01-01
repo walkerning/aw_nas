@@ -11,6 +11,7 @@ from torch import nn
 import torch.nn.functional as F
 
 from aw_nas import utils
+from aw_nas.utils.exception import expect, ConfigException
 from aw_nas.base import Component
 from aw_nas.utils import DenseGraphConvolution
 
@@ -314,6 +315,9 @@ class PointwiseComparator(ArchNetwork, nn.Module):
         nn.Module.__init__(self)
 
         # configs
+        expect(compare_loss_type in {"binary_cross_entropy", "margin_linear"},
+               "comparing loss type {} not supported".format(compare_loss_type),
+               ConfigException)
         self.compare_loss_type = compare_loss_type
         self.compare_margin = compare_margin
 
@@ -385,7 +389,7 @@ class PointwiseComparator(ArchNetwork, nn.Module):
             compare_score = torch.sigmoid(s_2 - s_1)
             pair_loss = F.binary_cross_entropy(
                 compare_score,
-                torch.tensor(better_labels).to(self._one_param.device))
+                torch.tensor(better_labels, dtype=torch.float32).to(self._one_param.device))
         elif self.compare_loss_type == "margin_linear":
             # in range (0, 1) to make the `compare_margin` meaningful
             # s_1 = self.predict(arch_1)
@@ -402,6 +406,10 @@ class PointwiseComparator(ArchNetwork, nn.Module):
         # return pair_loss.item(), s_1, s_2
         return pair_loss.item()
 
+    # def argsort_list(self, archs, batch_size=None):
+    #     # TODO
+    #     pass
+
     def save(self, path):
         torch.save(self.state_dict(), path)
 
@@ -410,6 +418,150 @@ class PointwiseComparator(ArchNetwork, nn.Module):
 
     def on_epoch_start(self, epoch):
         super(PointwiseComparator, self).on_epoch_start(epoch)
+        if self.scheduler is not None:
+            self.scheduler.step(epoch - 1)
+            self.logger.info("Epoch %3d: lr: %.5f", epoch, self.scheduler.get_lr()[0])
+
+
+class PairwiseComparator(ArchNetwork, nn.Module):
+    """
+    Convert the pointwise regression problem to a pairwise classfication problem.
+    Do not support predict call.
+    """
+    NAME = "pairwise_comparator"
+
+    def __init__(self, search_space,
+                 arch_embedder_type="lstm", arch_embedder_cfg=None,
+                 mlp_hiddens=(200, 200, 200), mlp_dropout=0.1,
+                 optimizer={
+                     "type": "Adam",
+                     "lr": 0.001
+                 }, scheduler=None,
+                 compare_loss_type="margin_linear",
+                 compare_margin=0.01,
+                 pairing_method="concat",
+                 schedule_cfg=None):
+        # [optional] arch reconstruction loss (arch_decoder_type/cfg)
+        super(PairwiseComparator, self).__init__(schedule_cfg)
+        nn.Module.__init__(self)
+
+        # configs
+        expect(compare_loss_type in {"binary_cross_entropy", "margin_linear"},
+               "comparing loss type {} not supported".format(compare_loss_type),
+               ConfigException)
+        self.compare_loss_type = compare_loss_type
+        self.compare_margin = compare_margin
+        expect(pairing_method in {"concat", "diff"},
+               "pairing method {} not supported".format(pairing_method),
+               ConfigException)
+        self.pairing_method = pairing_method
+
+        self.search_space = search_space
+        ae_cls = ArchEmbedder.get_class_(arch_embedder_type)
+        self.arch_embedder = ae_cls(self.search_space, **(arch_embedder_cfg or {}))
+
+        dim = self.embedding_dim = 2 * self.arch_embedder.out_dim
+        # construct MLP from embedding to score
+        self.mlp = []
+        for hidden_size in mlp_hiddens:
+            self.mlp.append(nn.Sequential(
+                nn.Linear(dim, hidden_size),
+                nn.ReLU(inplace=False),
+                nn.Dropout(p=mlp_dropout)))
+            dim = hidden_size
+        self.mlp.append(nn.Linear(dim, 1))
+        self.mlp = nn.Sequential(*self.mlp)
+
+        # init optimizer and scheduler
+        self.optimizer = utils.init_optimizer(self.parameters(), optimizer)
+        self.scheduler = utils.init_scheduler(self.optimizer, scheduler)
+        object.__setattr__(self, "_one_param", next(self.parameters()))
+
+    def compare(self, arch_1, arch_2):
+        emb_1 = self.arch_embedder(arch_1)
+        emb_2 = self.arch_embedder(arch_2)
+        if self.pairing_method == "concat":
+            emb = torch.cat((emb_1, emb_2), dim=-1)
+            score = torch.sigmoid(self.mlp(emb).squeeze())
+            emb = torch.cat((emb_2, emb_1), dim=-1)
+            score += 1 - torch.sigmoid(self.mlp(emb).squeeze())
+            score /= 2
+        elif self.pairing_method == "diff":
+            emb = torch.cat((emb_1, emb_2 - emb_1), dim=-1)
+            score = torch.sigmoid(self.mlp(emb).squeeze())
+            emb = torch.cat((emb_2, emb_1 - emb_2), dim=-1)
+            score += 1 - torch.sigmoid(self.mlp(emb).squeeze())
+        return score
+
+    def _cmp_for_sorted(self, x, y):
+        score = self.compare([x], [y]).item()
+        return 2 * (score < 0.5) - 1
+
+    def update_compare_rollouts(self, compare_rollouts, better_labels):
+        arch_1, arch_2 = zip(*[(r.rollout_1.arch, r.rollout_2.arch) for r in compare_rollouts])
+        return self.update_compare(arch_1, arch_2, better_labels)
+
+    def update_compare_list(self, compare_lst):
+        # use binary classification loss to step
+        arch_1, arch_2, better_labels = zip(*compare_lst)
+        return self.update_compare(arch_1, arch_2, better_labels)
+
+    def _get_loss(self, mlp_out, better_labels):
+        if self.compare_loss_type == "binary_cross_entropy":
+            score = torch.sigmoid(mlp_out)
+            pair_loss = F.binary_cross_entropy(
+                score,
+                torch.tensor(better_labels, dtype=torch.float32).to(self._one_param.device))
+        elif self.compare_loss_type == "margin_linear":
+            score = torch.sigmoid(mlp_out)
+            better_pm = 2 * torch.tensor(np.array(better_labels, dtype=np.float32))\
+                                 .to(self._one_param.device) - 1
+            zero_ = torch.tensor(0., dtype=torch.float32, device=self._one_param.device)
+            pair_loss = torch.mean(torch.max(zero_, self.compare_margin - \
+                                             better_pm * (2 * score - 1)))
+        return pair_loss
+
+    def update_compare(self, arch_1, arch_2, better_labels):
+        emb_1 = self.arch_embedder(arch_1)
+        emb_2 = self.arch_embedder(arch_2)
+        better_labels = np.array(better_labels)
+        if self.pairing_method == "concat":
+            emb = torch.cat((emb_1, emb_2), dim=-1)
+            mlp_out = self.mlp(emb).squeeze()
+            pair_loss = self._get_loss(mlp_out, better_labels)
+            emb = torch.cat((emb_2, emb_1), dim=-1)
+            mlp_out = self.mlp(emb).squeeze()
+            pair_loss += self._get_loss(mlp_out, 1 - better_labels)
+        elif self.pairing_method == "diff":
+            emb = torch.cat((emb_1, emb_2 - emb_1), dim=-1)
+            mlp_out = self.mlp(emb).squeeze()
+            pair_loss = self._get_loss(mlp_out, better_labels)
+            emb = torch.cat((emb_2, emb_1 - emb_2), dim=-1)
+            mlp_out = self.mlp(emb).squeeze()
+            pair_loss += self._get_loss(mlp_out, 1 - better_labels)
+        self.optimizer.zero_grad()
+        pair_loss.backward()
+        self.optimizer.step()
+        return pair_loss.item()
+
+    def argsort_list(self, archs):
+        # TODO: implement q-sort with random pivots
+        #       and the compares could be batched easily...
+        num_arch = len(archs)
+        indexes = list(range(num_arch))
+        import functools
+        return sorted(
+            indexes, key=functools.cmp_to_key(
+                lambda ind1, ind2: self._cmp_for_sorted(archs[ind1], archs[ind2])))
+
+    def save(self, path):
+        torch.save(self.state_dict(), path)
+
+    def load(self, path):
+        self.load_state_dict(torch.load(path))
+
+    def on_epoch_start(self, epoch):
+        super(PairwiseComparator, self).on_epoch_start(epoch)
         if self.scheduler is not None:
             self.scheduler.step(epoch - 1)
             self.logger.info("Epoch %3d: lr: %.5f", epoch, self.scheduler.get_lr()[0])
