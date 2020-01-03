@@ -116,7 +116,7 @@ def valid(val_loader, model, args):
                  for pv_seed in getattr(
                          args, "pairwise_valid_seeds", [1, 12, 123]
                  )]
-        print("pairwise: ", corrs)
+        logging.info("pairwise: ", corrs)
         return np.mean(corrs)
 
     model.eval()
