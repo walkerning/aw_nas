@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 # pylint: disable-all
+
 import os
 import sys
 import shutil
@@ -46,34 +47,80 @@ def train(train_loader, model, epoch, args):
     n_diff_pairs_meter = utils.AverageMeter()
     model.train()
     for step, (archs, f_accs, h_accs) in enumerate(train_loader):
+        archs = np.array(archs)
+        h_accs = np.array(h_accs)
+        f_accs = np.array(f_accs)
         n = len(archs)
         if getattr(args, "use_half", False):
             accs = h_accs
         else:
             accs = f_accs
         if args.compare:
-            if getattr(args, "compare_split", False):
-                n_pairs = len(archs) // 2
-                accs = np.array(accs)
-                acc_diff_lst = accs[n_pairs:2*n_pairs] - accs[:n_pairs]
-                keep_inds = np.where(np.abs(acc_diff_lst) > args.compare_threshold)[0]
-                better_lst = (np.array(accs[n_pairs:2*n_pairs] - accs[:n_pairs]) > 0)[keep_inds]
-                archs_1 = np.array(archs[:n_pairs])[keep_inds]
-                archs_2 = np.array(archs[n_pairs:2*n_pairs])[keep_inds]
-            else:
+            if None in accs:
+                # some archs only have half-time acc
                 n_max_pairs = int(args.max_compare_ratio * n)
+                n_max_inter_pairs = int(args.inter_pair_ratio * n_max_pairs)
+                half_inds = np.array([ind for ind, acc in enumerate(accs) if acc is None])
+                mask = np.zeros(n)
+                mask[half_inds] = 1
+                final_inds = np.where(1 - mask)[0]
+                half_eche = h_accs[half_inds]
+                final_eche = h_accs[final_inds]
+                half_acc_diff = final_eche[:, None] - half_eche # (num_final, num_half)
+                assert (half_acc_diff >= 0).all() # should be >0
+                half_ex_thresh_inds = np.where(np.abs(half_acc_diff) > getattr(
+                    args, "half_compare_threshold", 2 * args.compare_threshold))
+                half_ex_thresh_num = len(half_ex_thresh_inds[0])
+                if half_ex_thresh_num > n_max_inter_pairs:
+                    # random choose
+                    keep_inds = np.random.choice(np.arange(half_ex_thresh_num), n_max_inter_pairs, replace=False)
+                    half_ex_thresh_inds = (half_ex_thresh_inds[0][keep_inds],
+                                           half_ex_thresh_inds[1][keep_inds])
+                inter_archs_1, inter_archs_2, inter_better_lst \
+                    = archs[half_inds[half_ex_thresh_inds[1]]], archs[final_inds[half_ex_thresh_inds[0]]], \
+                    (half_acc_diff > 0)[half_ex_thresh_inds]
+                n_inter_pairs = len(inter_better_lst)
+
+                # only use intra pairs in the final echelon
+                n_intra_pairs = n_max_pairs - n_inter_pairs
+                accs = np.array(accs)[final_inds]
+                archs = archs[final_inds]
                 acc_diff = np.array(accs)[:, None] - np.array(accs)
                 acc_abs_diff_matrix = np.triu(np.abs(acc_diff), 1)
                 ex_thresh_inds = np.where(acc_abs_diff_matrix > args.compare_threshold)
                 ex_thresh_num = len(ex_thresh_inds[0])
-                if ex_thresh_num > n_max_pairs:
+                if ex_thresh_num > n_intra_pairs:
                     if args.choose_pair_criterion == "diff":
-                        keep_inds = np.argpartition(acc_abs_diff_matrix[ex_thresh_inds], -n_max_pairs)[-n_max_pairs:]
+                        keep_inds = np.argpartition(acc_abs_diff_matrix[ex_thresh_inds], -n_intra_pairs)[-n_intra_pairs:]
                     elif args.choose_pair_criterion == "random":
-                        keep_inds = np.random.choice(np.arange(ex_thresh_num), n_max_pairs, replace=False)
+                        keep_inds = np.random.choice(np.arange(ex_thresh_num), n_intra_pairs, replace=False)
                     ex_thresh_inds = (ex_thresh_inds[0][keep_inds], ex_thresh_inds[1][keep_inds])
-                archs = np.array(archs)
                 archs_1, archs_2, better_lst = archs[ex_thresh_inds[1]], archs[ex_thresh_inds[0]], (acc_diff > 0)[ex_thresh_inds]
+                archs_1, archs_2, better_lst = np.concatenate((inter_archs_1, archs_1)),\
+                                               np.concatenate((inter_archs_2, archs_2)),\
+                                               np.concatenate((inter_better_lst, better_lst))
+            else:
+                if getattr(args, "compare_split", False):
+                    n_pairs = len(archs) // 2
+                    accs = np.array(accs)
+                    acc_diff_lst = accs[n_pairs:2*n_pairs] - accs[:n_pairs]
+                    keep_inds = np.where(np.abs(acc_diff_lst) > args.compare_threshold)[0]
+                    better_lst = (np.array(accs[n_pairs:2*n_pairs] - accs[:n_pairs]) > 0)[keep_inds]
+                    archs_1 = np.array(archs[:n_pairs])[keep_inds]
+                    archs_2 = np.array(archs[n_pairs:2*n_pairs])[keep_inds]
+                else:
+                    n_max_pairs = int(args.max_compare_ratio * n)
+                    acc_diff = np.array(accs)[:, None] - np.array(accs)
+                    acc_abs_diff_matrix = np.triu(np.abs(acc_diff), 1)
+                    ex_thresh_inds = np.where(acc_abs_diff_matrix > args.compare_threshold)
+                    ex_thresh_num = len(ex_thresh_inds[0])
+                    if ex_thresh_num > n_max_pairs:
+                        if args.choose_pair_criterion == "diff":
+                            keep_inds = np.argpartition(acc_abs_diff_matrix[ex_thresh_inds], -n_max_pairs)[-n_max_pairs:]
+                        elif args.choose_pair_criterion == "random":
+                            keep_inds = np.random.choice(np.arange(ex_thresh_num), n_max_pairs, replace=False)
+                        ex_thresh_inds = (ex_thresh_inds[0][keep_inds], ex_thresh_inds[1][keep_inds])
+                    archs_1, archs_2, better_lst = archs[ex_thresh_inds[1]], archs[ex_thresh_inds[0]], (acc_diff > 0)[ex_thresh_inds]
             n_diff_pairs = len(better_lst)
             n_diff_pairs_meter.update(float(n_diff_pairs))
             loss = model.update_compare(archs_1, archs_2, better_lst)
@@ -89,6 +136,51 @@ def train(train_loader, model, epoch, args):
                     n_diff_pairs_meter.avg / n_pair_per_batch,
                     n_diff_pairs_meter.avg, n_pair_per_batch) if args.compare else ""))
     return objs.avg
+
+def test_xp(true_scores, predict_scores):
+    true_inds = np.argsort(true_scores)[::-1]
+    true_scores = np.array(true_scores)
+    reorder_true_scores = true_scores[true_inds]
+    predict_scores = np.array(predict_scores)
+    reorder_predict_scores = predict_scores[true_inds]
+    ranks = np.argsort(reorder_predict_scores)[::-1]
+    num_archs = len(ranks)
+    # calculate precision at each point
+    cur_inds = np.zeros(num_archs)
+    passed_set = set()
+    for i_rank, rank in enumerate(ranks):
+        cur_inds[i_rank] = (cur_inds[i_rank - 1] if i_rank > 0 else 0) + \
+                           int(i_rank in passed_set) + int(rank <= i_rank)
+        passed_set.add(rank)
+    patks = cur_inds / (np.arange(num_archs) + 1)
+    THRESH = 100
+    p_corrs = []
+    for prec in [0.1, 0.3, 0.5, 0.7, 0.9, 1.0]:
+        k = np.where(patks[THRESH:] >= prec)[0][0] + THRESH
+        arch_inds = ranks[:k][ranks[:k] < k]
+        # stats.kendalltau(arch_inds, np.arange(len(arch_inds)))
+        p_corrs.append((k, float(k)/num_archs, len(arch_inds), prec, stats.kendalltau(
+            reorder_true_scores[arch_inds],
+            reorder_predict_scores[arch_inds]).correlation))
+    return p_corrs
+
+def test_xk(true_scores, predict_scores):
+    true_inds = np.argsort(true_scores)[::-1]
+    true_scores = np.array(true_scores)
+    reorder_true_scores = true_scores[true_inds]
+    predict_scores = np.array(predict_scores)
+    reorder_predict_scores = predict_scores[true_inds]
+    ranks = np.argsort(reorder_predict_scores)[::-1]
+    num_archs = len(ranks)
+    patks = []
+    for ratio in [0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0]:
+        k = int(num_archs * ratio)
+        p = len(np.where(ranks[:k] < k)[0]) / float(k)
+        arch_inds = ranks[:k][ranks[:k] < k]
+        patks.append((k, ratio, len(arch_inds), p, stats.kendalltau(
+            reorder_true_scores[arch_inds],
+            reorder_predict_scores[arch_inds]).correlation))
+    return patks
 
 def pairwise_valid(val_loader, model, seed=None):
     if seed is not None:
@@ -107,17 +199,20 @@ def pairwise_valid(val_loader, model, seed=None):
     pseudo_scores[indexes] = np.arange(num_valid)
 
     corr = stats.kendalltau(true_accs, pseudo_scores).correlation
-    return corr
+    funcs_res = [func(true_accs, all_scores) for func in funcs]
+    return corr, funcs_res
 
-def valid(val_loader, model, args):
+def valid(val_loader, model, args, funcs=[]):
     if not callable(getattr(model, "predict", None)):
         assert callable(getattr(model, "compare", None))
-        corrs = [pairwise_valid(val_loader, model, pv_seed)
-                 for pv_seed in getattr(
-                         args, "pairwise_valid_seeds", [1, 12, 123]
-                 )]
+        corrs, funcs_res = zip(*[
+            pairwise_valid(val_loader, model, pv_seed, funcs)
+            for pv_seed in getattr(
+                    args, "pairwise_valid_seeds", [1, 12, 123]
+            )])
+        funcs_res = np.mean(funcs_res, axis=0)
         logging.info("pairwise: ", corrs)
-        return np.mean(corrs)
+        return np.mean(corrs), true_accs, p_scores, funcs_res
 
     model.eval()
     all_scores = []
@@ -128,7 +223,8 @@ def valid(val_loader, model, args):
         true_accs += list(accs)
 
     corr = stats.kendalltau(true_accs, all_scores).correlation
-    return corr
+    funcs_res = [func(true_accs, all_scores) for func in funcs]
+    return corr, funcs_res
 
 def main(argv):
     parser = argparse.ArgumentParser(prog="train_nasbench_pkl.py")
@@ -137,22 +233,31 @@ def main(argv):
     parser.add_argument("--num-workers", default=4, type=int)
     parser.add_argument("--report_freq", default=200, type=int)
     parser.add_argument("--seed", default=None, type=int)
-    parser.add_argument("--train-dir", required=True)
+    parser.add_argument("--train-dir", default=None, help="Save train log/results into TRAIN_DIR")
     parser.add_argument("--save-every", default=10, type=int)
+    parser.add_argument("--test-only", default=False, action="store_true")
+    parser.add_argument("--test-funcs", default=None, help="comma-separated list of test funcs")
+    parser.add_argument("--load", default=None, help="Load comparator from disk.")
     args = parser.parse_args(argv)
 
     # log
     log_format = "%(asctime)s %(message)s"
     logging.basicConfig(stream=sys.stdout, level=logging.INFO,
                         format=log_format, datefmt="%m/%d %I:%M:%S %p")
-    if not os.path.exists(args.train_dir):
-        os.makedirs(args.train_dir)
-    log_file = os.path.join(args.train_dir, "train.log")
-    logging.getLogger().addFile(log_file)
 
-    # copy config file
-    backup_cfg_file = os.path.join(args.train_dir, "config.yaml")
-    shutil.copyfile(args.cfg_file, backup_cfg_file)
+    if not args.test_only:
+        assert args.train_dir is not None, "Must specificy `--train-dir` when training"
+        # if training, setting up log file, backup config file
+        if not os.path.exists(args.train_dir):
+            os.makedirs(args.train_dir)
+        log_file = os.path.join(args.train_dir, "train.log")
+        logging.getLogger().addFile(log_file)
+
+        # copy config file
+        backup_cfg_file = os.path.join(args.train_dir, "config.yaml")
+        shutil.copyfile(args.cfg_file, backup_cfg_file)
+    else:
+        backup_cfg_file = args.cfg_file
 
     # cuda
     if torch.cuda.is_available():
@@ -221,6 +326,9 @@ def main(argv):
     arch_network_type = cfg.get("arch_network_type", "pointwise_comparator")
     model_cls = ArchNetwork.get_class_(arch_network_type)
     model = model_cls(search_space, **cfg.pop("arch_network_cfg"))
+    if args.load is not None:
+        logging.info("Load %s from %s", arch_network_type, args.load)
+        model.load(args.load)
     model.to(device)
 
     args.__dict__.update(cfg)
@@ -231,7 +339,23 @@ def main(argv):
         _num = len(train_data)
         train_data = train_data[:int(_num * args.train_ratio)]
         logging.info("Train dataset ratio: %.3f", args.train_ratio)
-    logging.info("Number of architectures: train: %d; valid: %d", len(train_data), len(valid_data))
+    num_train_archs = len(train_data)
+    logging.info("Number of architectures: train: %d; valid: %d", num_train_archs, len(valid_data))
+    # decide how many archs would only train to halftime
+    if hasattr(args, "ignore_quantile") and args.ignore_quantile is not None:
+        half_accs = [item[2] for item in train_data]
+        if not args.compare or getattr(args, "ignore_halftime", False):
+            # just ignore halftime archs
+            full_inds = np.argsort(half_accs)[int(num_train_archs * args.ignore_quantile):]
+            train_data = [train_data[ind] for ind in full_inds]
+            logging.info("#Train architectures after ignore half-time %.2f bad archs: %d",
+                         args.ignore_quantile, len(train_data))
+        else:
+            half_inds = np.argsort(half_accs)[:int(num_train_archs * args.ignore_quantile)]
+            logging.info("#Architectures do not need to be trained to final: %.2f (%.2f %%)",
+                         len(half_inds), args.ignore_quantile * 100)
+            for ind in half_inds:
+                train_data[ind] = (train_data[ind][0], None, train_data[ind][2])
     train_data = NasBench101Dataset(train_data, minus=cfg.get("dataset_minus", None),
                                     div=cfg.get("dataset_div", None))
     valid_data = NasBench101Dataset(valid_data, minus=cfg.get("dataset_minus", None),
@@ -244,7 +368,7 @@ def main(argv):
         collate_fn=lambda items: list(zip(*items)))
 
     # init test
-    if not arch_network_type == "pairwise_comparator":
+    if not arch_network_type == "pairwise_comparator" or args.test_only:
         # the comparison-based `argsort_list` would be very slow
         # if the partial order is totally violated, cauz in this case 
         # the score is far from meaningful to be utilized to get relative balanced split.
@@ -252,13 +376,26 @@ def main(argv):
         # 3~4 s for pointwise. How about stop evaluate small segments, which is
         # not efficient, e.g. when len(inds) < N just do not do recursion.
         # threshold 1: 450s; threshold 50: 70s; threshold 100: 60s
-        corr = valid(val_loader, model, args)
-        logging.info("INIT: kendall tau {:.4f}".format(corr))
+        if args.test_funcs is not None:
+            test_func_names = args.test_funcs.split(",")
+        corr, func_res = valid(val_loader, model, args,
+                               funcs=[globals()[func_name] for func_name in test_func_names]
+                               if args.test_funcs is not None else [])
+        if args.test_funcs is None:
+            logging.info("INIT: kendall tau {:.4f}".format(corr))
+        else:
+            logging.info("INIT: kendall tau {:.4f};\n\t{}".format(
+                corr,
+                "\n\t".join(["{}: {}".format(name, res)
+                             for name, res in zip(test_func_names, func_res)])))
+
+    if args.test_only:
+        return
 
     for i_epoch in range(1, args.epochs + 1):
         avg_loss = train(train_loader, model, i_epoch, args)
         logging.info("Train: Epoch {:3d}: train loss {:.4f}".format(i_epoch, avg_loss))
-        corr = valid(val_loader, model, args)
+        corr, _ = valid(val_loader, model, args)
         logging.info("Valid: Epoch {:3d}: kendall tau {:.4f}".format(i_epoch, corr))
         if i_epoch % args.save_every == 0:
             save_path = os.path.join(args.train_dir, "{}.ckpt".format(i_epoch))

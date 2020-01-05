@@ -93,7 +93,7 @@ for fname in fnames:
     cur_p = fname
     while 1:
         label = os.path.basename(cur_p)
-        if "." in label:
+        if ".txt" in label or ".log" in label:
             label = label.rsplit(".", 1)[0]
         if label in {"train", "search"}:
             cur_p = os.path.dirname(cur_p)
