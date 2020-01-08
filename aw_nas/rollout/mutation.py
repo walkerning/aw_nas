@@ -16,14 +16,8 @@ from aw_nas import utils
 from aw_nas.utils import expect
 from aw_nas.base import Component
 from aw_nas.rollout.base import BaseRollout
-from aw_nas.common import get_genotype_substr, genotype_from_str
+from aw_nas.common import get_genotype_substr, genotype_from_str, ConfigTemplate
 from aw_nas.utils import logger as _logger
-
-class ConfigTemplate(dict):
-    def create_cfg(self, genotype):
-        cfg = copy.deepcopy(self)
-        cfg["final_model_cfg"]["genotypes"] = get_genotype_substr(str(genotype))
-        return dict(cfg)
 
 class ModelRecord(object):
     def __init__(self, genotype, config, search_space,

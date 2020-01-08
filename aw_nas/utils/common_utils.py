@@ -132,9 +132,10 @@ def flatten_list(lst):
                             if isinstance(l, (tuple, list)) else s + [l],
                             lst, [])
 
-def recur_apply(func, lst, depth=0):
-    return [recur_apply(func, item, depth-1) if isinstance(item, (tuple, list)) and depth > 0 \
-            else func(item) for item in lst]
+def recur_apply(func, lst, depth=0, out_type=list):
+    return out_type([recur_apply(func, item, depth-1, out_type)
+                     if isinstance(item, (tuple, list)) and depth > 0 \
+                     else func(item) for item in lst])
 
 class Ticker(object):
     def __init__(self, name):
@@ -260,9 +261,11 @@ def add_text_prefix(text, prefix):
     lines = text.split("\n")
     return "\n".join([prefix + line if line else line for line in lines])
 
-def component_sample_config_str(comp_name, prefix, filter_funcs=None):
+def component_sample_config_str(comp_name, prefix, filter_funcs=None, cfg_name=None):
+    if cfg_name is None:
+        cfg_name = comp_name
     filter_funcs = filter_funcs or []
-    all_text = prefix + "## ---- Component {} ----\n".format(comp_name)
+    all_text = prefix + "## ---- Component {} ----\n".format(cfg_name)
 
     for type_name, cls in six.iteritems(RegistryMeta.all_classes(comp_name)):
         try:
@@ -278,8 +281,8 @@ def component_sample_config_str(comp_name, prefix, filter_funcs=None):
             continue
 
         all_text += prefix + "# ---- Type {} ----\n".format(type_name)
-        all_text += prefix + "{}_type: {}\n".format(comp_name, type_name)
-        all_text += prefix + "{}_cfg:\n".format(comp_name)
+        all_text += prefix + "{}_type: {}\n".format(cfg_name, type_name)
+        all_text += prefix + "{}_cfg:\n".format(cfg_name)
 
         # write the default configuration
         config_str = cls.get_default_config_str()
@@ -287,7 +290,7 @@ def component_sample_config_str(comp_name, prefix, filter_funcs=None):
 
         all_text += prefix + "# ---- End Type {} ----\n".format(type_name)
 
-    all_text += prefix + "## ---- End Component {} ----\n".format(comp_name)
+    all_text += prefix + "## ---- End Component {} ----\n".format(cfg_name)
     return all_text
 
 

@@ -212,7 +212,6 @@ class CNNGenotypeModel(FinalModel):
             self.dropout = ops.Identity()
         self.classifier = nn.Linear(prev_num_channels[-1],
                                     self.num_classes)
-
         self.to(self.device)
 
         # for flops calculation
@@ -365,7 +364,7 @@ class CNNGenotypeCell(nn.Module):
         prev_strides.insert(0, 1)
         prev_strides = reversed(prev_strides[:len(prev_num_channels)])
         for prev_c, prev_s in zip(prev_num_channels, prev_strides):
-            print("cin: {}, cout: {}, stride: {}".format(prev_c, num_channels, prev_s))
+            # print("cin: {}, cout: {}, stride: {}".format(prev_c, num_channels, prev_s))
             if not self.use_preprocess:
                 # stride/channel not handled!
                 self.preprocess_ops.append(ops.Identity())

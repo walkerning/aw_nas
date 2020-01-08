@@ -4,6 +4,7 @@ Search space and some search space related utils.
 
 import re
 import abc
+import copy
 import collections
 import itertools
 
@@ -606,6 +607,12 @@ def get_genotype_substr(genotypes):
         return re.search(r".+?Genotype\((.+)\)", genotypes).group(1)
     except Exception:
         return genotypes
+
+class ConfigTemplate(dict):
+    def create_cfg(self, genotype):
+        cfg = copy.deepcopy(self)
+        cfg["final_model_cfg"]["genotypes"] = get_genotype_substr(str(genotype))
+        return dict(cfg)
 
 # import all the rollouts here
 from aw_nas.rollout import ( # pylint:disable=unused-import
