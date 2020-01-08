@@ -2,8 +2,6 @@
 Controller that sample compare rollout
 """
 
-import abc
-
 from aw_nas import Component, assert_rollout_type
 from aw_nas.common import CompareRollout
 from aw_nas.controller.base import BaseController

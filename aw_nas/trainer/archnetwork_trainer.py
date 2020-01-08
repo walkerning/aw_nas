@@ -25,7 +25,7 @@ class ArchNetworkTrainer(BaseTrainer):
     The major difference: Batched evaluation results for predictor training.
     """
 
-    NAME = "archnetwork-based"
+    NAME = "archnetwork_based"
 
     SCHEDULABLE_ATTRS = []
 
@@ -78,8 +78,9 @@ class ArchNetworkTrainer(BaseTrainer):
             self.i_iter = i_iter
             if self.controller_use_archnetwork:
                 # TODO: add an util for avoiding sampling repeating archs
-                rollouts = self.controller.sample(n=self.num_each_iter[i_iter],
-                                                  arch_network=self.arch_network_evaluator)
+                rollouts = self.controller.sample(
+                    n=self.num_each_iter[i_iter],
+                    arch_network_evaluator=self.arch_network_evaluator)
             else:
                 rollouts = self.controller.sample(n=self.num_each_iter[i_iter])
 

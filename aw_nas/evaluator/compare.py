@@ -136,20 +136,28 @@ class BatchUpdateArchNetworkEvaluator(BaseEvaluator):
 
     def evaluate_rollouts(self, rollouts, is_training, portion=None, eval_batches=None,
                           return_candidate_net=False, callback=None):
-        for rollout in rollouts:
-            if self.rollout_type == "compare":
-                better = self.arch_network.compare(rollout.rollout1.arch, rollout.rollout2.arch)
-                rollout.set_perfs(OrderedDict(
-                    [
-                        ("compare_result", better),
-                        # ("confidence", 1),
-                    ]))
-            elif self.rollout_type == "discrete":
-                acc = self.arch_network.predict(rollout.arch)
-                rollout.set_perfs(OrderedDict(
-                    [
-                        ("reward", acc),
-                    ]))
+        archs = [r.arch for r in rollouts]
+        scores = self.arch_network.predict(archs)
+        for rollout, score in zip(rollouts, scores):
+            rollout.set_perfs(OrderedDict(
+                [
+                    ("reward", acc),
+                ]))
+        # for rollout in rollouts:
+        #     if self.rollout_type == "compare":
+        #         better = self.arch_network.compare(rollout.rollout1.arch, rollout.rollout2.arch)
+        #         rollout.set_perfs(OrderedDict(
+        #             [
+        #                 ("compare_result", better),
+        #                 # ("confidence", 1),
+        #             ]))
+        #     elif self.rollout_type == "discrete":
+        #         acc = self.arch_network.predict(rollout.arch)
+        #         rollout.set_perfs(OrderedDict(
+        #             [
+        #                 ("reward", acc),
+        #             ]))
+        # return rollouts
         return rollouts
 
     def update_evaluator(self, controller):
@@ -158,6 +166,7 @@ class BatchUpdateArchNetworkEvaluator(BaseEvaluator):
 
     def update_rollouts(self, rollouts):
         # TODO: batch training of predictor
+        # init dataset
         pass
 
     def save(self, path):
