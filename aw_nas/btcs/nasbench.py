@@ -22,7 +22,6 @@ from aw_nas.common import SearchSpace
 from aw_nas.rollout.base import BaseRollout
 from aw_nas.controller.base import BaseController
 from aw_nas.evaluator.base import BaseEvaluator
-from aw_nas.trainer.base import BaseTrainer
 from aw_nas.rollout.compare import CompareRollout
 from aw_nas.evaluator.arch_network import ArchEmbedder
 from aw_nas.utils import DenseGraphConvolution, DenseGraphFlow

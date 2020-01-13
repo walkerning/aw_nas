@@ -2,7 +2,8 @@ import pytest
 
 @pytest.mark.parametrize("case", [
     {"type": "lstm"},
-    {"type": "gcn"}
+    {"type": "gcn"},
+    {"type": "cellss-flow"}
 ])
 def test_arch_embedder(case):
     from aw_nas.common import get_search_space

@@ -13,7 +13,7 @@ import torch.nn.functional as F
 from aw_nas import utils
 from aw_nas.utils.exception import expect, ConfigException
 from aw_nas.base import Component
-from aw_nas.utils import DenseGraphConvolution
+from aw_nas.utils import DenseGraphConvolution, DenseGraphOpEdgeFlow
 
 __all__ = ["PointwiseComparator"]
 
@@ -291,6 +291,163 @@ class GCNArchEmbedder(ArchEmbedder):
         return y
 
 # ---- END: GCNArchEmbedder ----
+
+# ---- BEGIN: GCNFlowArchEmbedder ----
+class GCNFlowArchEmbedder(ArchEmbedder):
+    NAME = "cellss-flow"
+
+    def __init__(self, search_space,
+                 node_dim=48, op_dim=48, hidden_dim=48,
+                 gcn_out_dims=[128, 128],
+                 other_node_zero=False,
+                 gcn_kwargs=None,
+                 dropout=0.,
+                 use_bn=False,
+                 schedule_cfg=None):
+        super(GCNFlowArchEmbedder, self).__init__(schedule_cfg)
+
+        self.search_space = search_space
+
+        # configs
+        self.node_dim = node_dim
+        self.op_dim = op_dim
+        self.hidden_dim = hidden_dim
+        self.gcn_out_dims = gcn_out_dims
+        self.dropout = dropout
+        self.use_bn = use_bn
+
+        self._num_init_nodes = self.search_space.num_init_nodes
+        self._num_node_inputs = self.search_space.num_node_inputs
+        self._num_steps = self.search_space.num_steps
+        self._num_nodes = self._num_steps + self._num_init_nodes
+        self._num_cg = self.search_space.num_cell_groups
+
+        # share init node embedding for all cell groups
+        self.init_node_emb = nn.Parameter(torch.Tensor(self._num_cg, self._num_init_nodes,
+                                                       self.node_dim).normal_())
+        self.other_node_emb = nn.Parameter(torch.zeros(self._num_cg, 1, self.node_dim),
+                                           requires_grad=not other_node_zero)
+
+        self.num_ops = len(self.search_space.shared_primitives)
+        try:
+            self.none_index = self.search_space.shared_primitives.index("none")
+        except ValueError:
+            self.none_index = len(self.search_space.shared_primitives)
+            self.num_ops += 1
+
+        self.op_emb = []
+        for idx in range(self.num_ops):
+            if idx == self.none_index:
+                emb = nn.Parameter(torch.zeros(self.op_dim), requires_grad=False)
+            else:
+                emb = nn.Parameter(torch.Tensor(self.op_dim).normal_())
+            setattr(self, "op_embedding_{}".format(idx), emb)
+            self.op_emb.append(emb)
+        self.x_hidden = nn.Linear(self.node_dim, self.hidden_dim)
+
+        # init graph convolutions
+        self.gcns = []
+        self.bns = []
+        in_dim = self.hidden_dim
+        for dim in self.gcn_out_dims:
+            self.gcns.append(DenseGraphOpEdgeFlow(
+                in_dim, dim, self.op_dim, **(gcn_kwargs or {})))
+            in_dim = dim
+            if self.use_bn:
+                self.bns.append(nn.BatchNorm1d(self._num_nodes * self._num_cg))
+        self.gcns = nn.ModuleList(self.gcns)
+        if self.use_bn:
+            self.bns = nn.ModuleList(self.bns)
+        self.num_gcn_layers = len(self.gcns)
+        self.out_dim = self._num_cg * in_dim
+
+    def get_adj_dense(self, arch):
+        return self._get_adj_dense(arch, self._num_init_nodes,
+                                   self._num_node_inputs, self._num_nodes, self.none_index)
+
+    def _get_adj_dense(self, arch, num_init_nodes, num_node_inputs, num_nodes, none_index): #pylint: disable=no-self-use
+        """
+        get dense adjecent matrix, could be batched
+        """
+        f_nodes = np.array(arch[:, 0, :])
+        ops = np.array(arch[:, 1, :])
+        _ndim = f_nodes.ndim
+        if _ndim == 1:
+            f_nodes = np.expand_dims(f_nodes, 0)
+            ops = np.expand_dims(ops, 0)
+        else:
+            assert _ndim == 2
+        batch_size = f_nodes.shape[0]
+        t_nodes = np.tile(
+            np.repeat(np.array(range(num_init_nodes, num_nodes)), num_node_inputs)[None, :],
+            [batch_size, 1]
+        )
+        batch_inds = np.tile(np.arange(batch_size)[:, None], [1, t_nodes.shape[1]])
+        ori_indexes = np.stack((batch_inds, t_nodes, f_nodes))
+        indexes = ori_indexes.reshape([3, -1])
+        indexes, edge_counts = np.unique(indexes, return_counts=True, axis=1)
+        adj = torch.zeros(batch_size, num_nodes, num_nodes)
+        adj[indexes] += torch.tensor(edge_counts, dtype=torch.float32)
+        adj_op_inds = torch.ones(batch_size, num_nodes, num_nodes, dtype=torch.long) * none_index
+        adj_op_inds[ori_indexes] = torch.tensor(ops)
+        if _ndim == 1:
+            adj = adj[0]
+            adj_op_inds = adj_op_inds[0]
+        return adj, adj_op_inds
+
+    def embed_and_transform_arch(self, archs):
+        if isinstance(archs, (np.ndarray, list, tuple)):
+            archs = np.array(archs)
+            if archs.ndim == 3:
+                # one arch
+                archs = np.expand_dims(archs, 0)
+            else:
+                assert archs.ndim == 4
+
+        # get adjacent matrix
+        # sparse
+        # archs[:, :, 0, :]: (batch_size, num_cell_groups, num_node_inputs * num_steps)
+        b_size, n_cg, _, n_edge = archs.shape
+        adjs, adj_op_inds = self.get_adj_dense(archs.reshape(b_size * n_cg, 2, n_edge))
+        adjs = adjs.reshape([b_size, n_cg, adjs.shape[1], adjs.shape[2]]).to(
+            self.init_node_emb.device)
+        adj_op_inds = adj_op_inds.reshape([b_size, n_cg, adj_op_inds.shape[1],
+                                           adj_op_inds.shape[2]]).to(
+                                               self.init_node_emb.device)
+        # (batch_size, num_cell_groups, num_nodes, num_nodes)
+
+        # embedding of init nodes
+        # TODO: output op should have a embedding maybe? (especially for hierarchical purpose)
+        node_embs = torch.cat(
+            (self.init_node_emb.unsqueeze(0).repeat(b_size, 1, 1, 1),
+             self.other_node_emb.unsqueeze(0).repeat(b_size, 1, self._num_steps, 1)),
+            dim=2)
+        # (batch_size, num_cell_groups, num_nodes, self.node_dim)
+
+        x = self.x_hidden(node_embs)
+        # (batch_size, num_cell_groups, num_nodes, op_hid)
+        return adjs, adj_op_inds, x
+
+    def forward(self, archs):
+        # adjs: (batch_size, num_cell_groups, num_nodes, num_nodes)
+        # adj_op_inds: (batch_size, num_cell_groups, num_nodes, num_nodes)
+        # x: (batch_size, num_cell_groups, num_nodes, op_hid)
+        adjs, adj_op_inds, x = self.embed_and_transform_arch(archs)
+        y = x
+        for i_layer, gcn in enumerate(self.gcns):
+            y = gcn(y, adjs, adj_op_inds, torch.stack(self.op_emb), self.none_index)
+            if self.use_bn:
+                shape_y = y.shape
+                y = self.bns[i_layer](y.reshape(shape_y[0], -1, shape_y[-1])).reshape(shape_y)
+            if i_layer != self.num_gcn_layers - 1:
+                y = F.relu(y)
+            y = F.dropout(y, self.dropout, training=self.training)
+        # y: (batch_size, num_cell_groups, num_nodes, gcn_out_dims[-1])
+        y = y[:, :, 2:, :] # do not keep the init node embedding
+        y = torch.mean(y, dim=2) # average across nodes (bs, nc, god)
+        y = torch.reshape(y, [y.shape[0], -1]) # concat across cell groups, just reshape here
+        return y
+# ---- END: GCNFlowArchEmbedder ----
 
 class PointwiseComparator(ArchNetwork, nn.Module):
     """
