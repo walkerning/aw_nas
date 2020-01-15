@@ -304,6 +304,7 @@ class GCNFlowArchEmbedder(ArchEmbedder):
                  dropout=0.,
                  normalize=False,
                  use_bn=False,
+                 other_node_independent=False,
                  schedule_cfg=None):
         super(GCNFlowArchEmbedder, self).__init__(schedule_cfg)
 
@@ -317,6 +318,7 @@ class GCNFlowArchEmbedder(ArchEmbedder):
         self.gcn_out_dims = gcn_out_dims
         self.dropout = dropout
         self.use_bn = use_bn
+        self.other_node_independent = other_node_independent
 
         self._num_init_nodes = self.search_space.num_init_nodes
         self._num_node_inputs = self.search_space.num_node_inputs
@@ -325,10 +327,15 @@ class GCNFlowArchEmbedder(ArchEmbedder):
         self._num_cg = self.search_space.num_cell_groups
 
         # share init node embedding for all cell groups
-        self.init_node_emb = nn.Parameter(torch.Tensor(self._num_cg, self._num_init_nodes,
-                                                       self.node_dim).normal_())
-        self.other_node_emb = nn.Parameter(torch.zeros(self._num_cg, 1, self.node_dim),
-                                           requires_grad=not other_node_zero)
+        if self.other_node_independent:
+            self.init_node_emb = nn.Parameter(torch.Tensor(
+                self._num_cg, self._num_nodes, self.node_dim).normal_())
+        else:
+            # other nodes share init embedding
+            self.init_node_emb = nn.Parameter(torch.Tensor(self._num_cg, self._num_init_nodes,
+                                                           self.node_dim).normal_())
+            self.other_node_emb = nn.Parameter(torch.zeros(self._num_cg, 1, self.node_dim),
+                                               requires_grad=not other_node_zero)
 
         self.num_ops = len(self.search_space.shared_primitives)
         try:
@@ -432,10 +439,13 @@ class GCNFlowArchEmbedder(ArchEmbedder):
 
         # embedding of init nodes
         # TODO: output op should have a embedding maybe? (especially for hierarchical purpose)
-        node_embs = torch.cat(
-            (self.init_node_emb.unsqueeze(0).repeat(b_size, 1, 1, 1),
-             self.other_node_emb.unsqueeze(0).repeat(b_size, 1, self._num_steps, 1)),
-            dim=2)
+        if self.other_node_independent:
+            node_embs = self.init_node_emb.unsqueeze(0).repeat(b_size, 1, 1, 1)
+        else:
+            node_embs = torch.cat(
+                (self.init_node_emb.unsqueeze(0).repeat(b_size, 1, 1, 1),
+                 self.other_node_emb.unsqueeze(0).repeat(b_size, 1, self._num_steps, 1)),
+                dim=2)
         # (batch_size, num_cell_groups, num_nodes, self.node_dim)
 
         x = self.x_hidden(node_embs)
