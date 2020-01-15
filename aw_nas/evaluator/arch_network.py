@@ -302,6 +302,7 @@ class GCNFlowArchEmbedder(ArchEmbedder):
                  other_node_zero=False,
                  gcn_kwargs=None,
                  dropout=0.,
+                 normalize=False,
                  use_bn=False,
                  schedule_cfg=None):
         super(GCNFlowArchEmbedder, self).__init__(schedule_cfg)
@@ -309,6 +310,7 @@ class GCNFlowArchEmbedder(ArchEmbedder):
         self.search_space = search_space
 
         # configs
+        self.normalize = normalize
         self.node_dim = node_dim
         self.op_dim = op_dim
         self.hidden_dim = hidden_dim
@@ -388,12 +390,23 @@ class GCNFlowArchEmbedder(ArchEmbedder):
         indexes, edge_counts = np.unique(indexes, return_counts=True, axis=1)
         adj = torch.zeros(batch_size, num_nodes, num_nodes)
         adj[indexes] += torch.tensor(edge_counts, dtype=torch.float32)
-        adj_op_inds = torch.ones(batch_size, num_nodes, num_nodes, dtype=torch.long) * none_index
-        adj_op_inds[ori_indexes] = torch.tensor(ops)
+        adj_op_inds_lst = [
+            torch.ones(batch_size, num_nodes, num_nodes, dtype=torch.long) * none_index
+            for _ in range(num_node_inputs)]
+        ori_indexes_lst = np.split(
+            ori_indexes.reshape(
+                3, ori_indexes.shape[1],
+                ori_indexes.shape[-1]//num_node_inputs, num_node_inputs),
+            range(1, num_node_inputs), axis=-1)
+        ops_lst = np.split(ops.reshape(ops.shape[0], ops.shape[1] // num_node_inputs, num_node_inputs), range(1, num_node_inputs), axis=-1)
+        for adj_op_inds, inds, op in zip(adj_op_inds_lst, ori_indexes_lst, ops_lst):
+            adj_op_inds[inds] = torch.tensor(op)
+
         if _ndim == 1:
             adj = adj[0]
-            adj_op_inds = adj_op_inds[0]
-        return adj, adj_op_inds
+            adj_op_inds_lst = [adj_op_inds[0] for adj_op_inds in adj_op_inds_lst]
+            # adj_op_inds = adj_op_inds[0]
+        return adj, adj_op_inds_lst
 
     def embed_and_transform_arch(self, archs):
         if isinstance(archs, (np.ndarray, list, tuple)):
@@ -408,12 +421,13 @@ class GCNFlowArchEmbedder(ArchEmbedder):
         # sparse
         # archs[:, :, 0, :]: (batch_size, num_cell_groups, num_node_inputs * num_steps)
         b_size, n_cg, _, n_edge = archs.shape
-        adjs, adj_op_inds = self.get_adj_dense(archs.reshape(b_size * n_cg, 2, n_edge))
+        adjs, adj_op_inds_lst = self.get_adj_dense(archs.reshape(b_size * n_cg, 2, n_edge))
         adjs = adjs.reshape([b_size, n_cg, adjs.shape[1], adjs.shape[2]]).to(
             self.init_node_emb.device)
-        adj_op_inds = adj_op_inds.reshape([b_size, n_cg, adj_op_inds.shape[1],
-                                           adj_op_inds.shape[2]]).to(
-                                               self.init_node_emb.device)
+        adj_op_inds_lst = [adj_op_inds.reshape([b_size, n_cg, adj_op_inds.shape[1],
+                                                adj_op_inds.shape[2]]).to(
+                                                    self.init_node_emb.device)
+                           for adj_op_inds in adj_op_inds_lst]
         # (batch_size, num_cell_groups, num_nodes, num_nodes)
 
         # embedding of init nodes
@@ -426,16 +440,16 @@ class GCNFlowArchEmbedder(ArchEmbedder):
 
         x = self.x_hidden(node_embs)
         # (batch_size, num_cell_groups, num_nodes, op_hid)
-        return adjs, adj_op_inds, x
+        return adjs, adj_op_inds_lst, x
 
     def forward(self, archs):
         # adjs: (batch_size, num_cell_groups, num_nodes, num_nodes)
         # adj_op_inds: (batch_size, num_cell_groups, num_nodes, num_nodes)
         # x: (batch_size, num_cell_groups, num_nodes, op_hid)
-        adjs, adj_op_inds, x = self.embed_and_transform_arch(archs)
+        adjs, adj_op_inds_lst, x = self.embed_and_transform_arch(archs)
         y = x
         for i_layer, gcn in enumerate(self.gcns):
-            y = gcn(y, adjs, adj_op_inds, torch.stack(self.op_emb), self.none_index)
+            y = gcn(y, adjs, adj_op_inds_lst, torch.stack(self.op_emb), self.none_index)
             if self.use_bn:
                 shape_y = y.shape
                 y = self.bns[i_layer](y.reshape(shape_y[0], -1, shape_y[-1])).reshape(shape_y)
@@ -444,7 +458,11 @@ class GCNFlowArchEmbedder(ArchEmbedder):
             y = F.dropout(y, self.dropout, training=self.training)
         # y: (batch_size, num_cell_groups, num_nodes, gcn_out_dims[-1])
         y = y[:, :, 2:, :] # do not keep the init node embedding
+        if self.normalize:
+            y = F.normalize(y, 2, dim=-1)
         y = torch.mean(y, dim=2) # average across nodes (bs, nc, god)
+        if self.normalize:
+            y = F.normalize(y, 2, dim=-1)
         y = torch.reshape(y, [y.shape[0], -1]) # concat across cell groups, just reshape here
         return y
 # ---- END: GCNFlowArchEmbedder ----
