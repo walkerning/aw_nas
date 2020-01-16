@@ -4,6 +4,7 @@
 from io import StringIO
 import os
 import sys
+import copy
 import shutil
 import logging
 import argparse
@@ -14,7 +15,6 @@ import yaml
 from scipy.stats import stats
 
 import torch
-from torch import nn
 import torch.backends.cudnn as cudnn
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
@@ -54,34 +54,102 @@ def _cal_stage_probs(avg_stage_scores, stage_prob_power):
     probs.append(prob)
     return probs
 
-def train_multi_stage(train_stages, model, epoch, args, avg_stage_scores):
+def make_pair_pool(train_stages, args, stage_epochs):
+    num_stages = len(train_stages)
+    stage_pairs_list = []
+    diff_threshold = args.diff_threshold
+    all_train_stages = sum(train_stages, [])
+    stage_lens = [len(stage_data) for stage_data in train_stages]
+    stage_start_inds = [0] + list(np.cumsum(stage_lens[:-1]))
+    for i_stage in range(num_stages):
+        stage_data = train_stages[i_stage]
+        if i_stage in {0}:
+            beyond_stage_data = sum([train_stages[j_stage] for j_stage in range(i_stage + 2, num_stages)], [])
+            other_start_ind = stage_start_inds[i_stage + 2]
+        else:
+            beyond_stage_data = sum([train_stages[j_stage] for j_stage in range(i_stage, num_stages)], [])
+            other_start_ind = stage_start_inds[i_stage]
+
+        epoch = stage_epochs[i_stage]
+        # stage_perf
+        stage_perf = np.array([d[1][epoch] for d in stage_data])
+        beyond_stage_perf = np.array([d[1][epoch] for d in beyond_stage_data])
+        diff = beyond_stage_perf - stage_perf[:, None]
+        acc_abs_diff_matrix = np.triu(np.abs(diff), 1) - np.tril(np.ones(diff.shape), 0)
+        indexes = np.where(acc_abs_diff_matrix > diff_threshold[i_stage])
+        pairs = (stage_start_inds[i_stage] + indexes[0], other_start_ind + indexes[1], (diff > 0)[indexes])
+        stage_pairs_list.append(pairs)
+        logging.info("Num pairs using the perfs of stage {} (epoch {}): {}/{}".format(
+            i_stage, epoch, len(pairs[0]),
+            stage_lens[i_stage] * (stage_lens[i_stage] - 1) / 2 + stage_lens[i_stage] * sum(stage_lens[i_stage+1:], 0)))
+    return all_train_stages, stage_pairs_list
+
+def train_multi_stage_pair_pool(all_stages, pairs_list, model, i_epoch, args):
+    objs = utils.AverageMeter()
+    model.train()
+
+    # try get through all the pairs
+    pairs_pool = list(zip(*[np.concatenate(items) for items in zip(*pairs_list)]))
+    num_pairs = len(pairs_pool)
+    logging.info("Number of pairs: {}".format(num_pairs))
+    np.random.shuffle(pairs_pool)
+    num_batch = num_pairs // args.batch_size
+
+    for i_batch in range(num_batch):
+        archs_1_inds, archs_2_inds, better_lst = list(zip(
+            *pairs_pool[i_batch * args.batch_size: (i_batch + 1) * args.batch_size]))
+        loss = model.update_compare(np.array([all_stages[idx][0] for idx in archs_1_inds]),
+                                    np.array([all_stages[idx][0] for idx in archs_2_inds]), better_lst)
+        objs.update(loss, args.batch_size)
+        if i_batch % args.report_freq == 0:
+            logging.info("train {:03d} [{:03d}/{:03d}] {:.4f}".format(
+                i_epoch, i_batch, num_batch, objs.avg))
+    return objs.avg
+
+def train_multi_stage(train_stages, model, epoch, args, avg_stage_scores, stage_epochs):
     # TODO: multi stage
     objs = utils.AverageMeter()
     n_diff_pairs_meter = utils.AverageMeter()
     model.train()
 
+    num_stages = len(train_stages)
     # must specificy `stage_probs` or `stage_prob_power`
     stage_probs = getattr(args, "stage_probs", None)
     if stage_probs is None:
         stage_probs = _cal_stage_probs(avg_stage_scores, args.stage_prob_power)
-    logging.info("Epoch {:d}: Stage probs {}".format(epoch, stage_probs))
+    stage_accept_pair_probs = getattr(args, "stage_accept_pair_probs", [1.0] * num_stages)
 
     stage_lens = [len(stage_data) for stage_data in train_stages]
+    for i, len_ in enumerate(stage_lens):
+        if len_ == 0:
+            n_j = num_stages - i - 1
+            for j in range(i + 1, num_stages):
+                stage_probs[j] += stage_probs[i] / float(n_j)
+            stage_probs[i] = 0
     # diff_threshold = getattr(args, "diff_threshold", [0.08, 0.04, 0.02, 0.0])
+    stage_single_probs = getattr(args, "stage_single_probs", None)
+    if stage_single_probs is not None:
+        stage_probs = np.array([single_prob * len_ for single_prob, len_ in zip(stage_single_probs, stage_lens)])
+        stage_probs = stage_probs / stage_probs.sum()
+    logging.info("Epoch {:d}: Stage probs {}".format(epoch, stage_probs))
+
     diff_threshold = args.diff_threshold
     for step in range(args.num_batch_per_epoch):
-        # num_stage_samples = np.multinomial(args.batch_size, stage_probs)
-        # sampled_stage_inds = [np.random.choice(np.arange(stage_lens[i_stage]), num_sample, replace=False)
-        #                       for i_stage, (stage_data, num_sample) in enumerate(zip(train_stages, num_stage_samples))]
-        
         pair_batch = []
         i_pair = 0
         while 1:
-            stage_1, stage_2 = np.random.choice(np.arange(4), size=2, p=stage_probs)
+            stage_1, stage_2 = np.random.choice(np.arange(num_stages), size=2, p=stage_probs)
             d_1 = train_stages[stage_1][np.random.randint(0, stage_lens[stage_1])]
             d_2 = train_stages[stage_2][np.random.randint(0, stage_lens[stage_2])]
             min_stage = min(stage_2, stage_1)
-            diff_21 = d_2[1][min_stage] - d_1[1][min_stage]
+            if np.random.rand() > stage_accept_pair_probs[min_stage]:
+                continue
+            # max_stage = stage_2 + stage_1 - min_stage
+            # if max_stage - min_stage >= 2:
+            #     better = stage_2 > stage_1
+            # else:
+            min_epoch = stage_epochs[min_stage]
+            diff_21 = d_2[1][min_epoch] - d_1[1][min_epoch]
             # print(stage_1, stage_2, diff_21, diff_threshold)
             if np.abs(diff_21) > diff_threshold[min_stage]:
                 # if the difference is larger than the threshold of the min stage, this pair count
@@ -185,7 +253,7 @@ def test_xk(true_scores, predict_scores):
     ranks = np.argsort(reorder_predict_scores)[::-1]
     num_archs = len(ranks)
     patks = []
-    for ratio in [0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0]:
+    for ratio in [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 1.0]:
         k = int(num_archs * ratio)
         p = len(np.where(ranks[:k] < k)[0]) / float(k)
         arch_inds = ranks[:k][ranks[:k] < k]
@@ -213,6 +281,27 @@ def pairwise_valid(val_loader, model, seed=None):
     corr = stats.kendalltau(true_accs, pseudo_scores).correlation
     funcs_res = [func(true_accs, all_scores) for func in funcs]
     return corr, funcs_res
+
+def sample(search_space, model, N, K, args):
+    model.eval()
+    logging.info("Sample {} archs based on the predicted score across {} archs".format(K, N))
+    # ugly
+    while 1:
+        rollouts = [search_space.random_sample() for _ in range(N)]
+        if len(np.unique([r.arch for r in rollouts], axis=0)) == N:
+            break
+        logging.info("Resample ...")
+    archs = [r.arch for r in rollouts]
+    num_batch = (len(archs) + args.batch_size - 1) // args.batch_size
+    all_scores = []
+    for i_batch in range(num_batch):
+        batch_archs = archs[i_batch * args.batch_size: min((i_batch + 1) * args.batch_size, N)]
+        scores = list(model.predict(batch_archs).cpu().data.numpy())
+        all_scores += scores
+    all_scores = np.array(all_scores)
+    sorted_inds = np.argsort(all_scores)[::-1][:K]
+    # np.where(np.triu(all_scores[sorted_inds] == all_scores[sorted_inds][:, None]).astype(float) - np.eye(N))
+    return [rollouts[ind].genotype for ind in sorted_inds]
 
 def valid(val_loader, model, args, funcs=[]):
     if not callable(getattr(model, "predict", None)):
@@ -273,6 +362,9 @@ def main(argv):
     parser.add_argument("--test-only", default=False, action="store_true")
     parser.add_argument("--test-funcs", default=None, help="comma-separated list of test funcs")
     parser.add_argument("--load", default=None, help="Load comparator from disk.")
+    parser.add_argument("--sample", default=None, type=int)
+    parser.add_argument("--sample-ratio", default=10, type=float)
+    parser.add_argument("--sample-output-dir", default="./sample_output/")
     args = parser.parse_args(argv)
 
     # log
@@ -334,7 +426,10 @@ def main(argv):
     logging.info("Combined args: %s", args)
 
     # init data loaders
-    train_valid_split = int(getattr(args, "train_valid_split", 0.6) * len(data))
+    if hasattr(args, "train_size"):
+        train_valid_split = args.train_size
+    else:
+        train_valid_split = int(getattr(args, "train_valid_split", 0.6) * len(data))
     train_data = data[:train_valid_split]
     valid_data = data[train_valid_split:]
     if hasattr(args, "train_ratio") and args.train_ratio is not None:
@@ -361,6 +456,20 @@ def main(argv):
         corr, func_res = valid(val_loader, model, args,
                                funcs=[globals()[func_name] for func_name in test_func_names]
                                if args.test_funcs is not None else [])
+
+        if args.sample is not None:
+            with open("./final_template.yaml", "r") as rf:
+                logging.info("Load final template config file!")
+                template_cfg = yaml.load(rf)
+            genotypes = sample(search_space, model, args.sample * int(args.sample_ratio), args.sample, args)
+            for i, genotype in enumerate(genotypes):
+                sample_cfg = copy.deepcopy(template_cfg)
+                sample_cfg["final_model_cfg"]["genotypes"] = str(genotype)
+                if not os.path.exists(args.sample_output_dir):
+                    os.makedirs(args.sample_output_dir)
+                with open(os.path.join(args.sample_output_dir, "{}.yaml".format(i)), "w") as wf:
+                    yaml.dump(sample_cfg, wf)
+
         if args.test_funcs is None:
             logging.info("INIT: kendall tau {:.4f}".format(corr))
         else:
@@ -373,30 +482,52 @@ def main(argv):
         return
 
     _multi_stage = getattr(args, "multi_stage", False)
+    _multi_stage_pair_pool = getattr(args, "multi_stage_pair_pool", False)
     if _multi_stage:
         all_perfs = np.array([item[1] for item in train_data.data])
         all_inds = np.arange(all_perfs.shape[0])
 
-        default_stage_nums = [all_perfs.shape[0] // 4] * 3 + [all_perfs.shape[0] - all_perfs.shape[0] // 4 * 3]
+        stage_epochs = getattr(args, "stage_epochs", [0, 1, 2, 3])
+        num_stages = len(stage_epochs)
+
+        default_stage_nums = [all_perfs.shape[0] // num_stages] * (num_stages - 1) + \
+            [all_perfs.shape[0] - all_perfs.shape[0] // num_stages * (num_stages - 1)]
         stage_nums = getattr(args, "stage_nums", default_stage_nums)
+
         assert np.sum(stage_nums) == all_perfs.shape[0]
         logging.info("Stage nums: {}".format(stage_nums))
 
         stage_inds_lst = []
-        for i_stage in range(4):
-            sorted_inds = np.argsort(all_perfs[all_inds, i_stage])
+        for i_stage in range(num_stages):
+            max_stage_ = np.max(all_perfs[all_inds, stage_epochs[i_stage]])
+            min_stage_ = np.min(all_perfs[all_inds, stage_epochs[i_stage]])
+            logging.info("Stage {}, epoch {}: min {:.2f} %; max {:.2f}% (range {:.2f} %)".format(
+                i_stage, stage_epochs[i_stage], min_stage_ * 100, max_stage_ * 100, (max_stage_ - min_stage_) * 100))
+            sorted_inds = np.argsort(all_perfs[all_inds, stage_epochs[i_stage]])
             stage_inds, all_inds = all_inds[sorted_inds[:stage_nums[i_stage]]],\
                                             all_inds[sorted_inds[stage_nums[i_stage]:]]
             stage_inds_lst.append(stage_inds)
-        train_stages = [[train_data.data[ind] for ind in stage_inds] for stage_inds in stage_inds_lst]
+        train_stages = [[train_data.data[ind] for ind in _stage_inds]
+                        for _stage_inds in stage_inds_lst]
         avg_score_stages = []
-        for i_stage in range(3):
-            avg_score_stages.append((all_perfs[stage_inds_lst[i_stage], i_stage].sum(),
-                                     np.sum([all_perfs[stage_inds_lst[j_stage], i_stage].sum() for j_stage in range(i_stage+1, 4)])))
+        for i_stage in range(num_stages - 1):
+            avg_score_stages.append((all_perfs[stage_inds_lst[i_stage], stage_epochs[i_stage]].sum(),
+                                     np.sum([all_perfs[stage_inds_lst[j_stage], stage_epochs[i_stage]].sum()
+                                             for j_stage in range(i_stage+1, num_stages)])))
+        if _multi_stage_pair_pool:
+            all_stages, pairs_list = make_pair_pool(train_stages, args, stage_epochs)
+
+        total_eval_time = all_perfs.shape[0] * all_perfs.shape[1]
+        multi_stage_eval_time = sum([(stage_epochs[i_stage] + 1) * len(_stage_inds)
+                                     for i_stage, _stage_inds in enumerate(stage_inds_lst)])
+        logging.info("Percentage of evaluation time: {:.2f} %".format(float(multi_stage_eval_time) / total_eval_time * 100))
 
     for i_epoch in range(1, args.epochs + 1):
         if _multi_stage:
-            avg_loss = train_multi_stage(train_stages, model, i_epoch, args, avg_score_stages)
+            if _multi_stage_pair_pool:
+                avg_loss = train_multi_stage_pair_pool(all_stages, pairs_list, model, i_epoch, args)
+            else:
+                avg_loss = train_multi_stage(train_stages, model, i_epoch, args, avg_score_stages, stage_epochs)
         else:
             avg_loss = train(train_loader, model, i_epoch, args)
         logging.info("Train: Epoch {:3d}: train loss {:.4f}".format(i_epoch, avg_loss))
