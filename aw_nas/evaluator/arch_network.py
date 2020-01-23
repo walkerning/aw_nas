@@ -492,6 +492,7 @@ class PointwiseComparator(ArchNetwork, nn.Module):
                  }, scheduler=None,
                  compare_loss_type="margin_linear",
                  compare_margin=0.01,
+                 max_grad_norm=None,
                  schedule_cfg=None):
         # [optional] arch reconstruction loss (arch_decoder_type/cfg)
         super(PointwiseComparator, self).__init__(schedule_cfg)
@@ -503,6 +504,7 @@ class PointwiseComparator(ArchNetwork, nn.Module):
                ConfigException)
         self.compare_loss_type = compare_loss_type
         self.compare_margin = compare_margin
+        self.max_grad_norm = max_grad_norm
 
         self.search_space = search_space
         ae_cls = ArchEmbedder.get_class_(arch_embedder_type)
@@ -524,8 +526,10 @@ class PointwiseComparator(ArchNetwork, nn.Module):
         self.optimizer = utils.init_optimizer(self.parameters(), optimizer)
         self.scheduler = utils.init_scheduler(self.optimizer, scheduler)
 
-    def predict(self, arch):
-        score = torch.sigmoid(self.mlp(self.arch_embedder(arch))).squeeze()
+    def predict(self, arch, sigmoid=True):
+        score = self.mlp(self.arch_embedder(arch)).squeeze()
+        if sigmoid:
+            score = torch.sigmoid(score)
         return score
 
     def update_predict_rollouts(self, rollouts, labels):
@@ -544,6 +548,7 @@ class PointwiseComparator(ArchNetwork, nn.Module):
             scores.squeeze(), scores.new(labels))
         self.optimizer.zero_grad()
         mse_loss.backward()
+        self._clip_grads()
         self.optimizer.step()
         return mse_loss.item()
 
@@ -581,9 +586,45 @@ class PointwiseComparator(ArchNetwork, nn.Module):
             pair_loss = torch.mean(torch.max(zero_, self.compare_margin - better_pm * (s_2 - s_1)))
         self.optimizer.zero_grad()
         pair_loss.backward()
+        self._clip_grads()
         self.optimizer.step()
         # return pair_loss.item(), s_1, s_2
         return pair_loss.item()
+
+    def argsort(self, archs, batch_size=None):
+        pass
+
+    def update_argsort(self, archs, idxes, first_n=None, accumulate_only=False):
+        archs = np.array(archs)
+        idxes = np.array(idxes)
+        if archs.ndim == 3:
+            flat_archs = archs.reshape(-1, archs.shape[-1])
+        else:
+            flat_archs = archs
+        if idxes.ndim == 1:
+            idxes = idxes[None, :]
+        bs, len_ = idxes.shape
+        scores = self.predict(flat_archs, sigmoid=False)
+
+        scores = scores.reshape(idxes.shape)
+        exp_score = (scores - scores.max(dim=-1, keepdim=True)[0].detach()).exp()
+        exp_score_rank = exp_score[np.arange(0, idxes.shape[0])[:, None], idxes]
+        inds = (np.tile(np.arange(bs)[:, None], [1, len_]),
+                np.tile(np.arange(len_)[::-1][None, :], [bs, 1]))
+        normalize = torch.cumsum(exp_score_rank[inds], dim=1)[inds]
+
+        if first_n is not None:
+            exp_score_rank = exp_score_rank[:, :first_n]
+            normalize = normalize[:, :first_n]
+        # loss = torch.mean(torch.sum(torch.log(normalize) - torch.log(exp_score_rank), dim=1))
+        loss = torch.mean(torch.mean(torch.log(normalize) - torch.log(exp_score_rank), dim=1))
+        if not accumulate_only:
+            self.optimizer.zero_grad()
+        loss.backward()
+        if not accumulate_only:
+            self._clip_grads()
+            self.optimizer.step()
+        return loss.item()
 
     # def argsort_list(self, archs, batch_size=None):
     #     # TODO
@@ -600,6 +641,10 @@ class PointwiseComparator(ArchNetwork, nn.Module):
         if self.scheduler is not None:
             self.scheduler.step(epoch - 1)
             self.logger.info("Epoch %3d: lr: %.5f", epoch, self.scheduler.get_lr()[0])
+
+    def _clip_grads(self):
+        if self.max_grad_norm is not None:
+            torch.nn.utils.clip_grad_norm_(self.parameters(), self.max_grad_norm)
 
 
 class PairwiseComparator(ArchNetwork, nn.Module):
@@ -621,6 +666,7 @@ class PairwiseComparator(ArchNetwork, nn.Module):
                  pairing_method="concat",
                  sorting_residue_worse_thresh=100,
                  sorting_residue_better_thresh=100,
+                 max_grad_norm=None,
                  schedule_cfg=None):
         # [optional] arch reconstruction loss (arch_decoder_type/cfg)
         super(PairwiseComparator, self).__init__(schedule_cfg)
@@ -638,6 +684,7 @@ class PairwiseComparator(ArchNetwork, nn.Module):
         self.pairing_method = pairing_method
         self.sorting_residue_worse_thresh = sorting_residue_worse_thresh
         self.sorting_residue_better_thresh = sorting_residue_better_thresh
+        self.max_grad_norm = max_grad_norm
 
         self.search_space = search_space
         ae_cls = ArchEmbedder.get_class_(arch_embedder_type)
@@ -723,6 +770,7 @@ class PairwiseComparator(ArchNetwork, nn.Module):
             pair_loss += self._get_loss(mlp_out, 1 - better_labels)
         self.optimizer.zero_grad()
         pair_loss.backward()
+        self._clip_grads()
         self.optimizer.step()
         return pair_loss.item()
 
@@ -786,3 +834,7 @@ class PairwiseComparator(ArchNetwork, nn.Module):
         if self.scheduler is not None:
             self.scheduler.step(epoch - 1)
             self.logger.info("Epoch %3d: lr: %.5f", epoch, self.scheduler.get_lr()[0])
+
+    def _clip_grads(self):
+        if self.max_grad_norm is not None:
+            torch.nn.utils.clip_grad_norm_(self.parameters(), self.max_grad_norm)

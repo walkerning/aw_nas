@@ -1,4 +1,5 @@
 import pytest
+import numpy as np
 
 @pytest.mark.parametrize("case", [
     {"type": "lstm"},
@@ -59,7 +60,12 @@ def test_gcn_arch_embedder_utils():
     assert node_embed.shape == (batch_size, search_space.num_cell_groups,
                                 _num_nodes, embedder.op_dim)
 
-def test_arch_comparator():
+@pytest.mark.parametrize("case", [
+    {"method": "predict"},
+    {"method": "compare"},
+    {"method": "argsort"}
+])
+def test_arch_comparator(case):
     from aw_nas.common import get_search_space
     from aw_nas.evaluator.arch_network import PointwiseComparator
     search_space = get_search_space(cls="cnn")
@@ -72,14 +78,28 @@ def test_arch_comparator():
     archs_2 = [search_space.random_sample().arch for _ in range(batch_size)]
 
     # forward
-    scores = comparator.predict(archs_1)
-    assert len(scores) == batch_size
+    # true_scores = np.random.rand(batch_size * 2)
+    true_scores = np.arange(0, 1.01, 1. / (2 * batch_size - 1))
+    scores = comparator.predict(archs_1 + archs_2)
+    print("true scores:", true_scores)
+    print("scores before {}:".format(case["method"]), scores)
+    assert len(scores) == batch_size * 2
     compare_res = comparator.compare(archs_1, archs_2)
     assert len(compare_res) == batch_size
 
     # update
-    comparator.update_predict(archs_1, [0.1, 0.3, 0.4, 0.9])
-    comparator.update_compare(archs_1, archs_2, [0.1, 0.3, 0.4, 0.9])
+    for _ in range(5):
+        if case["method"] == "predict":
+            comparator.update_predict(archs_1 + archs_2, true_scores)
+        elif case["method"] == "compare":
+            comparator.update_compare(
+                archs_1, archs_2,
+                true_scores[batch_size:] > true_scores[:batch_size])
+        elif case["method"] == "argsort":
+            comparator.update_argsort(archs_1 + archs_2, np.argsort(true_scores)[::-1])
+    scores = comparator.predict(archs_1 + archs_2)
+    print("scores after {}:".format(case["method"]), scores)
+
 
 @pytest.mark.parametrize("case", [
     {"pairing_method": "concat"},

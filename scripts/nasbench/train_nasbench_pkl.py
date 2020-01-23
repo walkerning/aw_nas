@@ -17,8 +17,6 @@ import torch.backends.cudnn as cudnn
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
 
-from nasbench import api
-
 from aw_nas import utils
 from aw_nas.common import get_search_space
 from aw_nas.evaluator.arch_network import ArchNetwork
@@ -41,6 +39,61 @@ class NasBench101Dataset(Dataset):
         if self.div is not None:
             data = (data[0], data[1] / self.div, data[2] / self.div)
         return data
+
+def train_listwise(train_data, model, epoch, args):
+    objs = utils.AverageMeter()
+    model.train()
+    num_data = len(train_data)
+    idx_list = np.arange(num_data)
+    num_batches = getattr(
+        args, "num_batch_per_epoch",
+        int(num_data / (args.batch_size * args.list_length) * args.max_compare_ratio))
+    logging.info("Number of batches: {:d}".format(num_batches))
+    update_batch_n = getattr(args, "update_batch_n", 1)
+    listwise_compare = getattr(args, "listwise_compare", False)
+    if listwise_compare:
+        assert args.list_length == 2 and update_batch_n == 1
+    model.optimizer.zero_grad()
+    for step in range(1, num_batches + 1):
+        if getattr(args, "bs_replace", False):
+            idxes = np.array([np.random.choice(idx_list, size=(args.list_length,), replace=False) for _ in range(args.batch_size)])
+        else:
+            idxes = np.random.choice(idx_list, size=(args.batch_size, args.list_length), replace=False)
+        flat_idxes = idxes.reshape(-1)
+        archs, accs, _ = zip(*[train_data[idx] for idx in flat_idxes])
+        archs = np.array(archs).reshape((args.batch_size, args.list_length, -1))
+        accs = np.array(accs).reshape((args.batch_size, args.list_length))
+        # accs[np.arange(0, args.batch_size)[:, None], np.argsort(accs, axis=1)[:, ::-1]]
+        if update_batch_n == 1:
+            if listwise_compare:
+                loss = model.update_compare(archs[:, 0, :], archs[:, 1, :],
+                                            accs[:, 1] > accs[:, 0])
+            else:
+                loss = model.update_argsort(archs, np.argsort(accs, axis=1)[:, ::-1],
+                                            first_n=getattr(args, "score_list_length", None))
+        else:
+            loss = model.update_argsort(archs, np.argsort(accs, axis=1)[:, ::-1],
+                                        first_n=getattr(args, "score_list_length", None),
+                                        accumulate_only=True)
+            if step % update_batch_n == 0:
+                model.optimizer.step()
+                model.optimizer.zero_grad()
+        objs.update(loss, args.batch_size)
+        if step % args.report_freq == 0:
+           logging.info("train {:03d} [{:03d}/{:03d}] {:.4f}".format(
+                epoch, step, num_batches, objs.avg))
+    return objs.avg
+
+    # for step, (archs, f_accs, h_accs) in enumerate(train_loader):
+    #     archs = np.array(archs)
+    #     h_accs = np.array(h_accs)
+    #     f_accs = np.array(f_accs)
+    #     n = len(archs)
+    #     if getattr(args, "use_half", False):
+    #         accs = h_accs
+    #     else:
+    #         accs = f_accs
+    #     args.list_length
 
 def train(train_loader, model, epoch, args):
     objs = utils.AverageMeter()
@@ -393,7 +446,10 @@ def main(argv):
         return
 
     for i_epoch in range(1, args.epochs + 1):
-        avg_loss = train(train_loader, model, i_epoch, args)
+        if getattr(args, "use_listwise", False):
+            avg_loss = train_listwise(train_data, model, i_epoch, args)
+        else:
+            avg_loss = train(train_loader, model, i_epoch, args)
         logging.info("Train: Epoch {:3d}: train loss {:.4f}".format(i_epoch, avg_loss))
         corr, _ = valid(val_loader, model, args)
         logging.info("Valid: Epoch {:3d}: kendall tau {:.4f}".format(i_epoch, corr))
