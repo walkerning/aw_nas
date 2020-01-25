@@ -422,6 +422,9 @@ class GCNFlowArchEmbedder(ArchEmbedder):
                 # one arch
                 archs = np.expand_dims(archs, 0)
             else:
+                if not archs.ndim == 4:
+                    import ipdb
+                    ipdb.set_trace()
                 assert archs.ndim == 4
 
         # get adjacent matrix
@@ -594,21 +597,27 @@ class PointwiseComparator(ArchNetwork, nn.Module):
     def argsort(self, archs, batch_size=None):
         pass
 
-    def update_argsort(self, archs, idxes, first_n=None, accumulate_only=False):
+    def update_argsort(self, archs, idxes, first_n=None, accumulate_only=False, is_sorted=False):
         archs = np.array(archs)
-        idxes = np.array(idxes)
-        if archs.ndim == 3:
-            flat_archs = archs.reshape(-1, archs.shape[-1])
+        bs, len_ = archs.shape[:2]
+        if idxes is not None:
+            idxes = np.array(idxes)
+            assert idxes.ndim == 2 and idxes.shape[0] == bs and idxes.shape[1] == len_
+            # if idxes.ndim == 1:
+            #     idxes = idxes[None, :]
         else:
-            flat_archs = archs
-        if idxes.ndim == 1:
-            idxes = idxes[None, :]
-        bs, len_ = idxes.shape
+            assert is_sorted
+        flat_archs = archs.reshape([-1] + list(archs.shape[2:]))
         scores = self.predict(flat_archs, sigmoid=False)
 
-        scores = scores.reshape(idxes.shape)
+        scores = scores.reshape((bs, len_))
         exp_score = (scores - scores.max(dim=-1, keepdim=True)[0].detach()).exp()
-        exp_score_rank = exp_score[np.arange(0, idxes.shape[0])[:, None], idxes]
+        if not is_sorted:
+            exp_score_rank = exp_score[np.arange(0, bs)[:, None], idxes]
+        else:
+            exp_score_rank = exp_score
+        EPS = 1e-12
+        exp_score_rank = torch.max(exp_score_rank, torch.tensor(EPS).to(exp_score_rank.device))
         inds = (np.tile(np.arange(bs)[:, None], [1, len_]),
                 np.tile(np.arange(len_)[::-1][None, :], [bs, 1]))
         normalize = torch.cumsum(exp_score_rank[inds], dim=1)[inds]
@@ -616,8 +625,13 @@ class PointwiseComparator(ArchNetwork, nn.Module):
         if first_n is not None:
             exp_score_rank = exp_score_rank[:, :first_n]
             normalize = normalize[:, :first_n]
+
+        # import logging
+        # logging.info("exp score maxmin: {} {}".format(exp_score_rank.min(), exp_score_rank.max()))
+        # logging.info("normalize maxmin: {} {}".format(normalize.min(), normalize.max()))
         # loss = torch.mean(torch.sum(torch.log(normalize) - torch.log(exp_score_rank), dim=1))
         loss = torch.mean(torch.mean(torch.log(normalize) - torch.log(exp_score_rank), dim=1))
+        # logging.info("loss: {}".format(loss))
         if not accumulate_only:
             self.optimizer.zero_grad()
         loss.backward()

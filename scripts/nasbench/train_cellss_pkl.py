@@ -169,7 +169,54 @@ def train_multi_stage(train_stages, model, epoch, args, avg_stage_scores, stage_
             logging.info("train {:03d} [{:03d}/{:03d}] {:.4f}".format(
                 epoch, step, args.num_batch_per_epoch, objs.avg))
     return objs.avg
-    
+
+def train_multi_stage_listwise(train_stages, model, epoch, args, avg_stage_scores, stage_epochs):
+    # TODO: multi stage
+    objs = utils.AverageMeter()
+    n_listlength_meter = utils.AverageMeter()
+    model.train()
+
+    num_stages = len(train_stages)
+
+    stage_lens = [len(stage_data) for stage_data in train_stages]
+    stage_sep_inds = [np.arange(stage_len) for stage_len in stage_lens]
+    stage_single_probs = getattr(args, "stage_single_probs", None)
+    assert stage_single_probs is not None
+    if stage_single_probs is not None:
+        stage_probs = np.array([single_prob * len_ for single_prob, len_ in zip(stage_single_probs, stage_lens)])
+        stage_probs = stage_probs / stage_probs.sum()
+    logging.info("Epoch {:d}: Stage probs {}".format(epoch, stage_probs))
+
+    num_stage_samples_avg = np.zeros(num_stages)
+    train_stages = np.array(train_stages)
+
+    listwise_compare = getattr(args, "listwise_compare", False)
+    if listwise_compare:
+        assert args.list_length == 2
+
+    for step in range(args.num_batch_per_epoch):
+        num_stage_samples = np.random.multinomial(args.list_length, stage_probs)
+        num_stage_samples = np.minimum(num_stage_samples, stage_lens)
+        true_ll = np.sum(num_stage_samples)
+        n_listlength_meter.update(true_ll, args.batch_size)
+        num_stage_samples_avg += num_stage_samples
+        stage_inds = [np.array([np.random.choice(stage_sep_inds[i_stage], size=(sz), replace=False) for _ in range(args.batch_size)])
+                      if sz > 0 else np.zeros((args.batch_size, 0), dtype=np.int) for i_stage, sz in enumerate(num_stage_samples)]
+        sorted_stage_inds = [s_stage_inds[np.arange(args.batch_size)[:, None], np.argsort(np.array(np.array(train_stages[i_stage])[s_stage_inds][:, :, 1].tolist())[:, :, i_stage], axis=1)] if s_stage_inds.shape[1] > 1 else s_stage_inds for i_stage, s_stage_inds in enumerate(stage_inds)]
+        archs = np.concatenate([np.array(train_stages[i_stage])[s_stage_inds][:, :, 0] for i_stage, s_stage_inds in enumerate(sorted_stage_inds) if s_stage_inds.size > 0], axis=1)
+        archs = archs[:, ::-1] # order: from best to worst
+        assert archs.ndim == 2
+        archs = np.array(archs.tolist()) # (batch_size, list_length, num_cell_groups, node_or_op, decisions)
+        if listwise_compare:
+            loss = model.update_compare(archs[:, 0], archs[:, 1], np.zeros(archs.shape[0]))
+        else:
+            loss = model.update_argsort(archs, idxes=None, first_n=getattr(args, "score_list_length", None), is_sorted=True)
+        objs.update(loss, args.batch_size)
+        if step % args.report_freq == 0:
+            logging.info("train {:03d} [{:03d}/{:03d}] {:.4f} (mean ll: {:.1f}; {})".format(
+                epoch, step, args.num_batch_per_epoch, objs.avg, n_listlength_meter.avg, (num_stage_samples_avg / (step + 1)).tolist()))
+    return objs.avg
+
 def train(train_loader, model, epoch, args):
     objs = utils.AverageMeter()
     n_diff_pairs_meter = utils.AverageMeter()
@@ -355,7 +402,7 @@ def main(argv):
     parser.add_argument("cfg_file")
     parser.add_argument("--gpu", type=int, default=0, help="gpu device id")
     parser.add_argument("--num-workers", default=4, type=int)
-    parser.add_argument("--report_freq", default=200, type=int)
+    parser.add_argument("--report-freq", default=200, type=int)
     parser.add_argument("--seed", default=None, type=int)
     parser.add_argument("--train-dir", default=None, help="Save train log/results into TRAIN_DIR")
     parser.add_argument("--save-every", default=None, type=int)
@@ -365,6 +412,7 @@ def main(argv):
     parser.add_argument("--sample", default=None, type=int)
     parser.add_argument("--sample-ratio", default=10, type=float)
     parser.add_argument("--sample-output-dir", default="./sample_output/")
+    parser.add_argument("--addi-train", default=[], action="append", help="additional train data")
     args = parser.parse_args(argv)
 
     # log
@@ -436,6 +484,11 @@ def main(argv):
         _num = len(train_data)
         train_data = train_data[:int(_num * args.train_ratio)]
         logging.info("Train dataset ratio: %.3f", args.train_ratio)
+    if args.addi_train:
+        for addi_train_fname in args.addi_train:
+            with open(addi_train_fname, "rb") as rf:
+                addi_train_data = pickle.load(rf)
+            train_data += addi_train_data
     num_train_archs = len(train_data)
     logging.info("Number of architectures: train: %d; valid: %d", num_train_archs, len(valid_data))
     train_data = CellSSDataset(train_data, minus=cfg.get("dataset_minus", None),
@@ -527,7 +580,10 @@ def main(argv):
             if _multi_stage_pair_pool:
                 avg_loss = train_multi_stage_pair_pool(all_stages, pairs_list, model, i_epoch, args)
             else:
-                avg_loss = train_multi_stage(train_stages, model, i_epoch, args, avg_score_stages, stage_epochs)
+                if getattr(args, "use_listwise", False):
+                    avg_loss = train_multi_stage_listwise(train_stages, model, i_epoch, args, avg_score_stages, stage_epochs)
+                else:
+                    avg_loss = train_multi_stage(train_stages, model, i_epoch, args, avg_score_stages, stage_epochs)
         else:
             avg_loss = train(train_loader, model, i_epoch, args)
         logging.info("Train: Epoch {:3d}: train loss {:.4f}".format(i_epoch, avg_loss))

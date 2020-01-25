@@ -431,6 +431,7 @@ class NasBench101FlowArchEmbedder(ArchEmbedder):
                  node_embedding_dim=48, hid_dim=96, gcn_out_dims=[128, 128],
                  share_op_attention=False,
                  other_node_zero=False, gcn_kwargs=None,
+                 use_bn=False,
                  dropout=0., schedule_cfg=None):
         super(NasBench101FlowArchEmbedder, self).__init__(schedule_cfg)
 
@@ -442,6 +443,7 @@ class NasBench101FlowArchEmbedder(ArchEmbedder):
         self.hid_dim = hid_dim
         self.gcn_out_dims = gcn_out_dims
         self.dropout = dropout
+        self.use_bn = use_bn
         self.share_op_attention = share_op_attention
         self.vertices = self.search_space.num_vertices
         self.num_op_choices = self.search_space.num_op_choices
@@ -471,13 +473,18 @@ class NasBench101FlowArchEmbedder(ArchEmbedder):
 
         # init graph convolutions
         self.gcns = []
+        self.bns = []
         in_dim = self.hid_dim
         for dim in self.gcn_out_dims:
             self.gcns.append(DenseGraphFlow(
                 in_dim, dim, self.op_embedding_dim if not self.share_op_attention else dim,
                 has_attention=not self.share_op_attention, **(gcn_kwargs or {})))
             in_dim = dim
+            if self.use_bn:
+                self.bns.append(nn.BatchNorm1d(self.vertices))
         self.gcns = nn.ModuleList(self.gcns)
+        if self.use_bn:
+            self.bns = nn.ModuleList(self.bns)
         self.num_gcn_layers = len(self.gcns)
         self.out_dim = in_dim
 
@@ -510,6 +517,9 @@ class NasBench101FlowArchEmbedder(ArchEmbedder):
         y = x
         for i_layer, gcn in enumerate(self.gcns):
             y = gcn(y, adjs, op_emb)
+            if self.use_bn:
+                shape_y = y.shape
+                y = self.bns[i_layer](y.reshape(shape_y[0], -1, shape_y[-1])).reshape(shape_y)
             if i_layer != self.num_gcn_layers - 1:
                 y = F.relu(y)
             y = F.dropout(y, self.dropout, training=self.training)

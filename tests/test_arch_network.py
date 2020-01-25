@@ -96,7 +96,7 @@ def test_arch_comparator(case):
                 archs_1, archs_2,
                 true_scores[batch_size:] > true_scores[:batch_size])
         elif case["method"] == "argsort":
-            comparator.update_argsort(archs_1 + archs_2, np.argsort(true_scores)[::-1])
+            comparator.update_argsort([archs_1 + archs_2], [np.argsort(true_scores)[::-1]])
     scores = comparator.predict(archs_1 + archs_2)
     print("scores after {}:".format(case["method"]), scores)
 
