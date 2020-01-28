@@ -20,7 +20,7 @@ import numpy as np
 from torch.utils.data import Dataset, DataLoader
 
 from aw_nas import utils
-from aw_nas.common import get_search_space
+from aw_nas.common import get_search_space, rollout_from_genotype_str
 from aw_nas.evaluator.arch_network import ArchNetwork
 
 
@@ -63,7 +63,7 @@ def make_pair_pool(train_stages, args, stage_epochs):
     stage_start_inds = [0] + list(np.cumsum(stage_lens[:-1]))
     for i_stage in range(num_stages):
         stage_data = train_stages[i_stage]
-        if i_stage in {0}:
+        if i_stage in {0} and num_stages == 4: # try special handling for 4-stage
             beyond_stage_data = sum([train_stages[j_stage] for j_stage in range(i_stage + 2, num_stages)], [])
             other_start_ind = stage_start_inds[i_stage + 2]
         else:
@@ -170,7 +170,7 @@ def train_multi_stage(train_stages, model, epoch, args, avg_stage_scores, stage_
                 epoch, step, args.num_batch_per_epoch, objs.avg))
     return objs.avg
 
-def train_multi_stage_listwise(train_stages, model, epoch, args, avg_stage_scores, stage_epochs):
+def train_multi_stage_listwise(train_stages, model, epoch, args, avg_stage_scores, stage_epochs, score_train_stages=None):
     # TODO: multi stage
     objs = utils.AverageMeter()
     n_listlength_meter = utils.AverageMeter()
@@ -329,15 +329,39 @@ def pairwise_valid(val_loader, model, seed=None):
     funcs_res = [func(true_accs, all_scores) for func in funcs]
     return corr, funcs_res
 
-def sample(search_space, model, N, K, args):
+def sample(search_space, model, N, K, args, from_genotypes=None, conflict_archs=None):
     model.eval()
     logging.info("Sample {} archs based on the predicted score across {} archs".format(K, N))
     # ugly
-    while 1:
-        rollouts = [search_space.random_sample() for _ in range(N)]
-        if len(np.unique([r.arch for r in rollouts], axis=0)) == N:
-            break
-        logging.info("Resample ...")
+    if from_genotypes is None:
+        remain_to_sample = N
+        all_archs = []
+        all_rollouts = []
+        while remain_to_sample > 0:
+            logging.info("sample {}".format(remain_to_sample))
+            while 1:
+                rollouts = [search_space.random_sample() for _ in range(remain_to_sample)]
+                archs = np.array([r.arch for r in rollouts]).tolist()
+                if len(np.unique(archs, axis=0)) == remain_to_sample:
+                    break
+                loging.info("Resample ...")
+            conflict = conflict_archs + all_archs
+            remain_to_sample = 0
+            indexes = []
+            for i, r in enumerate(archs):
+                if r in conflict:
+                    remain_to_sample += 1
+                else:
+                    indexes.append(i)
+            archs = [archs[i] for i in indexes]
+            rollouts = [rollouts[i] for i in indexes]
+            all_archs = all_archs + archs
+            all_rollouts = all_rollouts + rollouts
+    else:
+        # rollouts = [rollout_from_genotype_str(geno_str, search_space) for geno_str in from_genotypes]
+        all_rollouts = [rollout_from_genotype_str(geno_str, search_space) for geno_str in from_genotypes]
+    rollouts = all_rollouts
+    logging.info("len sampled: {}".format(len(rollouts)))
     archs = [r.arch for r in rollouts]
     num_batch = (len(archs) + args.batch_size - 1) // args.batch_size
     all_scores = []
@@ -372,6 +396,29 @@ def valid(val_loader, model, args, funcs=[]):
         true_accs += list(accs[:, -1])
 
     corr = stats.kendalltau(true_accs, all_scores).correlation
+    if args.valid_true_split or args.valid_score_split:
+        valid_true_split = ["null"] + [float(x) for x in args.valid_true_split.split(",")]
+        valid_score_split = ["null"] + [float(x) for x in args.valid_score_split.split(",")]
+        tas_list = []
+        sas_list = []
+        num_unique_tas_list = []
+        num_unique_sas_list = []
+        for vts in valid_true_split:
+            tas = true_accs if vts == "null" else (np.array(true_accs) / vts).astype(int)
+            tas_list.append(tas)
+            num_unique_tas_list.append(len(np.unique(tas)))
+        for vss in valid_score_split:
+            sas = all_scores if vss == "null" else (np.array(all_scores) / vss).astype(int)
+            sas_list.append(sas)
+            num_unique_sas_list.append(len(np.unique(sas)))
+
+        str_ = "{:15}   {}".format("true/score split", "   ".join(["{:5} ({:4})".format(
+            split, num_uni) for split, num_uni in zip(valid_score_split, num_unique_sas_list)]))
+        for i_tas, tas in enumerate(tas_list):
+            s_str_ = "{:15}   ".format("{:5} ({:4})".format(valid_true_split[i_tas], num_unique_tas_list[i_tas])) + \
+                     "   ".join(["{:12.4f}".format(stats.kendalltau(tas, sas).correlation) for sas in sas_list])
+            str_ = str_ + "\n" + s_str_
+        logging.info("Valid kd matrix:\n" + str_)
     funcs_res = [func(true_accs, all_scores) for func in funcs]
     return corr, funcs_res
 
@@ -410,9 +457,17 @@ def main(argv):
     parser.add_argument("--test-funcs", default=None, help="comma-separated list of test funcs")
     parser.add_argument("--load", default=None, help="Load comparator from disk.")
     parser.add_argument("--sample", default=None, type=int)
+    parser.add_argument("--sample-to-file", default=None, type=str)
+    parser.add_argument("--sample-from-file", default=None, type=str)
+    parser.add_argument("--sample-conflict-file", default=None, type=str)
     parser.add_argument("--sample-ratio", default=10, type=float)
     parser.add_argument("--sample-output-dir", default="./sample_output/")
     parser.add_argument("--addi-train", default=[], action="append", help="additional train data")
+    parser.add_argument("--addi-train-only", action="store_true", default=False)
+    parser.add_argument("--addi-valid", default=[], action="append", help="additional valid data")
+    parser.add_argument("--addi-valid-only", action="store_true", default=False)
+    parser.add_argument("--valid-true-split", default=None)
+    parser.add_argument("--valid-score-split", default=None)
     args = parser.parse_args(argv)
 
     # log
@@ -485,10 +540,19 @@ def main(argv):
         train_data = train_data[:int(_num * args.train_ratio)]
         logging.info("Train dataset ratio: %.3f", args.train_ratio)
     if args.addi_train:
+        if args.addi_train_only:
+            train_data = []
         for addi_train_fname in args.addi_train:
             with open(addi_train_fname, "rb") as rf:
                 addi_train_data = pickle.load(rf)
             train_data += addi_train_data
+    if args.addi_valid:
+        if args.addi_valid_only:
+            valid_data = []
+        for addi_fname in args.addi_valid:
+            with open(addi_fname, "rb") as rf:
+                addi_valid_data = pickle.load(rf)
+            valid_data += addi_valid_data
     num_train_archs = len(train_data)
     logging.info("Number of architectures: train: %d; valid: %d", num_train_archs, len(valid_data))
     train_data = CellSSDataset(train_data, minus=cfg.get("dataset_minus", None),
@@ -511,17 +575,32 @@ def main(argv):
                                if args.test_funcs is not None else [])
 
         if args.sample is not None:
-            with open("./final_template.yaml", "r") as rf:
-                logging.info("Load final template config file!")
-                template_cfg = yaml.load(rf)
-            genotypes = sample(search_space, model, args.sample * int(args.sample_ratio), args.sample, args)
-            for i, genotype in enumerate(genotypes):
-                sample_cfg = copy.deepcopy(template_cfg)
-                sample_cfg["final_model_cfg"]["genotypes"] = str(genotype)
-                if not os.path.exists(args.sample_output_dir):
-                    os.makedirs(args.sample_output_dir)
-                with open(os.path.join(args.sample_output_dir, "{}.yaml".format(i)), "w") as wf:
-                    yaml.dump(sample_cfg, wf)
+            if args.sample_from_file:
+                logging.info("Read genotypes from: {}".format(args.sample_from_file))
+                with open(args.sample_from_file, "r") as rf:
+                    from_genotypes = yaml.load(rf)
+                assert len(from_genotypes) == args.sample * int(args.sample_ratio)
+            else:
+                from_genotypes = None
+            if args.sample_conflict_file is not None:
+                conflict_archs = pickle.load(open(args.sample_conflict_file, "rb"))
+            else:
+                conflict_archs = None
+            genotypes = sample(search_space, model, args.sample * int(args.sample_ratio), args.sample, args, from_genotypes=from_genotypes, conflict_archs=conflict_archs)
+            if args.sample_to_file:
+                with open(args.sample_to_file, "w") as wf:
+                    yaml.dump([str(geno) for geno in genotypes], wf)
+            else:
+                with open("./final_template.yaml", "r") as rf:
+                    logging.info("Load final template config file!")
+                    template_cfg = yaml.load(rf)
+                for i, genotype in enumerate(genotypes):
+                    sample_cfg = copy.deepcopy(template_cfg)
+                    sample_cfg["final_model_cfg"]["genotypes"] = str(genotype)
+                    if not os.path.exists(args.sample_output_dir):
+                        os.makedirs(args.sample_output_dir)
+                    with open(os.path.join(args.sample_output_dir, "{}.yaml".format(i)), "w") as wf:
+                        yaml.dump(sample_cfg, wf)
 
         if args.test_funcs is None:
             logging.info("INIT: kendall tau {:.4f}".format(corr))
