@@ -317,7 +317,7 @@ class CNNSearchSpace(CellSearchSpace):
         return Rollout(arch, {}, self)
 
     def plot_cell(self, genotype_concat, filename, cell_index,
-                  label="", edge_labels=None, plot_format="png"):
+                  label="", edge_labels=None, plot_format="pdf"):
         """Plot a cell to `filename` on disk."""
 
         genotype, concat = genotype_concat
@@ -372,7 +372,7 @@ class CNNSearchSpace(CellSearchSpace):
 
         return filename + ".png"
 
-    def plot_arch(self, genotypes, filename, label="", edge_labels=None, plot_format="png"): #pylint: disable=arguments-differ
+    def plot_arch(self, genotypes, filename, label="", edge_labels=None, plot_format="pdf"): #pylint: disable=arguments-differ
         """Plot an architecture to files on disk"""
 
         if edge_labels is None:
@@ -515,7 +515,7 @@ class RNNSearchSpace(CellSearchSpace):
         return Rollout(arch, {}, self)
 
     def plot_arch(self, genotypes, filename,
-                  label="", edge_labels=None, plot_format="png"): #pylint: disable=arguments-differ
+                  label="", edge_labels=None, plot_format="pdf"): #pylint: disable=arguments-differ
         """Plot an architecture to files on disk"""
         expect(len(genotypes) == 2 and self.num_cell_groups == 1,
                "Current RNN search space only support one cell group")
@@ -588,7 +588,7 @@ def rollout_from_genotype_str(genotype_str, search_space):
     return search_space.rollout_from_genotype(genotype_from_str(genotype_str, search_space))
 
 def plot_genotype(genotype, dest, cls, label="",
-                  edge_labels=None, plot_format="png", **search_space_cfg):
+                  edge_labels=None, plot_format="pdf", **search_space_cfg):
     ss = get_search_space(cls, **search_space_cfg)
     if isinstance(genotype, str):
         genotype = eval("ss.genotype_type({})".format(genotype)) # pylint: disable=eval-used

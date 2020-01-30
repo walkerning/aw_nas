@@ -495,6 +495,7 @@ class PointwiseComparator(ArchNetwork, nn.Module):
                  }, scheduler=None,
                  compare_loss_type="margin_linear",
                  compare_margin=0.01,
+                 margin_l2=False,
                  max_grad_norm=None,
                  schedule_cfg=None):
         # [optional] arch reconstruction loss (arch_decoder_type/cfg)
@@ -507,6 +508,7 @@ class PointwiseComparator(ArchNetwork, nn.Module):
                ConfigException)
         self.compare_loss_type = compare_loss_type
         self.compare_margin = compare_margin
+        self.margin_l2 = margin_l2
         self.max_grad_norm = max_grad_norm
 
         self.search_space = search_space
@@ -570,7 +572,31 @@ class PointwiseComparator(ArchNetwork, nn.Module):
         arch_1, arch_2, better_labels = zip(*compare_lst)
         return self.update_compare(arch_1, arch_2, better_labels)
 
-    def update_compare(self, arch_1, arch_2, better_labels):
+    def update_compare_eq(self, arch_1, arch_2, better_eq_labels, margin=None):
+        assert self.compare_loss_type == "margin_linear"
+        # in range (0, 1) to make the `compare_margin` meaningful
+        # s_1 = self.predict(arch_1)
+        # s_2 = self.predict(arch_2)
+        s_1 = self.mlp(self.arch_embedder(arch_1)).squeeze()
+        s_2 = self.mlp(self.arch_embedder(arch_2)).squeeze()
+        better_pm = s_1.new(np.array(better_eq_labels, dtype=np.float32))
+        zero_ = s_1.new([0.])
+        margin = [self.compare_margin] if margin is None else margin
+        margin = s_1.new(margin)
+        pair_loss = torch.mean(
+            torch.where(
+                better_pm == 0,
+                torch.max(zero_, (s_2 - s_1).abs() - margin / 2),
+                torch.max(zero_, margin - better_pm * (s_2 - s_1))
+            ))
+        self.optimizer.zero_grad()
+        pair_loss.backward()
+        self._clip_grads()
+        self.optimizer.step()
+        # return pair_loss.item(), s_1, s_2
+        return pair_loss.item()
+
+    def update_compare(self, arch_1, arch_2, better_labels, margin=None):
         if self.compare_loss_type == "binary_cross_entropy":
             # compare_score = self.compare(arch_1, arch_2)
             s_1 = self.mlp(self.arch_embedder(arch_1)).squeeze()
@@ -586,7 +612,12 @@ class PointwiseComparator(ArchNetwork, nn.Module):
             s_2 = self.mlp(self.arch_embedder(arch_2)).squeeze()
             better_pm = 2 * s_1.new(np.array(better_labels, dtype=np.float32)) - 1
             zero_ = s_1.new([0.])
-            pair_loss = torch.mean(torch.max(zero_, self.compare_margin - better_pm * (s_2 - s_1)))
+            margin = [self.compare_margin] if margin is None else margin
+            margin = s_1.new(margin)
+            if not self.margin_l2:
+                pair_loss = torch.mean(torch.max(zero_, margin - better_pm * (s_2 - s_1)))
+            else:
+                pair_loss = torch.mean(torch.max(zero_, margin - better_pm * (s_2 - s_1)) ** 2 / np.maximum(1., margin))
         self.optimizer.zero_grad()
         pair_loss.backward()
         self._clip_grads()

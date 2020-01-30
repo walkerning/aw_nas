@@ -220,7 +220,15 @@ def train_multi_stage_listwise(train_stages, model, epoch, args, avg_stage_score
 def train(train_loader, model, epoch, args):
     objs = utils.AverageMeter()
     n_diff_pairs_meter = utils.AverageMeter()
+    n_eq_pairs_meter = utils.AverageMeter()
     model.train()
+
+    margin_diff_coeff = getattr(args, "margin_diff_coeff", None)
+    eq_threshold = getattr(args, "eq_threshold", None)
+    eq_pair_ratio = getattr(args, "eq_pair_ratio", 0)
+    if eq_threshold is not None:
+        assert eq_pair_ratio > 0
+        assert eq_threshold <= args.compare_threshold
     for step, (archs, all_accs) in enumerate(train_loader):
         archs = np.array(archs)
         n = len(archs)
@@ -236,7 +244,7 @@ def train(train_loader, model, epoch, args):
                 archs_1 = np.array(archs[:n_pairs])[keep_inds]
                 archs_2 = np.array(archs[n_pairs:2*n_pairs])[keep_inds]
             else:
-                n_max_pairs = int(args.max_compare_ratio * n)
+                n_max_pairs = int(args.max_compare_ratio * n * (1 - eq_pair_ratio))
                 acc_diff = np.array(accs)[:, None] - np.array(accs)
                 acc_abs_diff_matrix = np.triu(np.abs(acc_diff), 1)
                 ex_thresh_inds = np.where(acc_abs_diff_matrix > args.compare_threshold)
@@ -247,10 +255,36 @@ def train(train_loader, model, epoch, args):
                     elif args.choose_pair_criterion == "random":
                         keep_inds = np.random.choice(np.arange(ex_thresh_num), n_max_pairs, replace=False)
                     ex_thresh_inds = (ex_thresh_inds[0][keep_inds], ex_thresh_inds[1][keep_inds])
-                archs_1, archs_2, better_lst = archs[ex_thresh_inds[1]], archs[ex_thresh_inds[0]], (acc_diff > 0)[ex_thresh_inds]
+                archs_1, archs_2, better_lst, acc_diff_lst = archs[ex_thresh_inds[1]], archs[ex_thresh_inds[0]], (acc_diff > 0)[ex_thresh_inds], acc_diff[ex_thresh_inds]
             n_diff_pairs = len(better_lst)
             n_diff_pairs_meter.update(float(n_diff_pairs))
-            loss = model.update_compare(archs_1, archs_2, better_lst)
+            if eq_threshold is None:
+                if margin_diff_coeff is not None:
+                    margin = np.abs(acc_diff_lst) * margin_diff_coeff
+                    loss = model.update_compare(archs_1, archs_2, better_lst, margin=margin)
+                else:
+                    loss = model.update_compare(archs_1, archs_2, better_lst)
+            else:
+                # drag close the score of arch pairs whose true acc diffs are below args.eq_threshold
+                n_eq_pairs = int(args.max_compare_ratio * n * eq_pair_ratio)
+                below_eq_thresh_inds = np.where(acc_abs_diff_matrix < eq_threshold)
+                below_eq_thresh_num = len(below_eq_thresh_inds[0])
+                if below_eq_thresh_num > n_eq_pairs:
+                    keep_inds = np.random.choice(np.arange(below_eq_thresh_num), n_eq_pairs, replace=False)
+                    below_eq_thresh_inds = (below_eq_thresh_inds[0][keep_inds], below_eq_thresh_inds[1][keep_inds])
+                eq_archs_1, eq_archs_2, below_acc_diff_lst = \
+                    archs[below_eq_thresh_inds[1]], archs[below_eq_thresh_inds[0]], acc_abs_diff_matrix[below_eq_thresh_inds]
+                if margin_diff_coeff is not None:
+                    margin = np.concatenate((
+                        np.abs(acc_diff_lst),
+                        np.abs(below_acc_diff_lst))) * margin_diff_coeff
+                else:
+                    margin = None
+                better_pm_lst = np.concatenate((2 * better_lst - 1, np.zeros(len(eq_archs_1))))
+                n_eq_pairs_meter.update(float(len(eq_archs_1)))
+                loss = model.update_compare_eq(np.concatenate((archs_1, eq_archs_1)),
+                                               np.concatenate((archs_2, eq_archs_2)),
+                                               better_pm_lst, margin=margin)
             objs.update(loss, n_diff_pairs)
         else:
             loss = model.update_predict(archs, accs)
@@ -259,9 +293,11 @@ def train(train_loader, model, epoch, args):
             n_pair_per_batch = (args.batch_size * (args.batch_size - 1)) // 2
             logging.info("train {:03d} [{:03d}/{:03d}] {:.4f}; {}".format(
                 epoch, step, len(train_loader), objs.avg,
-                "different pair ratio: {:.3f} ({:.1f}/{:3d})".format(
+                "different pair ratio: {:.3f} ({:.1f}/{:3d}){}".format(
                     n_diff_pairs_meter.avg / n_pair_per_batch,
-                    n_diff_pairs_meter.avg, n_pair_per_batch) if args.compare else ""))
+                    n_diff_pairs_meter.avg, n_pair_per_batch,
+                    "; eq pairs: {.3d}".format(n_eq_pairs_meter.avg) if eq_threshold is not None else "")
+                if args.compare else ""))
     return objs.avg
 
 def test_xp(true_scores, predict_scores):
@@ -397,8 +433,14 @@ def valid(val_loader, model, args, funcs=[]):
 
     corr = stats.kendalltau(true_accs, all_scores).correlation
     if args.valid_true_split or args.valid_score_split:
-        valid_true_split = ["null"] + [float(x) for x in args.valid_true_split.split(",")]
-        valid_score_split = ["null"] + [float(x) for x in args.valid_score_split.split(",")]
+        if args.valid_true_split:
+            valid_true_split = ["null"] + [float(x) for x in args.valid_true_split.split(",")]
+        else:
+            valid_true_split = ["null"]
+        if args.valid_score_split:
+            valid_score_split = ["null"] + [float(x) for x in args.valid_score_split.split(",")]
+        else:
+            valid_score_split = ["null"]
         tas_list = []
         sas_list = []
         num_unique_tas_list = []
