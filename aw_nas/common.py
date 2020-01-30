@@ -370,7 +370,7 @@ class CNNSearchSpace(CellSearchSpace):
 
         graph.render(filename, view=False)
 
-        return filename + ".png"
+        return filename + ".{}".format(plot_format)
 
     def plot_arch(self, genotypes, filename, label="", edge_labels=None, plot_format="pdf"): #pylint: disable=arguments-differ
         """Plot an architecture to files on disk"""

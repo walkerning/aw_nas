@@ -37,7 +37,8 @@ class NasBench101SearchSpace(SearchSpace):
         self.ops_choices = [
             "conv1x1-bn-relu",
             "conv3x3-bn-relu",
-            "maxpool3x3"
+            "maxpool3x3",
+            "none",
         ]
         self.ops_choice_to_idx = {choice: i for i, choice in enumerate(self.ops_choices)}
 
@@ -45,6 +46,7 @@ class NasBench101SearchSpace(SearchSpace):
         self.load_nasbench = load_nasbench
         self.num_vertices = VERTICES
         self.max_edges = MAX_EDGES
+        self.none_op_ind = self.ops_choices.index("none")
         self.num_possible_edges = self.num_vertices * (self.num_vertices - 1) // 2
         self.num_op_choices = len(self.ops_choices) # 3
         self.num_ops = self.num_vertices - 2 # 5
@@ -432,6 +434,7 @@ class NasBench101FlowArchEmbedder(ArchEmbedder):
                  share_op_attention=False,
                  other_node_zero=False, gcn_kwargs=None,
                  use_bn=False,
+                 use_final_only=False,
                  dropout=0., schedule_cfg=None):
         super(NasBench101FlowArchEmbedder, self).__init__(schedule_cfg)
 
@@ -444,9 +447,11 @@ class NasBench101FlowArchEmbedder(ArchEmbedder):
         self.gcn_out_dims = gcn_out_dims
         self.dropout = dropout
         self.use_bn = use_bn
+        self.use_final_only = use_final_only
         self.share_op_attention = share_op_attention
         self.vertices = self.search_space.num_vertices
         self.num_op_choices = self.search_space.num_op_choices
+        self.none_op_ind = self.search_space.none_op_ind
 
         self.input_node_emb = nn.Embedding(1, self.node_embedding_dim)
         # Maybe separate output node?
@@ -505,13 +510,13 @@ class NasBench101FlowArchEmbedder(ArchEmbedder):
             dim=1)
         x = self.x_hidden(node_embs)
         # x: (batch_size, vertices, hid_dim)
-        return adjs, x, op_embs
+        return adjs, x, op_embs, op_inds
 
     def forward(self, archs):
         # adjs: (batch_size, vertices, vertices)
         # x: (batch_size, vertices, hid_dim)
         # op_emb: (batch_size, vertices, emb_dim)
-        adjs, x, op_emb = self.embed_and_transform_arch(archs)
+        adjs, x, op_emb, op_inds = self.embed_and_transform_arch(archs)
         if self.share_op_attention:
             op_emb = self.op_attention(op_emb)
         y = x
@@ -524,8 +529,18 @@ class NasBench101FlowArchEmbedder(ArchEmbedder):
                 y = F.relu(y)
             y = F.dropout(y, self.dropout, training=self.training)
         # y: (batch_size, vertices, gcn_out_dims[-1])
-        y = y[:, 1:, :] # do not keep the inputs node embedding
-        y = torch.mean(y, dim=1) # average across nodes (bs, god)
+        if self.use_final_only:
+            # only use the output node's info embedding as the embedding
+            y = y[:, -1, :]
+        else:
+            y = y[:, 1:, :] # do not keep the inputs node embedding
+
+            # throw away padded info here
+            y = torch.cat((
+                y[:, :-1, :] * (op_inds != self.none_op_ind)[:, :, None].to(torch.float32),
+                y[:, -1:, :]), axis=1)
+
+            y = torch.mean(y, dim=1) # average across nodes (bs, god)
         return y
 
 

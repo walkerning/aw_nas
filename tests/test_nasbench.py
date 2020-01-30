@@ -6,6 +6,39 @@ AWNAS_TEST_NASBENCH = os.environ.get("AWNAS_TEST_NASBENCH", None)
 
 @pytest.mark.skipif(
     not AWNAS_TEST_NASBENCH, reason="do not test the nasbench BTC by default.")
+def test_flow_embedder():
+    import numpy as np
+    from aw_nas.evaluator.arch_network import ArchEmbedder
+    from aw_nas.common import get_search_space
+
+    nasbench_search_space = get_search_space("nasbench-101", load_nasbench=False)
+    device = "cuda"
+    embedder = ArchEmbedder.get_class_("nb101-flow")(nasbench_search_space)
+    embedder.to(device)
+    arch_1 = (np.array([[0, 1, 0, 0, 1, 1, 0],
+                        [0, 0, 1, 0, 0, 0, 0],
+                        [0, 0, 0, 1, 0, 0, 1],
+                        [0, 0, 0, 0, 0, 1, 0],
+                        [0, 0, 0, 0, 0, 1, 0],
+                        [0, 0, 0, 0, 0, 0, 1],
+                        [0, 0, 0, 0, 0, 0, 0]], dtype=np.int8), [1, 2, 1, 1, 0])
+    arch_2 = (np.array([[0, 1, 0, 1, 1, 0, 0],
+                        [0, 0, 1, 0, 0, 0, 1],
+                        [0, 0, 0, 1, 0, 0, 0],
+                        [0, 0, 0, 0, 1, 0, 1],
+                        [0, 0, 0, 0, 0, 0, 1],
+                        [0, 0, 0, 0, 0, 0, 0],
+                        [0, 0, 0, 0, 0, 0, 0]], dtype=np.int8),
+            nasbench_search_space.op_to_idx(
+                ['input', 'conv3x3-bn-relu', 'conv3x3-bn-relu', 'maxpool3x3',
+                 'conv3x3-bn-relu', 'none', 'output']))
+    print(arch_1)
+    print(arch_2)
+    print(embedder.forward([arch_1, arch_2]))
+    # embedder.embed_and_transform_arch(arch_2)
+
+@pytest.mark.skipif(
+    not AWNAS_TEST_NASBENCH, reason="do not test the nasbench BTC by default.")
 def test_nasbench(nasbench_search_space):
     from scipy.stats import stats
     from aw_nas.btcs import nasbench

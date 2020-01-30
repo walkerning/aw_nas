@@ -709,6 +709,8 @@ class PairwiseComparator(ArchNetwork, nn.Module):
                  compare_loss_type="margin_linear",
                  compare_margin=0.01,
                  pairing_method="concat",
+                 diff_only=False,
+                 train_use_sigmoid=False,
                  sorting_residue_worse_thresh=100,
                  sorting_residue_better_thresh=100,
                  max_grad_norm=None,
@@ -730,12 +732,16 @@ class PairwiseComparator(ArchNetwork, nn.Module):
         self.sorting_residue_worse_thresh = sorting_residue_worse_thresh
         self.sorting_residue_better_thresh = sorting_residue_better_thresh
         self.max_grad_norm = max_grad_norm
+        self.train_use_sigmoid = train_use_sigmoid
+        self.diff_only = diff_only
 
         self.search_space = search_space
         ae_cls = ArchEmbedder.get_class_(arch_embedder_type)
         self.arch_embedder = ae_cls(self.search_space, **(arch_embedder_cfg or {}))
 
-        dim = self.embedding_dim = 2 * self.arch_embedder.out_dim
+        dim = self.embedding_dim = self.arch_embedder.out_dim \
+                                   if (diff_only and pairing_method == "diff") \
+                                   else 2 * self.arch_embedder.out_dim
         # construct MLP from embedding to score
         self.mlp = []
         for hidden_size in mlp_hiddens:
@@ -761,11 +767,15 @@ class PairwiseComparator(ArchNetwork, nn.Module):
             score += 1 - torch.sigmoid(self.mlp(emb))
             score /= 2
         elif self.pairing_method == "diff":
-            emb = torch.cat((emb_1, emb_2 - emb_1), dim=-1)
-            score = torch.sigmoid(self.mlp(emb))
-            emb = torch.cat((emb_2, emb_1 - emb_2), dim=-1)
-            score += 1 - torch.sigmoid(self.mlp(emb))
-            score /= 2
+            if not self.diff_only:
+                emb = torch.cat((emb_1, emb_2 - emb_1), dim=-1)
+                score = torch.sigmoid(self.mlp(emb))
+                emb = torch.cat((emb_2, emb_1 - emb_2), dim=-1)
+                score += 1 - torch.sigmoid(self.mlp(emb))
+                score /= 2
+            else:
+                emb = emb_2 - emb_1
+                score = torch.sigmoid(self.mlp(emb))
         return score.squeeze(-1)
 
     def _cmp_for_sorted(self, x, y):
@@ -788,11 +798,18 @@ class PairwiseComparator(ArchNetwork, nn.Module):
                 score,
                 score.new(better_labels))
         elif self.compare_loss_type == "margin_linear":
-            score = torch.sigmoid(mlp_out)
+            if self.train_use_sigmoid:
+                score = torch.sigmoid(mlp_out)
+            else:
+                score = mlp_out
             better_pm = 2 * score.new(np.array(better_labels, dtype=np.float32)) - 1
             zero_ = score.new([0.])
-            pair_loss = torch.mean(torch.max(zero_, self.compare_margin - \
-                                             better_pm * (2 * score - 1)))
+            if self.train_use_sigmoid:
+                pair_loss = torch.mean(torch.max(zero_, self.compare_margin - \
+                                                 better_pm * (2 * score - 1)))
+            else:
+                pair_loss = torch.mean(torch.max(zero_, self.compare_margin - \
+                                                 better_pm * score))
         return pair_loss
 
     def update_compare(self, arch_1, arch_2, better_labels):
@@ -807,12 +824,17 @@ class PairwiseComparator(ArchNetwork, nn.Module):
             mlp_out = self.mlp(emb).squeeze()
             pair_loss += self._get_loss(mlp_out, 1 - better_labels)
         elif self.pairing_method == "diff":
-            emb = torch.cat((emb_1, emb_2 - emb_1), dim=-1)
-            mlp_out = self.mlp(emb).squeeze()
-            pair_loss = self._get_loss(mlp_out, better_labels)
-            emb = torch.cat((emb_2, emb_1 - emb_2), dim=-1)
-            mlp_out = self.mlp(emb).squeeze()
-            pair_loss += self._get_loss(mlp_out, 1 - better_labels)
+            if not self.diff_only:
+                emb = torch.cat((emb_1, emb_2 - emb_1), dim=-1)
+                mlp_out = self.mlp(emb).squeeze()
+                pair_loss = self._get_loss(mlp_out, better_labels)
+                emb = torch.cat((emb_2, emb_1 - emb_2), dim=-1)
+                mlp_out = self.mlp(emb).squeeze()
+                pair_loss += self._get_loss(mlp_out, 1 - better_labels)
+            else:
+                emb = emb_2 - emb_1
+                mlp_out = self.mlp(emb).squeeze()
+                pair_loss = self._get_loss(mlp_out, better_labels)
         self.optimizer.zero_grad()
         pair_loss.backward()
         self._clip_grads()

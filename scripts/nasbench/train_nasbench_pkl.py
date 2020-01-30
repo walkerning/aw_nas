@@ -109,7 +109,7 @@ def train(train_loader, model, epoch, args):
         else:
             accs = f_accs
         if args.compare:
-            if None in accs:
+            if None in f_accs:
                 # some archs only have half-time acc
                 n_max_pairs = int(args.max_compare_ratio * n)
                 n_max_inter_pairs = int(args.inter_pair_ratio * n_max_pairs)
@@ -117,6 +117,21 @@ def train(train_loader, model, epoch, args):
                 mask = np.zeros(n)
                 mask[half_inds] = 1
                 final_inds = np.where(1 - mask)[0]
+
+                # half_eche = h_accs[half_inds]
+                # half_acc_diff = h_accs[:, None] - half_eche # (num, num_half)
+                # half_ex_thresh_inds = np.where(half_acc_diff > getattr(
+                #     args, "half_compare_threshold", 2 * args.compare_threshold))
+                # half_ex_thresh_num = len(half_ex_thresh_inds[0])
+                # if half_ex_thresh_num > n_max_inter_pairs:
+                #     # random choose
+                #     keep_inds = np.random.choice(np.arange(half_ex_thresh_num), n_max_inter_pairs, replace=False)
+                #     half_ex_thresh_inds = (half_ex_thresh_inds[0][keep_inds],
+                #                            half_ex_thresh_inds[1][keep_inds])
+                # inter_archs_1, inter_archs_2, inter_better_lst \
+                #     = archs[half_inds[half_ex_thresh_inds[1]]], archs[half_ex_thresh_inds[0]], \
+                #     (half_acc_diff > 0)[half_ex_thresh_inds]
+
                 half_eche = h_accs[half_inds]
                 final_eche = h_accs[final_inds]
                 half_acc_diff = final_eche[:, None] - half_eche # (num_final, num_half)
@@ -235,7 +250,7 @@ def test_xk(true_scores, predict_scores):
             reorder_predict_scores[arch_inds]).correlation))
     return patks
 
-def pairwise_valid(val_loader, model, seed=None):
+def pairwise_valid(val_loader, model, seed=None, funcs=[]):
     if seed is not None:
         random.seed(seed)
         np.random.seed(seed)
@@ -248,8 +263,10 @@ def pairwise_valid(val_loader, model, seed=None):
 
     num_valid = len(true_accs)
     pseudo_scores = np.zeros(num_valid)
+    # indexes, ranks = model.argsort_list(all_archs, batch_size=512)
     indexes = model.argsort_list(all_archs, batch_size=512)
     pseudo_scores[indexes] = np.arange(num_valid)
+    # pseudo_scores[indexes] = ranks
 
     corr = stats.kendalltau(true_accs, pseudo_scores).correlation
     funcs_res = [func(true_accs, all_scores) for func in funcs]
@@ -264,8 +281,9 @@ def valid(val_loader, model, args, funcs=[]):
                     args, "pairwise_valid_seeds", [1, 12, 123]
             )])
         funcs_res = np.mean(funcs_res, axis=0)
-        logging.info("pairwise: ", corrs)
-        return np.mean(corrs), true_accs, p_scores, funcs_res
+        logging.info("pairwise: {}".format(corrs))
+        # return np.mean(corrs), true_accs, p_scores, funcs_res
+        return np.mean(corrs), funcs_res
 
     model.eval()
     all_scores = []
@@ -291,6 +309,10 @@ def main(argv):
     parser.add_argument("--test-only", default=False, action="store_true")
     parser.add_argument("--test-funcs", default=None, help="comma-separated list of test funcs")
     parser.add_argument("--load", default=None, help="Load comparator from disk.")
+    parser.add_argument("--full", default=False, action="store_true")
+    parser.add_argument("--eval-only-last", default=None, type=int,
+                        help=("for pairwise compartor, the evaluation is slow,"
+                              " only evaluate in the final epochs"))
     args = parser.parse_args(argv)
 
     # log
@@ -330,46 +352,54 @@ def main(argv):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    if not os.path.exists("./nasbench_7v.pkl"):
-        # init nasbench search space, might take several minutes
-        search_space = get_search_space("nasbench-101")
-        # sort according to hash, direct group without using get_metrics_from_spec
-        fixed_statistics = list(search_space.nasbench.fixed_statistics.items())
-        # only handle archs with 7 nodes for efficient batching
-        fixed_statistics = [stat for stat in fixed_statistics
-                            if stat[1]["module_adjacency"].shape[0] == 7]
-        logging.info("Number of arch data: {}".format(len(fixed_statistics)))
-        valid_ratio = 0.1
-        num_valid = int(len(fixed_statistics) * valid_ratio)
-        train_data = []
-        for key, f_metric in fixed_statistics[:-num_valid]:
-            arch = (f_metric["module_adjacency"], search_space.op_to_idx(f_metric["module_operations"]))
-            metrics = search_space.nasbench.computed_statistics[key]
-            valid_acc = np.mean([metrics[108][i]["final_validation_accuracy"] for i in range(3)])
-            half_valid_acc = np.mean([metrics[108][i]["halfway_validation_accuracy"]
-                                      for i in range(3)])
-            train_data.append((arch, valid_acc, half_valid_acc))
-
-        valid_data = []
-        for key, f_metric in fixed_statistics[-num_valid:]:
-            arch = (f_metric["module_adjacency"], search_space.op_to_idx(f_metric["module_operations"]))
-            metrics = search_space.nasbench.computed_statistics[key]
-            valid_acc = np.mean([metrics[108][i]["final_validation_accuracy"] for i in range(3)])
-            half_valid_acc = np.mean([metrics[108][i]["halfway_validation_accuracy"]
-                                      for i in range(3)])
-            valid_data.append((arch, valid_acc, half_valid_acc))
-
-        with open("nasbench_7v.pkl", "wb") as wf:
-            pickle.dump(train_data, wf)
-        with open("nasbench_7v_valid.pkl", "wb") as wf:
-            pickle.dump(valid_data, wf)
-    else:
+    if args.full:
         search_space = get_search_space("nasbench-101", load_nasbench=False)
-        logging.info("Load pkl cache from nasbench_7v.pkl and nasbench_7v_valid.pkl")
-        with open("nasbench_7v.pkl", "rb") as rf:
+        logging.info("Load pkl cache from nasbench_allv.pkl and nasbench_allv_valid.pkl")
+        with open("nasbench_allv.pkl", "rb") as rf:
             train_data = pickle.load(rf)
-        with open("nasbench_7v_valid.pkl", "rb") as rf:
+        with open("nasbench_allv_valid.pkl", "rb") as rf:
             valid_data = pickle.load(rf)
+    else:
+        if not os.path.exists("./nasbench_7v.pkl"):
+            # init nasbench search space, might take several minutes
+            search_space = get_search_space("nasbench-101")
+            # sort according to hash, direct group without using get_metrics_from_spec
+            fixed_statistics = list(search_space.nasbench.fixed_statistics.items())
+            # only handle archs with 7 nodes for efficient batching
+            fixed_statistics = [stat for stat in fixed_statistics
+                                if stat[1]["module_adjacency"].shape[0] == 7]
+            logging.info("Number of arch data: {}".format(len(fixed_statistics)))
+            valid_ratio = 0.1
+            num_valid = int(len(fixed_statistics) * valid_ratio)
+            train_data = []
+            for key, f_metric in fixed_statistics[:-num_valid]:
+                arch = (f_metric["module_adjacency"], search_space.op_to_idx(f_metric["module_operations"]))
+                metrics = search_space.nasbench.computed_statistics[key]
+                valid_acc = np.mean([metrics[108][i]["final_validation_accuracy"] for i in range(3)])
+                half_valid_acc = np.mean([metrics[108][i]["halfway_validation_accuracy"]
+                                          for i in range(3)])
+                train_data.append((arch, valid_acc, half_valid_acc))
+    
+            valid_data = []
+            for key, f_metric in fixed_statistics[-num_valid:]:
+                arch = (f_metric["module_adjacency"], search_space.op_to_idx(f_metric["module_operations"]))
+                metrics = search_space.nasbench.computed_statistics[key]
+                valid_acc = np.mean([metrics[108][i]["final_validation_accuracy"] for i in range(3)])
+                half_valid_acc = np.mean([metrics[108][i]["halfway_validation_accuracy"]
+                                          for i in range(3)])
+                valid_data.append((arch, valid_acc, half_valid_acc))
+    
+            with open("nasbench_7v.pkl", "wb") as wf:
+                pickle.dump(train_data, wf)
+            with open("nasbench_7v_valid.pkl", "wb") as wf:
+                pickle.dump(valid_data, wf)
+        else:
+            search_space = get_search_space("nasbench-101", load_nasbench=False)
+            logging.info("Load pkl cache from nasbench_7v.pkl and nasbench_7v_valid.pkl")
+            with open("nasbench_7v.pkl", "rb") as rf:
+                train_data = pickle.load(rf)
+            with open("nasbench_7v_valid.pkl", "rb") as rf:
+                valid_data = pickle.load(rf)
 
     with open(backup_cfg_file, "r") as cfg_f:
         cfg = yaml.load(cfg_f)
@@ -451,8 +481,9 @@ def main(argv):
         else:
             avg_loss = train(train_loader, model, i_epoch, args)
         logging.info("Train: Epoch {:3d}: train loss {:.4f}".format(i_epoch, avg_loss))
-        corr, _ = valid(val_loader, model, args)
-        logging.info("Valid: Epoch {:3d}: kendall tau {:.4f}".format(i_epoch, corr))
+        if args.eval_only_last is None or (args.epochs - i_epoch < args.eval_only_last):
+            corr, _ = valid(val_loader, model, args)
+            logging.info("Valid: Epoch {:3d}: kendall tau {:.4f}".format(i_epoch, corr))
         if i_epoch % args.save_every == 0:
             save_path = os.path.join(args.train_dir, "{}.ckpt".format(i_epoch))
             model.save(save_path)
