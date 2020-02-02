@@ -1064,7 +1064,8 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
     def _init_data_queues_and_hidden(self, data_type, data_portion, mepa_as_surrogate):
         self._dataset_related_attrs = []
         if data_type == "image":
-            queue_cfgs = [{"split": "train", "portion": p,
+            queue_cfgs = [{"split": p[0] if isinstance(p, (list, tuple)) else "train",
+                           "portion": p[1] if isinstance(p, (list, tuple)) else p,
                            "batch_size": self.batch_size} for p in data_portion]
             self.s_hid_kwargs = {}
             self.c_hid_kwargs = {}
@@ -1079,10 +1080,12 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
                                      for n in ["surrogate", "mepa", "controller"]]
             queue_cfgs = []
             for callback, portion in zip(self.hiddens_resetter, data_portion):
-                queue_cfgs.append({"split": "train", "portion": portion,
-                                   "batch_size": self.batch_size,
-                                   "bptt_steps": self.bptt_steps,
-                                   "callback": callback})
+                queue_cfgs.append({
+                    "split": portion[0] if isinstance(portion, (list, tuple)) else "train",
+                    "portion": portion[1] if isinstance(portion, (list, tuple)) else portion,
+                    "batch_size": self.batch_size,
+                    "bptt_steps": self.bptt_steps,
+                    "callback": callback})
             self.s_hid_kwargs = {"hiddens": self.surrogate_hiddens}
             self.c_hid_kwargs = {"hiddens": self.controller_hiddens}
             self.m_hid_kwargs = {"hiddens": self.mepa_hiddens}

@@ -146,7 +146,8 @@ class DenseGraphConvolution(nn.Module):
 class DenseGraphFlow(nn.Module):
 
     def __init__(self, in_features, out_features, op_emb_dim,
-                 has_attention=True, plus_I=False, normalize=False, bias=True):
+                 has_attention=True, plus_I=False, normalize=False, bias=True,
+                 residual_only=None):
         super(DenseGraphFlow, self).__init__()
 
         self.plus_I = plus_I
@@ -154,6 +155,7 @@ class DenseGraphFlow(nn.Module):
         self.in_features = in_features
         self.out_features = out_features
         self.op_emb_dim = op_emb_dim
+        self.residual_only = residual_only
         self.weight = nn.Parameter(torch.FloatTensor(in_features, out_features))
         if has_attention:
             self.op_attention = nn.Linear(op_emb_dim, out_features)
@@ -182,7 +184,10 @@ class DenseGraphFlow(nn.Module):
         else:
             adj_aug = adj
         support = torch.matmul(inputs, self.weight)
-        output = torch.sigmoid(self.op_attention(op_emb)) * torch.matmul(adj_aug, support) + support
+        if self.residual_only is None:
+            output = torch.sigmoid(self.op_attention(op_emb)) * torch.matmul(adj_aug, support) + support
+        else:
+            output = torch.sigmoid(self.op_attention(op_emb)) * torch.matmul(adj_aug, support) + support[:, :self.residual_only, :]
         if self.bias is not None:
             return output + self.bias
         else:
