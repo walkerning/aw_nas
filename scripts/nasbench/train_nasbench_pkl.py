@@ -15,6 +15,7 @@ from scipy.stats import stats
 import torch
 import torch.backends.cudnn as cudnn
 import numpy as np
+import setproctitle
 from torch.utils.data import Dataset, DataLoader
 
 from aw_nas import utils
@@ -314,6 +315,9 @@ def main(argv):
                         help=("for pairwise compartor, the evaluation is slow,"
                               " only evaluate in the final epochs"))
     args = parser.parse_args(argv)
+
+    setproctitle.setproctitle("python train_nasbench_pkl.py config: {}; train_dir: {}; cwd: {}"\
+                              .format(args.cfg_file, args.train_dir, os.getcwd()))
 
     # log
     log_format = "%(asctime)s %(message)s"

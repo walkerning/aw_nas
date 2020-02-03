@@ -435,6 +435,7 @@ class NasBench101FlowArchEmbedder(ArchEmbedder):
                  other_node_zero=False, gcn_kwargs=None,
                  use_bn=False,
                  use_final_only=False,
+                 input_op_emb_trainable=False,
                  dropout=0., schedule_cfg=None):
         super(NasBench101FlowArchEmbedder, self).__init__(schedule_cfg)
 
@@ -449,6 +450,7 @@ class NasBench101FlowArchEmbedder(ArchEmbedder):
         self.use_bn = use_bn
         self.use_final_only = use_final_only
         self.share_op_attention = share_op_attention
+        self.input_op_emb_trainable = input_op_emb_trainable
         self.vertices = self.search_space.num_vertices
         self.num_op_choices = self.search_space.num_op_choices
         self.none_op_ind = self.search_space.none_op_ind
@@ -465,7 +467,8 @@ class NasBench101FlowArchEmbedder(ArchEmbedder):
         #                                     requires_grad=False)
 
         # the last embedding is the output op emb
-        self.input_op_emb = nn.Parameter(torch.zeros(1, self.op_embedding_dim), requires_grad=False)
+        self.input_op_emb = nn.Parameter(torch.zeros(1, self.op_embedding_dim),
+                                         requires_grad=self.input_op_emb_trainable)
         self.op_emb = nn.Embedding(self.num_op_choices, self.op_embedding_dim)
         self.output_op_emb = nn.Embedding(1, self.op_embedding_dim)
 

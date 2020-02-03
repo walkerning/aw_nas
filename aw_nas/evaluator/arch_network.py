@@ -305,6 +305,7 @@ class GCNFlowArchEmbedder(ArchEmbedder):
                  normalize=False,
                  use_bn=False,
                  other_node_independent=False,
+                 share_self_op_emb=False,
                  schedule_cfg=None):
         super(GCNFlowArchEmbedder, self).__init__(schedule_cfg)
 
@@ -319,6 +320,7 @@ class GCNFlowArchEmbedder(ArchEmbedder):
         self.dropout = dropout
         self.use_bn = use_bn
         self.other_node_independent = other_node_independent
+        self.share_self_op_emb = share_self_op_emb
 
         self._num_init_nodes = self.search_space.num_init_nodes
         self._num_node_inputs = self.search_space.num_node_inputs
@@ -326,7 +328,9 @@ class GCNFlowArchEmbedder(ArchEmbedder):
         self._num_nodes = self._num_steps + self._num_init_nodes
         self._num_cg = self.search_space.num_cell_groups
 
-        # share init node embedding for all cell groups
+        # different init node embedding for different cell groups
+        # but share op embedding for different cell groups
+        # maybe this should be separated? at least for stride-2 op and stride-1 op
         if self.other_node_independent:
             self.init_node_emb = nn.Parameter(torch.Tensor(
                 self._num_cg, self._num_nodes, self.node_dim).normal_())
@@ -352,6 +356,11 @@ class GCNFlowArchEmbedder(ArchEmbedder):
                 emb = nn.Parameter(torch.Tensor(self.op_dim).normal_())
             setattr(self, "op_embedding_{}".format(idx), emb)
             self.op_emb.append(emb)
+        if self.share_self_op_emb:
+            self.self_op_emb = nn.Parameter(torch.FloatTensor(self.op_dim).normal_())
+        else:
+            self.self_op_emb = None
+
         self.x_hidden = nn.Linear(self.node_dim, self.hidden_dim)
 
         # init graph convolutions
@@ -379,6 +388,8 @@ class GCNFlowArchEmbedder(ArchEmbedder):
         get dense adjecent matrix, could be batched
         """
         f_nodes = np.array(arch[:, 0, :])
+        # n_d: input degree (num_node_inputs)
+        # ops: (b_size * n_cg, n_steps * n_d)
         ops = np.array(arch[:, 1, :])
         _ndim = f_nodes.ndim
         if _ndim == 1:
@@ -462,7 +473,8 @@ class GCNFlowArchEmbedder(ArchEmbedder):
         adjs, adj_op_inds_lst, x = self.embed_and_transform_arch(archs)
         y = x
         for i_layer, gcn in enumerate(self.gcns):
-            y = gcn(y, adjs, adj_op_inds_lst, torch.stack(self.op_emb), self.none_index)
+            y = gcn(y, adjs, adj_op_inds_lst, torch.stack(self.op_emb), self.none_index,
+                    self_op_emb=self.self_op_emb)
             if self.use_bn:
                 shape_y = y.shape
                 y = self.bns[i_layer](y.reshape(shape_y[0], -1, shape_y[-1])).reshape(shape_y)

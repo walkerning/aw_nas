@@ -12,6 +12,7 @@ import random
 import pickle
 
 import yaml
+import setproctitle
 from scipy.stats import stats
 
 import torch
@@ -504,6 +505,8 @@ def main(argv):
     parser.add_argument("--sample-conflict-file", default=None, type=str)
     parser.add_argument("--sample-ratio", default=10, type=float)
     parser.add_argument("--sample-output-dir", default="./sample_output/")
+    # parser.add_argument("--data-fname", default="cellss_data.pkl")
+    parser.add_argument("--data-fname", default="cellss_data_round1_999.pkl")
     parser.add_argument("--addi-train", default=[], action="append", help="additional train data")
     parser.add_argument("--addi-train-only", action="store_true", default=False)
     parser.add_argument("--addi-valid", default=[], action="append", help="additional valid data")
@@ -511,6 +514,9 @@ def main(argv):
     parser.add_argument("--valid-true-split", default=None)
     parser.add_argument("--valid-score-split", default=None)
     args = parser.parse_args(argv)
+
+    setproctitle.setproctitle("python train_cellss_pkl.py config: {}; train_dir: {}; cwd: {}"\
+                              .format(args.cfg_file, args.train_dir, os.getcwd()))
 
     # log
     log_format = "%(asctime)s %(message)s"
@@ -549,7 +555,8 @@ def main(argv):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logging.info("Load pkl cache from cellss_data.pkl")
-    with open("cellss_data.pkl", "rb") as rf:
+    data_fname = args.data_fname
+    with open(data_fname, "rb") as rf:
         data = pickle.load(rf)
     with open(backup_cfg_file, "r") as cfg_f:
         cfg = yaml.load(cfg_f)
