@@ -7,5 +7,6 @@ from aw_nas.utils.lr_scheduler import *
 from aw_nas.utils.parallel_utils import (
     replicate,
     data_parallel,
-    DataParallel
+    DataParallel,
+    DistributedDataParallel
 )
