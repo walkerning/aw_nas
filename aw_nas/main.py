@@ -143,9 +143,11 @@ def _set_gpu(gpu):
 @click.group(cls=_OrderedCommandGroup,
              help="The awnas NAS framework command line interface. "
              "Use `AWNAS_LOG_LEVEL` environment variable to modify the log level.")
-def main():
-    mp.set_start_method("spawn")
-
+@click.option("--local_rank", default=-1, type=int,
+              help="the rank of this process")
+def main(local_rank):
+    if local_rank > -1:
+        torch.cuda.set_device(local_rank)
 
 # ---- Search, Sample, Derive using trainer ----
 @main.command(help="Searching for architecture.")
@@ -565,6 +567,87 @@ def derive(cfg_file, load, out_file, n, save_plot, test, steps, gpu, seed, dump_
                 of.write("# ---- Arch {} (Reward {}) ----\n".format(i, rollout.get_perf()))
                 _dump(rollout, dump_mode, of)
                 of.write("\n")
+
+
+# ---- Multiprocess Train, Test using final_trainer ----
+@main.command(help="Train an architecture.")
+@click.argument("cfg_file", required=True, type=str)
+@click.option("--seed", default=None, type=int,
+              help="the random seed to run training")
+@click.option("--load", default=None, type=str,
+              help="the checkpoint to load")
+@click.option("--load-state-dict", default=None, type=str,
+              help="the checkpoint (state dict) to load")
+@click.option("--save-every", default=None, type=int,
+              help="the number of epochs to save checkpoint every")
+@click.option("--train-dir", default=None, type=str,
+              help="the directory to save checkpoints")
+def mptrain(seed, cfg_file, load, load_state_dict, save_every, train_dir):
+    if train_dir:
+        # backup config file, and if in `develop` mode, also backup the aw_nas source code
+        train_dir = utils.makedir(train_dir, remove=True)
+        shutil.copyfile(cfg_file, os.path.join(train_dir, "train_config.yaml"))
+
+        # add log file handler
+        log_file = os.path.join(train_dir, "train.log")
+        _logger.addFile(log_file)
+
+    LOGGER.info("CWD: %s", os.getcwd())
+    LOGGER.info("CMD: %s", " ".join(sys.argv))
+
+    setproctitle.setproctitle("awnas-train config: {}; train_dir: {}; cwd: {}"\
+                              .format(cfg_file, train_dir, os.getcwd()))
+
+    # set gpu
+    device = torch.cuda.current_device()
+    torch.distributed.init_process_group(backend="nccl")
+
+    # set seed
+    if seed is not None:
+        LOGGER.info("Setting random seed: %d.", seed)
+        np.random.seed(seed)
+        random.seed(seed)
+        torch.manual_seed(seed)
+
+    # load components config
+    LOGGER.info("Loading configuration files.")
+    with open(cfg_file, "r") as f:
+        cfg = yaml.safe_load(f)
+
+    # initialize components
+    LOGGER.info("Initializing components.")
+    search_space = _init_component(cfg, "search_space")
+    whole_dataset = _init_component(cfg, "dataset")
+
+    _data_type = whole_dataset.data_type()
+    if _data_type == "sequence":
+        # get the num_tokens
+        num_tokens = whole_dataset.vocab_size
+        LOGGER.info("Dataset %s: vocabulary size: %d", whole_dataset.NAME, num_tokens)
+        model = _init_component(cfg, "final_model",
+                                search_space=search_space,
+                                device=device,
+                                num_tokens=num_tokens)
+    else:
+        model = _init_component(cfg, "final_model",
+                                search_space=search_space,
+                                device=device)
+    # check model support for data type
+    expect(_data_type in model.supported_data_types())
+    objective = _init_component(cfg, "objective", search_space=search_space)
+    trainer = _init_component(cfg, "final_trainer",
+                              dataset=whole_dataset,
+                              model=model,
+                              device=device,
+                              gpus=[device],
+                              objective=objective)
+    # check trainer support for data type
+    expect(_data_type in trainer.supported_data_types())
+
+    # start training
+    LOGGER.info("Start training.")
+    trainer.setup(load, load_state_dict, save_every, train_dir)
+    trainer.train()
 
 
 # ---- Train, Test using final_trainer ----
