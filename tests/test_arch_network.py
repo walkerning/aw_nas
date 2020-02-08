@@ -23,11 +23,18 @@ def test_arch_embedder(case):
     assert arch_embedding.shape[0] == batch_size
     assert arch_embedding.shape[1] == embedder.out_dim
 
-def test_gcnflow_arch_embedder_utils():
+@pytest.mark.parametrize("ss_cfg", [
+    {
+        "shared_primitives": ["skip_connect", "sep_conv_3x3", "sep_conv_5x5",
+                              "avg_pool_3x3", "max_pool_3x3"]
+    },
+    {}
+])
+def test_gcnflow_arch_embedder_utils(ss_cfg):
     from aw_nas.evaluator.arch_network import GCNFlowArchEmbedder
     from aw_nas.common import get_search_space
 
-    search_space = get_search_space(cls="cnn")
+    search_space = get_search_space(cls="cnn", **ss_cfg)
     device = "cuda"
     embedder = GCNFlowArchEmbedder(search_space)
     embedder.to(device)
@@ -36,11 +43,12 @@ def test_gcnflow_arch_embedder_utils():
     rollouts = [search_space.random_sample() for _ in range(batch_size)]
     archs = [r.arch for r in rollouts]
     adj_matrices, adj_op_inds_lst, x = embedder.embed_and_transform_arch(archs)
+    op_offset = 1 - int("none" in search_space.shared_primitives)
     assert search_space.num_init_nodes == len(adj_op_inds_lst)
     for i in range(batch_size):
         for j in range(search_space.num_cell_groups):
             for idx, (from_node, op) in enumerate(zip(rollouts[i].arch[j][0], rollouts[i].arch[j][1])):
-                assert adj_op_inds_lst[idx % 2][i, j][idx // 2 + 2, from_node] == op
+                assert adj_op_inds_lst[idx % 2][i, j][idx // 2 + 2, from_node] == op + op_offset
 
 def test_gcn_arch_embedder_utils():
     from aw_nas.evaluator.arch_network import GCNArchEmbedder

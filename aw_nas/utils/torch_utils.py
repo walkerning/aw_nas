@@ -347,6 +347,92 @@ class DenseGraphOpEdgeFlow(nn.Module):
                + str(self.in_features) + ' -> ' \
                + str(self.out_features) + ')'
 
+class DenseGraphSimpleOpEdgeFlow(nn.Module):
+    """
+    For search space that has operation on the edge.
+    SimpleOpEdgeFlow is applicable to the search space in which no double connection
+    between nodes exists.
+    """
+    def __init__(self, in_features, out_features, op_emb_dim,
+                 has_attention=True, plus_I=False, share_self_op_emb=False,
+                 normalize=False, bias=False,
+                 residual_only=None,
+                 concat=None, has_aggregate_op=False):
+        super(DenseGraphSimpleOpEdgeFlow, self).__init__()
+        
+        self.plus_I = plus_I
+        self.share_self_op_emb = share_self_op_emb
+        self.residual_only = residual_only
+        self.normalize = normalize
+        self.in_features = in_features
+        self.out_features = out_features
+        self.op_emb_dim = op_emb_dim
+        self.weight = nn.Parameter(torch.FloatTensor(in_features, out_features))
+        self.has_aggregate_op = has_aggregate_op
+        if self.has_aggregate_op:
+            # TODO: a non linear aggregate op can brought more representation ability?
+            # but no nonlinear aggreate op that have good interpreatability
+            # occurs to me for now..
+            # how the aggregation of different information dimensions
+            # differ? maybe can only use things like... sum, powered sum
+            # differ in the degree of emphasizing ``stronger'' info..
+            self.aggregate_op = nn.Linear(out_features, out_features)
+        if has_attention:
+            self.op_attention = nn.Linear(op_emb_dim, out_features)
+        else:
+            assert self.op_emb_dim == self.out_features
+            self.op_attention = nn.Identity()
+        if self.plus_I and not self.share_self_op_emb:
+            self.self_op_emb = nn.Parameter(torch.FloatTensor(op_emb_dim))
+        if bias:
+            self.bias = nn.Parameter(torch.FloatTensor(out_features))
+        else:
+            self.register_parameter("bias", None)
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        stdv = 1. / math.sqrt(self.weight.size(1))
+        self.weight.data.uniform_(-stdv, stdv)
+        if self.bias is not None:
+            self.bias.data.uniform_(-stdv, stdv)
+
+    def forward(self, inputs, adj, op_emb, self_op_emb=None):
+        # support: (b, V, h_i)
+        support = torch.matmul(inputs, self.weight)
+
+        if self.plus_I:
+            eye_mask = support.new(np.eye(adj.shape[-1]))
+            # for i in range(len(adj_op_inds_lst)):
+            #     op_emb_adj_lst[i] = torch.where(eye_mask, self.self_op_emb, op_emb_adj_lst[i])
+            #     attn_mask_inds_lst[i] = attn_mask_inds_lst[i] & (~eye_mask.bool())
+            self_op_emb = self_op_emb if self.share_self_op_emb else self.self_op_emb
+            op_emb = torch.where(eye_mask.unsqueeze(-1).to(torch.bool), self_op_emb, op_emb)
+            adj = adj + eye_mask.to(torch.long)
+
+        # attn: (b, V, V, h_i)
+        attn = torch.sigmoid(self.op_attention(op_emb))
+        attn = ((adj != 0).unsqueeze(-1).to(torch.float32)).detach() * attn
+
+        if self.residual_only is None:
+            res_output = support
+        else:
+            res_output = torch.cat(
+                (support[:, :self.residual_only, :],
+                 torch.zeros([support.shape[0], support.shape[1] - self.residual_only,
+                              support.shape[2]],
+                             device=support.device)), dim=1)
+
+        processed_info = (attn * support.unsqueeze(-3)).sum(-2)
+        if self.has_aggregate_op:
+            output = self.aggregate_op(processed_info) + res_output
+        else:
+            output = processed_info + res_output
+        if self.bias is not None:
+            return output + self.bias
+        else:
+            return output
+
 ## --- dataset ---
 class SimpleDataset(torch.utils.data.Dataset):
     def __init__(self, data):

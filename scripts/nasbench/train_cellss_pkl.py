@@ -465,27 +465,6 @@ def valid(val_loader, model, args, funcs=[]):
     funcs_res = [func(true_accs, all_scores) for func in funcs]
     return corr, funcs_res
 
-ss_cfg_str = """
-search_space_cfg:
-  cell_layout: null
-  num_cell_groups: 2
-  num_init_nodes: 2
-  num_layers: 8
-  num_node_inputs: 2
-  num_steps: 4
-  reduce_cell_groups:
-  - 1
-  shared_primitives:
-  - none
-  - max_pool_3x3
-  - avg_pool_3x3
-  - skip_connect
-  - sep_conv_3x3
-  - sep_conv_5x5
-  - dil_conv_3x3
-  - dil_conv_5x5
-search_space_type: cnn
-"""
 
 def main(argv):
     parser = argparse.ArgumentParser(prog="train_cellss_pkl.py")
@@ -513,6 +492,7 @@ def main(argv):
     parser.add_argument("--addi-valid-only", action="store_true", default=False)
     parser.add_argument("--valid-true-split", default=None)
     parser.add_argument("--valid-score-split", default=None)
+    parser.add_argument("--enas-ss", default=False, action="store_true")
     args = parser.parse_args(argv)
 
     setproctitle.setproctitle("python train_cellss_pkl.py config: {}; train_dir: {}; cwd: {}"\
@@ -566,6 +546,49 @@ def main(argv):
 
     arch_network_type = cfg.get("arch_network_type", "pointwise_comparator")
     model_cls = ArchNetwork.get_class_(arch_network_type)
+    # search space
+    if args.enas_ss:
+        ss_cfg_str = """
+search_space_type: cnn
+search_space_cfg:
+  cell_layout: null
+  num_cell_groups: 2
+  num_init_nodes: 2
+  num_layers: 8
+  num_node_inputs: 2
+  num_steps: 4
+  reduce_cell_groups:
+  - 1
+  shared_primitives:
+  - skip_connect
+  - sep_conv_3x3
+  - sep_conv_5x5
+  - avg_pool_3x3
+  - max_pool_3x3
+        """
+    else:
+        ss_cfg_str = """
+search_space_cfg:
+  cell_layout: null
+  num_cell_groups: 2
+  num_init_nodes: 2
+  num_layers: 8
+  num_node_inputs: 2
+  num_steps: 4
+  reduce_cell_groups:
+  - 1
+  shared_primitives:
+  - none
+  - max_pool_3x3
+  - avg_pool_3x3
+  - skip_connect
+  - sep_conv_3x3
+  - sep_conv_5x5
+  - dil_conv_3x3
+  - dil_conv_5x5
+search_space_type: cnn
+        """
+    
     ss_cfg = yaml.load(StringIO(ss_cfg_str))
     search_space = get_search_space(ss_cfg["search_space_type"], **ss_cfg["search_space_cfg"])
     model = model_cls(search_space, **cfg.pop("arch_network_cfg"))

@@ -344,8 +344,13 @@ class GCNFlowArchEmbedder(ArchEmbedder):
         self.num_ops = len(self.search_space.shared_primitives)
         try:
             self.none_index = self.search_space.shared_primitives.index("none")
+            self.add_none_index = False
+            assert self.none_index == 0, \
+                "search space with none op should have none op as the first primitive"
         except ValueError:
             self.none_index = len(self.search_space.shared_primitives)
+            self.none_index = 0
+            self.add_none_index = True
             self.num_ops += 1
 
         self.op_emb = []
@@ -391,6 +396,8 @@ class GCNFlowArchEmbedder(ArchEmbedder):
         # n_d: input degree (num_node_inputs)
         # ops: (b_size * n_cg, n_steps * n_d)
         ops = np.array(arch[:, 1, :])
+        if self.add_none_index:
+            ops = ops + 1
         _ndim = f_nodes.ndim
         if _ndim == 1:
             f_nodes = np.expand_dims(f_nodes, 0)
@@ -673,7 +680,7 @@ class PointwiseComparator(ArchNetwork, nn.Module):
         # logging.info("exp score maxmin: {} {}".format(exp_score_rank.min(), exp_score_rank.max()))
         # logging.info("normalize maxmin: {} {}".format(normalize.min(), normalize.max()))
         # loss = torch.mean(torch.sum(torch.log(normalize) - torch.log(exp_score_rank), dim=1))
-        loss = torch.mean(torch.mean(torch.log(normalize) - torch.log(exp_score_rank), dim=1))
+        loss = torch.mean(torch.mean(torch.log(normalize + EPS) - torch.log(exp_score_rank + EPS), dim=1))
         # logging.info("loss: {}".format(loss))
         if not accumulate_only:
             self.optimizer.zero_grad()
