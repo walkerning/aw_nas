@@ -541,7 +541,7 @@ class NasBench101FlowArchEmbedder(ArchEmbedder):
             # throw away padded info here
             y = torch.cat((
                 y[:, :-1, :] * (op_inds != self.none_op_ind)[:, :, None].to(torch.float32),
-                y[:, -1:, :]), axis=1)
+                y[:, -1:, :]), dim=1)
 
             y = torch.mean(y, dim=1) # average across nodes (bs, god)
         return y

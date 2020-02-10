@@ -3,6 +3,7 @@ Networks that take architectures as inputs.
 """
 
 import abc
+import logging
 
 import numpy as np
 import scipy.sparse as sp
@@ -515,6 +516,7 @@ class PointwiseComparator(ArchNetwork, nn.Module):
                  compare_loss_type="margin_linear",
                  compare_margin=0.01,
                  margin_l2=False,
+                 use_incorrect_list_only=False,
                  max_grad_norm=None,
                  schedule_cfg=None):
         # [optional] arch reconstruction loss (arch_decoder_type/cfg)
@@ -529,6 +531,8 @@ class PointwiseComparator(ArchNetwork, nn.Module):
         self.compare_margin = compare_margin
         self.margin_l2 = margin_l2
         self.max_grad_norm = max_grad_norm
+        # for update_argsort listwise only
+        self.use_incorrect_list_only = use_incorrect_list_only
 
         self.search_space = search_space
         ae_cls = ArchEmbedder.get_class_(arch_embedder_type)
@@ -668,20 +672,36 @@ class PointwiseComparator(ArchNetwork, nn.Module):
             exp_score_rank = exp_score
         EPS = 1e-12
         exp_score_rank = torch.max(exp_score_rank, torch.tensor(EPS).to(exp_score_rank.device))
-        inds = (np.tile(np.arange(bs)[:, None], [1, len_]),
-                np.tile(np.arange(len_)[::-1][None, :], [bs, 1]))
+
+        if self.use_incorrect_list_only:
+            correct_idxes = torch.all(torch.argsort(
+                exp_score_rank, dim=-1, descending=True) \
+                                      == exp_score_rank.new(np.arange(len_)).to(torch.long),
+                                      dim=-1)
+            do_not_train_idxes = (exp_score_rank[:, -1] / exp_score_rank[:, 0] < 1e-9) & correct_idxes
+            keep_list_idxes = 1 - do_not_train_idxes
+            exp_score_rank = exp_score_rank[keep_list_idxes]
+            actual_bs = torch.sum(keep_list_idxes).item()
+            logging.debug("actual bs: {}".format(actual_bs))
+        else:
+            actual_bs = bs
+
+        inds = (np.tile(np.arange(actual_bs)[:, None], [1, len_]),
+                np.tile(np.arange(len_)[::-1][None, :], [actual_bs, 1]))
         normalize = torch.cumsum(exp_score_rank[inds], dim=1)[inds]
 
         if first_n is not None:
             exp_score_rank = exp_score_rank[:, :first_n]
             normalize = normalize[:, :first_n]
 
-        # import logging
-        # logging.info("exp score maxmin: {} {}".format(exp_score_rank.min(), exp_score_rank.max()))
-        # logging.info("normalize maxmin: {} {}".format(normalize.min(), normalize.max()))
-        # loss = torch.mean(torch.sum(torch.log(normalize) - torch.log(exp_score_rank), dim=1))
-        loss = torch.mean(torch.mean(torch.log(normalize + EPS) - torch.log(exp_score_rank + EPS), dim=1))
-        # logging.info("loss: {}".format(loss))
+        normalize = torch.clamp(normalize, min=1.e-10)
+        exp_score_rank = torch.clamp(exp_score_rank, min=1.e-11)
+        loss = torch.mean(torch.mean(torch.log(normalize + EPS) - torch.log(exp_score_rank + EPS),
+                                     dim=1))
+
+        logging.debug("exp score maxmin: {} {}".format(exp_score_rank.min(), exp_score_rank.max()))
+        logging.debug("normalize maxmin: {} {}".format(normalize.min(), normalize.max()))
+        logging.debug("loss: {}".format(loss))
         if not accumulate_only:
             self.optimizer.zero_grad()
         loss.backward()

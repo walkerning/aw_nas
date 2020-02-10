@@ -46,15 +46,18 @@ def train_listwise(train_data, model, epoch, args):
     model.train()
     num_data = len(train_data)
     idx_list = np.arange(num_data)
-    num_batches = getattr(
+    num_batches = max(1, getattr(
         args, "num_batch_per_epoch",
-        int(num_data / (args.batch_size * args.list_length) * args.max_compare_ratio))
+        round(num_data / (args.batch_size * args.list_length) * args.max_compare_ratio)))
     logging.info("Number of batches: {:d}".format(num_batches))
     update_batch_n = getattr(args, "update_batch_n", 1)
     listwise_compare = getattr(args, "listwise_compare", False)
     if listwise_compare:
         assert args.list_length == 2 and update_batch_n == 1
     model.optimizer.zero_grad()
+    # if epoch >= 15:
+    #     import ipdb
+    #     ipdb.set_trace()
     for step in range(1, num_batches + 1):
         if getattr(args, "bs_replace", False):
             idxes = np.array([np.random.choice(idx_list, size=(args.list_length,), replace=False) for _ in range(args.batch_size)])
@@ -311,6 +314,7 @@ def main(argv):
     parser.add_argument("--test-funcs", default=None, help="comma-separated list of test funcs")
     parser.add_argument("--load", default=None, help="Load comparator from disk.")
     parser.add_argument("--full", default=False, action="store_true")
+    parser.add_argument("--testset", default=False, action="store_true")
     parser.add_argument("--eval-only-last", default=None, type=int,
                         help=("for pairwise compartor, the evaluation is slow,"
                               " only evaluate in the final epochs"))
@@ -356,7 +360,14 @@ def main(argv):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    if args.full:
+    if args.testset:
+        search_space = get_search_space("nasbench-101", load_nasbench=False)
+        logging.info("Load pkl cache from nasbench_allv_new.pkl and nasbench_allv_new_valid.pkl")
+        with open("nasbench_allv_new.pkl", "rb") as rf:
+            train_data = pickle.load(rf)
+        with open("nasbench_allv_new_valid.pkl", "rb") as rf:
+            valid_data = pickle.load(rf)
+    elif args.full:
         search_space = get_search_space("nasbench-101", load_nasbench=False)
         logging.info("Load pkl cache from nasbench_allv.pkl and nasbench_allv_valid.pkl")
         with open("nasbench_allv.pkl", "rb") as rf:
@@ -443,6 +454,18 @@ def main(argv):
                          len(half_inds), args.ignore_quantile * 100)
             for ind in half_inds:
                 train_data[ind] = (train_data[ind][0], None, train_data[ind][2])
+    args.split_valid_from_train = getattr(args, "split_valid_from_train", None)
+    if args.split_valid_from_train is not None:
+        num_split_valid = int(num_train_archs * args.split_valid_from_train)
+        split_valid_data = train_data[-num_split_valid:]
+        train_data = train_data[:-num_split_valid]
+        split_valid_loader = DataLoader(NasBench101Dataset(split_valid_data, minus=cfg.get("dataset_minus", None),
+                                                           div=cfg.get("dataset_div", None)),
+                                        batch_size=args.batch_size, shuffle=False, pin_memory=True, num_workers=1,
+                                        collate_fn=lambda items: list(zip(*items)))
+        logging.info("SPLIT VALID: Number of architectures: train: %d; split valid: %d; valid: %d",
+                     num_train_archs - num_split_valid, num_split_valid, len(valid_data))
+
     train_data = NasBench101Dataset(train_data, minus=cfg.get("dataset_minus", None),
                                     div=cfg.get("dataset_div", None))
     valid_data = NasBench101Dataset(valid_data, minus=cfg.get("dataset_minus", None),
@@ -485,6 +508,9 @@ def main(argv):
         else:
             avg_loss = train(train_loader, model, i_epoch, args)
         logging.info("Train: Epoch {:3d}: train loss {:.4f}".format(i_epoch, avg_loss))
+        if args.split_valid_from_train is not None:
+            corr, _ = valid(split_valid_loader, model, args)
+            logging.info("Split valid: Epoch {:3d}: kendall tau {:.4f}".format(i_epoch, corr))
         if args.eval_only_last is None or (args.epochs - i_epoch < args.eval_only_last):
             corr, _ = valid(val_loader, model, args)
             logging.info("Valid: Epoch {:3d}: kendall tau {:.4f}".format(i_epoch, corr))
