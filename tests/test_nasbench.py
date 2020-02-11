@@ -6,14 +6,38 @@ AWNAS_TEST_NASBENCH = os.environ.get("AWNAS_TEST_NASBENCH", None)
 
 @pytest.mark.skipif(
     not AWNAS_TEST_NASBENCH, reason="do not test the nasbench BTC by default.")
-def test_flow_embedder():
+@pytest.mark.parametrize(
+    "case", [
+        {"embedder_type": "nb101-lstm"},
+        {"embedder_type": "nb101-lstm",
+         "embedder_cfg": {
+             "use_hid": True,
+             "num_layers": 3
+         }},
+        {"embedder_type": "nb101-seq"},
+        {"embedder_type": "nb101-flow"},
+        {"embedder_type": "nb101-flow",
+         "embedder_cfg": {
+             "use_final_only": True,
+             "use_global_node": True
+         }},
+        {"embedder_type": "nb101-gcn"},
+        {"embedder_type": "nb101-gcn",
+         "embedder_cfg": {
+             "use_final_only": True,
+             "use_global_node": True
+         }},
+    ])
+def test_embedder(case):
     import numpy as np
     from aw_nas.evaluator.arch_network import ArchEmbedder
     from aw_nas.common import get_search_space
 
     nasbench_search_space = get_search_space("nasbench-101", load_nasbench=False)
     device = "cuda"
-    embedder = ArchEmbedder.get_class_("nb101-flow")(nasbench_search_space)
+    embedder = ArchEmbedder.get_class_(case["embedder_type"])(
+        nasbench_search_space,
+        **case.get("embedder_cfg", {}))
     embedder.to(device)
     arch_1 = (np.array([[0, 1, 0, 0, 1, 1, 0],
                         [0, 0, 1, 0, 0, 0, 0],

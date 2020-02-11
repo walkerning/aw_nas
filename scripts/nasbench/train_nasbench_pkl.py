@@ -46,7 +46,10 @@ def train_listwise(train_data, model, epoch, args):
     model.train()
     num_data = len(train_data)
     idx_list = np.arange(num_data)
-    num_batches = max(1, getattr(
+    # num_batches = max(1, getattr(
+    #     args, "num_batch_per_epoch",
+    #     round(num_data / (args.batch_size * args.list_length) * args.max_compare_ratio)))
+    num_batches = max(16, getattr(
         args, "num_batch_per_epoch",
         round(num_data / (args.batch_size * args.list_length) * args.max_compare_ratio)))
     logging.info("Number of batches: {:d}".format(num_batches))

@@ -95,7 +95,7 @@ class NasBench201SearchSpace(SearchSpace):
 
     def random_sample_arch(self):
         arch = np.zeros((self.num_vertices, self.num_vertices))
-        arch[np.tril_indices(self.num_veritices, k=-1)] = np.random.randint(
+        arch[np.tril_indices(self.num_vertices, k=-1)] = np.random.randint(
             low=0, high=self.num_op_choices, size=self.num_ops)
         return arch
 
@@ -128,67 +128,62 @@ class NasBench201Rollout(BaseRollout):
             .format(arch=self.arch, perf=self.perf)
 
 
-# class NasBench201ArchEmbedder(ArchEmbedder):
-#     NAME = "nb201-gcn"
+class NasBench201_LSTMSeqEmbedder(ArchEmbedder):
+    NAME = "nb201-lstm"
 
-#     def __init__(self, search_space, embedding_dim=48, hid_dim=48, gcn_out_dims=[128, 128],
-#                  gcn_kwargs=None, dropout=0., schedule_cfg=None):
-#         super(NasBench201ArchEmbedder, self).__init__(schedule_cfg)
+    def __init__(self, search_space, num_hid=100, emb_hid=100, num_layers=1,
+                 use_mean=False, use_hid=False,
+                 schedule_cfg=None):
+        super(NasBench201_LSTMSeqEmbedder, self).__init__(schedule_cfg)
 
-#         self.search_space = search_space
+        self.search_space = search_space
+        self.num_hid = num_hid
+        self.num_layers = num_layers
+        self.emb_hid = emb_hid
+        self.use_mean = use_mean
+        self.use_hid = use_hid
 
-#         # configs
-#         self.embedding_dim = embedding_dim
-#         self.hid_dim = hid_dim
-#         self.gcn_out_dims = gcn_out_dims
-#         self.dropout = dropout
-#         self.verticies = self.search_space.num_vertices
-#         self.num_op_choices = self.search_space.num_op_choices
+        self.op_emb = nn.Embedding(self.search_space.num_op_choices, self.emb_hid)
 
-#         self.input_op_emb = nn.Embedding(1, self.embedding_dim)
-#         # zero is ok
-#         self.output_op_emb = nn.Parameter(torch.zeros((1, self.embedding_dim)),
-#                                           requires_grad=False)
+        self.rnn = nn.LSTM(input_size=self.emb_hid,
+                           hidden_size=self.num_hid, num_layers=self.num_layers,
+                           batch_first=True)
 
-#         self.op_emb = nn.Embedding(self.num_op_choices, self.embedding_dim)
-#         self.x_hidden = nn.Linear(self.embedding_dim, self.hid_dim)
+        self.out_dim = num_hid
+        self._tril_indices = np.tril_indices(self.search_space.num_vertices, k=-1)
 
-#         # init graph convolutions
-#         self.gcns = []
-#         in_dim = self.hid_dim
-#         for dim in self.gcn_out_dims:
-#             self.gcns.append(DenseGraphConvolution(in_dim, dim, **(gcn_kwargs or {})))
-#             in_dim = dim
-#         self.gcns = nn.ModuleList(self.gcns)
-#         self.num_gcn_layers = len(self.gcns)
-#         self.out_dim = in_dim
+    def forward(self, archs):
+        x = [arch[self._tril_indices] for arch in archs]
+        embs = self.op_emb(torch.LongTensor(x).to(self.op_emb.weight.device))
+        out, (h_n, _) = self.rnn(embs)
 
-#     def embed_and_transform_arch(self, archs):
-#         adjs = self.input_op_emb.weight.new([arch[0].T for arch in archs])
-#         op_inds = self.input_op_emb.weight.new([arch[1] for arch in archs]).long()
-#         node_embs = self.op_emb(op_inds) # (batch_size, vertices - 2, emb_dim)
-#         b_size = node_embs.shape[0]
-#         node_embs = torch.cat((self.input_op_emb.weight.unsqueeze(0).repeat([b_size, 1, 1]),
-#                                node_embs, self.output_op_emb.unsqueeze(0).repeat([b_size, 1, 1])),
-#                               dim=1)
-#         x = self.x_hidden(node_embs)
-#         # x: (batch_size, vertices, hid_dim)
-#         return adjs, x
+        if self.use_hid:
+            y = h_n[0]
+        else:
+            if self.use_mean:
+                y = torch.mean(out, dim=1)
+            else:
+                # return final output
+                y = out[:, -1, :]
+        return y
 
-#     def forward(self, archs):
-#         # adjs: (batch_size, vertices, vertices)
-#         # x: (batch_size, vertices, hid_dim)
-#         adjs, x = self.embed_and_transform_arch(archs)
-#         y = x
-#         for i_layer, gcn in enumerate(self.gcns):
-#             y = gcn(y, adjs)
-#             if i_layer != self.num_gcn_layers - 1:
-#                 y = F.relu(y)
-#             y = F.dropout(y, self.dropout, training=self.training)
-#         # y: (batch_size, vertices, gcn_out_dims[-1])
-#         y = y[:, 1:, :] # do not keep the inputs node embedding
-#         y = torch.mean(y, dim=1) # average across nodes (bs, god)
-#         return y
+
+class NasBench201_SimpleSeqEmbedder(ArchEmbedder):
+    NAME = "nb201-seq"
+
+    def __init__(self, search_space, schedule_cfg=None):
+        super(NasBench201_SimpleSeqEmbedder, self).__init__(schedule_cfg)
+
+        self.search_space = search_space
+        self.out_dim = self.search_space.num_ops
+        self.num_node = self.search_space.num_vertices
+
+        self._tril_indices = np.tril_indices(self.num_node, k=-1)
+        self._placeholder_tensor = nn.Parameter(torch.zeros(1))
+
+    def forward(self, archs):
+        x = [arch[self._tril_indices] for arch in archs]
+        return self._placeholder_tensor.new(x)
 
 
 class NasBench201FlowArchEmbedder(ArchEmbedder):

@@ -363,27 +363,106 @@ class NasBench101Evaluator(BaseEvaluator):
     def load(self, path):
         pass
 
+
+# TODO: the multi stage trick could apply for all the embedders
+class NasBench101_LSTMSeqEmbedder(ArchEmbedder):
+    NAME = "nb101-lstm"
+
+    def __init__(self, search_space, num_hid=100, emb_hid=100, num_layers=1,
+                 use_mean=False, use_hid=False,
+                 schedule_cfg=None):
+        super(NasBench101_LSTMSeqEmbedder, self).__init__(schedule_cfg)
+                
+        self.search_space = search_space
+        self.num_hid = num_hid
+        self.num_layers = num_layers
+        self.emb_hid = emb_hid
+        self.use_mean = use_mean
+        self.use_hid = use_hid
+        
+        self.op_emb = nn.Embedding(self.search_space.num_op_choices, self.emb_hid)
+        self.conn_emb = nn.Embedding(2, self.emb_hid)
+
+        self.rnn = nn.LSTM(input_size=self.emb_hid,
+                           hidden_size=self.num_hid, num_layers=self.num_layers,
+                           batch_first=True)
+
+        self.out_dim = num_hid
+        self._triu_indices = np.triu_indices(VERTICES, k=1)
+
+    def forward(self, archs):
+        x_1 = np.array([arch[0][self._triu_indices] for arch in archs])
+        x_2 = np.array([arch[1] for arch in archs])
+
+        conn_embs = self.conn_emb(torch.LongTensor(x_1).to(self.op_emb.weight.device))
+        op_embs = self.op_emb(torch.LongTensor(x_2).to(self.op_emb.weight.device))
+        emb = torch.cat((conn_embs, op_embs), dim=-2)
+
+        out, (h_n, _) = self.rnn(emb)
+
+        if self.use_hid:
+            y = h_n[0]
+        else:
+            if self.use_mean:
+                y = torch.mean(out, dim=1)
+            else:
+                # return final output
+                y = out[:, -1, :]
+        return y
+
+
+class NasBench101_SimpleSeqEmbedder(ArchEmbedder):
+    NAME = "nb101-seq"
+
+    def __init__(self, search_space, use_all_adj_items=False, schedule_cfg=None):
+        super(NasBench101_SimpleSeqEmbedder, self).__init__(schedule_cfg)
+
+        self.search_space = search_space
+        self.use_all_adj_items = use_all_adj_items
+        self.out_dim = 49 + 5 if use_all_adj_items else 21 + 5
+        self._placeholder_tensor = nn.Parameter(torch.zeros(1))
+
+    def forward(self, archs):
+        if self.use_all_adj_items:
+            x = np.concatenate(
+                [np.array([arch[0].reshape(-1) for arch in archs]),
+                 np.array([arch[1] for arch in archs])], axis=-1)
+        else:
+            triu_indices = np.triu_indices(VERTICES, k=1)
+            x_1 = np.array([arch[0][triu_indices] for arch in archs])
+            x_2 = np.array([arch[1] for arch in archs])
+            x = np.concatenate([x_1, x_2], axis=-1)
+        return self._placeholder_tensor.new(x)
+
 class NasBench101ArchEmbedder(ArchEmbedder):
     NAME = "nb101-gcn"
 
     def __init__(self, search_space, embedding_dim=48, hid_dim=48, gcn_out_dims=[128, 128],
-                 gcn_kwargs=None, dropout=0., schedule_cfg=None):
+                 gcn_kwargs=None, dropout=0.,
+                 use_global_node=False,
+                 use_final_only=False,
+                 schedule_cfg=None):
         super(NasBench101ArchEmbedder, self).__init__(schedule_cfg)
 
         self.search_space = search_space
 
         # configs
+        self.none_op_ind = self.search_space.none_op_ind
         self.embedding_dim = embedding_dim
         self.hid_dim = hid_dim
         self.gcn_out_dims = gcn_out_dims
         self.dropout = dropout
-        self.verticies = self.search_space.num_vertices
+        self.use_global_node = use_global_node
+        self.use_final_only = use_final_only
+        self.vertices = self.search_space.num_vertices
         self.num_op_choices = self.search_space.num_op_choices
 
         self.input_op_emb = nn.Embedding(1, self.embedding_dim)
         # zero is ok
-        self.output_op_emb = nn.Parameter(torch.zeros((1, self.embedding_dim)),
-                                          requires_grad=False)
+        self.output_op_emb = nn.Parameter(torch.zeros((1, self.embedding_dim)))
+        # requires_grad=False)
+        if self.use_global_node:
+            self.global_op_emb = nn.Parameter(torch.zeros((1, self.embedding_dim)))
 
         self.op_emb = nn.Embedding(self.num_op_choices, self.embedding_dim)
         self.x_hidden = nn.Linear(self.embedding_dim, self.hid_dim)
@@ -401,19 +480,36 @@ class NasBench101ArchEmbedder(ArchEmbedder):
     def embed_and_transform_arch(self, archs):
         adjs = self.input_op_emb.weight.new([arch[0].T for arch in archs])
         op_inds = self.input_op_emb.weight.new([arch[1] for arch in archs]).long()
+        if self.use_global_node:
+            tmp_ones = torch.ones((adjs.shape[0], 1, 1), device=adjs.device)
+            tmp_cat = torch.cat((
+                tmp_ones,
+                (op_inds != self.none_op_ind).unsqueeze(1).to(torch.float32),
+                tmp_ones), dim=2)
+            adjs = torch.cat(
+                (torch.cat((adjs, tmp_cat), dim=1),
+                 torch.zeros((adjs.shape[0], self.vertices + 1, 1), device=adjs.device)), dim=2)
         node_embs = self.op_emb(op_inds) # (batch_size, vertices - 2, emb_dim)
         b_size = node_embs.shape[0]
-        node_embs = torch.cat((self.input_op_emb.weight.unsqueeze(0).repeat([b_size, 1, 1]),
-                               node_embs, self.output_op_emb.unsqueeze(0).repeat([b_size, 1, 1])),
-                              dim=1)
+        if self.use_global_node:
+            node_embs = torch.cat((self.input_op_emb.weight.unsqueeze(0).repeat([b_size, 1, 1]),
+                                   node_embs,
+                                   self.output_op_emb.unsqueeze(0).repeat([b_size, 1, 1]),
+                                   self.global_op_emb.unsqueeze(0).repeat([b_size, 1, 1])),
+                                  dim=1)
+        else:
+            node_embs = torch.cat((self.input_op_emb.weight.unsqueeze(0).repeat([b_size, 1, 1]),
+                                   node_embs,
+                                   self.output_op_emb.unsqueeze(0).repeat([b_size, 1, 1])),
+                                  dim=1)
         x = self.x_hidden(node_embs)
         # x: (batch_size, vertices, hid_dim)
-        return adjs, x
+        return adjs, x, op_inds
 
     def forward(self, archs):
         # adjs: (batch_size, vertices, vertices)
         # x: (batch_size, vertices, hid_dim)
-        adjs, x = self.embed_and_transform_arch(archs)
+        adjs, x, op_inds = self.embed_and_transform_arch(archs)
         y = x
         for i_layer, gcn in enumerate(self.gcns):
             y = gcn(y, adjs)
@@ -421,8 +517,15 @@ class NasBench101ArchEmbedder(ArchEmbedder):
                 y = F.relu(y)
             y = F.dropout(y, self.dropout, training=self.training)
         # y: (batch_size, vertices, gcn_out_dims[-1])
-        y = y[:, 1:, :] # do not keep the inputs node embedding
-        y = torch.mean(y, dim=1) # average across nodes (bs, god)
+        if self.use_final_only:
+            y = y[:, -1, :]
+        else:
+            y = y[:, 1:, :] # do not keep the inputs node embedding
+            # throw away padded info here
+            y = torch.cat((
+                y[:, :-1, :] * (op_inds != self.none_op_ind)[:, :, None].to(torch.float32),
+                y[:, -1:, :]), dim=1)
+            y = torch.mean(y, dim=1) # average across nodes (bs, god)
         return y
 
 
@@ -434,6 +537,7 @@ class NasBench101FlowArchEmbedder(ArchEmbedder):
                  share_op_attention=False,
                  other_node_zero=False, gcn_kwargs=None,
                  use_bn=False,
+                 use_global_node=False,
                  use_final_only=False,
                  input_op_emb_trainable=False,
                  dropout=0., schedule_cfg=None):
@@ -449,6 +553,7 @@ class NasBench101FlowArchEmbedder(ArchEmbedder):
         self.dropout = dropout
         self.use_bn = use_bn
         self.use_final_only = use_final_only
+        self.use_global_node = use_global_node
         self.share_op_attention = share_op_attention
         self.input_op_emb_trainable = input_op_emb_trainable
         self.vertices = self.search_space.num_vertices
@@ -471,6 +576,9 @@ class NasBench101FlowArchEmbedder(ArchEmbedder):
                                          requires_grad=self.input_op_emb_trainable)
         self.op_emb = nn.Embedding(self.num_op_choices, self.op_embedding_dim)
         self.output_op_emb = nn.Embedding(1, self.op_embedding_dim)
+        if self.use_global_node:
+            self.global_op_emb = nn.Parameter(torch.zeros((1, self.op_embedding_dim)))
+            self.vertices += 1
 
         self.x_hidden = nn.Linear(self.node_embedding_dim, self.hid_dim)
 
@@ -499,14 +607,31 @@ class NasBench101FlowArchEmbedder(ArchEmbedder):
     def embed_and_transform_arch(self, archs):
         adjs = self.input_op_emb.new([arch[0].T for arch in archs])
         op_inds = self.input_op_emb.new([arch[1] for arch in archs]).long()
+        if self.use_global_node:
+            tmp_ones = torch.ones((adjs.shape[0], 1, 1), device=adjs.device)
+            tmp_cat = torch.cat((
+                tmp_ones,
+                (op_inds != self.none_op_ind).unsqueeze(1).to(torch.float32),
+                tmp_ones), dim=2)
+            adjs = torch.cat(
+                (torch.cat((adjs, tmp_cat), dim=1),
+                 torch.zeros((adjs.shape[0], self.vertices, 1), device=adjs.device)), dim=2)
         op_embs = self.op_emb(op_inds) # (batch_size, vertices - 2, op_emb_dim)
         b_size = op_embs.shape[0]
         # the input one should not be relevant
-        op_embs = torch.cat(
-            (self.input_op_emb.unsqueeze(0).repeat([b_size, 1, 1]),
-             op_embs,
-             self.output_op_emb.weight.unsqueeze(0).repeat([b_size, 1, 1])),
-            dim=1)
+        if self.use_global_node:
+            op_embs = torch.cat(
+                (self.input_op_emb.unsqueeze(0).repeat([b_size, 1, 1]),
+                 op_embs,
+                 self.output_op_emb.weight.unsqueeze(0).repeat([b_size, 1, 1]),
+                 self.global_op_emb.unsqueeze(0).repeat([b_size, 1, 1])),
+                dim=1)
+        else:
+            op_embs = torch.cat(
+                (self.input_op_emb.unsqueeze(0).repeat([b_size, 1, 1]),
+                 op_embs,
+                 self.output_op_emb.weight.unsqueeze(0).repeat([b_size, 1, 1])),
+                dim=1)
         node_embs = torch.cat(
             (self.input_node_emb.weight.unsqueeze(0).repeat([b_size, 1, 1]),
              self.other_node_emb.unsqueeze(0).repeat([b_size, self.vertices - 1, 1])),
@@ -539,9 +664,14 @@ class NasBench101FlowArchEmbedder(ArchEmbedder):
             y = y[:, 1:, :] # do not keep the inputs node embedding
 
             # throw away padded info here
-            y = torch.cat((
-                y[:, :-1, :] * (op_inds != self.none_op_ind)[:, :, None].to(torch.float32),
-                y[:, -1:, :]), dim=1)
+            if self.use_global_node:
+                y = torch.cat((
+                    y[:, :-2, :] * (op_inds != self.none_op_ind)[:, :, None].to(torch.float32),
+                    y[:, -2:, :]), dim=1)
+            else:
+                y = torch.cat((
+                    y[:, :-1, :] * (op_inds != self.none_op_ind)[:, :, None].to(torch.float32),
+                    y[:, -1:, :]), dim=1)
 
             y = torch.mean(y, dim=1) # average across nodes (bs, god)
         return y
