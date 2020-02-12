@@ -3,6 +3,7 @@ NASBench-201 search space, rollout, embedder
 """
 
 import os
+import copy
 import collections
 
 import numpy as np
@@ -40,7 +41,7 @@ class NasBench201SearchSpace(SearchSpace):
         self.num_possible_edges = self.num_vertices * (self.num_vertices - 1) // 2
         self.num_op_choices = len(self.ops_choices) # 5
         self.num_ops = self.num_vertices * (self.num_vertices - 1) // 2
-        self.idx = np.triu_indices(self.num_vertices, k=1)
+        self.idx = np.tril_indices(self.num_vertices, k=1)
 
         if self.load_nasbench:
             self._init_nasbench()
@@ -126,6 +127,67 @@ class NasBench201Rollout(BaseRollout):
     def __repr__(self):
         return "NasBench201Rollout(matrix={arch}, perf={perf})"\
             .format(arch=self.arch, perf=self.perf)
+
+
+class NasBench201SAController(BaseController):
+    NAME = "nasbench-201-sa"
+
+    def __init__(self, search_space, rollout_type="nasbench-201", mode="eval",
+                 temperature=1000, anneal_coeff=0.95,
+                 schedule_cfg=None):
+        super(NasBench201SAController, self).__init__(search_space, rollout_type, mode, schedule_cfg)
+
+        # get the infinite iterator of the model matrix and ops
+        self.num_veritices = self.search_space.num_veritices 
+        self.cur_solution = self.search_space.random_sample_arch()
+        self.temperature = temperature
+        self.anneal_coeff = anneal_coeff
+        self.cur_perf = None
+
+    def sample(self, n, batch_size=None):
+        assert batch_size is None
+        rollouts = []
+        while n_r < n:
+            rand_ind = np.random.randint(0, self.search_space.idx[0].shape[0])
+            neighbor_choice = np.random.randint(0, self.search_space.num_op_choices)
+            while neighbor_choice == self.cur_solution[self.search_space.idx[0][rand_ind],\
+                     self.search_space.idx[1][rand_ind]]:
+                neighbor_choice = np.random.randint(0, self.search_space.num_op_choices)
+            new_choice = copy.deepcopy(self.cur_solution)
+            new_choice[self.search_space.idx[0][rand_ind], self.search_space.idx[1][rand_ind]] = neighbor_choice
+            rollouts.append(NasBench201Rollout(new_choice, self.search_space))
+        return rollouts
+
+    @classmethod
+    def supported_rollout_types(cls):
+        return ["nasbench-201"]
+
+    def step(self, rollouts, optimizer):
+        assert len(rollouts) == 1
+        if self.cur_perf == None or self.cur_perf < rollouts[0].get_perf():
+            self.cur_perf = rollouts[0].get_perf()
+            self.cur_solution = rollouts[0].arch
+        elif np.exp((self.cur_perf - rollouts[0].get_perf()) / self.temperature) > np.random.rand(0, 1):
+            self.cur_perf = rollouts[0].get_perf() 
+            self.cur_solution = rollouts[0].arch
+        self.temperature *= self.anneal_coeff
+        return 0
+
+    # ---- APIs that is not necessary ----
+    def set_mode(self, mode):
+        pass
+
+    def set_device(self, device):
+        pass
+
+    def summary(self, rollouts, log=False, log_prefix="", step=None):
+        pass
+
+    def save(self, path):
+        pass
+
+    def load(self, path):
+        pass
 
 
 # class NasBench201ArchEmbedder(ArchEmbedder):
