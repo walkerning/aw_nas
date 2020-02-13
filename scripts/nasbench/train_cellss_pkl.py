@@ -406,6 +406,7 @@ def sample(search_space, model, N, K, args, from_genotypes=None, conflict_archs=
         batch_archs = archs[i_batch * args.batch_size: min((i_batch + 1) * args.batch_size, N)]
         scores = list(model.predict(batch_archs).cpu().data.numpy())
         all_scores += scores
+
     all_scores = np.array(all_scores)
     sorted_inds = np.argsort(all_scores)[::-1][:K]
     # np.where(np.triu(all_scores[sorted_inds] == all_scores[sorted_inds][:, None]).astype(float) - np.eye(N))
@@ -481,18 +482,19 @@ def main(argv):
     parser.add_argument("--sample", default=None, type=int)
     parser.add_argument("--sample-to-file", default=None, type=str)
     parser.add_argument("--sample-from-file", default=None, type=str)
-    parser.add_argument("--sample-conflict-file", default=None, type=str)
+    parser.add_argument("--sample-conflict-file", default=None, type=str, action="append")
     parser.add_argument("--sample-ratio", default=10, type=float)
     parser.add_argument("--sample-output-dir", default="./sample_output/")
     # parser.add_argument("--data-fname", default="cellss_data.pkl")
-    parser.add_argument("--data-fname", default="cellss_data_round1_999.pkl")
+    # parser.add_argument("--data-fname", default="cellss_data_round1_999.pkl")
+    parser.add_argument("--data-fname", default="enas_data_round1_980.pkl")
     parser.add_argument("--addi-train", default=[], action="append", help="additional train data")
     parser.add_argument("--addi-train-only", action="store_true", default=False)
     parser.add_argument("--addi-valid", default=[], action="append", help="additional valid data")
     parser.add_argument("--addi-valid-only", action="store_true", default=False)
     parser.add_argument("--valid-true-split", default=None)
     parser.add_argument("--valid-score-split", default=None)
-    parser.add_argument("--enas-ss", default=False, action="store_true")
+    parser.add_argument("--enas-ss", default=True, action="store_true")
     args = parser.parse_args(argv)
 
     setproctitle.setproctitle("python train_cellss_pkl.py config: {}; train_dir: {}; cwd: {}"\
@@ -654,8 +656,10 @@ search_space_type: cnn
                 assert len(from_genotypes) == args.sample * int(args.sample_ratio)
             else:
                 from_genotypes = None
-            if args.sample_conflict_file is not None:
-                conflict_archs = pickle.load(open(args.sample_conflict_file, "rb"))
+            if args.sample_conflict_file:
+                conflict_archs = []
+                for scf in args.sample_conflict_file:
+                    conflict_archs += pickle.load(open(scf, "rb"))
             else:
                 conflict_archs = None
             genotypes = sample(search_space, model, args.sample * int(args.sample_ratio), args.sample, args, from_genotypes=from_genotypes, conflict_archs=conflict_archs)

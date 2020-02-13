@@ -99,12 +99,10 @@ class LSTMArchEmbedder(ArchEmbedder):
         # TODO: dropout on embedding?
         out, _ = self.rnn(emb)
         # normalize the output following NAO
-        # FIXME: do not know why
         out = F.normalize(out, 2, dim=-1)
 
         # average across decisions (time steps)
         out = torch.mean(out, dim=1)
-        # FIXME: normalzie again, why?
         out = F.normalize(out, 2, dim=-1)
         return out
 
@@ -307,6 +305,7 @@ class GCNFlowArchEmbedder(ArchEmbedder):
                  use_bn=False,
                  other_node_independent=False,
                  share_self_op_emb=False,
+                 final_concat=False,
                  schedule_cfg=None):
         super(GCNFlowArchEmbedder, self).__init__(schedule_cfg)
 
@@ -322,6 +321,9 @@ class GCNFlowArchEmbedder(ArchEmbedder):
         self.use_bn = use_bn
         self.other_node_independent = other_node_independent
         self.share_self_op_emb = share_self_op_emb
+        # final concat only support the cell-ss that all nodes are concated
+        # (loose-end is not supported)
+        self.final_concat = final_concat
 
         self._num_init_nodes = self.search_space.num_init_nodes
         self._num_node_inputs = self.search_space.num_node_inputs
@@ -383,7 +385,10 @@ class GCNFlowArchEmbedder(ArchEmbedder):
         if self.use_bn:
             self.bns = nn.ModuleList(self.bns)
         self.num_gcn_layers = len(self.gcns)
-        self.out_dim = self._num_cg * in_dim
+        if not self.final_concat:
+            self.out_dim = self._num_cg * in_dim
+        else:
+            self.out_dim = self._num_cg * in_dim * self._num_steps
 
     def get_adj_dense(self, arch):
         return self._get_adj_dense(arch, self._num_init_nodes,
@@ -493,7 +498,11 @@ class GCNFlowArchEmbedder(ArchEmbedder):
         y = y[:, :, 2:, :] # do not keep the init node embedding
         if self.normalize:
             y = F.normalize(y, 2, dim=-1)
-        y = torch.mean(y, dim=2) # average across nodes (bs, nc, god)
+        if not self.final_concat:
+            y = torch.mean(y, dim=2) # average across nodes (bs, nc, god)
+        else:
+            # concat across all internal nodes (bs, nc, num_steps * god)
+            y = torch.reshape(y, [y.shape[0], y.shape[1], -1])
         if self.normalize:
             y = F.normalize(y, 2, dim=-1)
         y = torch.reshape(y, [y.shape[0], -1]) # concat across cell groups, just reshape here
@@ -556,8 +565,12 @@ class PointwiseComparator(ArchNetwork, nn.Module):
         self.optimizer = utils.init_optimizer(self.parameters(), optimizer)
         self.scheduler = utils.init_scheduler(self.optimizer, scheduler)
 
+    def predict_rollouts(self, rollouts, **kwargs):
+        archs = [r.arch for r in rollouts]
+        return self.predict(archs, **kwargs)
+
     def predict(self, arch, sigmoid=True, tanh=False):
-        score = self.mlp(self.arch_embedder(arch)).squeeze()
+        score = self.mlp(self.arch_embedder(arch)).squeeze(-1)
         if sigmoid:
             score = torch.sigmoid(score)
         elif tanh:

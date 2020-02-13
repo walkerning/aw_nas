@@ -29,9 +29,9 @@ class BaseController(Component):
 
         self.set_mode(prev_mode)
 
-    @abc.abstractmethod
     def set_mode(self, mode):
         """Set the mode of the controller"""
+        self.mode = mode
 
     @abc.abstractmethod
     def set_device(self, device):
@@ -46,7 +46,7 @@ class BaseController(Component):
         """
 
     @abc.abstractmethod
-    def step(self, rollouts, optimizer):
+    def step(self, rollouts, optimizer, perf_name):
         """Update the controller state using rollouts, which are already evaluated by the Evaluator.
 
         Args:

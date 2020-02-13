@@ -173,6 +173,9 @@ class DenseSearchSpace(SearchSpace):
                 mult *= 0.25
         return flops * 2
 
+    @classmethod
+    def supported_rollout_types(cls):
+        return ["dense_discrete", "dense_mutation"]
 
 class DenseDiscreteRollout(Rollout):
     NAME = "dense_discrete"

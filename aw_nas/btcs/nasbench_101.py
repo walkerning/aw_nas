@@ -40,6 +40,8 @@ class NasBench101SearchSpace(SearchSpace):
     NAME = "nasbench-101"
 
     def __init__(self, multi_fidelity=False, load_nasbench=True):
+        super(NasBench101SearchSpace, self).__init__()
+
         self.ops_choices = [
             "conv1x1-bn-relu",
             "conv3x3-bn-relu",
@@ -71,11 +73,29 @@ class NasBench101SearchSpace(SearchSpace):
         if self.load_nasbench:
             self._init_nasbench()
 
+    @classmethod
+    def pad_archs(cls, archs):
+        return [pad_arch(arch) for arch in archs]
+
     # ---- APIs ----
     def random_sample(self):
-        return NasBench101Rollout(
-            *self.random_sample_arch(),
-            search_space=self)
+        while 1:
+            splits = np.array(
+                sorted([0] + list(np.random.randint(
+                    0, self.max_edges + 1,
+                    size=self.num_possible_edges - 1)) + [self.max_edges]))
+            edges = np.minimum(splits[1:] - splits[:-1], 1)
+            matrix = self.edges_to_matrix(edges)
+            ops = np.random.randint(0, self.num_op_choices - 1, size=self.num_ops)
+            rollout = NasBench101Rollout(
+                matrix, ops, search_space=self)
+            try:
+                self.nasbench._check_spec(rollout.genotype)
+            except api.OutOfDomainError:
+                # ignore out-of-domain archs (disconnected)
+                continue
+            else:
+                return rollout
 
     def genotype(self, arch):
         # return the corresponding ModelSpec
@@ -128,18 +148,14 @@ class NasBench101SearchSpace(SearchSpace):
         return model_spec
 
     def random_sample_arch(self):
-        # FIXME: not uniform, and could be illegal,
+        # not uniform, and could be illegal,
         #   if there is not edge from the INPUT or no edge to the OUTPUT,
-        #   maybe just check and reject
-        splits = np.array(
-            sorted([0] + list(np.random.randint(
-                0, self.max_edges + 1,
-                size=self.num_possible_edges - 1)) + [self.max_edges]))
-        edges = np.minimum(splits[1:] - splits[:-1], 1)
-        matrix = self.edges_to_matrix(edges)
-        ops = np.random.randint(0, self.num_op_choices - 1, size=self.num_ops)
-        return matrix, ops
+        # Just check and reject for now
+        return self.random_sample().arch
 
+    @classmethod
+    def supported_rollout_types(cls):
+        return ["nasbench-101"]
 
 class NasBench101Rollout(BaseRollout):
     NAME = "nasbench-101"
@@ -168,6 +184,9 @@ class NasBench101Rollout(BaseRollout):
         return "NasBench101Rollout(matrix={arch}, perf={perf})"\
             .format(arch=self.arch, perf=self.perf)
 
+    def __eq__(self, other):
+        return ((other.arch[0]).tolist(), other.arch[1].tolist()) \
+            == ((self.arch[0]).tolist(), self.arch[1].tolist())
 
 class NasBench101CompareController(BaseController):
     NAME = "nasbench-101-compare"
@@ -228,9 +247,6 @@ class NasBench101CompareController(BaseController):
         return ["compare"]
 
     # ---- APIs that is not necessary ----
-    def set_mode(self, mode):
-        pass
-
     def set_device(self, device):
         pass
 
@@ -288,9 +304,6 @@ class NasBench101Controller(BaseController):
         return ["nasbench-101"]
 
     # ---- APIs that is not necessary ----
-    def set_mode(self, mode):
-        pass
-
     def set_device(self, device):
         pass
 
@@ -364,10 +377,10 @@ class NasBench101EvoController(BaseController):
             ))
         return rollouts
 
-    def step(self, rollouts, optimizer):
+    def step(self, rollouts, optimizer, perf_name):
         assert len(rollouts) == 1
         self.population.pop(self.population.keys()[0])
-        self.population[rollouts[0].arch] = rollouts[0].get_perf()
+        self.population[rollouts[0].arch] = rollouts[0].get_perf(perf_name)
         return 0
 
     @classmethod
@@ -375,9 +388,6 @@ class NasBench101EvoController(BaseController):
         return ["nasbench-101"]
 
     # ---- APIs that is not necessary ----
-    def set_mode(self, mode):
-        pass
-
     def set_device(self, device):
         pass
 
@@ -408,6 +418,11 @@ class NasBench101SAController(BaseController):
         self.cur_solution = self.search_space.random_sample_arch()
 
     def sample(self, n, batch_size=None):
+        if self.mode == "eval":
+            # return the current rollout
+            return [NasBench101Rollout(
+                *self.cur_solution, search_space=self.search_space)] * n
+
         assert batch_size is None
         rollouts = []
         cur_matrix, cur_ops = self.cur_solution
@@ -445,15 +460,18 @@ class NasBench101SAController(BaseController):
             ))
         return rollouts
 
-    def step(self, rollouts, optimizer):
-        assert len(rollouts) == 1
-        if self.cur_perf is None or self.cur_perf < rollouts[0].get_perf():
-            self.cur_perf = rollouts[0].get_perf()
-            self.cur_solution = rollouts[0].arch
-        elif np.exp((self.cur_perf - rollouts[0].get_perf()) / self.temperature) \
+    def step(self, rollouts, optimizer, perf_name):
+        # assert len(rollouts) == 1
+        ind = np.argmax([r.get_perf(perf_name) for r in rollouts])
+        rollout = rollouts[ind]
+        new_perf = rollout.get_perf(perf_name)
+        if self.cur_perf is None or self.cur_perf < new_perf:
+            self.cur_perf = new_perf
+            self.cur_solution = rollout.arch
+        elif np.exp((self.cur_perf - new_perf) / self.temperature) \
              > np.random.rand(0, 1):
-            self.cur_perf = rollouts[0].get_perf() 
-            self.cur_solution = rollouts[0].arch
+            self.cur_perf = new_perf
+            self.cur_solution = rollout.arch
         self.temperature *= self.anneal_coeff
         return 0
 
@@ -462,9 +480,6 @@ class NasBench101SAController(BaseController):
         return ["nasbench-101"]
 
     # ---- APIs that is not necessary ----
-    def set_mode(self, mode):
-        pass
-
     def set_device(self, device):
         pass
 
@@ -499,7 +514,7 @@ class NasBench101Evaluator(BaseEvaluator):
         return None
 
     def suggested_evaluator_steps_per_epoch(self):
-        return None
+        return 0
 
     def evaluate_rollouts(self, rollouts, is_training=False, portion=None, eval_batches=None,
                           return_candidate_net=False, callback=None):
@@ -541,6 +556,22 @@ class NasBench101Evaluator(BaseEvaluator):
         pass
 
 
+def pad_arch(arch):
+    # padding for batchify training
+    adj, ops = arch
+    num_v = adj.shape[0]
+    if num_v < VERTICES:
+        padded_adj = np.concatenate((adj[:-1],
+                                     np.zeros((VERTICES - num_v, num_v), dtype=np.int8),
+                                     adj[-1:]))
+        padded_adj = np.concatenate((padded_adj[:, :-1],
+                                     np.zeros((VERTICES, VERTICES - num_v)),
+                                     padded_adj[:, -1:]), axis=1)
+        padded_ops = ops + [3] * (5 - num_v)
+        adj, ops = padded_adj, padded_ops
+    return (adj, ops)
+
+# ---- embedders for NASBench-101 ----
 # TODO: the multi stage trick could apply for all the embedders
 class NasBench101_LSTMSeqEmbedder(ArchEmbedder):
     NAME = "nb101-lstm"

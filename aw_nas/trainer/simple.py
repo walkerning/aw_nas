@@ -187,9 +187,8 @@ class SimpleTrainer(BaseTrainer):
                                                             step_loss=step_loss))
             self.evaluator.update_rollouts(rollouts)
 
-            if self.rollout_type == "discrete" or self.rollout_type == "nasbench-101" or self.rollout_type == "nasbench-201":
-                controller_loss = self.controller.step(rollouts, self.controller_optimizer)
-            else: # differntiable rollout (controller is optimized using differentiable relaxation)
+            if self.rollout_type == "differentiable":
+                # differntiable rollout (controller is optimized using differentiable relaxation)
                 # adjust lr and call step_current_gradients
                 # (update using the accumulated gradients)
                 controller_loss = step_loss["_"] / self.controller_samples
@@ -201,6 +200,9 @@ class SimpleTrainer(BaseTrainer):
                 self.controller.step_current_gradient(self.controller_optimizer)
                 if self.controller_samples != 1:
                     self.controller_optimizer.param_groups[0]["lr"] = lr_bak
+            else: # other rollout types
+                controller_loss = self.controller.step(
+                    rollouts, self.controller_optimizer, perf_name="reward")
 
             # update meters
             controller_loss_meter.update(controller_loss)
@@ -345,7 +347,7 @@ class SimpleTrainer(BaseTrainer):
         """
         rollouts = self.derive(n=self.derive_samples)
 
-        rewards = [r.get_perf() for r in rollouts]
+        rewards = [r.get_perf("reward") for r in rollouts]
         mean_rew = np.mean(rewards)
         idx = np.argmax(rewards)
         other_perfs = {n: [r.perf[n] for r in rollouts] for n in rollouts[0].perf}

@@ -28,6 +28,8 @@ class NasBench201SearchSpace(SearchSpace):
     NAME = "nasbench-201"
 
     def __init__(self, load_nasbench=True):
+        super(NasBench201SearchSpace, self).__init__()
+
         self.ops_choices = [
             "none",
             "skip_connect",
@@ -79,6 +81,10 @@ class NasBench201SearchSpace(SearchSpace):
 
     def distance(self, arch1, arch2):
         pass
+
+    @classmethod
+    def supported_rollout_types(cls):
+        return ["nasbench-201"]
 
     # ---- helpers ----
     def matrix2str(self, arch):

@@ -742,7 +742,8 @@ def gen_sample_config(out_file, data_type, rollout_type):
                 elif comp_name in {"evaluator", "weights_manager", "objective"}:
                     filter_funcs.append(lambda cls: data_type in cls.supported_data_types())
             if rollout_type is not None:
-                if comp_name in {"controller", "weights_manager", "evaluator", "trainer"}:
+                if comp_name in {"search_space", "controller", "weights_manager",
+                                 "evaluator", "trainer"}:
                     filter_funcs.append(lambda cls: rollout_type in cls.supported_rollout_types())
 
             out_f.write(utils.component_sample_config_str(comp_name, prefix="# ",

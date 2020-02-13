@@ -40,6 +40,10 @@ class SearchSpace(Component):
     def distance(self, arch1, arch2):
         pass
 
+    @utils.abstractclassmethod
+    def supported_rollout_types(cls):
+        pass
+
 
 class CellSearchSpace(SearchSpace):
     def __init__(self):
@@ -66,6 +70,10 @@ class CellSearchSpace(SearchSpace):
     @abc.abstractmethod
     def get_num_steps(self, cell_index):
         pass
+
+    @classmethod
+    def supported_rollout_types(cls):
+        return ["discrete", "differentiable"]
 
 
 class CNNSearchSpace(CellSearchSpace):
