@@ -332,9 +332,9 @@ def main(argv):
 
     search_space = get_search_space("nasbench-201", load_nasbench=False)
     logging.info("Load pkl cache from nasbench201.pkl and nasbench201_valid.pkl")
-    with open("nasbench201.pkl", "rb") as rf:
+    with open("nasbench201_05.pkl", "rb") as rf:
         train_data = pickle.load(rf)
-    with open("nasbench201_valid.pkl", "rb") as rf:
+    with open("nasbench201_05_valid.pkl", "rb") as rf:
         valid_data = pickle.load(rf)
 
     with open(backup_cfg_file, "r") as cfg_f:
