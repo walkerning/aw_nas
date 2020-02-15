@@ -517,6 +517,7 @@ class PointwiseComparator(ArchNetwork, nn.Module):
                  compare_margin=0.01,
                  margin_l2=False,
                  use_incorrect_list_only=False,
+                 tanh_score=None,
                  max_grad_norm=None,
                  schedule_cfg=None):
         # [optional] arch reconstruction loss (arch_decoder_type/cfg)
@@ -533,6 +534,7 @@ class PointwiseComparator(ArchNetwork, nn.Module):
         self.max_grad_norm = max_grad_norm
         # for update_argsort listwise only
         self.use_incorrect_list_only = use_incorrect_list_only
+        self.tanh_score = tanh_score
 
         self.search_space = search_space
         ae_cls = ArchEmbedder.get_class_(arch_embedder_type)
@@ -554,10 +556,12 @@ class PointwiseComparator(ArchNetwork, nn.Module):
         self.optimizer = utils.init_optimizer(self.parameters(), optimizer)
         self.scheduler = utils.init_scheduler(self.optimizer, scheduler)
 
-    def predict(self, arch, sigmoid=True):
+    def predict(self, arch, sigmoid=True, tanh=False):
         score = self.mlp(self.arch_embedder(arch)).squeeze()
         if sigmoid:
             score = torch.sigmoid(score)
+        elif tanh:
+            score = torch.tanh(score)
         return score
 
     def update_predict_rollouts(self, rollouts, labels):
@@ -662,7 +666,10 @@ class PointwiseComparator(ArchNetwork, nn.Module):
         else:
             assert is_sorted
         flat_archs = archs.reshape([-1] + list(archs.shape[2:]))
-        scores = self.predict(flat_archs, sigmoid=False)
+        if self.tanh_score is not None:
+            scores = self.tanh_score * self.predict(flat_archs, sigmoid=False, tanh=True)
+        else:
+            scores = self.predict(flat_archs, sigmoid=False)
 
         scores = scores.reshape((bs, len_))
         exp_score = (scores - scores.max(dim=-1, keepdim=True)[0].detach()).exp()
