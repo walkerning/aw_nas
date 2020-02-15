@@ -11,3 +11,5 @@ from aw_nas.weights_manager.morphism import *
 from aw_nas.weights_manager.dense import *
 
 from aw_nas.weights_manager.mnasnet import *
+
+from aw_nas.weights_manager.stub import *

@@ -187,7 +187,7 @@ class SimpleTrainer(BaseTrainer):
                                                             step_loss=step_loss))
             self.evaluator.update_rollouts(rollouts)
 
-            if self.rollout_type == "discrete":
+            if self.rollout_type == "discrete" or self.rollout_type == "nasbench-101":
                 controller_loss = self.controller.step(rollouts, self.controller_optimizer)
             else: # differntiable rollout (controller is optimized using differentiable relaxation)
                 # adjust lr and call step_current_gradients
@@ -205,7 +205,8 @@ class SimpleTrainer(BaseTrainer):
             # update meters
             controller_loss_meter.update(controller_loss)
             controller_stats = self.controller.summary(rollouts, log=False)
-            controller_stat_meters.update(controller_stats)
+            if controller_stats is not None:
+                controller_stat_meters.update(controller_stats)
 
             r_stats = OrderedDict()
             for n in rollouts[0].perf:
@@ -227,7 +228,7 @@ class SimpleTrainer(BaseTrainer):
     # ---- APIs ----
     @classmethod
     def supported_rollout_types(cls):
-        return ["discrete", "differentiable", "compare"]
+        return ["discrete", "differentiable", "compare", "nasbench-101", "nasbench-201"]
 
     def train(self): #pylint: disable=too-many-branches
         assert self.is_setup, "Must call `trainer.setup` method before calling `trainer.train`."
@@ -270,9 +271,12 @@ class SimpleTrainer(BaseTrainer):
                         = self._controller_update(controller_steps,
                                                   finished_e_steps, finished_c_steps)
                     # update meters
-                    c_loss_meter.update(c_loss)
-                    rollout_stat_meters.update(rollout_stats)
-                    c_stat_meters.update(c_stats)
+                    if c_loss is not None:
+                        c_loss_meter.update(c_loss)
+                    if rollout_stats is not None:
+                        rollout_stat_meters.update(rollout_stats)
+                    if c_stats is not None:
+                        c_stat_meters.update(c_stats)
 
                     finished_c_steps += controller_steps
 

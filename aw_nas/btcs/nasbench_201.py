@@ -16,6 +16,7 @@ from nas_201_api import NASBench201API as API
 from aw_nas import utils
 from aw_nas.common import SearchSpace
 from aw_nas.rollout.base import BaseRollout
+from aw_nas.controller.base import BaseController
 from aw_nas.evaluator.arch_network import ArchEmbedder
 from aw_nas.utils import DenseGraphSimpleOpEdgeFlow
 
@@ -96,7 +97,7 @@ class NasBench201SearchSpace(SearchSpace):
 
     def random_sample_arch(self):
         arch = np.zeros((self.num_vertices, self.num_vertices))
-        arch[np.tril_indices(self.num_veritices, k=-1)] = np.random.randint(
+        arch[np.tril_indices(self.num_vertices, k=-1)] = np.random.randint(
             low=0, high=self.num_op_choices, size=self.num_ops)
         return arch
 
@@ -129,6 +130,69 @@ class NasBench201Rollout(BaseRollout):
             .format(arch=self.arch, perf=self.perf)
 
 
+class NasBench201EvoController(BaseController):
+    NAME = "nasbench-201-evo"
+
+    def __init__(self, search_space, rollout_type="nasbench-201", mode="eval",
+                 population_nums=100,
+                 schedule_cfg=None):
+        super(NasBench201EvoController, self).__init__(search_space, rollout_type, mode, schedule_cfg)
+
+        # get the infinite iterator of the model matrix and ops
+        self.num_veritices = self.search_space.num_veritices 
+        self.cur_solution = self.search_space.random_sample_arch()
+        self.population_nums = population_nums
+        self.population = collections.OrderedDict()
+        self.num_arch = len(self.search_space.api)
+        population_ind = np.random.choice(np.arange(self.num_arch), size=self.population_nums, replace=False)
+        for i in range(self.population_nums):
+            arch_res = self.search_space.api.query_by_index(population_ind[i])
+            accs = np.mean([res.accles['ori-test@199'] for res in arch_res.query('cifar10').values()]) / 100.
+            self.population[api.str2matrix(arch_res.arch_str)] = accs
+
+    def sample(self, n, batch_size=None):
+        assert batch_size is None
+        new_archs = sorted(self.population.items(), key=lambda x:x[1], reverse=True)
+        rollouts = []
+        for n_r in range(n):
+            rand_ind = np.random.randint(0, self.search_space.idx[0].shape[0])
+            neighbor_choice = np.random.randint(0, self.search_space.num_op_choices)
+            while neighbor_choice == new_archs[n_r][0][self.search_space.idx[0][rand_ind],\
+                     self.search_space.idx[1][rand_ind]]:
+                neighbor_choice = np.random.randint(0, self.search_space.num_op_choices)
+            new_choice = copy.deepcopy(new_archs[n_r][0])
+            new_choice[self.search_space.idx[0][rand_ind], self.search_space.idx[1][rand_ind]] = neighbor_choice
+            rollouts.append(NasBench201Rollout(new_choice, self.search_space))
+        return rollouts
+
+    @classmethod
+    def supported_rollout_types(cls):
+        return ["nasbench-201"]
+
+    def step(self, rollouts, optimizer):
+        assert len(rollouts) == 1
+        self.population.pop(self.population.keys()[0])
+        self.population[rollouts[0].arch] = rollouts[0].get_perf()
+        return 0
+
+    # ---- APIs that is not necessary ----
+    def set_mode(self, mode):
+        pass
+
+    def set_device(self, device):
+        pass
+
+    def summary(self, rollouts, log=False, log_prefix="", step=None):
+        pass
+
+    def save(self, path):
+        pass
+
+    def load(self, path):
+        pass
+
+
+
 class NasBench201SAController(BaseController):
     NAME = "nasbench-201-sa"
 
@@ -147,7 +211,7 @@ class NasBench201SAController(BaseController):
     def sample(self, n, batch_size=None):
         assert batch_size is None
         rollouts = []
-        while n_r < n:
+        for n_r in range(n):
             rand_ind = np.random.randint(0, self.search_space.idx[0].shape[0])
             neighbor_choice = np.random.randint(0, self.search_space.num_op_choices)
             while neighbor_choice == self.cur_solution[self.search_space.idx[0][rand_ind],\
@@ -251,6 +315,63 @@ class NasBench201SAController(BaseController):
 #         y = y[:, 1:, :] # do not keep the inputs node embedding
 #         y = torch.mean(y, dim=1) # average across nodes (bs, god)
 #         return y
+
+class NasBench201_LSTMSeqEmbedder(ArchEmbedder):
+    NAME = "nb201-lstm"
+
+    def __init__(self, search_space, num_hid=100, emb_hid=100, num_layers=1,
+                 use_mean=False, use_hid=False,
+                 schedule_cfg=None):
+        super(NasBench201_LSTMSeqEmbedder, self).__init__(schedule_cfg)
+
+        self.search_space = search_space
+        self.num_hid = num_hid
+        self.num_layers = num_layers
+        self.emb_hid = emb_hid
+        self.use_mean = use_mean
+        self.use_hid = use_hid
+
+        self.op_emb = nn.Embedding(self.search_space.num_op_choices, self.emb_hid)
+
+        self.rnn = nn.LSTM(input_size=self.emb_hid,
+                           hidden_size=self.num_hid, num_layers=self.num_layers,
+                           batch_first=True)
+
+        self.out_dim = num_hid
+        self._tril_indices = np.tril_indices(self.search_space.num_vertices, k=-1)
+
+    def forward(self, archs):
+        x = [arch[self._tril_indices] for arch in archs]
+        embs = self.op_emb(torch.LongTensor(x).to(self.op_emb.weight.device))
+        out, (h_n, _) = self.rnn(embs)
+
+        if self.use_hid:
+            y = h_n[0]
+        else:
+            if self.use_mean:
+                y = torch.mean(out, dim=1)
+            else:
+                # return final output
+                y = out[:, -1, :]
+        return y
+
+
+class NasBench201_SimpleSeqEmbedder(ArchEmbedder):
+    NAME = "nb201-seq"
+
+    def __init__(self, search_space, schedule_cfg=None):
+        super(NasBench201_SimpleSeqEmbedder, self).__init__(schedule_cfg)
+
+        self.search_space = search_space
+        self.out_dim = self.search_space.num_ops
+        self.num_node = self.search_space.num_vertices
+
+        self._tril_indices = np.tril_indices(self.num_node, k=-1)
+        self._placeholder_tensor = nn.Parameter(torch.zeros(1))
+
+    def forward(self, archs):
+        x = [arch[self._tril_indices] for arch in archs]
+        return self._placeholder_tensor.new(x)
 
 
 class NasBench201FlowArchEmbedder(ArchEmbedder):
