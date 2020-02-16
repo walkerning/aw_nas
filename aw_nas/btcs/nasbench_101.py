@@ -7,6 +7,7 @@ referred https://github.com/automl/nas_benchmarks/blob/master/tabular_benchmarks
 import os
 import random
 import collections
+import pickle
 
 import numpy as np
 import torch
@@ -30,6 +31,11 @@ VERTICES = 7
 MAX_EDGES = 9
 
 
+class _ModelSpec(api.ModelSpec):
+    def __repr__(self):
+        return "ModelSpec(matrix={}, ops={})".format(self.matrix, self.ops)
+
+
 class NasBench101SearchSpace(SearchSpace):
     NAME = "nasbench-101"
 
@@ -48,7 +54,7 @@ class NasBench101SearchSpace(SearchSpace):
         self.max_edges = MAX_EDGES
         self.none_op_ind = self.ops_choices.index("none")
         self.num_possible_edges = self.num_vertices * (self.num_vertices - 1) // 2
-        self.num_op_choices = len(self.ops_choices) # 3
+        self.num_op_choices = len(self.ops_choices) # 3 + 1 (none)
         self.num_ops = self.num_vertices - 2 # 5
         self.idx = np.triu_indices(self.num_vertices, k=1)
 
@@ -118,7 +124,7 @@ class NasBench101SearchSpace(SearchSpace):
 
         labeling = [self.ops_choices[op_ind] for op_ind in ops]
         labeling = ["input"] + list(labeling) + ["output"]
-        model_spec = api.ModelSpec(matrix, labeling)
+        model_spec = _ModelSpec(matrix, labeling)
         return model_spec
 
     def random_sample_arch(self):
@@ -131,7 +137,7 @@ class NasBench101SearchSpace(SearchSpace):
                 size=self.num_possible_edges - 1)) + [self.max_edges]))
         edges = np.minimum(splits[1:] - splits[:-1], 1)
         matrix = self.edges_to_matrix(edges)
-        ops = np.random.randint(0, self.num_op_choices, size=self.num_ops)
+        ops = np.random.randint(0, self.num_op_choices - 1, size=self.num_ops)
         return matrix, ops
 
 
@@ -307,11 +313,18 @@ class NasBench101EvoController(BaseController):
     def __init__(self, search_space, device, rollout_type="nasbench-101", mode="eval",
                  population_nums=100, mutation_edges_prob=0.5,
                  schedule_cfg=None):
-        super(NasBench101EvoController, self).__init__(search_space, rollout_type, mode, schedule_cfg)
+        super(NasBench101EvoController, self).__init__(
+            search_space, rollout_type, mode, schedule_cfg)
 
-        # get pickel data
-        train_data = pickel.load("/home/foxfi/projects/aw_nas_clones/aw_nas_comparator/scripts/nasbench/nasbench_allv_new.pkl")
-        valid_data = pickel.load("/home/foxfi/projects/aw_nas_clones/aw_nas_comparator/scripts/nasbench/nasbench_allv_new_valid.pkl")
+        # get pickle data
+        base_dir = os.path.join(utils.get_awnas_dir("AWNAS_DATA", "data"), "nasbench-101")
+        train_data_path = os.path.join(base_dir, "nasbench_allv_new.pkl")
+        valid_data_path = os.path.join(base_dir, "nasbench_allv_new_valid.pkl")
+        with open(train_data_path, "rb") as f:
+            train_data = pickle.load(f)
+        with open(valid_data_path, "rb") as f:
+            valid_data = pickle.load(f)
+
         self.all_data = train_data + valid_data
         self.num_arch = len(self.all_data)
 
@@ -321,15 +334,15 @@ class NasBench101EvoController(BaseController):
         self.cur_solution = self.search_space.random_sample_arch()
         self.population_nums = population_nums
         self.population = collections.OrderedDict()
-        population_ind = np.random.choice(np.arange(self.num_arch), size=self.population_nums, replace=False)
+        population_ind = np.random.choice(np.arange(self.num_arch),
+                                          size=self.population_nums, replace=False)
         for i in range(self.population_nums):
             data_i = self.all_data[population_ind[i]]
             self.population[data_i[0]] = data_i[1]
-        
 
     def sample(self, n, batch_size=None):
         assert batch_size is None
-        new_archs = sorted(self.population.items(), key=lambda x:x[1], reverse=True)
+        new_archs = sorted(self.population.items(), key=lambda x: x[1], reverse=True)
         rollouts = []
         for n_r in range(n):
             cur_matrix, cur_ops = new_archs[n_r][0]
@@ -340,9 +353,9 @@ class NasBench101EvoController(BaseController):
                 cur_matrix[self.search_space.idx[0][edge_ind], self.search_space.idx[1][edge_ind]] = 1 - cur_matrix[self.search_space.idx[0][edge_ind], self.search_space.idx[1][edge_ind]]
             else:
                 ops_ind = np.random.randint(0, self.search_space.num_ops, size=1)
-                new_ops = np.random.randint(0, self.search_space.num_op_choices, size=1)
+                new_ops = np.random.randint(0, self.search_space.num_op_choices - 1, size=1)
                 while new_ops == cur_ops[ops_ind]:
-                    new_ops = np.random.randint(0, self.search_space.num_op_choices, size=1)
+                    new_ops = np.random.randint(0, self.search_space.num_op_choices - 1, size=1)
                 cur_ops[ops_ind] = new_ops
             rollouts.append(NasBench101Rollout(
                 cur_matrix,
@@ -378,16 +391,14 @@ class NasBench101EvoController(BaseController):
         pass
 
 
-
-
 class NasBench101SAController(BaseController):
     NAME = "nasbench-101-sa"
 
     def __init__(self, search_space, device, rollout_type="nasbench-101", mode="eval",
                  temperature=1000, anneal_coeff=0.95, mutation_edges_prob=0.5,
                  schedule_cfg=None):
-        super(NasBench101SAController, self).__init__(search_space, rollout_type, mode, schedule_cfg)
-
+        super(NasBench101SAController, self).__init__(
+            search_space, rollout_type, mode, schedule_cfg)
 
         # get the infinite iterator of the model matrix and ops
         self.temperature = temperature
@@ -400,17 +411,32 @@ class NasBench101SAController(BaseController):
         assert batch_size is None
         rollouts = []
         cur_matrix, cur_ops = self.cur_solution
+        ss = self.search_space
         for n_r in range(n):
             if np.random.rand() < self.mutation_edges_prob:
-                edge_ind = np.random.randint(0, self.search_space.num_possible_edges, size=1)
-                while graph_util.num_edges(cur_matrix) == self.search_space.max_edges and cur_matrix[self.search_space.idx[0][edge_ind], self.search_space.idx[1][edge_ind]] == 0:
-                    edge_ind = np.random.randint(0, self.search_space.num_possible_edges, size=1)
-                cur_matrix[self.search_space.idx[0][edge_ind], self.search_space.idx[1][edge_ind]] = 1 - cur_matrix[self.search_space.idx[0][edge_ind], self.search_space.idx[1][edge_ind]]
+                while 1:
+                    edge_ind = np.random.randint(0, ss.num_possible_edges, size=1)
+                    while graph_util.num_edges(cur_matrix) == ss.max_edges and \
+                          cur_matrix[ss.idx[0][edge_ind], ss.idx[1][edge_ind]] == 0:
+                        edge_ind = np.random.randint(0, ss.num_possible_edges, size=1)
+                    new_matrix = cur_matrix.copy()
+                    new_matrix[ss.idx[0][edge_ind], ss.idx[1][edge_ind]] \
+                        = 1 - cur_matrix[ss.idx[0][edge_ind], ss.idx[1][edge_ind]]
+                    new_rollout = NasBench101Rollout(new_matrix, cur_ops,
+                                                     search_space=self.search_space)
+                    try:
+                        ss.nasbench._check_spec(new_rollout.genotype)
+                    except api.OutOfDomainError:
+                        # ignore out-of-domain archs (disconnected)
+                        continue
+                    else:
+                        cur_matrix = new_matrix
+                        break
             else:
-                ops_ind = np.random.randint(0, self.search_space.num_ops, size=1)
-                new_ops = np.random.randint(0, self.search_space.num_op_choices, size=1)
+                ops_ind = np.random.randint(0, ss.num_ops, size=1)
+                new_ops = np.random.randint(0, ss.num_op_choices - 1, size=1)
                 while new_ops == cur_ops[ops_ind]:
-                    new_ops = np.random.randint(0, self.search_space.num_op_choices, size=1)
+                    new_ops = np.random.randint(0, ss.num_op_choices - 1, size=1)
                 cur_ops[ops_ind] = new_ops
             rollouts.append(NasBench101Rollout(
                 cur_matrix,
@@ -421,10 +447,11 @@ class NasBench101SAController(BaseController):
 
     def step(self, rollouts, optimizer):
         assert len(rollouts) == 1
-        if self.cur_perf == None or self.cur_perf < rollouts[0].get_perf():
+        if self.cur_perf is None or self.cur_perf < rollouts[0].get_perf():
             self.cur_perf = rollouts[0].get_perf()
             self.cur_solution = rollouts[0].arch
-        elif np.exp((self.cur_perf - rollouts[0].get_perf()) / self.temperature) > np.random.rand(0, 1):
+        elif np.exp((self.cur_perf - rollouts[0].get_perf()) / self.temperature) \
+             > np.random.rand(0, 1):
             self.cur_perf = rollouts[0].get_perf() 
             self.cur_solution = rollouts[0].arch
         self.temperature *= self.anneal_coeff

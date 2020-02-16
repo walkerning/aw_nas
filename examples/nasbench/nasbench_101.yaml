@@ -3,7 +3,8 @@ rollout_type: nasbench-101
 # ---- Type nasbench-101 ----
 search_space_type: nasbench-101
 search_space_cfg:
-  # Schedulable attributes: 
+  # Schedulable attributes:
+  load_nasbench: true
 # ---- End Type nasbench-101 ----
 ## ---- End Component search_space ----
 
