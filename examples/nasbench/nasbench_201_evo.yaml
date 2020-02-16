@@ -1,0 +1,77 @@
+rollout_type: nasbench-201
+## ---- Component search_space ----
+# ---- Type nasbench-101 ----
+search_space_type: nasbench-201
+search_space_cfg:
+  # Schedulable attributes: 
+# ---- End Type nasbench-101 ----
+## ---- End Component search_space ----
+
+## ---- Component dataset ----
+# ---- Type cifar10 ----
+dataset_type: cifar10
+dataset_cfg:
+  # Schedulable attributes: 
+  cutout: null
+# ---- End Type cifar10 ----
+## ---- End Component dataset ----
+
+## ---- Component controller ----
+# ---- Type nasbench-101-sa ----
+controller_type: nasbench-201-evo
+controller_cfg:
+  # Schedulable attributes: 
+  rollout_type: nasbench-201
+  mode: eval
+  population_nums: 10
+# ---- End Type nasbench-101-sa ----
+## ---- End Component controller ----
+
+## ---- Component evaluator ----
+# ---- Type nasbench-101 ----
+evaluator_type: nasbench-201
+evaluator_cfg:
+  # Schedulable attributes: controller_surrogate_steps, mepa_surrogate_steps, mepa_samples
+  rollout_type: nasbench-201
+# ---- End Type nasbench-101 ----
+## ---- End Component evaluator ----
+
+## ---- Component weights_manager ----
+# ---- Type stub ----
+weights_manager_type: stub
+weights_manager_cfg:
+  # Schedulable attributes: 
+  rollout_type: nasbench-201
+# ---- End Type stub ----
+## ---- End Component weights_manager ----
+
+## ---- Component objective ----
+# ---- Type classification ----
+objective_type: classification
+objective_cfg:
+  # Schedulable attributes: 
+  {}
+# ---- End Type classification ----
+## ---- End Component objective ----
+
+## ---- Component trainer ----
+# ---- Type simple ----
+trainer_type: simple
+trainer_cfg:
+  # Schedulable attributes: controller_samples, derive_samples
+  rollout_type: nasbench-201
+  epochs: 200
+  test_every: 10
+  controller_optimizer: null
+  controller_scheduler: null
+  controller_samples: 5
+  derive_samples: 10
+  evaluator_steps: 0
+  controller_steps: 10
+  controller_train_every: 1
+  controller_train_begin: 1
+  interleave_controller_every: null
+  schedule_cfg: null
+  rollout_batch_size: null
+# ---- End Type simple ----
+## ---- End Component trainer ----

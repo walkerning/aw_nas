@@ -16,6 +16,7 @@ from nas_201_api import NASBench201API as API
 from aw_nas import utils
 from aw_nas.common import SearchSpace
 from aw_nas.rollout.base import BaseRollout
+from aw_nas.evaluator.base import BaseEvaluator
 from aw_nas.controller.base import BaseController
 from aw_nas.evaluator.arch_network import ArchEmbedder
 from aw_nas.utils import DenseGraphSimpleOpEdgeFlow
@@ -73,7 +74,8 @@ class NasBench201SearchSpace(SearchSpace):
 
     def plot_arch(self, genotypes, filename, label, **kwargs):
         # TODO
-        raise NotImplementedError()
+        #raise NotImplementedError()
+        pass
 
     def distance(self, arch1, arch2):
         pass
@@ -133,13 +135,14 @@ class NasBench201Rollout(BaseRollout):
 class NasBench201EvoController(BaseController):
     NAME = "nasbench-201-evo"
 
-    def __init__(self, search_space, rollout_type="nasbench-201", mode="eval",
+    def __init__(self, search_space, device, rollout_type="nasbench-201", mode="eval",
                  population_nums=100,
                  schedule_cfg=None):
         super(NasBench201EvoController, self).__init__(search_space, rollout_type, mode, schedule_cfg)
 
         # get the infinite iterator of the model matrix and ops
-        self.num_veritices = self.search_space.num_veritices 
+        self.mode = mode
+        self.num_vertices = self.search_space.num_vertices 
         self.cur_solution = self.search_space.random_sample_arch()
         self.population_nums = population_nums
         self.population = collections.OrderedDict()
@@ -147,21 +150,32 @@ class NasBench201EvoController(BaseController):
         population_ind = np.random.choice(np.arange(self.num_arch), size=self.population_nums, replace=False)
         for i in range(self.population_nums):
             arch_res = self.search_space.api.query_by_index(population_ind[i])
-            accs = np.mean([res.accles['ori-test@199'] for res in arch_res.query('cifar10').values()]) / 100.
-            self.population[api.str2matrix(arch_res.arch_str)] = accs
+            accs = np.mean([res.eval_acc1es['ori-test@199'] for res in arch_res.query('cifar10').values()]) / 100.
+            self.population[arch_res.arch_str] = accs
 
     def sample(self, n, batch_size=None):
         assert batch_size is None
         new_archs = sorted(self.population.items(), key=lambda x:x[1], reverse=True)
+        if self.mode == 'eval':
+            best_sets = []
+            for n_r in range(n):
+                best_sets.append(NasBench201Rollout(self.search_space.api.str2matrix(new_archs[n_r][0]), self.search_space))
+            return best_sets
         rollouts = []
         for n_r in range(n):
-            rand_ind = np.random.randint(0, self.search_space.idx[0].shape[0])
-            neighbor_choice = np.random.randint(0, self.search_space.num_op_choices)
-            while neighbor_choice == new_archs[n_r][0][self.search_space.idx[0][rand_ind],\
-                     self.search_space.idx[1][rand_ind]]:
+            try_times = 0
+            while True:
+                rand_ind = np.random.randint(0, self.search_space.idx[0].shape[0])
                 neighbor_choice = np.random.randint(0, self.search_space.num_op_choices)
-            new_choice = copy.deepcopy(new_archs[n_r][0])
-            new_choice[self.search_space.idx[0][rand_ind], self.search_space.idx[1][rand_ind]] = neighbor_choice
+                arch_mat = self.search_space.api.str2matrix(new_archs[n_r][0])
+                while neighbor_choice == arch_mat[self.search_space.idx[0][rand_ind],\
+                         self.search_space.idx[1][rand_ind]]:
+                    neighbor_choice = np.random.randint(0, self.search_space.num_op_choices)
+                new_choice = copy.deepcopy(arch_mat)
+                new_choice[self.search_space.idx[0][rand_ind], self.search_space.idx[1][rand_ind]] = neighbor_choice
+                try_times += 1
+                if self.search_space.genotype(new_choice) not in self.population.keys():
+                    break
             rollouts.append(NasBench201Rollout(new_choice, self.search_space))
         return rollouts
 
@@ -170,14 +184,17 @@ class NasBench201EvoController(BaseController):
         return ["nasbench-201"]
 
     def step(self, rollouts, optimizer):
-        assert len(rollouts) == 1
-        self.population.pop(self.population.keys()[0])
-        self.population[rollouts[0].arch] = rollouts[0].get_perf()
+        best_rollout = rollouts[0]
+        for ro in rollouts:
+            if ro.get_perf() > best_rollout.get_perf():
+                best_rollout = ro
+        self.population.pop(list(self.population.keys())[0])
+        self.population[best_rollout.genotype] = best_rollout.get_perf()
         return 0
 
     # ---- APIs that is not necessary ----
     def set_mode(self, mode):
-        pass
+        self.mode = mode
 
     def set_device(self, device):
         pass
@@ -196,13 +213,13 @@ class NasBench201EvoController(BaseController):
 class NasBench201SAController(BaseController):
     NAME = "nasbench-201-sa"
 
-    def __init__(self, search_space, rollout_type="nasbench-201", mode="eval",
-                 temperature=1000, anneal_coeff=0.95,
+    def __init__(self, search_space, device, rollout_type="nasbench-201", mode="eval",
+                 temperature=1000, anneal_coeff=0.98,
                  schedule_cfg=None):
         super(NasBench201SAController, self).__init__(search_space, rollout_type, mode, schedule_cfg)
 
         # get the infinite iterator of the model matrix and ops
-        self.num_veritices = self.search_space.num_veritices 
+        self.num_vertices = self.search_space.num_vertices
         self.cur_solution = self.search_space.random_sample_arch()
         self.temperature = temperature
         self.anneal_coeff = anneal_coeff
@@ -228,10 +245,11 @@ class NasBench201SAController(BaseController):
 
     def step(self, rollouts, optimizer):
         assert len(rollouts) == 1
+        prob = np.random.rand()
         if self.cur_perf == None or self.cur_perf < rollouts[0].get_perf():
             self.cur_perf = rollouts[0].get_perf()
             self.cur_solution = rollouts[0].arch
-        elif np.exp((self.cur_perf - rollouts[0].get_perf()) / self.temperature) > np.random.rand(0, 1):
+        elif np.exp(-(self.cur_perf - rollouts[0].get_perf()) / self.temperature) > prob:
             self.cur_perf = rollouts[0].get_perf() 
             self.cur_solution = rollouts[0].arch
         self.temperature *= self.anneal_coeff
@@ -474,4 +492,70 @@ class NasBench201FlowArchEmbedder(ArchEmbedder):
             y = y[:, 1:, :] # do not keep the inputs node embedding
             y = torch.mean(y, dim=1) # average across nodes (bs, god)
         return y
+
+
+class NasBench201Evaluator(BaseEvaluator):
+    NAME = "nasbench-201"
+
+    def __init__(self, dataset, weights_manager, objective, rollout_type="nasbench-201",
+                 schedule_cfg=None):
+        super(NasBench201Evaluator, self).__init__(
+            dataset, weights_manager, objective, rollout_type)
+
+    @classmethod
+    def supported_data_types(cls):
+        # cifar10
+        return ["image"]
+
+    @classmethod
+    def supported_rollout_types(cls):
+        return ["nasbench-201", "compare"]
+
+    def suggested_controller_steps_per_epoch(self):
+        return None
+
+    def suggested_evaluator_steps_per_epoch(self):
+        return None
+
+    def evaluate_rollouts(self, rollouts, is_training=False, portion=None, eval_batches=None,
+                          return_candidate_net=False, callback=None):
+        if self.rollout_type == "compare":
+            eval_rollouts = sum([[r.rollout_1, r.rollout_2] for r in rollouts], [])
+        else:
+            eval_rollouts = rollouts
+
+        for rollout in eval_rollouts:
+            query_idx = rollout.search_space.api.query_index_by_arch(rollout.genotype)
+            query_res = rollout.search_space.api.query_by_index(query_idx)
+            rollout_perf = np.mean([res.eval_acc1es['ori-test@199'] for res in query_res.query('cifar10').values()]) / 100.
+            # TODO: could use other performance, this functionality is not compatible with objective
+            # multiple fidelity too
+            rollout.set_perf(rollout_perf)
+
+        if self.rollout_type == "compare":
+            num_r = len(rollouts)
+            for i_rollout in range(num_r):
+                diff = eval_rollouts[2 * i_rollout + 1].perf["reward"] - \
+                       eval_rollouts[2 * i_rollout].perf["reward"]
+                better = diff > 0
+                rollouts[i_rollout].set_perfs(collections.OrderedDict(
+                    [
+                        ("compare_result", better),
+                        ("diff", diff),
+                    ]))
+        return rollouts
+
+    # ---- APIs that is not necessary ----
+    def update_evaluator(self, controller):
+        pass
+
+    def update_rollouts(self, rollouts):
+        pass
+
+    def save(self, path):
+        pass
+
+    def load(self, path):
+        pass
+
 

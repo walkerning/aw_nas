@@ -187,7 +187,7 @@ class SimpleTrainer(BaseTrainer):
                                                             step_loss=step_loss))
             self.evaluator.update_rollouts(rollouts)
 
-            if self.rollout_type == "discrete" or self.rollout_type == "nasbench-101":
+            if self.rollout_type == "discrete" or self.rollout_type == "nasbench-101" or self.rollout_type == "nasbench-201":
                 controller_loss = self.controller.step(rollouts, self.controller_optimizer)
             else: # differntiable rollout (controller is optimized using differentiable relaxation)
                 # adjust lr and call step_current_gradients
@@ -354,7 +354,7 @@ class SimpleTrainer(BaseTrainer):
         if save_path is not None:
             # NOTE: If `train_dir` is None, the image will not be saved to tensorboard too
             fnames = rollouts[idx].plot_arch(save_path, label="epoch {}".format(self.epoch))
-            if not self.writer.is_none():
+            if not self.writer.is_none() and fnames is not None:
                 for cg_n, fname in fnames:
                     image = imageio.imread(fname)
                     self.writer.add_image("genotypes/{}".format(cg_n), image, self.epoch,
