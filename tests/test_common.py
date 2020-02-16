@@ -21,7 +21,7 @@ def test_search_space(case, tmp_path):
     print("genotype: ", rollout.genotype, "save to: ", prefix)
     fnames = rollout.plot_arch(prefix, label="test plot",
                                edge_labels=mock_edge_label.tolist())
-    assert fnames == [(cn, prefix + "-{}.png".format(cn)) for cn in ss.cell_group_names]
+    assert fnames == [(cn, prefix + "-{}.pdf".format(cn)) for cn in ss.cell_group_names]
 
 def test_diff_rollout(tmp_path):
     import torch
@@ -40,7 +40,7 @@ def test_diff_rollout(tmp_path):
     print("genotype: ", rollout.genotype)
     prefix = os.path.join(str(tmp_path), "cell")
     fnames = rollout.plot_arch(prefix, label="test plot")
-    assert fnames == [(cn, prefix + "-{}.png".format(cn)) for cn in ss.cell_group_names]
+    assert fnames == [(cn, prefix + "-{}.pdf".format(cn)) for cn in ss.cell_group_names]
 
 @pytest.mark.parametrize("genotype,cls", [
     ("""normal_0=[('dil_conv_5x5', 0, 2), ('sep_conv_5x5', 0, 2), ('avg_pool_3x3',

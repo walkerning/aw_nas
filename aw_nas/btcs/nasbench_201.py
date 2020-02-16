@@ -52,7 +52,7 @@ class NasBench201SearchSpace(SearchSpace):
 
     def __getstate__(self):
         state = super(NasBench201SearchSpace, self).__getstate__().copy()
-        del state["nasbench"]
+        del state["api"]
         return state
 
     def __setstate__(self, state):
@@ -63,7 +63,7 @@ class NasBench201SearchSpace(SearchSpace):
     # ---- APIs ----
     def random_sample(self):
         return NasBench201Rollout(
-            *self.random_sample_arch(),
+            self.random_sample_arch(),
             search_space=self)
 
     def genotype(self, arch):
@@ -114,6 +114,8 @@ class NasBench201Rollout(BaseRollout):
     NAME = "nasbench-201"
 
     def __init__(self, matrix, search_space):
+        super(NasBench201Rollout, self).__init__()
+
         self.arch = matrix
         self.search_space = search_space
         self.perf = collections.OrderedDict()
@@ -144,28 +146,47 @@ class NasBench201EvoController(BaseController):
     def __init__(self, search_space, device, rollout_type="nasbench-201", mode="eval",
                  population_nums=100,
                  schedule_cfg=None):
-        super(NasBench201EvoController, self).__init__(search_space, rollout_type, mode, schedule_cfg)
+        super(NasBench201EvoController, self).__init__(
+            search_space, rollout_type, mode, schedule_cfg)
 
         # get the infinite iterator of the model matrix and ops
         self.mode = mode
-        self.num_vertices = self.search_space.num_vertices 
+        self.num_vertices = self.search_space.num_vertices
         self.cur_solution = self.search_space.random_sample_arch()
         self.population_nums = population_nums
         self.population = collections.OrderedDict()
         self.num_arch = len(self.search_space.api)
-        population_ind = np.random.choice(np.arange(self.num_arch), size=self.population_nums, replace=False)
+        population_ind = np.random.choice(
+            np.arange(self.num_arch), size=self.population_nums, replace=False)
         for i in range(self.population_nums):
             arch_res = self.search_space.api.query_by_index(population_ind[i])
-            accs = np.mean([res.eval_acc1es['ori-test@199'] for res in arch_res.query('cifar10').values()]) / 100.
+            accs = np.mean([res.eval_acc1es["ori-test@199"]
+                            for res in arch_res.query("cifar10").values()]) / 100.
             self.population[arch_res.arch_str] = accs
+
+    def reinit(self):
+        population_ind = np.random.choice(
+            np.arange(self.num_arch), size=self.population_nums, replace=False)
+        for i in range(self.population_nums):
+            arch_res = self.search_space.api.query_by_index(population_ind[i])
+            accs = np.mean([res.eval_acc1es["ori-test@199"]
+                            for res in arch_res.query("cifar10").values()]) / 100.
+            self.population[arch_res.arch_str] = accs
+
+    def set_init_population(self, rollout_list, perf_name):
+        # clear the current population
+        self.population = collections.OrderedDict()
+        for r in rollout_list:
+            self.population[r.genotype] = r.get_perf(perf_name)
 
     def sample(self, n, batch_size=None):
         assert batch_size is None
-        new_archs = sorted(self.population.items(), key=lambda x:x[1], reverse=True)
-        if self.mode == 'eval':
+        new_archs = sorted(self.population.items(), key=lambda x: x[1], reverse=True)
+        if self.mode == "eval":
             best_sets = []
             for n_r in range(n):
-                best_sets.append(NasBench201Rollout(self.search_space.api.str2matrix(new_archs[n_r][0]), self.search_space))
+                best_sets.append(NasBench201Rollout(
+                    self.search_space.api.str2matrix(new_archs[n_r][0]), self.search_space))
             return best_sets
         rollouts = []
         for n_r in range(n):
@@ -178,7 +199,8 @@ class NasBench201EvoController(BaseController):
                          self.search_space.idx[1][rand_ind]]:
                     neighbor_choice = np.random.randint(0, self.search_space.num_op_choices)
                 new_choice = copy.deepcopy(arch_mat)
-                new_choice[self.search_space.idx[0][rand_ind], self.search_space.idx[1][rand_ind]] = neighbor_choice
+                new_choice[self.search_space.idx[0][rand_ind], self.search_space.idx[1][rand_ind]]\
+                    = neighbor_choice
                 try_times += 1
                 if self.search_space.genotype(new_choice) not in self.population.keys():
                     break
@@ -189,13 +211,13 @@ class NasBench201EvoController(BaseController):
     def supported_rollout_types(cls):
         return ["nasbench-201"]
 
-    def step(self, rollouts, optimizer):
+    def step(self, rollouts, optimizer, perf_name):
         best_rollout = rollouts[0]
-        for ro in rollouts:
-            if ro.get_perf() > best_rollout.get_perf():
-                best_rollout = ro
+        for r in rollouts:
+            if r.get_perf(perf_name) > best_rollout.get_perf(perf_name):
+                best_rollout = r
         self.population.pop(list(self.population.keys())[0])
-        self.population[best_rollout.genotype] = best_rollout.get_perf()
+        self.population[best_rollout.genotype] = best_rollout.get_perf(perf_name)
         return 0
 
     # ---- APIs that is not necessary ----
@@ -222,17 +244,38 @@ class NasBench201SAController(BaseController):
     def __init__(self, search_space, device, rollout_type="nasbench-201", mode="eval",
                  temperature=1000, anneal_coeff=0.98,
                  schedule_cfg=None):
-        super(NasBench201SAController, self).__init__(search_space, rollout_type, mode, schedule_cfg)
+        super(NasBench201SAController, self).__init__(
+            search_space, rollout_type, mode, schedule_cfg)
 
         # get the infinite iterator of the model matrix and ops
         self.num_vertices = self.search_space.num_vertices
-        self.cur_solution = self.search_space.random_sample_arch()
         self.temperature = temperature
         self.anneal_coeff = anneal_coeff
+
+        # random sample as the init arch
+        self.cur_solution = self.search_space.random_sample_arch()
         self.cur_perf = None
 
+    def reinit(self):
+        # random sample as the init arch
+        self.cur_solution = self.search_space.random_sample_arch()
+        self.cur_perf = None
+
+    def set_init_population(self, rollout_list, perf_name):
+        # set the initialization to the best rollout in the list
+        perf_list = [r.get_perf(perf_name) for r in rollout_list]
+        best_rollout = rollout_list[np.argmax(perf_list)]
+        self.cur_solution = best_rollout.arch
+        self.cur_perf = best_rollout.get_perf(perf_name)
+        self.logger.info("Set the initialization rollout: {}; perf: {}".format(
+            best_rollout, self.cur_perf))
+        
     def sample(self, n, batch_size=None):
         assert batch_size is None
+
+        if self.mode == "eval":
+            return [NasBench201Rollout(self.cur_solution, self.search_space)] * n
+
         rollouts = []
         for n_r in range(n):
             rand_ind = np.random.randint(0, self.search_space.idx[0].shape[0])
@@ -249,14 +292,17 @@ class NasBench201SAController(BaseController):
     def supported_rollout_types(cls):
         return ["nasbench-201"]
 
-    def step(self, rollouts, optimizer):
-        assert len(rollouts) == 1
+    def step(self, rollouts, optimizer, perf_name):
+        ind = np.argmax([r.get_perf(perf_name) for r in rollouts])
+        rollout = rollouts[ind]
+        new_perf = rollout.get_perf(perf_name)
+
         prob = np.random.rand()
-        if self.cur_perf == None or self.cur_perf < rollouts[0].get_perf():
-            self.cur_perf = rollouts[0].get_perf()
+        if self.cur_perf is None or self.cur_perf < new_perf:
+            self.cur_perf = new_perf
             self.cur_solution = rollouts[0].arch
-        elif np.exp(-(self.cur_perf - rollouts[0].get_perf()) / self.temperature) > prob:
-            self.cur_perf = rollouts[0].get_perf() 
+        elif np.exp(-(self.cur_perf - new_perf) / self.temperature) > prob:
+            self.cur_perf = new_perf
             self.cur_solution = rollouts[0].arch
         self.temperature *= self.anneal_coeff
         return 0
@@ -278,68 +324,7 @@ class NasBench201SAController(BaseController):
         pass
 
 
-# class NasBench201ArchEmbedder(ArchEmbedder):
-#     NAME = "nb201-gcn"
-
-#     def __init__(self, search_space, embedding_dim=48, hid_dim=48, gcn_out_dims=[128, 128],
-#                  gcn_kwargs=None, dropout=0., schedule_cfg=None):
-#         super(NasBench201ArchEmbedder, self).__init__(schedule_cfg)
-
-#         self.search_space = search_space
-
-#         # configs
-#         self.embedding_dim = embedding_dim
-#         self.hid_dim = hid_dim
-#         self.gcn_out_dims = gcn_out_dims
-#         self.dropout = dropout
-#         self.verticies = self.search_space.num_vertices
-#         self.num_op_choices = self.search_space.num_op_choices
-
-#         self.input_op_emb = nn.Embedding(1, self.embedding_dim)
-#         # zero is ok
-#         self.output_op_emb = nn.Parameter(torch.zeros((1, self.embedding_dim)),
-#                                           requires_grad=False)
-
-#         self.op_emb = nn.Embedding(self.num_op_choices, self.embedding_dim)
-#         self.x_hidden = nn.Linear(self.embedding_dim, self.hid_dim)
-
-#         # init graph convolutions
-#         self.gcns = []
-#         in_dim = self.hid_dim
-#         for dim in self.gcn_out_dims:
-#             self.gcns.append(DenseGraphConvolution(in_dim, dim, **(gcn_kwargs or {})))
-#             in_dim = dim
-#         self.gcns = nn.ModuleList(self.gcns)
-#         self.num_gcn_layers = len(self.gcns)
-#         self.out_dim = in_dim
-
-#     def embed_and_transform_arch(self, archs):
-#         adjs = self.input_op_emb.weight.new([arch[0].T for arch in archs])
-#         op_inds = self.input_op_emb.weight.new([arch[1] for arch in archs]).long()
-#         node_embs = self.op_emb(op_inds) # (batch_size, vertices - 2, emb_dim)
-#         b_size = node_embs.shape[0]
-#         node_embs = torch.cat((self.input_op_emb.weight.unsqueeze(0).repeat([b_size, 1, 1]),
-#                                node_embs, self.output_op_emb.unsqueeze(0).repeat([b_size, 1, 1])),
-#                               dim=1)
-#         x = self.x_hidden(node_embs)
-#         # x: (batch_size, vertices, hid_dim)
-#         return adjs, x
-
-#     def forward(self, archs):
-#         # adjs: (batch_size, vertices, vertices)
-#         # x: (batch_size, vertices, hid_dim)
-#         adjs, x = self.embed_and_transform_arch(archs)
-#         y = x
-#         for i_layer, gcn in enumerate(self.gcns):
-#             y = gcn(y, adjs)
-#             if i_layer != self.num_gcn_layers - 1:
-#                 y = F.relu(y)
-#             y = F.dropout(y, self.dropout, training=self.training)
-#         # y: (batch_size, vertices, gcn_out_dims[-1])
-#         y = y[:, 1:, :] # do not keep the inputs node embedding
-#         y = torch.mean(y, dim=1) # average across nodes (bs, god)
-#         return y
-
+# ---- embedders for NASBench-201 ----
 class NasBench201_LSTMSeqEmbedder(ArchEmbedder):
     NAME = "nb201-lstm"
 

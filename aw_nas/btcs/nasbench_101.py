@@ -353,6 +353,12 @@ class NasBench101EvoController(BaseController):
             data_i = self.all_data[population_ind[i]]
             self.population[data_i[0]] = data_i[1]
 
+    def set_init_population(self, rollout_list, perf_name):
+        # clear the current population
+        self.population = collections.OrderedDict()
+        for r in rollout_list:
+            self.population[r.genotype] = r.get_perf(perf_name)
+
     def sample(self, n, batch_size=None):
         assert batch_size is None
         new_archs = sorted(self.population.items(), key=lambda x: x[1], reverse=True)
@@ -416,6 +422,19 @@ class NasBench101SAController(BaseController):
         self.mutation_edges_prob = mutation_edges_prob
         self.cur_perf = None
         self.cur_solution = self.search_space.random_sample_arch()
+
+    def reinit(self):
+        self.cur_perf = None
+        self.cur_solution = self.search_space.random_sample_arch()
+
+    def set_init_population(self, rollout_list, perf_name):
+        # set the initialization to the best rollout in the list
+        perf_list = [r.get_perf(perf_name) for r in rollout_list]
+        best_rollout = rollout_list[np.argmax(perf_list)]
+        self.cur_solution = best_rollout.arch
+        self.cur_perf = best_rollout.get_perf(perf_name)
+        self.logger.info("Set the initialization rollout: {}; perf: {}".format(
+            best_rollout, self.cur_perf))
 
     def sample(self, n, batch_size=None):
         if self.mode == "eval":
@@ -570,6 +589,7 @@ def pad_arch(arch):
         padded_ops = ops + [3] * (5 - num_v)
         adj, ops = padded_adj, padded_ops
     return (adj, ops)
+
 
 # ---- embedders for NASBench-101 ----
 # TODO: the multi stage trick could apply for all the embedders

@@ -21,12 +21,12 @@ def test_rl_controller():
     rollouts = controller.sample(3)
     [r.set_perf(np.random.rand(1)) for r in rollouts]
     optimizer = torch.optim.SGD(controller.parameters(), lr=0.01)
-    loss = controller.step(rollouts, optimizer)
+    loss = controller.step(rollouts, optimizer, "reward")
 
     rollouts = controller_i.sample(3)
     [r.set_perf(np.random.rand(1)) for r in rollouts]
     optimizer = torch.optim.SGD(controller_i.parameters(), lr=0.01)
-    loss = controller_i.step(rollouts, optimizer)
+    loss = controller_i.step(rollouts, optimizer, "reward")
 
 @pytest.mark.parametrize("case", [
     {"type": "anchor_lstm"},
@@ -152,7 +152,7 @@ def test_rl_agent_ppo():
     ori_params = {n: v.clone() for n, v in controller.named_parameters()}
     lr = 0.01
     optimizer = torch.optim.SGD(controller.parameters(), lr=lr)
-    agent.step(rollouts, optimizer)
+    agent.step(rollouts, optimizer, "reward")
     for n, v in controller.named_parameters():
         assert (ori_params[n] - v).abs().mean() > 0
 

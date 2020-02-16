@@ -99,9 +99,12 @@ class PredictorBasedController(BaseController):
                  inner_steps=200,
                  inner_report_freq=50,
                  predict_batch_size=512,
+                 inner_random_init=True,
+                 inner_iter_random_init=True,
+                 inner_enumerate_search_space=False,
 
-                 begin_train_num=0,
                  # how to train the arch network
+                 begin_train_num=0,
                  predictor_train_cfg={
                      "epochs": 200,
                      "num_workers": 2,
@@ -120,11 +123,16 @@ class PredictorBasedController(BaseController):
         expect(inner_controller_type is not None, "Must specificy inner controller type",
                ConfigException)
 
+        self.device = device
         self.predictor_train_cfg = predictor_train_cfg
+        self.inner_controller_reinit = True
         self.inner_sample_n = inner_sample_n
         self.inner_samples = inner_samples
         self.inner_steps = inner_steps
         self.inner_report_freq = inner_report_freq
+        self.inner_random_init = inner_random_init
+        self.inner_iter_random_init = inner_iter_random_init
+        self.inner_enumerate_search_space = inner_enumerate_search_space
         self.predict_batch_size = predict_batch_size
         self.begin_train_num = begin_train_num
 
@@ -137,8 +145,16 @@ class PredictorBasedController(BaseController):
                    "the outer `rollout_type`",
                    ConfigException)
             inner_controller_cfg.pop("rollout_type")
-        self.inner_controller = BaseController.get_class_(inner_controller_type)(
-            search_space, device, rollout_type=rollout_type, **inner_controller_cfg)
+            inner_controller_cfg.pop("mode")
+
+        self.inner_controller_type = inner_controller_type
+        self.inner_controller_cfg = inner_controller_cfg
+        if not self.inner_controller_reinit:
+            self.inner_controller = BaseController.get_class_(self.inner_controller_type)(
+                self.search_space, self.device,
+                rollout_type=self.rollout_type, **self.inner_controller_cfg)
+        else:
+            self.inner_controller = None
         # Currently, we do not use controller with parameters to be optimized (e.g. RL-learned RNN)
         self.inner_cont_optimizer = None
 
@@ -175,12 +191,14 @@ class PredictorBasedController(BaseController):
 
     # ---- APIs ----
     def set_mode(self, mode):
-        self.inner_controller.set_mode(mode)
+        if self.inner_controller is not None:
+            self.inner_controller.set_mode(mode)
         self.mode = mode
 
     def set_device(self, device):
-        self.inner_controller.set_device(device)
-        self.mode = mode
+        if self.inner_controller is not None:
+            self.inner_controller.set_device(device)
+        self.device = device
 
     def sample(self, n=1, batch_size=1):
         """Sample architectures based on the current predictor"""
@@ -197,9 +215,36 @@ class PredictorBasedController(BaseController):
             best_inds = np.argpartition(all_scores, -n)[-n:]
             return [all_rollouts[ind] for ind in best_inds]
 
+        # *TODO*: nb101, nb201 420k, 15k, small. forward 1~2min
+        if self.enumerate_search_space:
+            iter_ = self.search_space.batch_rollouts(batch_size=self.predict_batch_size)
+            # for rollouts in iter_:
+            # call self._predict_rollouts(rollouts)
+            # finaly: ranking, and get the first n archs. train_cellss_pkl.py `sample` function
+            # TODO
+            pass
+
         if n % self.inner_sample_n != 0:
             self.logger.warn("samle number %d cannot be divided by inner_sample_n %d",
                              n, self.inner_sample_n)
+
+        # if self.inner_controller_reinit:
+        self.inner_controller = BaseController.get_class_(self.inner_controller_type)(
+            self.search_space, self.device, mode=self.mode,
+            rollout_type=self.rollout_type, **self.inner_controller_cfg)
+        if hasattr(self.inner_controller, "set_init_population"):
+            self.logger.info("re-evaluating %d rollouts using the current predictor",
+                             self.num_gt_rollouts)
+            # set the init population of the inner controller
+            # re-evaluate rollouts using the current predictor
+            for rollouts in self.gt_rollouts:
+                rollouts = self._predict_rollouts(rollouts)
+
+            if not self.inner_random_init:
+                self.inner_controller.set_init_population(
+                    sum(self.gt_rollouts, []), perf_name="predicted_score")
+
+        # inner_sample_n: how many archs to sample every iter
         num_iter = (n + self.inner_sample_n - 1) // self.inner_sample_n
         # the arch rollouts that have already evaled, avoid sampling them
         already_evaled_r_set = sum(self.gt_rollouts, [])
@@ -208,6 +253,10 @@ class PredictorBasedController(BaseController):
         # the number, mean and max predicted scores of current sampled archs
         cur_sampled_mean_max = (0, 0, 0)
         for i_iter in range(1, num_iter+1):
+            # random init
+            if self.inner_iter_random_init \
+               and hasattr(self.inner_controller, "reinit"):
+                self.inner_controller.reinit()
             # a list with length self.inner_sample_n
             best_rollouts = []
             best_scores = []
@@ -216,15 +265,24 @@ class PredictorBasedController(BaseController):
             iter_s_set = []
             sampled_r_set = sampled_rollouts
             for i_inner in range(1, self.inner_steps+1):
+                # self.inner_controller.on_epoch_begin(i_inner)
                 while 1:
                     rollouts = self.inner_controller.sample(self.inner_samples)
                     # remove the duplicate rollouts
+                    # *fixme* FIXME: local minimum problem exists!
+                    # random sample is one way, or do not use the best as the init?
+                    # Add a test to test the whole dataset...
+                    # grond-truth evaled, decided rollouts
                     rollouts = [r for r in rollouts
-                                if r not in sampled_r_set and r not in iter_r_set \
-                                and r not in already_evaled_r_set]
+                                if r not in already_evaled_r_set \
+                                and r not in sampled_r_set]
+                    # and r not in iter_r_set
+
                     if not rollouts:
+                        print("all conflict, resample")
                         continue
                     else:
+                        # print("sampled {}".format(i_inner))
                         break
                 rollouts = self._predict_rollouts(rollouts)
                 self.inner_controller.step(rollouts, self.inner_cont_optimizer,
@@ -273,11 +331,11 @@ class PredictorBasedController(BaseController):
                              self.num_gt_rollouts, self.begin_train_num)
             return 0
 
-        # TODO: different ways of utilizing multi-stage data
+        # *TODO*: different ways of utilizing multi-stage data
         # weight? finetune with smaller lr? multi-stage sampling?
 
-        # TODO: maybe use some for validation, and early stop using validation set,
-        # or cross valid and use an ensemble
+        # TODO: maybe use some for validation, and *early stop using validation set*
+        # TODO: cross valid and use an ensemble
         # val_loader = DataLoader(
         #     valid_data, batch_size=self.predictor_train_cfg["batch_size"],
         #     shuffle=True, pin_memory=True, num_workers=self.predictor_train_cfg["num_workers"],
@@ -292,7 +350,7 @@ class PredictorBasedController(BaseController):
                 num_stage_train_arch = int(tv_split * num_stage_arch)
                 val_arch_scores.append(arch_scores[num_stage_train_arch:])
                 train_arch_scores.append(arch_scores[:num_stage_train_arch])
-            all_val_data = sum(val_arch_scores, []) # TODO: other methods to use multi-stage data
+            all_val_data = sum(val_arch_scores, []) # *TODO*: other methods to use multi-stage data
             self.val_loader = DataLoader(
                 ArchDataset(all_val_data), batch_size=self.predictor_train_cfg["batch_size"],
                 shuffle=True, pin_memory=True, num_workers=self.predictor_train_cfg["num_workers"],
@@ -302,7 +360,7 @@ class PredictorBasedController(BaseController):
             train_arch_scores = self.gt_arch_scores
 
         # construct the train loader
-        all_train_data = sum(train_arch_scores, []) # TODO: other methods to use multi-stage data
+        all_train_data = sum(train_arch_scores, []) # *TODO*: other methods to use multi-stage data
         self.logger.info("Number of data: train {} val {}".format(
             len(all_train_data), len(all_val_data)))
         self.train_loader = DataLoader(
@@ -322,14 +380,15 @@ class PredictorBasedController(BaseController):
         pass
 
     def save(self, path):
-        # save the predictor, controller
+        # save the evaled rollouts, predictor, controller
         with open("{}_rollouts.pkl".format(path), "wb") as f:
             pickle.dump(self.gt_rollouts, f)
-        self.inner_controller.save("{}_controller".format(path))
+        if self.inner_controller is not None:
+            self.inner_controller.save("{}_controller".format(path))
         self.model.save("{}_predictor".format(path))
 
     def load(self, path):
-        # load the predictor, controller
+        # load the evaled rollouts, predictor, controller
         rollout_path = "{}_rollouts.pkl".format(path)
         if os.path.exists(rollout_path):
             with open(rollout_path, "rb") as f:
@@ -338,9 +397,15 @@ class PredictorBasedController(BaseController):
                 archs, perfs = zip(*[(r.arch, r.get_perf("reward")) for r in rollouts])
                 self.gt_arch_scores.append(list(zip(self._pad_archs(archs), perfs)))
             self.num_gt_rollouts = sum([len(rollouts) for rollouts in self.gt_rollouts])
-        self.inner_controller.load("{}_controller".format(path))
-        self.model.load("{}_predictor".format(path))
-        self.is_predictor_trained = True
+
+        inner_controller_path = "{}_controller".format(path)
+        if os.path.exists(inner_controller_path):
+            self.inner_controller.load(inner_controller_path)
+
+        predictor_path = "{}_predictor".format(path)
+        if os.path.exists(predictor_path):
+            self.model.load(predictor_path)
+            self.is_predictor_trained = True
 
     @classmethod
     def supported_rollout_types(cls):
