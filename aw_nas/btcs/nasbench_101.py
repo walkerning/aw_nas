@@ -104,12 +104,14 @@ class NasBench101SearchSpace(SearchSpace):
         return self.construct_modelspec(edges=None, matrix=matrix, ops=ops)
 
     def rollout_from_genotype(self, genotype):
-        # TODO
-        pass
+        return NasBench101Rollout(genotype.matrix, ops=self.op_to_idx(genotype.ops),
+                                  search_space=self)
 
-    def plot_arch(self, genotypes, filename, label, **kwargs):
-        # TODO
-        pass
+    def plot_arch(self, genotypes, filename, label, plot_format="pdf", **kwargs):
+        graph = genotypes.visualize()
+        graph.format = "pdf"
+        graph.render(filename, view=False)
+        return filename + ".{}".format(plot_format)
 
     def distance(self, arch1, arch2):
         pass

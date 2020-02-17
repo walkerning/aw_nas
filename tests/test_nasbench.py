@@ -6,6 +6,26 @@ AWNAS_TEST_NASBENCH = os.environ.get("AWNAS_TEST_NASBENCH", None)
 
 @pytest.mark.skipif(
     not AWNAS_TEST_NASBENCH, reason="do not test the nasbench BTC by default.")
+def test_plot_arch(tmp_path):
+    import numpy as np
+    from aw_nas.common import get_search_space
+    from aw_nas.btcs.nasbench_101 import NasBench101Rollout
+
+    nasbench_ss = get_search_space("nasbench-101", load_nasbench=False)
+    prefix = os.path.join(str(tmp_path), "nb101-cell")
+    arch_1 = (np.array([[0, 1, 0, 0, 1, 1, 0],
+                        [0, 0, 1, 0, 0, 0, 0],
+                        [0, 0, 0, 1, 0, 0, 1],
+                        [0, 0, 0, 0, 0, 1, 0],
+                        [0, 0, 0, 0, 0, 1, 0],
+                        [0, 0, 0, 0, 0, 0, 1],
+                        [0, 0, 0, 0, 0, 0, 0]], dtype=np.int8), [1, 2, 1, 1, 0])
+    rollout = NasBench101Rollout(*arch_1, search_space=nasbench_ss)
+    print("genotype: ", rollout.genotype, "save to: ", prefix)
+    rollout.plot_arch(prefix, label="test plot")
+
+@pytest.mark.skipif(
+    not AWNAS_TEST_NASBENCH, reason="do not test the nasbench BTC by default.")
 @pytest.mark.parametrize(
     "case", [
         {"embedder_type": "nb101-lstm"},

@@ -74,10 +74,35 @@ class NasBench201SearchSpace(SearchSpace):
     def rollout_from_genotype(self, genotype):
         return NasBench201Rollout(API.str2matrix(genotype), search_space=self)
 
-    def plot_arch(self, genotypes, filename, label, **kwargs):
-        # TODO
-        #raise NotImplementedError()
-        pass
+    def plot_arch(self, genotypes, filename, label, plot_format="pdf", **kwargs):
+        matrix = API.str2matrix(genotypes)
+
+        from graphviz import Digraph
+        graph = Digraph(
+            format=plot_format,
+            # https://stackoverflow.com/questions/4714262/graphviz-dot-captions
+            body=["label=\"{l}\"".format(l=label),
+                  "labelloc=top", "labeljust=left"],
+            edge_attr=dict(fontsize="20", fontname="times"),
+            node_attr=dict(style="filled", shape="rect",
+                           align="center", fontsize="20",
+                           height="0.5", width="0.5",
+                           penwidth="2", fontname="times"),
+            engine="dot")
+        graph.body.extend(["rankdir=LR"])
+        graph.node(str(0), fillcolor="darkseagreen2")
+        graph.node(str(self.num_vertices - 1), fillcolor="palegoldenrod")
+        [graph.node(str(i), fillcolor="lightblue") for i in range(1, self.num_vertices-1)]
+
+        for to_, from_ in zip(*self.idx):
+            op_name = self.ops_choices[int(matrix[to_, from_])]
+            if op_name == "none":
+                continue
+            graph.edge(str(from_), str(to_), label=op_name, fillcolor="gray")
+
+        graph.render(filename, view=False)
+
+        return filename + ".{}".format(plot_format)
 
     def distance(self, arch1, arch2):
         pass
