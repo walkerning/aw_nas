@@ -52,6 +52,7 @@ controller_cfg:
   inner_samples: 1
   inner_steps: 50
   inner_report_freq: 50
+  inner_enumerate_search_space: true
   predict_batch_size: 512
   inner_random_init: true
   inner_iter_random_init: true

@@ -155,6 +155,17 @@ class NasBench101SearchSpace(SearchSpace):
         # Just check and reject for now
         return self.random_sample().arch
 
+    def batch_rollouts(self, batch_size):
+        len_ = len(self.nasbench.fixed_statistics)
+        list_ = list(self.nasbench.fixed_statistics.values())
+        ind = 0
+        while ind < len_:
+            end_ind = min(len_, ind + batch_size)
+            yield [NasBench101Rollout(
+                r["module_adjacency"], self.op_to_idx(r["module_operations"]), search_space=self)
+                   for r in list_[ind:end_ind]]
+            ind = end_ind
+
     @classmethod
     def supported_rollout_types(cls):
         return ["nasbench-101"]
@@ -600,7 +611,7 @@ def pad_arch(arch):
         padded_adj = np.concatenate((padded_adj[:, :-1],
                                      np.zeros((VERTICES, VERTICES - num_v)),
                                      padded_adj[:, -1:]), axis=1)
-        padded_ops = ops + [3] * (5 - num_v)
+        padded_ops = ops + [3] * (7 - num_v)
         adj, ops = padded_adj, padded_ops
     return (adj, ops)
 

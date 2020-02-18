@@ -134,6 +134,15 @@ class NasBench201SearchSpace(SearchSpace):
             low=0, high=self.num_op_choices, size=self.num_ops)
         return arch
 
+    def batch_rollouts(self, batch_size):
+        len_ = len(self.api)
+        ind = 0
+        while ind < len_:
+            end_ind = min(len_, ind + batch_size)
+            yield [NasBench201Rollout(matrix=self.api.str2matrix(self.api.arch(i)),
+                                      search_space=self) for i in range(ind,end_ind)]
+            ind = end_ind
+
 
 class NasBench201Rollout(BaseRollout):
     NAME = "nasbench-201"

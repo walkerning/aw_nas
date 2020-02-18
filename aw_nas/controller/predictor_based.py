@@ -216,13 +216,16 @@ class PredictorBasedController(BaseController):
             return [all_rollouts[ind] for ind in best_inds]
 
         # *TODO*: nb101, nb201 420k, 15k, small. forward 1~2min
-        if self.enumerate_search_space:
+        if self.inner_enumerate_search_space:
             iter_ = self.search_space.batch_rollouts(batch_size=self.predict_batch_size)
-            # for rollouts in iter_:
-            # call self._predict_rollouts(rollouts)
+            scores = []
+            rollouts = []
+            for rollout in iter_:
+                rollouts = rollouts + self._predict_rollouts(rollout)
+                scores = scores + [i.perf['predicted_score'] for i in rollout]
+            best_inds = np.argsort(scores)[-n:]
+            return [rollouts[i] for i in best_inds]
             # finaly: ranking, and get the first n archs. train_cellss_pkl.py `sample` function
-            # TODO
-            pass
 
         if n % self.inner_sample_n != 0:
             self.logger.warn("samle number %d cannot be divided by inner_sample_n %d",
