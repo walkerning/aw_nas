@@ -541,9 +541,12 @@ class NasBench101Evaluator(BaseEvaluator):
     NAME = "nasbench-101"
 
     def __init__(self, dataset, weights_manager, objective, rollout_type="nasbench-101",
+                 use_epoch=108,
                  schedule_cfg=None):
         super(NasBench101Evaluator, self).__init__(
             dataset, weights_manager, objective, rollout_type)
+
+        self.use_epoch = use_epoch
 
     @classmethod
     def supported_data_types(cls):
@@ -569,9 +572,14 @@ class NasBench101Evaluator(BaseEvaluator):
 
         for rollout in eval_rollouts:
             query_res = rollout.search_space.nasbench.query(rollout.genotype)
-            # TODO: could use other performance, this functionality is not compatible with objective
-            # multiple fidelity too
+            # could use other performance, this functionality is not compatible with objective
             rollout.set_perf(query_res["validation_accuracy"])
+            # use mean for test acc
+            # can use other fidelity too
+            res = rollout.search_space.nasbench.get_metrics_from_spec(
+                rollout.genotype)[1][self.use_epoch]
+            mean_test_acc = np.mean([s_res["final_test_accuracy"] for s_res in res])
+            rollout.set_perf(mean_test_acc, name="mean_test_acc")
 
         if self.rollout_type == "compare":
             num_r = len(rollouts)

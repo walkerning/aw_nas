@@ -25,6 +25,13 @@ from aw_nas.common import get_search_space, rollout_from_genotype_str
 from aw_nas.evaluator.arch_network import ArchNetwork
 
 
+def _get_float_format(lst, fmt):
+    if isinstance(lst, (float, np.float32, np.float64)):
+        return fmt.format(lst)
+    if isinstance(lst, (list, tuple)):
+        return "[" + ", ".join([_get_float_format(item, fmt) for item in lst]) + "]"
+    return "{}".format(lst)
+
 class CellSSDataset(Dataset):
     def __init__(self, data, minus=None, div=None):
         self.data = data
@@ -181,6 +188,16 @@ def train_multi_stage_listwise(train_stages, model, epoch, args, avg_stage_score
 
     stage_lens = [len(stage_data) for stage_data in train_stages]
     stage_sep_inds = [np.arange(stage_len) for stage_len in stage_lens]
+    sample_acc_temp = getattr(args, "sample_acc_temp", None)
+    if sample_acc_temp is not None:
+        stage_sep_probs = []
+        for i_stage, stage_data in enumerate(train_stages):
+            perfs = np.array([item[1][stage_epochs[i_stage]] for item in train_stages[i_stage]])
+            perfs = perfs / sample_acc_temp
+            exp_perfs = np.exp(perfs - np.max(perfs))
+            stage_sep_probs.append(exp_perfs / exp_perfs.sum())
+    else:
+        stage_sep_probs = None
     stage_single_probs = getattr(args, "stage_single_probs", None)
     assert stage_single_probs is not None
     if stage_single_probs is not None:
@@ -201,9 +218,11 @@ def train_multi_stage_listwise(train_stages, model, epoch, args, avg_stage_score
         true_ll = np.sum(num_stage_samples)
         n_listlength_meter.update(true_ll, args.batch_size)
         num_stage_samples_avg += num_stage_samples
-        stage_inds = [np.array([np.random.choice(stage_sep_inds[i_stage], size=(sz), replace=False) for _ in range(args.batch_size)])
+        stage_inds = [np.array([np.random.choice(
+            stage_sep_inds[i_stage], size=(sz), replace=False,
+            p=None if stage_sep_probs is None else stage_sep_probs[i_stage]) for _ in range(args.batch_size)])
                       if sz > 0 else np.zeros((args.batch_size, 0), dtype=np.int) for i_stage, sz in enumerate(num_stage_samples)]
-        sorted_stage_inds = [s_stage_inds[np.arange(args.batch_size)[:, None], np.argsort(np.array(np.array(train_stages[i_stage])[s_stage_inds][:, :, 1].tolist())[:, :, i_stage], axis=1)] if s_stage_inds.shape[1] > 1 else s_stage_inds for i_stage, s_stage_inds in enumerate(stage_inds)]
+        sorted_stage_inds = [s_stage_inds[np.arange(args.batch_size)[:, None], np.argsort(np.array(np.array(train_stages[i_stage])[s_stage_inds][:, :, 1].tolist())[:, :, stage_epochs[i_stage]], axis=1)] if s_stage_inds.shape[1] > 1 else s_stage_inds for i_stage, s_stage_inds in enumerate(stage_inds)]
         archs = np.concatenate([np.array(train_stages[i_stage])[s_stage_inds][:, :, 0] for i_stage, s_stage_inds in enumerate(sorted_stage_inds) if s_stage_inds.size > 0], axis=1)
         archs = archs[:, ::-1] # order: from best to worst
         assert archs.ndim == 2
@@ -301,6 +320,64 @@ def train(train_loader, model, epoch, args):
                 if args.compare else ""))
     return objs.avg
 
+# ---- test funcs ----
+def kat1(true_scores, predict_scores):
+    ind = np.argmax(true_scores)
+    return list(np.argsort(predict_scores)[::-1]).index(ind) + 1
+
+def katn(true_scores, predict_scores):
+    true_inds = np.argsort(true_scores)[::-1]
+    true_scores = np.array(true_scores)
+    reorder_true_scores = true_scores[true_inds]
+    predict_scores = np.array(predict_scores)
+    reorder_predict_scores = predict_scores[true_inds]
+    ranks = np.argsort(reorder_predict_scores)[::-1] + 1
+    num_archs = len(ranks)
+    # katn for each number
+    katns = np.zeros(num_archs)
+    passed_set = set()
+    cur_ind = 0
+    for k in range(1, num_archs+1):
+        if k in passed_set:
+            katns[k - 1] = katns[k - 2]
+        else:
+            while ranks[cur_ind] != k:
+                passed_set.add(ranks[cur_ind])
+                cur_ind += 1
+            katns[k - 1] = cur_ind + 1
+    ratios = [0.01, 0.05, 0.1, 0.5]
+    ks = [0, 4, 9] + [int(r * num_archs) - 1 for r in ratios]
+    return [(k + 1, float(k + 1) / num_archs, int(katns[k]), float(katns[k]) / num_archs)
+            for k in ks]
+
+def natk(true_scores, predict_scores):
+    true_scores = np.array(true_scores)
+    predict_scores = np.array(predict_scores)
+    predict_inds = np.argsort(predict_scores)[::-1]
+    reorder_predict_scores = predict_scores[predict_inds]
+    reorder_true_scores = true_scores[predict_inds]
+    ranks = np.argsort(reorder_true_scores)[::-1] + 1
+    num_archs = len(ranks)
+    # natk for each number
+    natks = np.zeros(num_archs)
+    passed_set = set()
+    cur_ind = 0
+    for k in range(1, num_archs+1):
+        if k in passed_set:
+            natks[k - 1] = natks[k - 2]
+        else:
+            while ranks[cur_ind] != k:
+                passed_set.add(ranks[cur_ind])
+                cur_ind += 1
+            natks[k - 1] = cur_ind + 1
+    ratios = [0.01, 0.05, 0.1, 0.5]
+    ks = [0, 4, 9] + [int(r * num_archs) - 1 for r in ratios]
+    return [(k + 1, float(k + 1) / num_archs, int(natks[k]), float(natks[k]) / num_archs)
+            for k in ks]
+
+def patk(true_scores, predict_scores):
+    return [(item[0], item[1], item[3]) for item in test_xk(true_scores, predict_scores, ratios=[0.01, 0.05, 0.1, 0.2, 0.5])]
+
 def test_xp(true_scores, predict_scores):
     true_inds = np.argsort(true_scores)[::-1]
     true_scores = np.array(true_scores)
@@ -328,7 +405,7 @@ def test_xp(true_scores, predict_scores):
             reorder_predict_scores[arch_inds]).correlation))
     return p_corrs
 
-def test_xk(true_scores, predict_scores):
+def test_xk(true_scores, predict_scores, ratios=[0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 1.0]):
     true_inds = np.argsort(true_scores)[::-1]
     true_scores = np.array(true_scores)
     reorder_true_scores = true_scores[true_inds]
@@ -337,7 +414,7 @@ def test_xk(true_scores, predict_scores):
     ranks = np.argsort(reorder_predict_scores)[::-1]
     num_archs = len(ranks)
     patks = []
-    for ratio in [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 1.0]:
+    for ratio in ratios:
         k = int(num_archs * ratio)
         p = len(np.where(ranks[:k] < k)[0]) / float(k)
         arch_inds = ranks[:k][ranks[:k] < k]
@@ -345,6 +422,8 @@ def test_xk(true_scores, predict_scores):
             reorder_true_scores[arch_inds],
             reorder_predict_scores[arch_inds]).correlation))
     return patks
+# ---- END test funcs ----
+
 
 def pairwise_valid(val_loader, model, seed=None):
     if seed is not None:
@@ -640,13 +719,15 @@ search_space_type: cnn
         valid_data, batch_size=args.batch_size, shuffle=False, pin_memory=True, num_workers=args.num_workers,
         collate_fn=lambda items: list([np.array(x) for x in zip(*items)]))
 
+    if args.test_funcs is not None:
+        test_func_names = args.test_funcs.split(",")
+        test_funcs = [globals()[func_name] for func_name in test_func_names]
+    else:
+        test_funcs = []
+
     # init test
     if not arch_network_type == "pairwise_comparator" or args.test_only:
-        if args.test_funcs is not None:
-            test_func_names = args.test_funcs.split(",")
-        corr, func_res = valid(val_loader, model, args,
-                               funcs=[globals()[func_name] for func_name in test_func_names]
-                               if args.test_funcs is not None else [])
+        corr, func_res = valid(val_loader, model, args, funcs=test_funcs)
 
         if args.sample is not None:
             if args.sample_from_file:
@@ -683,7 +764,7 @@ search_space_type: cnn
         else:
             logging.info("INIT: kendall tau {:.4f};\n\t{}".format(
                 corr,
-                "\n\t".join(["{}: {}".format(name, res)
+                "\n\t".join(["{}: {}".format(name, _get_float_format(res, "{:.4f}"))
                              for name, res in zip(test_func_names, func_res)])))
 
     if args.test_only:
@@ -731,6 +812,7 @@ search_space_type: cnn
         logging.info("Percentage of evaluation time: {:.2f} %".format(float(multi_stage_eval_time) / total_eval_time * 100))
 
     for i_epoch in range(1, args.epochs + 1):
+        model.on_epoch_start(i_epoch)
         if _multi_stage:
             if _multi_stage_pair_pool:
                 avg_loss = train_multi_stage_pair_pool(all_stages, pairs_list, model, i_epoch, args)
@@ -742,7 +824,19 @@ search_space_type: cnn
         else:
             avg_loss = train(train_loader, model, i_epoch, args)
         logging.info("Train: Epoch {:3d}: train loss {:.4f}".format(i_epoch, avg_loss))
-        corr, _ = valid(val_loader, model, args)
+        train_corr, train_func_res = valid(
+            train_loader, model, args,
+            funcs=test_funcs)
+        if args.test_funcs is not None:
+            for name, res in zip(test_func_names, train_func_res):
+                logging.info("Train: Epoch {:3d}: {}: {}".format(i_epoch, name, _get_float_format(res, "{:.4f}")))
+        logging.info("Train: Epoch {:3d}: train kd {:.4f}".format(i_epoch, train_corr))
+        corr, func_res = valid(
+            val_loader, model, args,
+            funcs=test_funcs)
+        if args.test_funcs is not None:
+            for name, res in zip(test_func_names, func_res):
+                logging.info("Valid: Epoch {:3d}: {}: {}".format(i_epoch, name, _get_float_format(res, "{:.4f}")))
         logging.info("Valid: Epoch {:3d}: kendall tau {:.4f}".format(i_epoch, corr))
         if args.save_every is not None and i_epoch % args.save_every == 0:
             save_path = os.path.join(args.train_dir, "{}.ckpt".format(i_epoch))

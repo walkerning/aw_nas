@@ -26,7 +26,7 @@ def _convert_float(x):
 parser = argparse.ArgumentParser()
 parser.add_argument("--save", "-s", required=True, help="save to path")
 parser.add_argument("--type", "-t", choices=[
-    "rnn", "cnn", "pgd_robustness", "cnn_oneshot_search", "ftt", "nasbench"],
+    "rnn", "cnn", "pgd_robustness", "cnn_oneshot_search", "ftt", "nasbench", "nasbench_tkd"],
                     default="cnn", help="the type of logs")
 parser.add_argument("--simplify", action="store_true",
                     help=("try to simplify the legend names using "
@@ -83,7 +83,45 @@ elif args.type == "nasbench":
     valid_pattern = re.compile("Epoch [ 0-9]+: kendall tau ([0-9.]+)")
     valid_obj_names = ["kendall tau"]
     valid_ylims = [None, None]
+elif args.type == "nasbench_tkd":
+    train_pattern = [
+        re.compile(r"train loss ([0-9.]+)"),
+        re.compile(r"Train: Epoch [ 0-9]+: train kd ([0-9.]+)"),
+        re.compile("Train: Epoch [ 0-9]+: patk:[^\n]+?, 0.01[0]*, ([0-9.]+)[^\n]+?, 0.05[0]*, "
+                   "([0-9.]+)[^\n]+?, 0.1[0]*, ([0-9.]+)"),
+        re.compile(
+            r"Train: Epoch [ 0-9]+: natk:[^\n]+\[1, [0-9.]+, "
+            r"([0-9.]+)[^\n]+, 0.1[0]*, [0-9.]+, ([0-9.]+)"),
+        re.compile(r"Train: Epoch [ 0-9]+: kat1: ([0-9]+)")
+    ]
+    train_obj_names = ["loss", "kendall tau", "P@1%", "P@5%", "P@10%", "N@1", "N@10%", "K@1"]
+    train_ylims = [None] * len(train_obj_names)
+    valid_pattern = [
+        re.compile("Epoch [ 0-9]+: kendall tau ([0-9.]+)"),
+        re.compile("Valid: Epoch [ 0-9]+: patk:[^\n]+?, 0.01[0]*, ([0-9.]+)[^\n]+?, 0.05[0]*, "
+                   "([0-9.]+)[^\n]+?, 0.1[0]*, ([0-9.]+)"),
+        re.compile(
+            r"Valid: Epoch [ 0-9]+: natk:[^\n]+\[1, [0-9.]+, "
+            r"([0-9.]+)[^\n]+, 0.1[0]*, [0-9.]+, ([0-9.]+)"),
+        re.compile(r"Valid: Epoch [ 0-9]+: kat1: ([0-9]+)")
+    ]
+    # valid_pattern = re.compile("Train: Epoch [ 0-9]+: train kd ([0-9.]+)\n"
+    #                            "[^\n]+Epoch [ 0-9]+: kendall tau ([0-9.]+)")
+    valid_obj_names = ["kendall tau", "P@1%", "P@5%", "P@10%", "N@1", "N@10%", "K@1"]
+    valid_ylims = [None] * len(valid_obj_names)
 
+
+def findall(content, patterns):
+    if isinstance(patterns, (list, tuple)):
+        all_items = []
+        for pattern in patterns:
+            item = pattern.findall(content)
+            if isinstance(item[0], (list, tuple)):
+                all_items.append(list(zip(*item)))
+            else:
+                all_items.append([item])
+        return list(zip(*sum(all_items, [])))
+    return patterns.findall(content)
 
 ## --- parse logs ---
 labels = []
@@ -101,8 +139,8 @@ for fname in fnames:
             break
     labels.append(label)
     content = open(fname, "r").read().strip()
-    train_data = _convert_float(train_pattern.findall(content))
-    valid_data = _convert_float(valid_pattern.findall(content))
+    train_data = _convert_float(findall(content, train_pattern))
+    valid_data = _convert_float(findall(content, valid_pattern))
     if len(train_obj_names) == 1:
         train_objs = [train_data]
     else:

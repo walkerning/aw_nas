@@ -506,6 +506,7 @@ def main(argv):
         return
 
     for i_epoch in range(1, args.epochs + 1):
+        model.on_epoch_start(i_epoch)
         if getattr(args, "use_listwise", False):
             avg_loss = train_listwise(train_data, model, i_epoch, args)
         else:

@@ -41,7 +41,7 @@ class ArchEmbedder(Component, nn.Module):
         torch.save(self.state_dict(), path)
 
     def load(self, path):
-        self.load_state_dict(torch.load(path))
+        self.load_state_dict(torch.load(path, map_location=torch.device("cpu")))
 
 
 class LSTMArchEmbedder(ArchEmbedder):
@@ -738,7 +738,7 @@ class PointwiseComparator(ArchNetwork, nn.Module):
         torch.save(self.state_dict(), path)
 
     def load(self, path):
-        self.load_state_dict(torch.load(path))
+        self.load_state_dict(torch.load(path, map_location=torch.device("cpu")))
 
     def on_epoch_start(self, epoch):
         super(PointwiseComparator, self).on_epoch_start(epoch)

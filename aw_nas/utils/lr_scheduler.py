@@ -91,7 +91,7 @@ class ExpDecay(_LRScheduler):
         super(ExpDecay, self).__init__(optimizer, last_epoch)
 
     def get_lr(self):
-        return [max(self.eta_min,
+        return [max(0 if self.eta_min is None else self.eta_min,
                     base_lr * self.gamma ** ((self.last_epoch - self.start_epoch) // self.every))
                 for base_lr in self.base_lrs]
 

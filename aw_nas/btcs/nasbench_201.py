@@ -4,6 +4,7 @@ NASBench-201 search space, rollout, embedder
 
 import os
 import copy
+import random
 import collections
 
 import numpy as np
@@ -523,9 +524,12 @@ class NasBench201Evaluator(BaseEvaluator):
     NAME = "nasbench-201"
 
     def __init__(self, dataset, weights_manager, objective, rollout_type="nasbench-201",
+                 sample_query=True,
                  schedule_cfg=None):
         super(NasBench201Evaluator, self).__init__(
             dataset, weights_manager, objective, rollout_type)
+
+        self.sample_query = sample_query
 
     @classmethod
     def supported_data_types(cls):
@@ -552,10 +556,23 @@ class NasBench201Evaluator(BaseEvaluator):
         for rollout in eval_rollouts:
             query_idx = rollout.search_space.api.query_index_by_arch(rollout.genotype)
             query_res = rollout.search_space.api.query_by_index(query_idx)
-            rollout_perf = np.mean([res.eval_acc1es['ori-test@199'] for res in query_res.query('cifar10').values()]) / 100.
-            # TODO: could use other performance, this functionality is not compatible with objective
-            # multiple fidelity too
-            rollout.set_perf(rollout_perf)
+
+            # should use valid acc for search
+            results = list(query_res.query("cifar10-valid").values())
+            if self.sample_query:
+                # use one run with random seed as the reward
+                sampled_index = random.randint(0, len(results) - 1)
+                reward = (results[sampled_index].eval_acc1es["x-valid@199"]) / 100.
+            else:
+                reward = np.mean(
+                    [res.eval_acc1es["x-valid@199"] for res in results]) / 100.
+            rollout.set_perf(reward, name="reward")
+            rollout.set_perf(np.mean(
+                [res.eval_acc1es["ori-test@199"] for res in results]) / 100.,
+                             name="partial_test_acc")
+            rollout.set_perf(np.mean(
+                [res.eval_acc1es["ori-test@199"]
+                 for res in query_res.query("cifar10").values()]) / 100., name="test_acc")
 
         if self.rollout_type == "compare":
             num_r = len(rollouts)
