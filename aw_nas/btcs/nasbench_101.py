@@ -326,7 +326,7 @@ class NasBench101EvoController(BaseController):
     NAME = "nasbench-101-evo"
 
     def __init__(self, search_space, device, rollout_type="nasbench-101", mode="eval",
-                 population_nums=100, mutation_edges_prob=0.5,
+                 population_nums=100, mutation_prob=1.0,
                  schedule_cfg=None):
         super(NasBench101EvoController, self).__init__(
             search_space, rollout_type, mode, schedule_cfg)
@@ -344,7 +344,7 @@ class NasBench101EvoController(BaseController):
         self.num_arch = len(self.all_data)
 
         # get the infinite iterator of the model matrix and ops
-        self.mutation_edges_prob = mutation_edges_prob
+        self.mutation_prob = mutation_prob
         self.cur_perf = None
         self.cur_solution = self.search_space.random_sample_arch()
         self.population_nums = population_nums
@@ -353,7 +353,8 @@ class NasBench101EvoController(BaseController):
                                           size=self.population_nums, replace=False)
         for i in range(self.population_nums):
             data_i = self.all_data[population_ind[i]]
-            self.population[data_i[0]] = data_i[1]
+            geno = self.search_space.genotype(data_i[0])
+            self.population[geno] = data_i[1]
 
     def set_init_population(self, rollout_list, perf_name):
         # clear the current population
@@ -363,32 +364,43 @@ class NasBench101EvoController(BaseController):
 
     def sample(self, n, batch_size=None):
         assert batch_size is None
-        new_archs = sorted(self.population.items(), key=lambda x: x[1], reverse=True)
+        choices = np.random.choice(np.arange(len(self.population.items())), size=n, replace=False)
+        population_items = list(self.population.items())
+        selected_pop = [population_items[i] for i in choices]
+        new_archs = sorted(selected_pop, key=lambda x: x[1], reverse=True)
         rollouts = []
-        for n_r in range(n):
-            cur_matrix, cur_ops = new_archs[n_r][0]
-            if np.random.rand() < self.mutation_edges_prob:
-                edge_ind = np.random.randint(0, self.search_space.num_possible_edges, size=1)
-                while graph_util.num_edges(cur_matrix) == self.search_space.max_edges and cur_matrix[self.search_space.idx[0][edge_ind], self.search_space.idx[1][edge_ind]] == 0:
-                    edge_ind = np.random.randint(0, self.search_space.num_possible_edges, size=1)
-                cur_matrix[self.search_space.idx[0][edge_ind], self.search_space.idx[1][edge_ind]] = 1 - cur_matrix[self.search_space.idx[0][edge_ind], self.search_space.idx[1][edge_ind]]
-            else:
-                ops_ind = np.random.randint(0, self.search_space.num_ops, size=1)
-                new_ops = np.random.randint(0, self.search_space.num_op_choices - 1, size=1)
-                while new_ops == cur_ops[ops_ind]:
-                    new_ops = np.random.randint(0, self.search_space.num_op_choices - 1, size=1)
-                cur_ops[ops_ind] = new_ops
-            rollouts.append(NasBench101Rollout(
-                cur_matrix,
-                cur_ops,
-                search_space=self.search_space
-            ))
-        return rollouts
+        ss = self.search_space
+        cur_matrix, cur_ops = new_archs[0][0].original_matrix, new_archs[0][0].original_ops
+        while 1:
+            new_matrix, new_ops = cur_matrix.copy(), cur_ops.copy()
+            edge_mutation_prob = self.mutation_prob / ss.num_vertices
+            for src in range(0, ss.num_vertices - 1):
+                for dst in range(src + 1, ss.num_vertices):
+                    if np.random.random() < edge_mutation_prob:
+                        new_matrix[src, dst] = 1 - new_matrix[src, dst]
+
+            op_mutation_prob = self.mutation_prob / ss.num_ops
+            for ind in range(1, ss.num_vertices - 1):
+                if random.random() < op_mutation_prob:
+                    available = [o for o in ss.nasbench.config['available_ops'] if o != new_ops[ind]]
+                    new_ops[ind] = np.random.choice(available)
+
+            newspec = _ModelSpec(new_matrix, new_ops)
+            if ss.nasbench.is_valid(newspec):
+                rollouts.append(NasBench101Rollout(
+                    cur_matrix,
+                    ss.op_to_idx(cur_ops),
+                    search_space=self.search_space
+                ))
+                return rollouts
 
     def step(self, rollouts, optimizer, perf_name):
-        assert len(rollouts) == 1
-        self.population.pop(self.population.keys()[0])
-        self.population[rollouts[0].arch] = rollouts[0].get_perf(perf_name)
+        best_rollout = rollouts[0]
+        for r in rollouts:
+            if r.get_perf(perf_name) > best_rollout.get_perf(perf_name):
+                best_rollout = r
+        self.population.pop(list(self.population.keys())[0])
+        self.population[best_rollout.genotype] = best_rollout.get_perf(perf_name)
         return 0
 
     @classmethod
