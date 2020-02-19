@@ -84,17 +84,18 @@ def test_embedder(case):
 @pytest.mark.skipif(
     not AWNAS_TEST_NASBENCH, reason="do not test the nasbench BTC by default.")
 def test_nasbench(nasbench_search_space):
+    import numpy as np
     from scipy.stats import stats
-    from aw_nas.btcs import nasbench
+    from aw_nas.btcs import nasbench_101
     from aw_nas.evaluator.arch_network import PointwiseComparator
     from aw_nas.rollout.compare import CompareRollout
 
     ss = nasbench_search_space
     # construct controller
-    controller = nasbench.NasBench101Controller(ss)
-    compare_controller = nasbench.NasBench101CompareController(ss, rollout_type="compare")
+    controller = nasbench_101.NasBench101Controller(ss, device="cuda")
+    compare_controller = nasbench_101.NasBench101CompareController(ss, device="cuda", rollout_type="compare")
     # construct evaluator
-    evaluator = nasbench.NasBench101Evaluator(None, None, None)
+    evaluator = nasbench_101.NasBench101Evaluator(None, None, None)
 
     # test random sample
     _ = ss.random_sample()
@@ -130,8 +131,10 @@ def test_nasbench(nasbench_search_space):
     #                                     [r.rollout_2.arch for r in c_rollouts])
 
     # try training for several epochs using update_predict
+    true_scores = np.random.rand(len(rollouts))
     for i_step in range(5):
-        loss = comparator.update_predict([(r.arch, r.perf["reward"]) for r in rollouts])
+        loss = comparator.update_predict([(r.arch, r.perf["reward"]) for r in rollouts],
+                                         true_scores)
         print("update predict {}: {:.4f}".format(i_step, loss))
 
     # try training for several epochs using update_compare
@@ -156,3 +159,39 @@ def test_nasbench(nasbench_search_space):
     print("COMPARE: before training: {} (corr {:.3f}); after training: {} (corr {:.3f})".format(
         pred_scores_2, corr_init_2, pred_scores_2_after, corr_after_2
     ))
+
+@pytest.mark.skipif(
+    not AWNAS_TEST_NASBENCH, reason="do not test the nasbench BTC by default.")
+def test_equal(nasbench_search_space):
+    import numpy as np
+    from nasbench import api
+
+    ss = nasbench_search_space
+    arch_1 = (np.array([[0, 0, 1, 0, 1, 1, 0],
+                        [0, 0, 1, 1, 0, 0, 0],
+                        [0, 0, 0, 1, 0, 0, 1],
+                        [0, 0, 0, 0, 0, 1, 0],
+                        [0, 0, 0, 0, 0, 1, 0],
+                        [0, 0, 0, 0, 0, 0, 1],
+                        [0, 0, 0, 0, 0, 0, 0]], dtype=np.int8),
+              [1, 2, 1, 1, 0])
+    arch_2 = (np.array([[0, 0, 1, 0, 1, 1, 0],
+                        [0, 0, 1, 0, 0, 0, 0],
+                        [0, 0, 0, 1, 0, 0, 1],
+                        [0, 0, 0, 0, 0, 1, 0],
+                        [0, 0, 0, 0, 0, 1, 0],
+                        [0, 0, 0, 0, 0, 0, 1],
+                        [0, 0, 0, 0, 0, 0, 0]], dtype=np.int8),
+              [1, 2, 1, 1, 0])
+    spec_1 = api.ModelSpec(arch_1[0], ["input"] + [ss.ops_choices[ind] for
+                                                   ind in arch_1[1]] + ["output"])
+    spec_2 = api.ModelSpec(arch_2[0], ["input"] + [ss.ops_choices[ind] for
+                                                   ind in arch_2[1]] + ["output"])
+
+    assert not spec_1 == spec_2
+    r_1 = ss.rollout_from_genotype(spec_1)
+    r_2 = ss.rollout_from_genotype(spec_2)
+    assert r_1.genotype.hash_spec(ss.ops_choices) == r_2.genotype.hash_spec(ss.ops_choices)
+    assert r_1 == r_2
+    ss.compare_reduced = False
+    assert r_1 != r_2

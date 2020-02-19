@@ -33,13 +33,15 @@ MAX_EDGES = 9
 
 class _ModelSpec(api.ModelSpec):
     def __repr__(self):
-        return "ModelSpec(matrix={}, ops={})".format(self.matrix, self.ops)
+        return "ModelSpec(matrix={}, ops={}; original_matrix={}, original_ops={})".format(
+            self.matrix, self.ops, self.original_matrix, self.original_ops)
 
 
 class NasBench101SearchSpace(SearchSpace):
     NAME = "nasbench-101"
 
-    def __init__(self, multi_fidelity=False, load_nasbench=True):
+    def __init__(self, multi_fidelity=False, load_nasbench=True,
+                 compare_reduced=True, compare_use_hash=False):
         super(NasBench101SearchSpace, self).__init__()
 
         self.ops_choices = [
@@ -52,6 +54,9 @@ class NasBench101SearchSpace(SearchSpace):
 
         self.multi_fidelity = multi_fidelity
         self.load_nasbench = load_nasbench
+        self.compare_reduced = compare_reduced
+        self.compare_use_hash = compare_use_hash
+
         self.num_vertices = VERTICES
         self.max_edges = MAX_EDGES
         self.none_op_ind = self.ops_choices.index("none")
@@ -73,12 +78,40 @@ class NasBench101SearchSpace(SearchSpace):
         if self.load_nasbench:
             self._init_nasbench()
 
-    @classmethod
-    def pad_archs(cls, archs):
-        return [pad_arch(arch) for arch in archs]
+    def pad_archs(self, archs):
+        return [self._pad_arch(arch) for arch in archs]
 
-    # ---- APIs ----
-    def random_sample(self):
+    def _pad_arch(self, arch):
+        # padding for batchify training
+        adj, ops = arch
+        # all normalize the the reduced one
+        spec = self.construct_modelspec(edges=None, matrix=adj, ops=ops)
+        adj, ops = spec.matrix, self.op_to_idx(spec.ops)
+        num_v = adj.shape[0]
+        if num_v < VERTICES:
+            padded_adj = np.concatenate((adj[:-1],
+                                         np.zeros((VERTICES - num_v, num_v), dtype=np.int8),
+                                         adj[-1:]))
+            padded_adj = np.concatenate((padded_adj[:, :-1],
+                                         np.zeros((VERTICES, VERTICES - num_v)),
+                                         padded_adj[:, -1:]), axis=1)
+            padded_ops = ops + [3] * (7 - num_v)
+            adj, ops = padded_adj, padded_ops
+        return (adj, ops)
+
+    def _random_sample_ori(self):
+        while 1:
+            matrix = np.random.choice([0, 1], size=(self.num_vertices, self.num_vertices))
+            matrix = np.triu(matrix, 1)
+            ops = np.random.choice(self.ops_choices[:-1], size=(self.num_vertices)).tolist()
+            ops[0] = "input"
+            ops[-1] = "output"
+            spec = _ModelSpec(matrix=matrix, ops=ops)
+            if self.nasbench.is_valid(spec):
+                return NasBench101Rollout(
+                    spec.original_matrix, ops=self.op_to_idx(spec.original_ops), search_space=self)
+
+    def _random_sample_me(self):
         while 1:
             splits = np.array(
                 sorted([0] + list(np.random.randint(
@@ -97,6 +130,10 @@ class NasBench101SearchSpace(SearchSpace):
             else:
                 return rollout
 
+    # ---- APIs ----
+    def random_sample(self):
+        return self._random_sample_ori()
+
     def genotype(self, arch):
         # return the corresponding ModelSpec
         # edges, ops = arch
@@ -104,7 +141,9 @@ class NasBench101SearchSpace(SearchSpace):
         return self.construct_modelspec(edges=None, matrix=matrix, ops=ops)
 
     def rollout_from_genotype(self, genotype):
-        return NasBench101Rollout(genotype.matrix, ops=self.op_to_idx(genotype.ops),
+        # return NasBench101Rollout(genotype.matrix, ops=self.op_to_idx(genotype.ops),
+        return NasBench101Rollout(genotype.original_matrix,
+                                  ops=self.op_to_idx(genotype.original_ops),
                                   search_space=self)
 
     def plot_arch(self, genotypes, filename, label, plot_format="pdf", **kwargs):
@@ -141,8 +180,8 @@ class NasBench101SearchSpace(SearchSpace):
             assert edges is not None
             matrix = self.edges_to_matrix(edges)
 
-        expect(graph_util.num_edges(matrix) <= self.max_edges,
-               "number of edges could not exceed {}".format(self.max_edges))
+        # expect(graph_util.num_edges(matrix) <= self.max_edges,
+        #        "number of edges could not exceed {}".format(self.max_edges))
 
         labeling = [self.ops_choices[op_ind] for op_ind in ops]
         labeling = ["input"] + list(labeling) + ["output"]
@@ -198,8 +237,20 @@ class NasBench101Rollout(BaseRollout):
             .format(arch=self.arch, perf=self.perf)
 
     def __eq__(self, other):
-        return ((other.arch[0]).tolist(), other.arch[1].tolist()) \
-            == ((self.arch[0]).tolist(), self.arch[1].tolist())
+        if self.search_space.compare_reduced:
+            if self.search_space.compare_use_hash:
+                # compare using hash, isomorphic archs would be equal
+                return self.genotype.hash_spec(self.search_space.ops_choices) == \
+                    other.genotype.hash_spec(self.search_space.ops_choices)
+            else:
+                # compared using reduced archs
+                return (np.array(self.genotype.matrix).tolist() == \
+                        np.array(other.genotype.matrix).tolist()) \
+                        and list(self.genotype.ops) == list(other.genotype.ops)
+
+        # compared using original/non-reduced archs, might be wrong
+        return (np.array(other.arch[0]).tolist(), list(other.arch[1])) \
+            == (np.array(self.arch[0]).tolist(), list(self.arch[1]))
 
 class NasBench101CompareController(BaseController):
     NAME = "nasbench-101-compare"
@@ -280,11 +331,12 @@ class NasBench101Controller(BaseController):
     NAME = "nasbench-101"
 
     def __init__(self, search_space, device, rollout_type="nasbench-101", mode="eval",
-                 shuffle_indexes=True,
+                 shuffle_indexes=True, avoid_repeat=False,
                  schedule_cfg=None):
         super(NasBench101Controller, self).__init__(search_space, rollout_type, mode, schedule_cfg)
 
         self.shuffle_indexes = shuffle_indexes
+        self.avoid_repeat = avoid_repeat
 
         # get the infinite iterator of the model matrix and ops
         self.fixed_statistics = list(self.search_space.nasbench.fixed_statistics.values())
@@ -293,23 +345,26 @@ class NasBench101Controller(BaseController):
         self.cur_ind = 0
 
     def sample(self, n, batch_size=None):
-        assert batch_size is None
         rollouts = []
-        n_r = 0
-        while n_r < n:
-            fixed_stat = self.fixed_statistics[self.indexes[self.cur_ind]]
-            rollouts.append(NasBench101Rollout(
-                fixed_stat["module_adjacency"],
-                self.search_space.op_to_idx(fixed_stat["module_operations"]),
-                search_space=self.search_space
-            ))
-            self.cur_ind += 1
-            n_r += 1
-            if self.cur_ind >= self.num_data:
-                self.logger.info("One epoch end")
-                self.cur_ind = 0
-                if self.shuffle_indexes:
-                    random.shuffle(self.indexes)
+        if self.avoid_repeat:
+            assert batch_size is None
+            n_r = 0
+            while n_r < n:
+                fixed_stat = self.fixed_statistics[self.indexes[self.cur_ind]]
+                rollouts.append(NasBench101Rollout(
+                    fixed_stat["module_adjacency"],
+                    self.search_space.op_to_idx(fixed_stat["module_operations"]),
+                    search_space=self.search_space
+                ))
+                self.cur_ind += 1
+                n_r += 1
+                if self.cur_ind >= self.num_data:
+                    self.logger.info("One epoch end")
+                    self.cur_ind = 0
+                    if self.shuffle_indexes:
+                        random.shuffle(self.indexes)
+        else:
+            rollouts = [self.search_space.random_sample() for _ in range(n)]
         return rollouts
 
     @classmethod
@@ -492,10 +547,10 @@ class NasBench101SAController(BaseController):
                         cur_matrix = new_matrix
                         break
             else:
-                ops_ind = np.random.randint(0, ss.num_ops, size=1)
-                new_ops = np.random.randint(0, ss.num_op_choices - 1, size=1)
+                ops_ind = np.random.randint(0, ss.num_ops, size=1)[0]
+                new_ops = np.random.randint(0, ss.num_op_choices - 1, size=1)[0]
                 while new_ops == cur_ops[ops_ind]:
-                    new_ops = np.random.randint(0, ss.num_op_choices - 1, size=1)
+                    new_ops = np.random.randint(0, ss.num_op_choices - 1, size=1)[0]
                 cur_ops[ops_ind] = new_ops
             rollouts.append(NasBench101Rollout(
                 cur_matrix,
@@ -606,22 +661,6 @@ class NasBench101Evaluator(BaseEvaluator):
 
     def load(self, path):
         pass
-
-
-def pad_arch(arch):
-    # padding for batchify training
-    adj, ops = arch
-    num_v = adj.shape[0]
-    if num_v < VERTICES:
-        padded_adj = np.concatenate((adj[:-1],
-                                     np.zeros((VERTICES - num_v, num_v), dtype=np.int8),
-                                     adj[-1:]))
-        padded_adj = np.concatenate((padded_adj[:, :-1],
-                                     np.zeros((VERTICES, VERTICES - num_v)),
-                                     padded_adj[:, -1:]), axis=1)
-        padded_ops = ops + [3] * (7 - num_v)
-        adj, ops = padded_adj, padded_ops
-    return (adj, ops)
 
 
 # ---- embedders for NASBench-101 ----

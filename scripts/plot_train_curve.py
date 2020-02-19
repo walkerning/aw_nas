@@ -169,15 +169,21 @@ else:
     common_label = ""
 
 ## --- plot ---
+num_exp = len(labels)
 num_train_objs = len(train_obj_names)
 num_valid_objs = len(valid_obj_names)
 num_cols = max(num_train_objs, num_valid_objs)
 fig = plt.figure(figsize=(3*(num_cols+1), 5))
 gs = gridspec.GridSpec(nrows=2, ncols=(num_cols+1), width_ratios=[3]*num_cols + [2])
 
+color_map = plt.get_cmap("rainbow")
+
 # valid
 for i in range(num_valid_objs):
     ax = fig.add_subplot(gs[0, i])
+    # set color cycle
+    # ax.set_color_cycle([color_map(float(i) / num_exp) for i in range(num_exp)])
+    ax.set_prop_cycle(color=[color_map(float(i) / num_exp) for i in range(num_exp)])
     for label, objs in zip(labels, file_valid_objs_list):
         ax.plot(objs[i], label=label)
     if valid_ylims[i] is not None:
@@ -188,6 +194,8 @@ for i in range(num_valid_objs):
 # train
 for i in range(num_train_objs):
     ax = fig.add_subplot(gs[1, i])
+    # ax.set_color_cycle([color_map(float(i) / num_exp) for i in range(num_exp)])
+    ax.set_prop_cycle(color=[color_map(float(i) / num_exp) for i in range(num_exp)])
     handles = []
     for label, objs in zip(labels, file_train_objs_list):
         handles.append(ax.plot(objs[i], label=label)[0])

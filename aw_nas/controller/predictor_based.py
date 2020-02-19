@@ -102,6 +102,7 @@ class PredictorBasedController(BaseController):
                  inner_random_init=True,
                  inner_iter_random_init=True,
                  inner_enumerate_search_space=False,
+                 min_inner_sample_ratio=10,
 
                  # how to train the arch network
                  begin_train_num=0,
@@ -133,6 +134,7 @@ class PredictorBasedController(BaseController):
         self.inner_random_init = inner_random_init
         self.inner_iter_random_init = inner_iter_random_init
         self.inner_enumerate_search_space = inner_enumerate_search_space
+        self.min_inner_sample_ratio = min_inner_sample_ratio
         self.predict_batch_size = predict_batch_size
         self.begin_train_num = begin_train_num
 
@@ -255,11 +257,16 @@ class PredictorBasedController(BaseController):
         sampled_scores = []
         # the number, mean and max predicted scores of current sampled archs
         cur_sampled_mean_max = (0, 0, 0)
-        for i_iter in range(1, num_iter+1):
+        i_iter = 1
+        while i_iter <= num_iter:
+        # for i_iter in range(1, num_iter+1):
             # random init
             if self.inner_iter_random_init \
                and hasattr(self.inner_controller, "reinit"):
                 self.inner_controller.reinit()
+
+            new_per_step_meter = utils.AverageMeter()
+
             # a list with length self.inner_sample_n
             best_rollouts = []
             best_scores = []
@@ -269,32 +276,39 @@ class PredictorBasedController(BaseController):
             sampled_r_set = sampled_rollouts
             for i_inner in range(1, self.inner_steps+1):
                 # self.inner_controller.on_epoch_begin(i_inner)
-                while 1:
-                    rollouts = self.inner_controller.sample(self.inner_samples)
-                    # remove the duplicate rollouts
-                    # *fixme* FIXME: local minimum problem exists!
-                    # random sample is one way, or do not use the best as the init?
-                    # Add a test to test the whole dataset...
-                    # grond-truth evaled, decided rollouts
-                    rollouts = [r for r in rollouts
-                                if r not in already_evaled_r_set \
-                                and r not in sampled_r_set]
-                    # and r not in iter_r_set
+                # while 1:
+                #     rollouts = self.inner_controller.sample(self.inner_samples)
+                #     # remove the duplicate rollouts
+                #     # *fixme* FIXME: local minimum problem exists!
+                #     # random sample is one way, or do not use the best as the init?
+                #     # Add a test to test the whole dataset...
+                #     # grond-truth evaled, decided rollouts
+                #     # rollouts = [r for r in rollouts
+                #     #             if r not in already_evaled_r_set \
+                #     #             and r not in sampled_r_set]
+                #     # and r not in iter_r_set
 
-                    if not rollouts:
-                        print("all conflict, resample")
-                        continue
-                    else:
-                        # print("sampled {}".format(i_inner))
-                        break
+                #     if not rollouts:
+                #         print("all conflict, resample")
+                #         continue
+                #     else:
+                #         # print("sampled {}".format(i_inner))
+                #         break
+                rollouts = self.inner_controller.sample(self.inner_samples)
                 rollouts = self._predict_rollouts(rollouts)
                 self.inner_controller.step(rollouts, self.inner_cont_optimizer,
                                            perf_name="predicted_score")
 
                 # keep the `num_to_sample` archs with highest scores
                 step_scores = [r.get_perf(name="predicted_score") for r in rollouts]
-                best_rollouts += rollouts
-                best_scores += step_scores
+                new_rollouts = [r for r in rollouts
+                                if r not in already_evaled_r_set \
+                                and r not in sampled_r_set
+                                and r not in iter_r_set]
+                new_step_scores = [r.get_perf(name="predicted_score") for r in new_rollouts]
+                new_per_step_meter.update(len(new_rollouts))
+                best_rollouts += new_rollouts
+                best_scores += new_step_scores
                 iter_r_set += rollouts
                 iter_s_set += step_scores
 
@@ -307,13 +321,22 @@ class PredictorBasedController(BaseController):
                     self.logger.info(
                         ("Iter %d (to sample %d) (already sampled %d mean %.5f, best %.5f); "
                          "Step %d: sample %d step mean %.5f best %.5f: {} "
-                         "(iter mean %.5f, best %.5f)").format(
+                         "(iter mean %.5f, best %.5f). AVG new/step: %.3f").format(
                              ", ".join(["{:.5f}".format(s) for s in best_scores])),
                         i_iter, num_to_sample,
                         cur_sampled_mean_max[0], cur_sampled_mean_max[1], cur_sampled_mean_max[2],
                         i_inner, len(rollouts), np.mean(step_scores), np.max(step_scores),
-                        np.mean(iter_s_set), np.max(iter_s_set))
+                        np.mean(iter_s_set), np.max(iter_s_set), new_per_step_meter.avg)
+            if new_per_step_meter.sum < num_to_sample * self.min_inner_sample_ratio:
+                # rerun this iter, also reinit!
+                self.logger.info("Cannot find %d (num_to_sample x min_inner_sample_ratio)"
+                                 " (%d x %d) new rollouts in one run of the inner controller"
+                                 "Re-init the controller and re-run this iteration.",
+                                 num_to_sample * self.min_inner_sample_ratio,
+                                 num_to_sample, self.min_inner_sample_ratio)
+                continue
 
+            i_iter += 1
             assert len(best_scores) == num_to_sample
             sampled_rollouts += best_rollouts
             sampled_scores += best_scores
