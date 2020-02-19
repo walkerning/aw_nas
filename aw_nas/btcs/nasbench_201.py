@@ -135,13 +135,17 @@ class NasBench201SearchSpace(SearchSpace):
             low=0, high=self.num_op_choices, size=self.num_ops)
         return arch
 
-    def batch_rollouts(self, batch_size):
-        len_ = len(self.api)
+    def batch_rollouts(self, batch_size, shuffle=True, max_num=None):
+        len_ = ori_len_ = len(self.api)
+        if max_num is not None:
+            len_ = min(max_num, len_)
+        indexes = np.arange(ori_len_)
+        np.random.shuffle(indexes)
         ind = 0
         while ind < len_:
             end_ind = min(len_, ind + batch_size)
-            yield [NasBench201Rollout(matrix=self.api.str2matrix(self.api.arch(i)),
-                                      search_space=self) for i in range(ind,end_ind)]
+            yield [NasBench201Rollout(matrix=self.api.str2matrix(self.api.arch(r_ind)),
+                                      search_space=self) for r_ind in indexes[ind:end_ind]]
             ind = end_ind
 
 

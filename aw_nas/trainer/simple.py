@@ -350,7 +350,8 @@ class SimpleTrainer(BaseTrainer):
         rewards = [r.get_perf("reward") for r in rollouts]
         mean_rew = np.mean(rewards)
         idx = np.argmax(rewards)
-        other_perfs = {n: [r.perf[n] for r in rollouts] for n in rollouts[0].perf}
+        # other_perfs = {n: [r.perf[n] for r in rollouts] for n in rollouts[0].perf}
+        other_perfs = {n: [r.perf.get(n, None) for r in rollouts] for n in rollouts[0].perf}
 
         save_path = self._save_path("rollout/cell")
         if save_path is not None:
@@ -363,11 +364,11 @@ class SimpleTrainer(BaseTrainer):
                                           dataformats="HWC")
 
         self.logger.info("TEST Epoch %3d: Among %d sampled archs: "
-                         "BEST (in reward): %.3f (mean: %.3f); Performance: %s",
+                         "BEST (in reward): %.5f (mean: %.5f); Performance: %s",
                          self.epoch, self.derive_samples, rewards[idx], mean_rew,
-                         "; ".join(["{}: {:.3f} (mean {:.3f})".format(
-                             n, other_perfs[n][idx],
-                             np.mean(other_perfs[n])) for n in rollouts[0].perf]))
+                         "; ".join(["{}: {} (mean {:.5f})".format(
+                             n, "{:.5f}".format(other_perfs[n][idx]) if other_perfs[n][idx] is not None else None,
+                             np.mean([perf for perf in other_perfs[n] if perf is not None])) for n in rollouts[0].perf]))
         self.logger.info("Saved this arch to %s.\nGenotype: %s",
                          save_path, rollouts[idx].genotype)
         self.controller.summary(rollouts, log=True, log_prefix="Rollouts Info: ", step=self.epoch)

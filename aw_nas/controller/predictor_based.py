@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 
 import os
+import copy
 import pickle
+import warnings
 
 import numpy as np
 from scipy.stats import stats
@@ -101,7 +103,8 @@ class PredictorBasedController(BaseController):
                  predict_batch_size=512,
                  inner_random_init=True,
                  inner_iter_random_init=True,
-                 inner_enumerate_search_space=False,
+                 inner_enumerate_search_space=False, # DEPRECATED
+                 inner_enumerate_sample_ratio=None, # DEPRECATED
                  min_inner_sample_ratio=10,
 
                  # how to train the arch network
@@ -134,6 +137,11 @@ class PredictorBasedController(BaseController):
         self.inner_random_init = inner_random_init
         self.inner_iter_random_init = inner_iter_random_init
         self.inner_enumerate_search_space = inner_enumerate_search_space
+        if inner_enumerate_search_space:
+            warnings.warn("The `inner_enumerate_search_space` option is DEPRECATED. "
+                          "Use inner_controller, and set `inner_samples`, `inner_steps` "
+                          "accordingly", warnings.DeprecationWarning)
+        self.inner_enumerate_sample_ratio = inner_enumerate_sample_ratio
         self.min_inner_sample_ratio = min_inner_sample_ratio
         self.predict_batch_size = predict_batch_size
         self.begin_train_num = begin_train_num
@@ -170,8 +178,8 @@ class PredictorBasedController(BaseController):
         self.gt_rollouts = []
         self.gt_arch_scores = []
         self.num_gt_rollouts = 0
-        self.train_loader = None
-        self.val_loader = None
+        # self.train_loader = None
+        # self.val_loader = None
         self.is_predictor_trained = False
 
     def _predict_rollouts(self, rollouts):
@@ -212,26 +220,59 @@ class PredictorBasedController(BaseController):
         if self.mode == "eval":
             # return the best n rollouts that are evaluted by ground-truth evaluator
             self.logger.info("Return the best {} rollouts in the population".format(n))
-            all_rollouts, all_scores = zip(
-                *[(r, r.get_perf("reward")) for rs in self.gt_rollouts for r in rs])
-            best_inds = np.argpartition(all_scores, -n)[-n:]
+            all_gt_arch_scores= sum(self.gt_arch_scores, [])
+            all_rollouts = sum(self.gt_rollouts, [])
+            best_inds = np.argpartition([item[1] for item in all_gt_arch_scores], -n)[-n:]
+            # all_rollouts, all_scores = zip(
+            #     *[(r, r.get_perf("reward")) for rs in self.gt_rollouts for r in rs])
+            # best_inds = np.argpartition(all_scores, -n)[-n:]
             return [all_rollouts[ind] for ind in best_inds]
-
-        # *TODO*: nb101, nb201 420k, 15k, small. forward 1~2min
-        if self.inner_enumerate_search_space:
-            iter_ = self.search_space.batch_rollouts(batch_size=self.predict_batch_size)
-            scores = []
-            rollouts = []
-            for rollout in iter_:
-                rollouts = rollouts + self._predict_rollouts(rollout)
-                scores = scores + [i.perf['predicted_score'] for i in rollout]
-            best_inds = np.argsort(scores)[-n:]
-            return [rollouts[i] for i in best_inds]
-            # finaly: ranking, and get the first n archs. train_cellss_pkl.py `sample` function
 
         if n % self.inner_sample_n != 0:
             self.logger.warn("samle number %d cannot be divided by inner_sample_n %d",
                              n, self.inner_sample_n)
+
+        # the arch rollouts that have already evaled, avoid sampling them
+        already_evaled_r_set = sum(self.gt_rollouts, [])
+        # nb101, nb201 420k, 15k, small. forward 1~2min max
+        if self.inner_enumerate_search_space:
+            if self.inner_enumerate_sample_ratio is not None:
+                assert n % self.inner_sample_n == 0
+
+            max_num = None if self.inner_enumerate_sample_ratio is None \
+                      else n * self.inner_enumerate_sample_ratio
+            iter_ = self.search_space.batch_rollouts(batch_size=self.predict_batch_size,
+                                                     shuffle=True,
+                                                     max_num=max_num)
+            scores = []
+            all_rollouts = []
+            num_ignore = 0
+            for rollouts in iter_:
+                # remove the rollouts that is already evaled
+                ori_len_ = len(rollouts)
+                rollouts = [rollout for rollout in rollouts if rollout not in already_evaled_r_set]
+                num_ignore += ori_len_ - len(rollouts)
+                all_rollouts = all_rollouts + self._predict_rollouts(rollouts)
+                scores = scores + [i.perf["predicted_score"] for i in rollouts]
+
+            if self.inner_sample_n is not None:
+                num_iters = n // self.inner_sample_n
+                rs_per_s = len(scores) // num_iters
+                scores = np.array(scores)[:rs_per_s * num_iters]
+                inds = np.argpartition(scores.reshape([num_iters, rs_per_s]),
+                                       -self.inner_sample_n, axis=1)[:, -self.inner_sample_n:]
+                # inds: (num_iters, self.inner_sample_n)
+                best_inds = (inds + rs_per_s * np.arange(num_iters)[:, None]).reshape(-1)
+                self.logger.info("Random sample %d archs (max num %d), ignore %d already evaled archs, "
+                                 "and choose %d archs per %d archs with highest predict scores",
+                                 len(scores), max_num, num_ignore, self.inner_sample_n, rs_per_s)
+            else:
+                # finally: ranking, and get the first n archs. train_cellss_pkl.py `sample` function
+                best_inds = np.argpartition(scores, -n)[-n:]
+                self.logger.info("Random sample %d archs (max num %d), ignore %d already evaled archs, "
+                                 "and choose %d archs with highest predict scores",
+                                 len(scores), max_num, num_ignore, n)
+            return [all_rollouts[i] for i in best_inds]
 
         # if self.inner_controller_reinit:
         self.inner_controller = BaseController.get_class_(self.inner_controller_type)(
@@ -251,8 +292,6 @@ class PredictorBasedController(BaseController):
 
         # inner_sample_n: how many archs to sample every iter
         num_iter = (n + self.inner_sample_n - 1) // self.inner_sample_n
-        # the arch rollouts that have already evaled, avoid sampling them
-        already_evaled_r_set = sum(self.gt_rollouts, [])
         sampled_rollouts = []
         sampled_scores = []
         # the number, mean and max predicted scores of current sampled archs
@@ -314,7 +353,6 @@ class PredictorBasedController(BaseController):
 
                 if len(best_scores) > num_to_sample:
                     keep_inds = np.argpartition(best_scores, -num_to_sample)[-num_to_sample:]
-                    keep_inds = np.argsort(best_scores)[-num_to_sample:]
                     best_rollouts = [best_rollouts[ind] for ind in keep_inds]
                     best_scores = [best_scores[ind] for ind in keep_inds]
                 if i_inner % self.inner_report_freq == 0:
@@ -350,6 +388,7 @@ class PredictorBasedController(BaseController):
         self.gt_rollouts.append(rollouts)
         new_archs, new_perfs = zip(*[(r.arch, r.get_perf(perf_name)) for r in rollouts])
         self.gt_arch_scores.append(list(zip(self._pad_archs(new_archs), new_perfs)))
+        gt_arch_scores = copy.deepcopy(self.gt_arch_scores)
 
         self.num_gt_rollouts += len(rollouts)
         if self.num_gt_rollouts < self.begin_train_num:
@@ -371,31 +410,31 @@ class PredictorBasedController(BaseController):
         if tv_split is not None and tv_split < 1:
             val_arch_scores = []
             train_arch_scores = []
-            for arch_scores in self.gt_arch_scores:
+            for arch_scores in gt_arch_scores:
                 num_stage_arch = len(arch_scores)
                 num_stage_train_arch = int(tv_split * num_stage_arch)
                 val_arch_scores.append(arch_scores[num_stage_train_arch:])
                 train_arch_scores.append(arch_scores[:num_stage_train_arch])
             all_val_data = sum(val_arch_scores, []) # *TODO*: other methods to use multi-stage data
-            self.val_loader = DataLoader(
+            val_loader = DataLoader(
                 ArchDataset(all_val_data), batch_size=self.predictor_train_cfg["batch_size"],
                 shuffle=True, pin_memory=True, num_workers=self.predictor_train_cfg["num_workers"],
                 collate_fn=lambda items: list(zip(*items)))
         else:
-            self.val_loader = None
-            train_arch_scores = self.gt_arch_scores
+            val_loader = None
+            train_arch_scores = gt_arch_scores
 
         # construct the train loader
         all_train_data = sum(train_arch_scores, []) # *TODO*: other methods to use multi-stage data
         self.logger.info("Number of data: train {} val {}".format(
             len(all_train_data), len(all_val_data)))
-        self.train_loader = DataLoader(
+        train_loader = DataLoader(
             ArchDataset(all_train_data), batch_size=self.predictor_train_cfg["batch_size"],
             shuffle=True, pin_memory=True, num_workers=self.predictor_train_cfg["num_workers"],
             collate_fn=lambda items: list(zip(*items)))
 
         loss, corr, val_corr = train_predictor(
-            self.logger, self.train_loader, self.val_loader, self.model,
+            self.logger, train_loader, val_loader, self.model,
             self.predictor_train_cfg["epochs"], self.predictor_train_cfg)
 
         self.is_predictor_trained = True
@@ -420,6 +459,7 @@ class PredictorBasedController(BaseController):
             with open(rollout_path, "rb") as f:
                 self.gt_rollouts = pickle.load(f)
             for rollouts in self.gt_rollouts:
+                # FIXME: save the perf_name, or save the gt_arch_scores ?
                 archs, perfs = zip(*[(r.arch, r.get_perf("reward")) for r in rollouts])
                 self.gt_arch_scores.append(list(zip(self._pad_archs(archs), perfs)))
             self.num_gt_rollouts = sum([len(rollouts) for rollouts in self.gt_rollouts])

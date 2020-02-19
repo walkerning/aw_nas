@@ -194,15 +194,21 @@ class NasBench101SearchSpace(SearchSpace):
         # Just check and reject for now
         return self.random_sample().arch
 
-    def batch_rollouts(self, batch_size):
-        len_ = len(self.nasbench.fixed_statistics)
+    def batch_rollouts(self, batch_size, shuffle=True, max_num=None):
+        len_ = ori_len_ = len(self.nasbench.fixed_statistics)
+        if max_num is not None:
+            len_ = min(max_num, len_)
         list_ = list(self.nasbench.fixed_statistics.values())
+        indexes = np.arange(ori_len_)
+        np.random.shuffle(indexes)
         ind = 0
         while ind < len_:
             end_ind = min(len_, ind + batch_size)
             yield [NasBench101Rollout(
-                r["module_adjacency"], self.op_to_idx(r["module_operations"]), search_space=self)
-                   for r in list_[ind:end_ind]]
+                list_[r_ind]["module_adjacency"],
+                self.op_to_idx(list_[r_ind]["module_operations"]),
+                search_space=self)
+                   for r_ind in indexes[ind:end_ind]]
             ind = end_ind
 
     @classmethod
@@ -314,8 +320,8 @@ class NasBench101CompareController(BaseController):
     def set_device(self, device):
         pass
 
-    def step(self, rollouts, optimizer):
-        pass
+    def step(self, rollouts, optimizer, perf_name):
+        return 0.
 
     def summary(self, rollouts, log=False, log_prefix="", step=None):
         pass
@@ -344,8 +350,17 @@ class NasBench101Controller(BaseController):
         self.indexes = list(np.arange(self.num_data))
         self.cur_ind = 0
 
+        self.gt_rollouts = []
+        self.gt_scores = []
+
     def sample(self, n, batch_size=None):
         rollouts = []
+        if self.mode == "eval":
+            # Return n archs seen(self.gt_rollouts) with best rewards
+            self.logger.info("Return the best {} rollouts in the population".format(n))
+            best_inds = np.argpartition(self.gt_scores, -n)[-n:]
+            return [self.gt_rollouts[ind] for ind in best_inds]
+
         if self.avoid_repeat:
             assert batch_size is None
             n_r = 0
@@ -375,11 +390,19 @@ class NasBench101Controller(BaseController):
     def set_device(self, device):
         pass
 
-    def step(self, rollouts, optimizer):
-        pass
+    def step(self, rollouts, optimizer, perf_name):
+        num_rollouts_to_keep = 200
+        self.gt_rollouts = self.gt_rollouts + rollouts
+        self.gt_scores = self.gt_scores + [r.get_perf(perf_name) for r in rollouts]
+        if len(self.gt_rollouts) >= num_rollouts_to_keep:
+            best_inds = np.argpartition(
+                self.gt_scores, -num_rollouts_to_keep)[-num_rollouts_to_keep:]
+            self.gt_rollouts = [self.gt_rollouts[ind] for ind in best_inds]
+            self.gt_scores = [self.gt_scores[ind] for ind in best_inds]
+        return 0.
 
     def summary(self, rollouts, log=False, log_prefix="", step=None):
-        return OrderedDict()
+        return collections.OrderedDict()
 
     def save(self, path):
         pass
@@ -629,10 +652,13 @@ class NasBench101Evaluator(BaseEvaluator):
             query_res = rollout.search_space.nasbench.query(rollout.genotype)
             # could use other performance, this functionality is not compatible with objective
             rollout.set_perf(query_res["validation_accuracy"])
+
             # use mean for test acc
             # can use other fidelity too
             res = rollout.search_space.nasbench.get_metrics_from_spec(
                 rollout.genotype)[1][self.use_epoch]
+            mean_valid_acc = np.mean([s_res["final_validation_accuracy"] for s_res in res])
+            rollout.set_perf(mean_valid_acc, name="mean_valid_acc")
             mean_test_acc = np.mean([s_res["final_test_accuracy"] for s_res in res])
             rollout.set_perf(mean_test_acc, name="mean_test_acc")
 
