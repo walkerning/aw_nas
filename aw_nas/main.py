@@ -132,8 +132,16 @@ def _set_gpu(gpu):
     if gpu is None:
         return
     if torch.cuda.is_available():
+        set_reproducible = bool(os.environ.get("AWNAS_REPRODUCIBLE", False))
+        if set_reproducible:
+            LOGGER.info("AWNAS_REPRODUCIBLE environment variable set. Disable cudnn.benchmark, "
+                        "enable cudnn.deterministic for better reproducibility")
         torch.cuda.set_device(gpu)
-        cudnn.benchmark = True
+        if set_reproducible:
+            cudnn.benchmark = False
+            cudnn.deterministic = True
+        else:
+            cudnn.benchmark = True
         cudnn.enabled = True
         LOGGER.info('GPU device = %d' % gpu)
     else:
@@ -146,8 +154,7 @@ def _set_gpu(gpu):
 @click.option("--local_rank", default=-1, type=int,
               help="the rank of this process")
 def main(local_rank):
-    if local_rank > -1:
-        torch.cuda.set_device(local_rank)
+    pass
 
 # ---- Search, Sample, Derive using trainer ----
 @main.command(help="Searching for architecture.")
@@ -583,13 +590,16 @@ def derive(cfg_file, load, out_file, n, save_plot, test, steps, gpu, seed, dump_
 @click.option("--train-dir", default=None, type=str,
               help="the directory to save checkpoints")
 def mptrain(seed, cfg_file, load, load_state_dict, save_every, train_dir):
+    local_rank = int(os.environ["LOCAL_RANK"])
     if train_dir:
         # backup config file, and if in `develop` mode, also backup the aw_nas source code
-        train_dir = utils.makedir(train_dir, remove=True)
-        shutil.copyfile(cfg_file, os.path.join(train_dir, "train_config.yaml"))
+        if local_rank == 0:
+            train_dir = utils.makedir(train_dir, remove=False)
+            shutil.copyfile(cfg_file, os.path.join(train_dir, "train_config.yaml"))
 
         # add log file handler
-        log_file = os.path.join(train_dir, "train.log")
+        log_file = os.path.join(train_dir, "train{}.log".format(
+            "" if local_rank == 0 else "_{}".format(local_rank)))
         _logger.addFile(log_file)
 
     LOGGER.info("CWD: %s", os.getcwd())
@@ -599,8 +609,15 @@ def mptrain(seed, cfg_file, load, load_state_dict, save_every, train_dir):
                               .format(cfg_file, train_dir, os.getcwd()))
 
     # set gpu
+    _set_gpu(local_rank)
     device = torch.cuda.current_device()
     torch.distributed.init_process_group(backend="nccl")
+
+    LOGGER.info(("Start distributed parallel training: (world size {}; MASTER {}:{})"
+                 " rank {} local_rank {} PID {}").format(
+                     int(os.environ["WORLD_SIZE"]), os.environ["MASTER_ADDR"],
+                     os.environ["MASTER_PORT"],
+                     os.environ["RANK"], local_rank, os.getpid()))
 
     # set seed
     if seed is not None:

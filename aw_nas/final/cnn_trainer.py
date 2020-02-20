@@ -83,10 +83,11 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
         if self.multiprocess:
             self.train_queue = torch.utils.data.DataLoader(
                 _splits["train"], batch_size=batch_size, pin_memory=True,
-                num_workers=workers_per_queue, sampler=DistributedSampler(_splits["train"], shuffle=True))
+                num_workers=workers_per_queue,
+                sampler=DistributedSampler(_splits["train"], shuffle=True))
             self.valid_queue = torch.utils.data.DataLoader(
                 _splits["test"], batch_size=batch_size, pin_memory=True,
-                num_workers=workers_per_queue, sampler=DistributedSampler(_splits["test"], shuffle=False))
+                num_workers=workers_per_queue, shuffle=False)
         else:
             self.train_queue = torch.utils.data.DataLoader(
                 _splits["train"], batch_size=batch_size, pin_memory=True,

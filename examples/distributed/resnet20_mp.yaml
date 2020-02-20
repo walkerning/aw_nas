@@ -1,4 +1,4 @@
-# python -m torch.distributed.launch ./aw_nas/main.py mptrain [cfg] [options]
+# example: CUDA_VISIBLE_DEVICES=4,5 python -m torch.distributed.launch --nproc_per_node=2 --master_port 62222 ./aw_nas/main.py mptrain [cfg] [options]
 # param: 11.2 M
 # flops: 1110 M
 # clean acc with aux head 0.4: 0.947
