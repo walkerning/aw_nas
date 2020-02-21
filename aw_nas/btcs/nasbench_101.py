@@ -418,35 +418,42 @@ class NasBench101EvoController(BaseController):
     NAME = "nasbench-101-evo"
 
     def __init__(self, search_space, device, rollout_type="nasbench-101", mode="eval",
-                 population_nums=100, mutation_prob=1.0,
+                 population_nums=100, parent_pool_size=10, mutation_prob=1.0,
                  schedule_cfg=None):
         super(NasBench101EvoController, self).__init__(
             search_space, rollout_type, mode, schedule_cfg)
 
         # get pickle data
-        base_dir = os.path.join(utils.get_awnas_dir("AWNAS_DATA", "data"), "nasbench-101")
-        train_data_path = os.path.join(base_dir, "nasbench_allv_new.pkl")
-        valid_data_path = os.path.join(base_dir, "nasbench_allv_new_valid.pkl")
-        with open(train_data_path, "rb") as f:
-            train_data = pickle.load(f)
-        with open(valid_data_path, "rb") as f:
-            valid_data = pickle.load(f)
+        # base_dir = os.path.join(utils.get_awnas_dir("AWNAS_DATA", "data"), "nasbench-101")
+        # train_data_path = os.path.join(base_dir, "nasbench_allv.pkl")
+        # valid_data_path = os.path.join(base_dir, "nasbench_allv_valid.pkl")
+        # with open(train_data_path, "rb") as f:
+        #     train_data = pickle.load(f)
+        # with open(valid_data_path, "rb") as f:
+        #     valid_data = pickle.load(f)
 
-        self.all_data = train_data + valid_data
-        self.num_arch = len(self.all_data)
+        # self.all_data = train_data + valid_data
+        # self.num_arch = len(self.all_data)
 
         # get the infinite iterator of the model matrix and ops
         self.mutation_prob = mutation_prob
+        self.parent_pool_size = parent_pool_size
         self.cur_perf = None
         self.cur_solution = self.search_space.random_sample_arch()
         self.population_nums = population_nums
         self.population = collections.OrderedDict()
-        population_ind = np.random.choice(np.arange(self.num_arch),
-                                          size=self.population_nums, replace=False)
-        for i in range(self.population_nums):
-            data_i = self.all_data[population_ind[i]]
-            geno = self.search_space.genotype(data_i[0])
-            self.population[geno] = data_i[1]
+        # population_ind = np.random.choice(np.arange(len(self.search_space.nasbench.fixed_statistics)),
+        # size=self.population_nums, replace=False)
+        # for i in range(self.population_nums):
+        #     rollout = self.search_space.random_sample()
+        #     geno = rollout.genotype
+        #     self.search_space.nasbench.query(geno)["validataion_accuracy"]
+        #     data_i = self.all_data[population_ind[i]]
+        #     geno = self.search_space.genotype(data_i[0])
+        #     self.population[geno] = data_i[1]
+
+        self.gt_rollouts = []
+        self.gt_scores = []
 
     def set_init_population(self, rollout_list, perf_name):
         # clear the current population
@@ -456,8 +463,19 @@ class NasBench101EvoController(BaseController):
 
     def sample(self, n, batch_size=None):
         assert batch_size is None
-        choices = np.random.choice(np.arange(len(self.population.items())), size=n, replace=False)
+        if self.mode == "eval":
+            # Return n archs seen(self.gt_rollouts) with best rewards
+            self.logger.info("Return the best {} rollouts in the population".format(n))
+            best_inds = np.argpartition(self.gt_scores, -n)[-n:]
+            return [self.gt_rollouts[ind] for ind in best_inds]
+
+        if len(self.population) < self.population_nums:
+            self.logger.info("Population not full, random sample {}".format(n))
+            return [self.search_space.random_sample() for _ in range(n)]
+
         population_items = list(self.population.items())
+        choices = np.random.choice(np.arange(len(self.population)),
+                                   size=self.parent_pool_size, replace=False)
         selected_pop = [population_items[i] for i in choices]
         new_archs = sorted(selected_pop, key=lambda x: x[1], reverse=True)
         rollouts = []
@@ -487,12 +505,26 @@ class NasBench101EvoController(BaseController):
                 return rollouts
 
     def step(self, rollouts, optimizer, perf_name):
-        best_rollout = rollouts[0]
-        for r in rollouts:
-            if r.get_perf(perf_name) > best_rollout.get_perf(perf_name):
-                best_rollout = r
-        self.population.pop(list(self.population.keys())[0])
-        self.population[best_rollout.genotype] = best_rollout.get_perf(perf_name)
+        # best_rollout = rollouts[0]
+        # for r in rollouts:
+        #     if r.get_perf(perf_name) > best_rollout.get_perf(perf_name):
+        #         best_rollout = r
+        for best_rollout in rollouts:
+            self.population[best_rollout.genotype] = best_rollout.get_perf(perf_name)
+        if len(self.population) > self.population_nums:
+            for key in list(self.population.keys())[:len(self.population) - self.population_nums]:
+                self.population.pop(key)
+
+        # Save the best rollouts
+        num_rollouts_to_keep = 200
+        self.gt_rollouts = self.gt_rollouts + rollouts
+        self.gt_scores = self.gt_scores + [r.get_perf(perf_name) for r in rollouts]
+        if len(self.gt_rollouts) >= num_rollouts_to_keep:
+            best_inds = np.argpartition(
+                self.gt_scores, -num_rollouts_to_keep)[-num_rollouts_to_keep:]
+            self.gt_rollouts = [self.gt_rollouts[ind] for ind in best_inds]
+            self.gt_scores = [self.gt_scores[ind] for ind in best_inds]
+ 
         return 0
 
     @classmethod
@@ -622,12 +654,13 @@ class NasBench101Evaluator(BaseEvaluator):
     NAME = "nasbench-101"
 
     def __init__(self, dataset, weights_manager, objective, rollout_type="nasbench-101",
-                 use_epoch=108,
+                 use_epoch=108, use_mean_valid_as_reward=False,
                  schedule_cfg=None):
         super(NasBench101Evaluator, self).__init__(
             dataset, weights_manager, objective, rollout_type)
 
         self.use_epoch = use_epoch
+        self.use_mean_valid_as_reward = use_mean_valid_as_reward
 
     @classmethod
     def supported_data_types(cls):
@@ -652,15 +685,22 @@ class NasBench101Evaluator(BaseEvaluator):
             eval_rollouts = rollouts
 
         for rollout in eval_rollouts:
-            query_res = rollout.search_space.nasbench.query(rollout.genotype)
-            # could use other performance, this functionality is not compatible with objective
-            rollout.set_perf(query_res["validation_accuracy"])
+            if not self.use_mean_valid_as_reward:
+                try:
+                    query_res = rollout.search_space.nasbench.query(rollout.genotype)
+                except:
+                    import ipdb
+                    ipdb.set_trace()
+                # could use other performance, this functionality is not compatible with objective
+                rollout.set_perf(query_res["validation_accuracy"])
 
             # use mean for test acc
             # can use other fidelity too
             res = rollout.search_space.nasbench.get_metrics_from_spec(
                 rollout.genotype)[1][self.use_epoch]
             mean_valid_acc = np.mean([s_res["final_validation_accuracy"] for s_res in res])
+            if self.use_mean_valid_as_reward:
+                rollout.set_perf(mean_valid_acc)
             rollout.set_perf(mean_valid_acc, name="mean_valid_acc")
             mean_test_acc = np.mean([s_res["final_test_accuracy"] for s_res in res])
             rollout.set_perf(mean_test_acc, name="mean_test_acc")
