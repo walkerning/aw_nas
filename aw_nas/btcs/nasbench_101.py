@@ -15,7 +15,7 @@ from torch import nn
 import torch.nn.functional as F
 
 from nasbench import api
-from nasbench.lib import graph_util
+from nasbench.lib import graph_util, config
 
 from aw_nas import utils
 from aw_nas.utils.exception import expect
@@ -29,13 +29,15 @@ from aw_nas.utils import DenseGraphConvolution, DenseGraphFlow
 
 VERTICES = 7
 MAX_EDGES = 9
-
+_nasbench_cfg = config.build_config()
 
 class _ModelSpec(api.ModelSpec):
     def __repr__(self):
         return "ModelSpec(matrix={}, ops={}; original_matrix={}, original_ops={})".format(
             self.matrix, self.ops, self.original_matrix, self.original_ops)
 
+    def hash_spec(self):
+        return super(_ModelSpec, self).hash_spec(_nasbench_cfg["available_ops"])
 
 class NasBench101SearchSpace(SearchSpace):
     NAME = "nasbench-101"
@@ -50,6 +52,7 @@ class NasBench101SearchSpace(SearchSpace):
             "maxpool3x3",
             "none",
         ]
+        # operations: "conv3x3-bn-relu", "conv1x1-bn-relu", "maxpool3x3"
         self.ops_choice_to_idx = {choice: i for i, choice in enumerate(self.ops_choices)}
 
         self.multi_fidelity = multi_fidelity
@@ -246,8 +249,8 @@ class NasBench101Rollout(BaseRollout):
         if self.search_space.compare_reduced:
             if self.search_space.compare_use_hash:
                 # compare using hash, isomorphic archs would be equal
-                return self.genotype.hash_spec(self.search_space.ops_choices) == \
-                    other.genotype.hash_spec(self.search_space.ops_choices)
+                return self.genotype.hash_spec() == \
+                    other.genotype.hash_spec()
             else:
                 # compared using reduced archs
                 return (np.array(self.genotype.matrix).tolist() == \

@@ -8,6 +8,7 @@ import logging
 import argparse
 import random
 import pickle
+from collections import defaultdict
 
 import yaml
 from scipy.stats import stats
@@ -41,6 +42,24 @@ class NasBench101Dataset(Dataset):
             data = (data[0], data[1] / self.div, data[2] / self.div)
         return data
 
+class NasBench101HashDataset(Dataset):
+    def __init__(self, data, minus=None, div=None):
+        self.data = data
+        self._len = len(self.data)
+        self.minus = minus
+        self.div = div
+
+    def __len__(self):
+        return self._len
+
+    def __getitem__(self, idx):
+        data = self.data[idx]
+        if self.minus is not None:
+            data = (data[0], data[1], data[2] - self.minus, data[3] - self.minus)
+        if self.div is not None:
+            data = (data[0], data[1], data[2] / self.div, data[3] / self.div)
+        return data
+
 def train_listwise(train_data, model, epoch, args):
     objs = utils.AverageMeter()
     model.train()
@@ -58,9 +77,6 @@ def train_listwise(train_data, model, epoch, args):
     if listwise_compare:
         assert args.list_length == 2 and update_batch_n == 1
     model.optimizer.zero_grad()
-    # if epoch >= 15:
-    #     import ipdb
-    #     ipdb.set_trace()
     for step in range(1, num_batches + 1):
         if getattr(args, "bs_replace", False):
             idxes = np.array([np.random.choice(idx_list, size=(args.list_length,), replace=False) for _ in range(args.batch_size)])
@@ -279,6 +295,26 @@ def pairwise_valid(val_loader, model, seed=None, funcs=[]):
     funcs_res = [func(true_accs, all_scores) for func in funcs]
     return corr, funcs_res
 
+def valid_hash(val_loader, model, args, funcs):
+    model.eval()
+    hash_res_dct = defaultdict(list)
+    all_scores = []
+    true_accs = []
+    for hash_key, archs, accs, _ in val_loader:
+        scores = list(model.predict(archs).cpu().data.numpy())
+        for h_key, score in zip(hash_key, scores):
+            hash_res_dct[h_key].append(score)
+        all_scores += scores
+        true_accs += list(accs)
+    mean_var = utils.AverageMeter()
+    for hash_key, scores in hash_res_dct.items():
+        if len(scores) > 1:
+            mean_var.update(np.var(scores))
+    logging.info("Variance of {} isomorphism groups: total: {}; mean: {}".format(mean_var.cnt, mean_var.sum, mean_var.avg))
+    corr = stats.kendalltau(true_accs, all_scores).correlation
+    funcs_res = [func(true_accs, all_scores) for func in funcs]
+    return corr, funcs_res
+
 def valid(val_loader, model, args, funcs=[]):
     if not callable(getattr(model, "predict", None)):
         assert callable(getattr(model, "compare", None))
@@ -299,6 +335,10 @@ def valid(val_loader, model, args, funcs=[]):
         scores = list(model.predict(archs).cpu().data.numpy())
         all_scores += scores
         true_accs += list(accs)
+
+    if args.save_predict is not None:
+        with open(args.save_predict, "wb") as wf:
+            pickle.dump((true_accs, all_scores), wf)
 
     corr = stats.kendalltau(true_accs, all_scores).correlation
     funcs_res = [func(true_accs, all_scores) for func in funcs]
@@ -321,6 +361,9 @@ def main(argv):
     parser.add_argument("--eval-only-last", default=None, type=int,
                         help=("for pairwise compartor, the evaluation is slow,"
                               " only evaluate in the final epochs"))
+    parser.add_argument("--save-predict", default=None, help="Save the predict scores")
+    parser.add_argument("--valfile", default=None, help="Specificy another validation arch pikle file")
+    parser.add_argument("--valhash", default=False, action="store_true")
     args = parser.parse_args(argv)
 
     setproctitle.setproctitle("python train_nasbench_pkl.py config: {}; train_dir: {}; cwd: {}"\
@@ -418,6 +461,9 @@ def main(argv):
                 train_data = pickle.load(rf)
             with open("nasbench_7v_valid.pkl", "rb") as rf:
                 valid_data = pickle.load(rf)
+    if args.valfile is not None:
+        with open(args.valfile, "rb") as rf:
+            valid_data = pickle.load(rf)
 
     with open(backup_cfg_file, "r") as cfg_f:
         cfg = yaml.load(cfg_f)
@@ -471,8 +517,12 @@ def main(argv):
 
     train_data = NasBench101Dataset(train_data, minus=cfg.get("dataset_minus", None),
                                     div=cfg.get("dataset_div", None))
-    valid_data = NasBench101Dataset(valid_data, minus=cfg.get("dataset_minus", None),
-                                    div=cfg.get("dataset_div", None))
+    if args.valhash:
+        valid_data = NasBench101HashDataset(valid_data, minus=cfg.get("dataset_minus", None),
+                                            div=cfg.get("dataset_div", None))
+    else:
+        valid_data = NasBench101Dataset(valid_data, minus=cfg.get("dataset_minus", None),
+                                        div=cfg.get("dataset_div", None))
     train_loader = DataLoader(
         train_data, batch_size=args.batch_size, shuffle=True, pin_memory=True, num_workers=args.num_workers,
         collate_fn=lambda items: list(zip(*items)))
@@ -491,9 +541,14 @@ def main(argv):
         # threshold 1: 450s; threshold 50: 70s; threshold 100: 60s
         if args.test_funcs is not None:
             test_func_names = args.test_funcs.split(",")
-        corr, func_res = valid(val_loader, model, args,
-                               funcs=[globals()[func_name] for func_name in test_func_names]
-                               if args.test_funcs is not None else [])
+        if args.valhash:
+            corr, func_res = valid_hash(val_loader, model, args,
+                                        funcs=[globals()[func_name] for func_name in test_func_names]
+                                        if args.test_funcs is not None else [])
+        else:
+            corr, func_res = valid(val_loader, model, args,
+                                   funcs=[globals()[func_name] for func_name in test_func_names]
+                                   if args.test_funcs is not None else [])
         if args.test_funcs is None:
             logging.info("INIT: kendall tau {:.4f}".format(corr))
         else:
