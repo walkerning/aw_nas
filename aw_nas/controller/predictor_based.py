@@ -174,6 +174,7 @@ class PredictorBasedController(BaseController):
                "only support pointwise_comparator arch network for now", ConfigException)
         model_cls = ArchNetwork.get_class_(arch_network_type)
         self.model = model_cls(self.search_space, **arch_network_cfg)
+        self.model.to(self.device)
 
         self.gt_rollouts = []
         self.gt_arch_scores = []

@@ -498,7 +498,7 @@ class NasBench101EvoController(BaseController):
             newspec = _ModelSpec(new_matrix, new_ops)
             if ss.nasbench.is_valid(newspec):
                 rollouts.append(NasBench101Rollout(
-                    cur_matrix,
+                    new_matrix,
                     ss.op_to_idx(cur_ops),
                     search_space=self.search_space
                 ))
@@ -625,8 +625,7 @@ class NasBench101SAController(BaseController):
         if self.cur_perf is None or self.cur_perf < new_perf:
             self.cur_perf = new_perf
             self.cur_solution = rollout.arch
-        elif np.exp((self.cur_perf - new_perf) / self.temperature) \
-             > np.random.rand(0, 1):
+        elif np.exp((new_perf - self.cur_perf) / self.temperature) > np.random.rand():
             self.cur_perf = new_perf
             self.cur_solution = rollout.arch
         self.temperature *= self.anneal_coeff
@@ -686,11 +685,7 @@ class NasBench101Evaluator(BaseEvaluator):
 
         for rollout in eval_rollouts:
             if not self.use_mean_valid_as_reward:
-                try:
-                    query_res = rollout.search_space.nasbench.query(rollout.genotype)
-                except:
-                    import ipdb
-                    ipdb.set_trace()
+                query_res = rollout.search_space.nasbench.query(rollout.genotype)
                 # could use other performance, this functionality is not compatible with objective
                 rollout.set_perf(query_res["validation_accuracy"])
 
