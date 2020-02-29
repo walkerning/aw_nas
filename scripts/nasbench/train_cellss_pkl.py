@@ -445,6 +445,99 @@ def pairwise_valid(val_loader, model, seed=None):
     funcs_res = [func(true_accs, all_scores) for func in funcs]
     return corr, funcs_res
 
+def sample_batchify(search_space, model, ratio, K, args, conflict_archs=None):
+    model.eval()
+    inner_sample_n = args.sample_batchify_inner_sample_n
+    ss = search_space
+    assert K % inner_sample_n == 0
+    num_iter = K // inner_sample_n
+    want_samples_per_iter = int(ratio * inner_sample_n)
+    logging.info("Sample {}. REPEAT {}: Sample {} archs based on the predicted score across {} archs".format(
+        K, num_iter, inner_sample_n, want_samples_per_iter))
+    sampled_rollouts = []
+    sampled_scores = []
+    # the number, mean and max predicted scores of current sampled archs
+    cur_sampled_mean_max = (0, 0, 0)
+    i_iter = 1
+    # num_steps = (ratio * K + args.batch_size - 1) // args.batch_size
+    _r_cls = ss.random_sample().__class__
+    conflict_rollouts = [_r_cls(arch, info={}, search_space=search_space) for arch in conflict_archs or []]
+    inner_report_freq = 10
+    judget_conflict = False
+    while i_iter <= num_iter:
+        # # random init
+        # if self.inner_iter_random_init \
+        #    and hasattr(self.inner_controller, "reinit"):
+        #     self.inner_controller.reinit()
+
+        new_per_step_meter = utils.AverageMeter()
+
+        # a list with length self.inner_sample_n
+        best_rollouts = []
+        best_scores = []
+        num_to_sample = inner_sample_n
+        iter_r_set = []
+        iter_s_set = []
+        sampled_r_set = sampled_rollouts
+        # for i_inner in range(1, num_steps+1):
+        i_inner = 0
+        while new_per_step_meter.sum < want_samples_per_iter:
+            i_inner += 1
+            rollouts = [search_space.random_sample() for _ in range(args.batch_size)]
+            batch_archs = [r.arch for r in rollouts]
+            step_scores = list(model.predict(batch_archs).cpu().data.numpy())
+            if judget_conflict:
+                new_inds, new_rollouts = zip(*[(i, r) for i, r in enumerate(rollouts)
+                                               if r not in conflict_rollouts
+                                               and r not in sampled_r_set
+                                               and r not in iter_r_set])
+                new_step_scores = [step_scores[i] for i in new_inds]
+                iter_r_set += new_rollouts
+                iter_s_set += new_step_scores
+            else:
+                new_rollouts = rollouts
+                new_step_scores = step_scores
+            new_per_step_meter.update(len(new_rollouts))
+            best_rollouts += new_rollouts
+            best_scores += new_step_scores
+            # iter_r_set += rollouts
+            # iter_s_set += step_scores
+
+            if len(best_scores) > num_to_sample:
+                keep_inds = np.argpartition(best_scores, -num_to_sample)[-num_to_sample:]
+                best_rollouts = [best_rollouts[ind] for ind in keep_inds]
+                best_scores = [best_scores[ind] for ind in keep_inds]
+            if i_inner % inner_report_freq == 0:
+                logging.info(
+                    ("Seen %d/%d Iter %d (to sample %d) (already sampled %d mean %.5f, best %.5f); "
+                     "Step %d: sample %d step mean %.5f best %.5f: {} "
+                     # "(iter mean %.5f, best %.5f).
+                     "AVG new/step: %.3f").format(
+                         ", ".join(["{:.5f}".format(s) for s in best_scores])),
+                    new_per_step_meter.sum, want_samples_per_iter,
+                    i_iter, num_to_sample,
+                    cur_sampled_mean_max[0], cur_sampled_mean_max[1], cur_sampled_mean_max[2],
+                    i_inner, len(rollouts), np.mean(step_scores), np.max(step_scores),
+                    #np.mean(iter_s_set), np.max(iter_s_set),
+                    new_per_step_meter.avg)
+        # if new_per_step_meter.sum < num_to_sample * 10:
+        #         # rerun this iter, also reinit!
+        #         self.logger.info("Cannot find %d (num_to_sample x min_inner_sample_ratio)"
+        #                          " (%d x %d) new rollouts in one run of the inner controller"
+        #                          "Re-init the controller and re-run this iteration.",
+        #                          num_to_sample * self.min_inner_sample_ratio,
+        #                          num_to_sample, self.min_inner_sample_ratio)
+        #         continue
+
+        i_iter += 1
+        assert len(best_scores) == num_to_sample
+        sampled_rollouts += best_rollouts
+        sampled_scores += best_scores
+        cur_sampled_mean_max = (
+            len(sampled_scores), np.mean(sampled_scores), np.max(sampled_scores))
+
+    return [r.genotype for r in sampled_rollouts]
+
 def sample(search_space, model, N, K, args, from_genotypes=None, conflict_archs=None):
     model.eval()
     logging.info("Sample {} archs based on the predicted score across {} archs".format(K, N))
@@ -453,6 +546,7 @@ def sample(search_space, model, N, K, args, from_genotypes=None, conflict_archs=
         remain_to_sample = N
         all_archs = []
         all_rollouts = []
+        conflict_archs = conflict_archs or []
         while remain_to_sample > 0:
             logging.info("sample {}".format(remain_to_sample))
             while 1:
@@ -559,6 +653,7 @@ def main(argv):
     parser.add_argument("--test-funcs", default=None, help="comma-separated list of test funcs")
     parser.add_argument("--load", default=None, help="Load comparator from disk.")
     parser.add_argument("--sample", default=None, type=int)
+    parser.add_argument("--sample-batchify-inner-sample-n", default=None, type=int)
     parser.add_argument("--sample-to-file", default=None, type=str)
     parser.add_argument("--sample-from-file", default=None, type=str)
     parser.add_argument("--sample-conflict-file", default=None, type=str, action="append")
@@ -743,7 +838,11 @@ search_space_type: cnn
                     conflict_archs += pickle.load(open(scf, "rb"))
             else:
                 conflict_archs = None
-            genotypes = sample(search_space, model, args.sample * int(args.sample_ratio), args.sample, args, from_genotypes=from_genotypes, conflict_archs=conflict_archs)
+            if args.sample_batchify_inner_sample_n is not None:
+                # do not support multi-stage now
+                genotypes = sample_batchify(search_space, model, args.sample_ratio, args.sample, args, conflict_archs=conflict_archs)
+            else:
+                genotypes = sample(search_space, model, args.sample * int(args.sample_ratio), args.sample, args, from_genotypes=from_genotypes, conflict_archs=conflict_archs)
             if args.sample_to_file:
                 with open(args.sample_to_file, "w") as wf:
                     yaml.dump([str(geno) for geno in genotypes], wf)

@@ -269,6 +269,10 @@ def valid(val_loader, model, args, funcs=[]):
         all_scores += scores
         true_accs += list(accs)
 
+    if args.save_predict is not None:
+        with open(args.save_predict, "wb") as wf:
+            pickle.dump((true_accs, all_scores), wf)
+
     corr = stats.kendalltau(true_accs, all_scores).correlation
     funcs_res = [func(true_accs, all_scores) for func in funcs]
     return corr, funcs_res
@@ -288,6 +292,7 @@ def main(argv):
     parser.add_argument("--eval-only-last", default=None, type=int,
                         help=("for pairwise compartor, the evaluation is slow,"
                               " only evaluate in the final epochs"))
+    parser.add_argument("--save-predict", default=None, help="Save the predict scores")
     args = parser.parse_args(argv)
 
     setproctitle.setproctitle("python train_nasbench201_pkl.py config: {}; train_dir: {}; cwd: {}"\
