@@ -652,3 +652,107 @@ def test_mnasnet_ofa_forward_rollout(mnasnet_ofa_super_net):
     data = _cnn_data()
     logits = cand_net.forward(data[0])
     assert logits.shape[-1] == 10
+
+def _nasbench_201_sample_cand(net):
+    ss = net.search_space
+
+    rollout = ss.random_sample()
+    # arch = [([0, 0, 2, 2, 0, 2, 4, 4], [0, 6, 7, 6, 1, 1, 5, 7]),
+    # ([1, 1, 0, 0, 1, 2, 2, 2], [7, 2, 2, 1, 7, 4, 3, 7])]
+
+    cand_net = net.assemble_candidate(rollout)
+    return cand_net
+
+
+@pytest.mark.parametrize("nasbench_201", [
+    {"candidate_member_mask": False},
+], indirect=["nasbench_201"])
+def test_nasbench_201_assemble_nomask(nasbench_201):
+    net = nasbench_201
+    cand_net = _nasbench_201_sample_cand(net)
+    assert set(dict(cand_net.named_parameters()).keys()) == set(dict(net.named_parameters()).keys())
+    assert set(dict(cand_net.named_buffers()).keys()) == set(dict(net.named_buffers()).keys())
+
+def test_nasbench_201_assemble(nasbench_201):
+    net = nasbench_201
+    cand_net = _nasbench_201_sample_cand(net)
+
+    # test named_parameters/named_buffers
+    # print("Supernet parameter num: {} ; buffer num: {}"\
+    #       .format(len(list(net.parameters())), len(list(net.buffers()))))
+    # print("candidatenet parameter num: {} ; buffer num: {}"\
+    #       .format(len(list(cand_net.named_parameters())), len(list(cand_net.buffers()))))
+
+    s_names = set(dict(net.named_parameters()).keys())
+    c_names = set(dict(cand_net.named_parameters()).keys())
+    assert len(s_names) > len(c_names)
+    assert len(s_names.intersection(c_names)) == len(c_names)
+
+    s_b_names = set(dict(net.named_buffers()).keys())
+    c_b_names = set(dict(cand_net.named_buffers()).keys())
+    assert len(s_b_names) > len(c_b_names)
+    assert len(s_b_names.intersection(c_b_names)) == len(c_b_names)
+    # names = sorted(set(c_names).difference([g[0] for g in grads]))
+
+@pytest.mark.parametrize("nasbench_201", [
+    {},
+], indirect=["nasbench_201"])
+def test_nasbench_201_forward(nasbench_201):
+    # test forward
+    cand_net = _nasbench_201_sample_cand(nasbench_201)
+
+    data = _cnn_data()
+    logits = cand_net.forward_data(data[0], mode="eval")
+    assert logits.shape[-1] == 10
+
+@pytest.mark.parametrize("nasbench_201", [{
+    "gpus": [0, 1]
+}], indirect=["nasbench_201"])
+def test_nasbench_201_data_parallel_forward(nasbench_201):
+    # test forward
+    cand_net = _nasbench_201_sample_cand(nasbench_201)
+    batch_size = 10
+    data = _cnn_data(batch_size=batch_size)
+    logits = cand_net.forward_data(data[0], mode="eval")
+    assert logits.shape == (batch_size, 10)
+
+@pytest.mark.parametrize("nasbench_201", [{
+    "gpus": [0, 1]
+}], indirect=["nasbench_201"])
+def test_nasbench_201_data_parallel_gradient(nasbench_201):
+    cand_net = _nasbench_201_sample_cand(nasbench_201)
+    batch_size = 10
+    data = _cnn_data(batch_size=batch_size)
+
+    logits = cand_net.forward_data(data[0], mode="eval")
+    assert logits.shape == (batch_size, 10)
+    _ = cand_net.gradient(data, mode="train")
+
+def test_nasbench_201_candidate_forward_with_params(nasbench_201):
+    cand_net = _nasbench_201_sample_cand(nasbench_201)
+    batch_size = 2
+    data = _cnn_data(batch_size=batch_size)
+
+    old_params = {n: p.clone() for n, p in
+                  cand_net.active_named_members("parameters", check_visited=True)}
+    print("num active params: ", len(old_params))
+    # random init
+    new_params = {n: torch.autograd.Variable(p.new(p.size()).normal_(), requires_grad=True) for n, p in
+                  cand_net.active_named_members("parameters", check_visited=True)}
+    res = torch.sum(cand_net.forward_with_params(data[0], new_params, mode="train"))
+
+    # assert set back to original params
+    for name, new_value in cand_net.named_parameters():
+        if name in old_params:
+            assert (new_value == old_params[name]).all()
+
+    try:
+        torch.autograd.grad(
+            res, list(dict(cand_net.active_named_members("parameters", check_visited=True)).values()), retain_graph=True)
+    except Exception:
+        print("should raise!")
+    else:
+        assert False, "Should raise, as new params are used"
+    torch.autograd.grad(res, list(new_params.values()))
+
+

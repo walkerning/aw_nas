@@ -56,6 +56,10 @@ PRIMITVE_FACTORY = {
         C, C_out, 5, stride, 4, 2, affine=affine),
     "conv_7x1_1x7" : conv_7x1_1x7,
 
+    "nor_conv_1x1" : lambda C, C_out, stride, affine: ReLUConvBN(C, C_out,
+                                                                     1, stride, 0, affine=affine),
+    "nor_conv_3x3" : lambda C, C_out, stride, affine: ReLUConvBN(C, C_out,
+                                                                     3, stride, 1, affine=affine),
     "relu_conv_bn_1x1" : lambda C, C_out, stride, affine: ReLUConvBN(C, C_out,
                                                                      1, stride, 0, affine=affine),
     "relu_conv_bn_3x3" : lambda C, C_out, stride, affine: ReLUConvBN(C, C_out,
@@ -84,6 +88,9 @@ PRIMITVE_FACTORY = {
         nn.Conv2d(C_out // 2, C_out, 3, stride=2, padding=1, bias=False),
         nn.BatchNorm2d(C_out)
     ),
+
+    "NB201ResidualBlock": lambda C, C_out, stride, affine: NB201ResidualBlock(C, C_out, stride,
+                                                                   affine=affine),
 
     # activations
     "tanh": lambda **kwargs: nn.Tanh(),
@@ -354,6 +361,46 @@ class inspectBlock(torch.nn.Module):
             return self.op2(x)
         return self.op3(x)
 
+
+class NB201ResidualBlock(nn.Module):
+
+    def __init__(self, inplanes, planes, stride, affine=True):
+        super(NB201ResidualBlock, self).__init__()
+        assert stride == 1 or stride == 2, 'invalid stride {:}'.format(stride)
+        self.conv_a = ReLUConvBN(inplanes, planes, 3, stride, 1, affine)
+        self.conv_b = ReLUConvBN(  planes, planes, 3,      1, 1, affine)
+        if stride == 2:
+            self.downsample = nn.Sequential(
+                           nn.AvgPool2d(kernel_size=2, stride=2, padding=0),
+                           nn.Conv2d(inplanes, planes, kernel_size=1, stride=1, padding=0, bias=False))
+        elif inplanes != planes:
+            self.downsample = ReLUConvBN(inplanes, planes, 1, 1, 0, affine)
+        else:
+            self.downsample = None
+        self.in_dim  = inplanes
+        self.out_dim = planes
+        self.stride  = stride
+        self.num_conv = 2
+
+    def extra_repr(self):
+        string = '{name}(inC={in_dim}, outC={out_dim}, stride={stride})'.format(name=self.__class__.__name__, **self.__dict__)
+        return string
+
+    def forward(self, inputs, genotype=None):
+
+        basicblock = self.conv_a(inputs)
+        basicblock = self.conv_b(basicblock)
+
+        if self.downsample is not None:
+            residual = self.downsample(inputs)
+        else:
+            residual = inputs
+        return residual + basicblock
+
+    def sub_named_members(self, genotype, prefix="", member="parameters", check_visited=False):
+        _func = getattr(self, "named_" + member)
+        for n, v in _func(prefix):
+            yield n, v
 
 # ---- added for rnn ----
 # from https://github.com/carpedm20/ENAS-pytorch

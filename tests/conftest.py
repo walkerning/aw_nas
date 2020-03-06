@@ -265,3 +265,15 @@ def nasbench_search_space():
     # might take several minutes
     search_space = get_search_space("nasbench-101")
     return search_space
+
+@pytest.fixture
+def nasbench_201(request):
+    cfg = getattr(request, "param", {})
+    scfg = cfg.pop("search_space_cfg", {})
+    from aw_nas.common import get_search_space
+    from aw_nas.btcs.nasbench_201 import NB201SharedNet
+    search_space = get_search_space(cls="nasbench-201", **scfg)
+    device = "cuda"
+    net = NB201SharedNet(search_space, device, **cfg)
+    return net
+
