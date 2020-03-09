@@ -72,6 +72,7 @@ class DiffController(BaseController, nn.Module):
         self.to(self.device)
 
     def set_mode(self, mode):
+        super(DiffController, self).set_mode(mode)
         if mode == "train":
             nn.Module.train(self)
         elif mode == "eval":
@@ -165,9 +166,9 @@ class DiffController(BaseController, nn.Module):
         # apply the gradients
         optimizer.step()
 
-    def step(self, rollouts, optimizer): # very memory inefficient
+    def step(self, rollouts, optimizer, perf_name): # very memory inefficient
         self.zero_grad()
-        losses = [r.get_perf() for r in rollouts]
+        losses = [r.get_perf(perf_name) for r in rollouts]
         optimizer.step()
         [l.backward() for l in losses]
         return np.mean([l.detach().cpu().numpy() for l in losses])

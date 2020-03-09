@@ -78,7 +78,7 @@ evaluator_cfg:
   controller_surrogate_steps: 0
   mepa_surrogate_steps: 0
   mepa_optimizer:
-    lr: 0.01
+    lr: 0.05
     momentum: 0.9
     type: SGD
     weight_decay: 0.0003
@@ -86,13 +86,8 @@ evaluator_cfg:
     eta_min: 0.0
     T_max: 200
     type: CosineAnnealingLR
-  surrogate_optimizer:
-    lr: 0.01
-    type: SGD
-  surrogate_scheduler:
-    eta_min: 0.0
-    T_max: 200
-    type: CosineAnnealingLR
+  surrogate_optimizer: null
+  surrogate_scheduler: null
   mepa_samples: 1
   data_portion:
   - 0.0

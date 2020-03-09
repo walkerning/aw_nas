@@ -1,10 +1,10 @@
+import math
 from contextlib import contextmanager
-from functools import partial
 
 import six
 import numpy as np
 import torch
-from torch import optim
+from torch import optim, nn
 from torch.autograd import Variable
 import torch.nn.functional as F
 import torch.utils.data
@@ -93,6 +93,345 @@ def use_params(module, params):
     yield
     for mod_prefix, mod in module.named_modules():
         substitute_params(mod, backup_params, prefix=mod_prefix)
+
+class DenseGraphConvolution(nn.Module):
+    """
+    Simple GCN layer, similar to https://arxiv.org/abs/1609.02907
+    Reference:
+    https://github.com/tkipf/pygcn/blob/88c6676b2ab98b04bf3bef96b46ea037ebb07b12/pygcn/layers.py
+    Dense matrix multiply for batching
+    """
+
+    def __init__(self, in_features, out_features, plus_I=False, normalize=False, bias=True):
+        super(DenseGraphConvolution, self).__init__()
+
+        self.plus_I = plus_I
+        self.normalize = normalize
+        self.in_features = in_features
+        self.out_features = out_features
+        self.weight = nn.Parameter(torch.FloatTensor(in_features, out_features))
+        if bias:
+            self.bias = nn.Parameter(torch.FloatTensor(out_features))
+        else:
+            self.register_parameter('bias', None)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        stdv = 1. / math.sqrt(self.weight.size(1))
+        self.weight.data.uniform_(-stdv, stdv)
+        if self.bias is not None:
+            self.bias.data.uniform_(-stdv, stdv)
+
+    def forward(self, inputs, adj):
+        if self.plus_I:
+            adj_aug = adj + torch.eye(adj.shape[-1], device=adj.device).unsqueeze(0)
+            if self.normalize:
+                degree_invsqrt = 1. / adj_aug.sum(dim=-1).float().sqrt()
+                degree_norm = degree_invsqrt.unsqueeze(2) * degree_invsqrt.unsqueeze(1)
+                adj_aug = degree_norm * adj_aug
+        else:
+            adj_aug = adj
+        support = torch.matmul(inputs, self.weight)
+        output = torch.matmul(adj_aug, support)
+        if self.bias is not None:
+            return output + self.bias
+        else:
+            return output
+
+    def __repr__(self):
+        return self.__class__.__name__ + ' (' \
+               + str(self.in_features) + ' -> ' \
+               + str(self.out_features) + ')'
+
+class DenseGraphFlow(nn.Module):
+
+    def __init__(self, in_features, out_features, op_emb_dim,
+                 has_attention=True, plus_I=False, normalize=False, bias=True,
+                 residual_only=None):
+        super(DenseGraphFlow, self).__init__()
+
+        self.plus_I = plus_I
+        self.normalize = normalize
+        self.in_features = in_features
+        self.out_features = out_features
+        self.op_emb_dim = op_emb_dim
+        self.residual_only = residual_only
+        self.weight = nn.Parameter(torch.FloatTensor(in_features, out_features))
+        if has_attention:
+            self.op_attention = nn.Linear(op_emb_dim, out_features)
+        else:
+            assert self.op_emb_dim == self.out_features
+            self.op_attention = nn.Identity()
+        if bias:
+            self.bias = nn.Parameter(torch.FloatTensor(out_features))
+        else:
+            self.register_parameter('bias', None)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        stdv = 1. / math.sqrt(self.weight.size(1))
+        self.weight.data.uniform_(-stdv, stdv)
+        if self.bias is not None:
+            self.bias.data.uniform_(-stdv, stdv)
+
+    def forward(self, inputs, adj, op_emb):
+        if self.plus_I:
+            adj_aug = adj + torch.eye(adj.shape[-1], device=adj.device).unsqueeze(0)
+            if self.normalize:
+                degree_invsqrt = 1. / adj_aug.sum(dim=-1).float().sqrt()
+                degree_norm = degree_invsqrt.unsqueeze(2) * degree_invsqrt.unsqueeze(1)
+                adj_aug = degree_norm * adj_aug
+        else:
+            adj_aug = adj
+        support = torch.matmul(inputs, self.weight)
+        if self.residual_only is None:
+            # use residual
+            output = torch.sigmoid(self.op_attention(op_emb)) * torch.matmul(adj_aug, support) + support
+        else:
+            # residual only the first `self.residual_only` nodes
+            output = torch.sigmoid(self.op_attention(op_emb)) * torch.matmul(adj_aug, support) + torch.cat(
+                (support[:, :self.residual_only, :],
+                 torch.zeros([support.shape[0], support.shape[1] - self.residual_only, support.shape[2]], device=support.device)),
+                dim=1)
+
+        if self.bias is not None:
+            return output + self.bias
+        else:
+            return output
+
+    def __repr__(self):
+        return self.__class__.__name__ + ' (' \
+               + str(self.in_features) + ' -> ' \
+               + str(self.out_features) + ')'
+
+class DenseGraphOpEdgeFlow(nn.Module):
+    """
+    For search space that has operation on the edge.
+    """
+    def __init__(self, in_features, out_features, op_emb_dim,
+                 has_attention=True, plus_I=False, share_self_op_emb=False,
+                 normalize=False, bias=False,
+                 residual_only=None, use_sum=False,
+                 concat=None, has_aggregate_op=False):
+        super(DenseGraphOpEdgeFlow, self).__init__()
+
+        self.plus_I = plus_I
+        self.share_self_op_emb = share_self_op_emb
+        self.residual_only = residual_only
+        self.normalize = normalize
+        self.in_features = in_features
+        self.out_features = out_features
+        self.op_emb_dim = op_emb_dim
+        self.use_sum = use_sum
+        # self.concat = concat
+        self.weight = nn.Parameter(torch.FloatTensor(in_features, out_features))
+        self.has_aggregate_op = has_aggregate_op
+        if self.has_aggregate_op:
+            self.aggregate_op = nn.Linear(out_features, out_features)
+        if has_attention:
+            self.op_attention = nn.Linear(op_emb_dim, out_features)
+        else:
+            assert self.op_emb_dim == self.out_features
+            self.op_attention = nn.Identity()
+        if self.plus_I and not self.share_self_op_emb:
+            self.self_op_emb = nn.Parameter(torch.FloatTensor(op_emb_dim))
+        if bias:
+            self.bias = nn.Parameter(torch.FloatTensor(out_features))
+        else:
+            self.register_parameter("bias", None)
+        # if self.concat is not None:
+        #     assert isinstance(self.concat, int)
+        #     self.concats
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        stdv = 1. / math.sqrt(self.weight.size(1))
+        self.weight.data.uniform_(-stdv, stdv)
+        if self.bias is not None:
+            self.bias.data.uniform_(-stdv, stdv)
+
+    def forward(self, inputs, adj, adj_op_inds_lst, op_emb, zero_index, self_op_emb=None):
+        # if self.plus_I:
+        #     adj_aug = adj + torch.eye(adj.shape[-1], device=adj.device).unsqueeze(0)
+        # else:
+        #     adj_aug = adj
+        # if self.normalize:
+        #     # degree_invsqrt = 1. / (adj_aug.sum(dim=-1).float() + 1e-8).sqrt()
+        #     # degree_norm = degree_invsqrt.unsqueeze(-1) * degree_invsqrt.unsqueeze(-2)
+        #     # adj_aug = degree_norm * adj_aug
+        #     num_input = adj_aug.sum(dim=-1, keepdim=True)
+        #     adj_aug = torch.where(num_input > 0, adj_aug / (num_input + 1e-8), adj_aug)
+
+        # support: (b, n_cg, V, h_i)
+        support = torch.matmul(inputs, self.weight)
+        op_emb_adj_lst = [F.embedding(adj_op_inds, op_emb) for adj_op_inds in adj_op_inds_lst]
+        attn_mask_inds_lst = [(adj_op_inds == zero_index).unsqueeze(-1)
+                              for adj_op_inds in adj_op_inds_lst]
+        if self.plus_I:
+            eye_mask = support.new(np.eye(adj.shape[-1])).unsqueeze(-1).bool()
+            # for i in range(len(adj_op_inds_lst)):
+            #     op_emb_adj_lst[i] = torch.where(eye_mask, self.self_op_emb, op_emb_adj_lst[i])
+            #     attn_mask_inds_lst[i] = attn_mask_inds_lst[i] & (~eye_mask.bool())
+            self_op_emb = self_op_emb if self.share_self_op_emb else self.self_op_emb
+            op_emb_adj_lst[0] = torch.where(eye_mask, self_op_emb, op_emb_adj_lst[0])
+            attn_mask_inds_lst[0] = attn_mask_inds_lst[0] & (~eye_mask)
+
+        # attn_mask_inds_stack: (n_d, b, n_cg, V, V, 1)
+        attn_mask_inds_stack = torch.stack(attn_mask_inds_lst)
+        # ob_emb_adj_stack: (n_d, b, n_cg, V, V, h_o)
+        op_emb_adj_stack = torch.stack(op_emb_adj_lst)
+
+        attn = torch.sigmoid(self.op_attention(op_emb_adj_stack))
+        attn = torch.where(
+            attn_mask_inds_stack,
+            attn.new(1, 1, 1, 1, 1, attn.shape[-1]).zero_(),
+            attn)
+        # attn: (n_d, b, n_cg, V, V, h_o)
+
+        # output = (adj_aug.unsqueeze(-1) * attn \
+        #           * support.unsqueeze(2)).sum(-2) + support
+        if self.residual_only is None:
+            res_output = support
+        else:
+            res_output = torch.cat(
+                (support[:, :, :self.residual_only, :],
+                 torch.zeros([support.shape[0], support.shape[1],
+                              support.shape[2] - self.residual_only, support.shape[3]],
+                             device=support.device)),
+                dim=2)
+        processed_info = (attn * support.unsqueeze(2)).sum(-2)
+        processed_info = processed_info.sum(0) if self.use_sum else processed_info.mean(0)
+        if self.has_aggregate_op:
+            output = self.aggregate_op(processed_info) + res_output
+        else:
+            output = processed_info + res_output
+        if self.bias is not None:
+            return output + self.bias
+        else:
+            return output
+
+    # def forward(self, inputs, adj, adj_op_inds, op_emb, zero_index):
+    #     if self.plus_I:
+    #         adj_aug = adj + torch.eye(adj.shape[-1], device=adj.device).unsqueeze(0)
+    #     else:
+    #         adj_aug = adj
+    #     if self.normalize:
+    #         # degree_invsqrt = 1. / (adj_aug.sum(dim=-1).float() + 1e-8).sqrt()
+    #         # degree_norm = degree_invsqrt.unsqueeze(-1) * degree_invsqrt.unsqueeze(-2)
+    #         # adj_aug = degree_norm * adj_aug
+    #         num_input = adj_aug.sum(dim=-1, keepdim=True)
+    #         adj_aug = torch.where(num_input > 0, adj_aug / (num_input + 1e-8), adj_aug)
+    #     support = torch.matmul(inputs, self.weight)
+    #     op_emb_adj = F.embedding(adj_op_inds, op_emb)
+    #     attn_mask_inds = (adj_op_inds == zero_index).unsqueeze(-1)
+    #     if self.plus_I:
+    #         eye_mask = attn_mask_inds.new(np.eye(adj.shape[-1])).unsqueeze(-1)
+
+    #         op_emb_adj = torch.where(eye_mask, self.self_op_emb, op_emb_adj)
+    #         attn_mask_inds = attn_mask_inds & (~eye_mask.bool())
+
+    #     attn = torch.sigmoid(self.op_attention(op_emb_adj))
+    #     attn = torch.where(
+    #         attn_mask_inds,
+    #         attn.new(1, 1, 1, 1, attn.shape[-1]).zero_(),
+    #         attn)
+    #     output = (adj_aug.unsqueeze(-1) * attn \
+    #               * support.unsqueeze(2)).sum(-2) + support
+    #     if self.bias is not None:
+    #         return output + self.bias
+    #     else:
+    #         return output
+
+    def __repr__(self):
+        return self.__class__.__name__ + ' (' \
+               + str(self.in_features) + ' -> ' \
+               + str(self.out_features) + ')'
+
+class DenseGraphSimpleOpEdgeFlow(nn.Module):
+    """
+    For search space that has operation on the edge.
+    SimpleOpEdgeFlow is applicable to the search space in which no double connection
+    between nodes exists.
+    """
+    def __init__(self, in_features, out_features, op_emb_dim,
+                 has_attention=True, plus_I=False, share_self_op_emb=False,
+                 normalize=False, bias=False,
+                 residual_only=None,
+                 concat=None, has_aggregate_op=False):
+        super(DenseGraphSimpleOpEdgeFlow, self).__init__()
+        
+        self.plus_I = plus_I
+        self.share_self_op_emb = share_self_op_emb
+        self.residual_only = residual_only
+        self.normalize = normalize
+        self.in_features = in_features
+        self.out_features = out_features
+        self.op_emb_dim = op_emb_dim
+        self.weight = nn.Parameter(torch.FloatTensor(in_features, out_features))
+        self.has_aggregate_op = has_aggregate_op
+        if self.has_aggregate_op:
+            # TODO: a non linear aggregate op can brought more representation ability?
+            # but no nonlinear aggreate op that have good interpreatability
+            # occurs to me for now..
+            # how the aggregation of different information dimensions
+            # differ? maybe can only use things like... sum, powered sum
+            # differ in the degree of emphasizing ``stronger'' info..
+            self.aggregate_op = nn.Linear(out_features, out_features)
+        if has_attention:
+            self.op_attention = nn.Linear(op_emb_dim, out_features)
+        else:
+            assert self.op_emb_dim == self.out_features
+            self.op_attention = nn.Identity()
+        if self.plus_I and not self.share_self_op_emb:
+            self.self_op_emb = nn.Parameter(torch.FloatTensor(op_emb_dim))
+        if bias:
+            self.bias = nn.Parameter(torch.FloatTensor(out_features))
+        else:
+            self.register_parameter("bias", None)
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        stdv = 1. / math.sqrt(self.weight.size(1))
+        self.weight.data.uniform_(-stdv, stdv)
+        if self.bias is not None:
+            self.bias.data.uniform_(-stdv, stdv)
+
+    def forward(self, inputs, adj, op_emb, self_op_emb=None):
+        # support: (b, V, h_i)
+        support = torch.matmul(inputs, self.weight)
+
+        if self.plus_I:
+            eye_mask = support.new(np.eye(adj.shape[-1]))
+            # for i in range(len(adj_op_inds_lst)):
+            #     op_emb_adj_lst[i] = torch.where(eye_mask, self.self_op_emb, op_emb_adj_lst[i])
+            #     attn_mask_inds_lst[i] = attn_mask_inds_lst[i] & (~eye_mask.bool())
+            self_op_emb = self_op_emb if self.share_self_op_emb else self.self_op_emb
+            op_emb = torch.where(eye_mask.unsqueeze(-1).to(torch.bool), self_op_emb, op_emb)
+            adj = adj + eye_mask.to(torch.long)
+
+        # attn: (b, V, V, h_i)
+        attn = torch.sigmoid(self.op_attention(op_emb))
+        attn = ((adj != 0).unsqueeze(-1).to(torch.float32)).detach() * attn
+
+        if self.residual_only is None:
+            res_output = support
+        else:
+            res_output = torch.cat(
+                (support[:, :self.residual_only, :],
+                 torch.zeros([support.shape[0], support.shape[1] - self.residual_only,
+                              support.shape[2]],
+                             device=support.device)), dim=1)
+
+        processed_info = (attn * support.unsqueeze(-3)).sum(-2)
+        if self.has_aggregate_op:
+            output = self.aggregate_op(processed_info) + res_output
+        else:
+            output = processed_info + res_output
+        if self.bias is not None:
+            return output + self.bias
+        else:
+            return output
 
 ## --- dataset ---
 class SimpleDataset(torch.utils.data.Dataset):

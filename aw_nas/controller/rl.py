@@ -60,6 +60,7 @@ class RLController(BaseController, nn.Module):
 
     # ---- APIs ----
     def set_mode(self, mode):
+        super(RLController, self).set_mode(mode)
         if mode == "train":
             nn.Module.train(self)
         elif mode == "eval":
@@ -117,16 +118,16 @@ class RLController(BaseController, nn.Module):
             agent.load("{}_agent_{}".format(path, i))
             controller.load("{}_net_{}".format(path, i))
 
-    def step(self, rollouts, optimizer):
+    def step(self, rollouts, optimizer, perf_name):
         if not self.independent_cell_group:
             # Single controller net and agent for all cell groups
-            loss = self.agents[0].step(rollouts, optimizer)
+            loss = self.agents[0].step(rollouts, optimizer, perf_name)
         else:
             # One controller net and agent per cel group
             rollouts_lst = zip(*[self._split_rollout(r) for r in rollouts])
             loss = 0.
             for agent, splited_rollouts in zip(self.agents, rollouts_lst):
-                loss += agent.step(splited_rollouts, optimizer)
+                loss += agent.step(splited_rollouts, optimizer, perf_name)
             loss /= len(self.agents)
         return loss
 
@@ -145,7 +146,7 @@ class RLController(BaseController, nn.Module):
         cg_entro_str = ",".join(["{:.2f}".format(n) for n in cg_entros])
         num = len(rollouts)
 
-        rewards = [r.get_perf() for r in rollouts]
+        rewards = [r.get_perf("reward") for r in rollouts]
         if rewards[0] is not None:
             total_reward = np.mean(rewards)
         else:

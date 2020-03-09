@@ -1,0 +1,122 @@
+rollout_type: nasbench-201
+## ---- Component search_space ----
+# ---- Type nasbench-201 ----
+search_space_type: nasbench-201
+search_space_cfg:
+  # Schedulable attributes: 
+  load_nasbench: true
+# ---- End Type nasbench-201 ----
+## ---- End Component search_space ----
+
+## ---- Component dataset ----
+# ---- Type cifar10 ----
+dataset_type: cifar10
+dataset_cfg:
+  # Schedulable attributes: 
+  cutout: null
+# ---- End Type cifar10 ----
+## ---- End Component dataset ----
+
+## ---- Component controller ----
+# ---- Type predictor-based ----
+controller_type: predictor-based
+controller_cfg:
+  # Schedulable attributes: 
+  mode: eval
+  inner_controller_type: nasbench-201-sa
+  inner_controller_cfg:
+    # Schedulable attributes: 
+    rollout_type: nasbench-201
+    mode: eval
+    temperature: 1000
+    anneal_coeff: 0.98
+    schedule_cfg: null
+  arch_network_type: pointwise_comparator
+  arch_network_cfg:
+    arch_embedder_cfg:
+      gcn_out_dims: [128, 128, 128, 128, 128]
+      gcn_kwargs:
+        residual_only: 1
+      use_final_only: true
+      hid_dim: 96
+      node_embedding_dim: 48
+      op_embedding_dim: 48
+    arch_embedder_type: nb201-flow
+    compare_loss_type: margin_linear
+    compare_margin: 0.1
+    mlp_dropout: 0.1
+    mlp_hiddens: [300, 300, 300, 300, 300]
+    optimizer: {lr: 0.001, type: Adam}
+    scheduler: null
+  inner_sample_n: 1
+  inner_samples: 1
+  inner_steps: 50
+  inner_report_freq: 50
+  inner_enumerate_search_space: true
+  predict_batch_size: 512
+  inner_random_init: true
+  inner_iter_random_init: true
+  begin_train_num: 0
+  predictor_train_cfg:
+    batch_size: 128
+    compare: true
+    compare_threshold: 0.0
+    epochs: 50
+    max_compare_ratio: 4
+    n_cross_valid: null
+    num_workers: 2
+    report_freq: 50
+    train_valid_split: 0.9
+  schedule_cfg: null
+# ## ---- End Component controller ----
+
+## ---- Component evaluator ----
+# ---- Type nasbench-201 ----
+evaluator_type: nasbench-201
+evaluator_cfg:
+  # Schedulable attributes: 
+  rollout_type: nasbench-201
+  schedule_cfg: null
+# ---- End Type nasbench-201 ----
+## ---- End Component evaluator ----
+
+## ---- Component weights_manager ----
+# ---- Type stub ----
+weights_manager_type: stub
+weights_manager_cfg:
+  # Schedulable attributes: 
+  rollout_type: nasbench-201
+# ---- End Type stub ----
+## ---- End Component weights_manager ----
+
+## ---- Component objective ----
+# ---- Type classification ----
+objective_type: classification
+objective_cfg:
+  # Schedulable attributes: 
+  label_smooth: null
+# ---- End Type classification ----
+## ---- End Component objective ----
+
+## ---- Component trainer ----
+# ---- Type simple ----
+trainer_type: simple
+trainer_cfg:
+  # Schedulable attributes: controller_samples, derive_samples
+  rollout_type: nasbench-201
+  epochs: 5
+  test_every: 1
+  controller_optimizer: null
+  controller_scheduler: null
+  controller_samples: 200
+  derive_samples: 5
+  rollout_batch_size: 1
+  evaluator_steps: 0
+  controller_steps: 1
+  controller_train_every: 1
+  controller_train_begin: 1
+  interleave_controller_every: null
+  schedule_cfg: null
+# ---- End Type simple ----
+## ---- End Component trainer ----
+

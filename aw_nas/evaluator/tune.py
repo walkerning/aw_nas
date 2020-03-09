@@ -6,7 +6,6 @@ import shutil
 import subprocess
 from collections import OrderedDict
 
-import yaml
 import torch
 
 from aw_nas import utils
@@ -15,7 +14,7 @@ from aw_nas.utils.exception import expect, ConfigException
 
 class TuneEvaluator(BaseEvaluator):
     """
-    An evaluator that tune each rollout for several epochs be evaluating performance,
+    An evaluator that tune each rollout for several epochs before evaluating performance,
     the tuned candidate network will be saved onto the disk.
     with optional performance predictor incorportated.
     """
@@ -26,8 +25,9 @@ class TuneEvaluator(BaseEvaluator):
             self, dataset, weights_manager, objective, rollout_type="mutation",
             schedule_cfg=None
     ):
-        super(TuneEvaluator, self).__init__(dataset, weights_manager,
-                                            objective, rollout_type, schedule_cfg)
+        super(TuneEvaluator, self).__init__(
+            dataset=None, weights_manager=weights_manager,
+            objective=objective, rollout_type=rollout_type, schedule_cfg=schedule_cfg)
 
         # check rollout type
         expect(self.rollout_type == self.weights_manager.rollout_type,

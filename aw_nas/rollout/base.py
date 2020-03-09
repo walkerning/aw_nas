@@ -4,6 +4,7 @@ Rollout base class and discrete/differentiable rollouts.
 
 import abc
 import collections
+
 import six
 import numpy as np
 
@@ -62,6 +63,12 @@ class Rollout(BaseRollout):
         self.candidate_net = candidate_net
 
         self._genotype = None # calc when need
+
+    def __hash__(self):
+        return hash(utils.recur_apply(lambda x: x, self.arch, depth=10, out_type=tuple))
+
+    def __eq__(self, other):
+        return tuple(self.arch) == tuple(other.arch)
 
     def set_candidate_net(self, c_net):
         self.candidate_net = c_net

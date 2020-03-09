@@ -256,11 +256,16 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
                                             objective, rollout_type, schedule_cfg)
 
         # check rollout type
-        expect(self.rollout_type == self.weights_manager.rollout_type,
-               "the rollout type of evaluator/weights_manager must match, "
-               "check the configuration. ({}/{})".format(
-                   self.rollout_type,
-                   self.weights_manager.rollout_type), ConfigException)
+        if self.rollout_type != "compare":
+            expect(self.rollout_type == self.weights_manager.rollout_type,
+                   "the rollout type of evaluator/weights_manager must match, "
+                   "check the configuration. ({}/{})".format(
+                       self.rollout_type,
+                       self.weights_manager.rollout_type), ConfigException)
+        else:
+            # Do not check for now
+            pass
+
         # only maml plus mode support `learn_per_weight_step_lr` and `high_order` config
         if use_maml_plus:
             expect(surrogate_optimizer is not None and
@@ -443,7 +448,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
 
     @classmethod
     def supported_rollout_types(cls):
-        return ["discrete", "differentiable"]
+        return ["discrete", "differentiable", "compare"]
 
     def suggested_controller_steps_per_epoch(self):
         return len(self.controller_queue)
@@ -470,6 +475,12 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
             If `portion` or `eval_batches` is set, when `is_training==False`, different rollout
             will be tested on different data. The performance comparison might not be accurate.
         """
+        # support CompareRollout
+        if self.rollout_type == "compare":
+            eval_rollouts = sum([[r.rollout_1, r.rollout_2] for r in rollouts], [])
+        else:
+            eval_rollouts = rollouts
+
         if is_training: # the returned reward will be used for training controller
             # get one data batch from controller queue
             cont_data = next(self.controller_queue)
@@ -486,7 +497,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
                 num_surrogate_step = self.controller_surrogate_steps
 
             # evaluate these rollouts on one batch of data
-            for rollout in rollouts:
+            for rollout in eval_rollouts:
                 cand_net = self.weights_manager.assemble_candidate(rollout)
                 if return_candidate_net:
                     rollout.candidate_net = cand_net
@@ -514,7 +525,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
                     expect(0.0 < portion < 1.0)
                     eval_steps = int(portion * eval_steps)
 
-            for rollout in rollouts:
+            for rollout in eval_rollouts:
                 cand_net = self.weights_manager.assemble_candidate(rollout)
                 if return_candidate_net:
                     rollout.candidate_net = cand_net
@@ -538,6 +549,17 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
                 rollout.set_perfs(OrderedDict(zip(
                     utils.flatten_list(["reward", "loss", self._perf_names]),
                     res))) # res is already flattend
+
+        # support CompareRollout
+        if self.rollout_type == "compare":
+            num_r = len(rollouts)
+            for i_rollout in range(num_r):
+                better = eval_rollouts[2 * i_rollout + 1].perf["reward"] > \
+                         eval_rollouts[2 * i_rollout].perf["reward"]
+                rollouts[i_rollout].set_perfs(OrderedDict(
+                    [
+                        ("compare_result", better),
+                    ]))
         return rollouts
 
     def update_rollouts(self, rollouts):
@@ -653,6 +675,8 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
             self.weights_manager.step_current_gradients(self.mepa_optimizer)
 
         del all_gradients
+
+        # return stats
         return OrderedDict(zip(
             utils.flatten_list(["reward", "loss", self._perf_names]),
             np.mean(report_stats, axis=0)))
@@ -1006,11 +1030,17 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
 
     def _init_criterions(self, rollout_type):
         # criterion and forward keyword arguments for evaluating rollout in `evaluate_rollout`
+
+        # support compare rollout
+        if rollout_type == "compare":
+            # init criterions according to weights manager's rollout type
+            rollout_type = self.weights_manager.rollout_type
+
         if rollout_type == "discrete":
             self._reward_func = self.objective.get_reward
             self._reward_kwargs = {}
             self._scalar_reward_func = self._reward_func
-        else: # rollout_type == "differentiable"
+        elif rollout_type == "differentiable":
             self._reward_func = partial(self.objective.get_loss,
                                         add_controller_regularization=True,
                                         add_evaluator_regularization=False)
@@ -1034,7 +1064,8 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
     def _init_data_queues_and_hidden(self, data_type, data_portion, mepa_as_surrogate):
         self._dataset_related_attrs = []
         if data_type == "image":
-            queue_cfgs = [{"split": "train", "portion": p,
+            queue_cfgs = [{"split": p[0] if isinstance(p, (list, tuple)) else "train",
+                           "portion": p[1] if isinstance(p, (list, tuple)) else p,
                            "batch_size": self.batch_size} for p in data_portion]
             self.s_hid_kwargs = {}
             self.c_hid_kwargs = {}
@@ -1049,10 +1080,12 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
                                      for n in ["surrogate", "mepa", "controller"]]
             queue_cfgs = []
             for callback, portion in zip(self.hiddens_resetter, data_portion):
-                queue_cfgs.append({"split": "train", "portion": portion,
-                                   "batch_size": self.batch_size,
-                                   "bptt_steps": self.bptt_steps,
-                                   "callback": callback})
+                queue_cfgs.append({
+                    "split": portion[0] if isinstance(portion, (list, tuple)) else "train",
+                    "portion": portion[1] if isinstance(portion, (list, tuple)) else portion,
+                    "batch_size": self.batch_size,
+                    "bptt_steps": self.bptt_steps,
+                    "callback": callback})
             self.s_hid_kwargs = {"hiddens": self.surrogate_hiddens}
             self.c_hid_kwargs = {"hiddens": self.controller_hiddens}
             self.m_hid_kwargs = {"hiddens": self.mepa_hiddens}
@@ -1086,7 +1119,8 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
         rollout.set_perfs(OrderedDict(zip(
             utils.flatten_list(["reward", "loss", self._perf_names]),
             res)))
-        callback(rollout)
+        if callback is not None:
+            callback(rollout)
         # set reward to be the scalar
         rollout.set_perf(utils.get_numpy(rollout.get_perf(name="reward")))
         return res

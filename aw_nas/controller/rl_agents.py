@@ -19,7 +19,7 @@ class BaseRLAgent(Component):
         self.controller = controller
 
     @abc.abstractmethod
-    def step(self, rollouts, optimizer):
+    def step(self, rollouts, optimizer, perf_name):
         """Update controller using rollouts."""
 
     @abc.abstractmethod
@@ -71,11 +71,11 @@ class PGAgent(BaseRLAgent):
         optimizer.step()
         return loss.item()
 
-    def step(self, rollouts, optimizer):
+    def step(self, rollouts, optimizer, perf_name):
         if self.batch_update:
             log_probs = torch.stack([torch.cat(r.info["log_probs"]) for r in rollouts])
             entropies = torch.stack([torch.cat(r.info["entropies"]) for r in rollouts])
-            returns = np.array([utils.compute_returns(r.get_perf(), self.gamma,
+            returns = np.array([utils.compute_returns(r.get_perf(perf_name), self.gamma,
                                                       log_probs.shape[-1]) for r in rollouts])
             loss = self._step(log_probs, entropies, returns, optimizer)
         else:
@@ -83,7 +83,7 @@ class PGAgent(BaseRLAgent):
             for i, rollout in enumerate(rollouts):
                 log_probs = torch.cat(rollout.info["log_probs"]).unsqueeze(0)
                 entropies = torch.cat(rollout.info["entropies"]).unsqueeze(0)
-                returns = utils.compute_returns(rollout.get_perf(),
+                returns = utils.compute_returns(rollout.get_perf(perf_name),
                                                 self.gamma, len(log_probs))[None, :]
                 loss = self._step(log_probs, entropies, returns, optimizer,
                                   retain_graph=i < len(rollouts)-1)
@@ -160,10 +160,10 @@ class PPOAgent(BaseRLAgent):
         optimizer.step()
         return loss.item()
 
-    def step(self, rollouts, optimizer):
+    def step(self, rollouts, optimizer, perf_name):
         log_probs = torch.stack([torch.cat(r.info["log_probs"]) for r in rollouts])
         entropies = torch.stack([torch.cat(r.info["entropies"]) for r in rollouts])
-        returns = np.array([utils.compute_returns(r.get_perf(), self.gamma,
+        returns = np.array([utils.compute_returns(r.get_perf(perf_name), self.gamma,
                                                   log_probs.shape[-1]) for r in rollouts])
         loss = self._step(log_probs, entropies, returns, optimizer)
         return loss

@@ -18,13 +18,45 @@ The interface between these components are somehow well-defined. TODO (what is R
 
 ## Install
 
-`pip install -r requirements.txt`
+Using virtual python environment is encouraged. For example, with Anaconda, you could run `conda create -n awnas python==3.7.3 pip` first.
 
-Make sure graphiz is installed, e.g. on Ubuntu, you can run `sudo apt-get install graphviz`.
+To install `awnas`, run `pip install -r requirements.txt`.
+
+Architecture plotting relies on the `graphviz` package, make sure `graphiz` is installed, e.g. on Ubuntu, you can run `sudo apt-get install graphviz`.
 
 ## Usage
 
 After installation, you can run `awnas --help` to see what sub-commands are available.
+
+Output of an example run (version 0.3.dev0):
+
+```
+02/18 12:28:53 PM btc              WARNING: Error importing module nasbench: No module named 'nasbench'
+Should install the NASBench 101 package following https://github.com/google-research/nasbench
+02/18 12:28:53 PM btc              WARNING: Error importing module nasbench_201: No module named 'nas_201_api'
+Should install the NASBench 201 package following https://github.com/D-X-Y/NAS-Bench-201
+02/18 12:28:53 PM plugin              INFO: Check plugins under /home/foxfi/awnas/plugins
+02/18 12:28:53 PM plugin              INFO: Loaded plugins:
+Usage: awnas [OPTIONS] COMMAND [ARGS]...
+
+  The awnas NAS framework command line interface. Use `AWNAS_LOG_LEVEL`
+  environment variable to modify the log level.
+
+Options:
+  --version  Show the version and exit.
+  --help     Show this message and exit.
+
+Commands:
+  search                   Searching for architecture.
+  random-sample            Random sample architectures.
+  sample                   Sample architectures, pickle loading controller...
+  eval-arch                Eval architecture from file.
+  derive                   Derive architectures.
+  train                    Train an architecture.
+  test                     Test a final-trained model.
+  gen-sample-config        Dump the sample configuration.
+  gen-final-sample-config  Dump the sample configuration for final training.
+```
 
 ### Prepare data
 

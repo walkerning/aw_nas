@@ -66,6 +66,11 @@ class MNasNetOFASearchSpace(SearchSpace):
     def distance(self, arch1, arch2):
         raise NotImplementedError()
 
+    @classmethod
+    def supported_rollout_types(cls):
+        return ["mnasnet_ofa"]
+
+
 class MNasNetOFARollout(Rollout):
     NAME = "mnasnet_ofa"
     channel = None

@@ -4,6 +4,7 @@ Search space and some search space related utils.
 
 import re
 import abc
+import copy
 import collections
 import itertools
 
@@ -39,6 +40,10 @@ class SearchSpace(Component):
     def distance(self, arch1, arch2):
         pass
 
+    @utils.abstractclassmethod
+    def supported_rollout_types(cls):
+        pass
+
 
 class CellSearchSpace(SearchSpace):
     def __init__(self):
@@ -46,6 +51,7 @@ class CellSearchSpace(SearchSpace):
         self.genotype_type = None
         self.genotype_type_name = None
         self.cell_group_names = None
+        self._default_concats = None
 
     # namedtuple defined not at the module top level is unpicklable
     # remove it from the states
@@ -64,6 +70,10 @@ class CellSearchSpace(SearchSpace):
     @abc.abstractmethod
     def get_num_steps(self, cell_index):
         pass
+
+    @classmethod
+    def supported_rollout_types(cls):
+        return ["discrete", "differentiable"]
 
 
 class CNNSearchSpace(CellSearchSpace):
@@ -315,7 +325,7 @@ class CNNSearchSpace(CellSearchSpace):
         return Rollout(arch, {}, self)
 
     def plot_cell(self, genotype_concat, filename, cell_index,
-                  label="", edge_labels=None, plot_format="png"):
+                  label="", edge_labels=None, plot_format="pdf"):
         """Plot a cell to `filename` on disk."""
 
         genotype, concat = genotype_concat
@@ -368,9 +378,9 @@ class CNNSearchSpace(CellSearchSpace):
 
         graph.render(filename, view=False)
 
-        return filename + ".png"
+        return filename + ".{}".format(plot_format)
 
-    def plot_arch(self, genotypes, filename, label="", edge_labels=None, plot_format="png"): #pylint: disable=arguments-differ
+    def plot_arch(self, genotypes, filename, label="", edge_labels=None, plot_format="pdf"): #pylint: disable=arguments-differ
         """Plot an architecture to files on disk"""
 
         if edge_labels is None:
@@ -513,7 +523,7 @@ class RNNSearchSpace(CellSearchSpace):
         return Rollout(arch, {}, self)
 
     def plot_arch(self, genotypes, filename,
-                  label="", edge_labels=None, plot_format="png"): #pylint: disable=arguments-differ
+                  label="", edge_labels=None, plot_format="pdf"): #pylint: disable=arguments-differ
         """Plot an architecture to files on disk"""
         expect(len(genotypes) == 2 and self.num_cell_groups == 1,
                "Current RNN search space only support one cell group")
@@ -586,7 +596,7 @@ def rollout_from_genotype_str(genotype_str, search_space):
     return search_space.rollout_from_genotype(genotype_from_str(genotype_str, search_space))
 
 def plot_genotype(genotype, dest, cls, label="",
-                  edge_labels=None, plot_format="png", **search_space_cfg):
+                  edge_labels=None, plot_format="pdf", **search_space_cfg):
     ss = get_search_space(cls, **search_space_cfg)
     if isinstance(genotype, str):
         genotype = eval("ss.genotype_type({})".format(genotype)) # pylint: disable=eval-used
@@ -606,13 +616,20 @@ def get_genotype_substr(genotypes):
     except Exception:
         return genotypes
 
+class ConfigTemplate(dict):
+    def create_cfg(self, genotype):
+        cfg = copy.deepcopy(self)
+        cfg["final_model_cfg"]["genotypes"] = get_genotype_substr(str(genotype))
+        return dict(cfg)
+
 # import all the rollouts here
 from aw_nas.rollout import ( # pylint:disable=unused-import
     assert_rollout_type,
     BaseRollout,
     Rollout,
     DifferentiableRollout,
-    MutationRollout
+    MutationRollout,
+    CompareRollout
 )
 
 from aw_nas.rollout.dense import (

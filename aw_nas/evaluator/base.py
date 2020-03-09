@@ -20,7 +20,8 @@ class BaseEvaluator(Component):
         self.rollout_type = rollout_type
 
     def set_device(self, device):
-        self.weights_manager.set_device(device)
+        if self.weights_manager is not None:
+            self.weights_manager.set_device(device)
 
     @utils.abstractclassmethod
     def supported_data_types(cls):

@@ -1,0 +1,25 @@
+arch_network_type: pairwise_comparator
+arch_network_cfg:
+  arch_embedder_type: nb101-flow
+  arch_embedder_cfg:
+    gcn_out_dims: [128, 128, 128, 128] # decide
+    op_embedding_dim: 48 # decide
+    node_embedding_dim: 48 # decide
+    hid_dim: 96
+  mlp_hiddens: [200] # decide
+  mlp_dropout: 0.1
+  optimizer:
+    type: Adam
+    lr: 0.001 # decide
+  scheduler: null
+  compare_loss_type: margin_linear
+  compare_margin: 0.1
+  pairing_method: diff
+
+batch_size: 512
+epochs: 80
+
+compare: true
+compare_threshold: 0.0
+max_compare_ratio: 4.0
+choose_pair_criterion: random

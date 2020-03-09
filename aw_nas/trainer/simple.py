@@ -138,10 +138,14 @@ class SimpleTrainer(BaseTrainer):
                                     suggested, self.evaluator_steps)
 
         # init controller optimizer and scheduler
-        self.controller_optimizer = utils.init_optimizer(self.controller.parameters(),
-                                                         controller_optimizer)
-        self.controller_scheduler = utils.init_scheduler(self.controller_optimizer,
-                                                         controller_scheduler)
+        if controller_optimizer:
+            self.controller_optimizer = utils.init_optimizer(self.controller.parameters(),
+                                                             controller_optimizer)
+            self.controller_scheduler = utils.init_scheduler(self.controller_optimizer,
+                                                             controller_scheduler)
+        else:
+            self.controller_optimizer = None
+            self.controller_scheduler = None
 
         # states and other help attributes
         self.last_epoch = 0
@@ -183,9 +187,8 @@ class SimpleTrainer(BaseTrainer):
                                                             step_loss=step_loss))
             self.evaluator.update_rollouts(rollouts)
 
-            if self.rollout_type == "discrete":
-                controller_loss = self.controller.step(rollouts, self.controller_optimizer)
-            else: # differntiable rollout (controller is optimized using differentiable relaxation)
+            if self.rollout_type == "differentiable":
+                # differntiable rollout (controller is optimized using differentiable relaxation)
                 # adjust lr and call step_current_gradients
                 # (update using the accumulated gradients)
                 controller_loss = step_loss["_"] / self.controller_samples
@@ -197,11 +200,15 @@ class SimpleTrainer(BaseTrainer):
                 self.controller.step_current_gradient(self.controller_optimizer)
                 if self.controller_samples != 1:
                     self.controller_optimizer.param_groups[0]["lr"] = lr_bak
+            else: # other rollout types
+                controller_loss = self.controller.step(
+                    rollouts, self.controller_optimizer, perf_name="reward")
 
             # update meters
             controller_loss_meter.update(controller_loss)
             controller_stats = self.controller.summary(rollouts, log=False)
-            controller_stat_meters.update(controller_stats)
+            if controller_stats is not None:
+                controller_stat_meters.update(controller_stats)
 
             r_stats = OrderedDict()
             for n in rollouts[0].perf:
@@ -223,7 +230,7 @@ class SimpleTrainer(BaseTrainer):
     # ---- APIs ----
     @classmethod
     def supported_rollout_types(cls):
-        return ["discrete", "differentiable"]
+        return ["discrete", "differentiable", "compare", "nasbench-101", "nasbench-201"]
 
     def train(self): #pylint: disable=too-many-branches
         assert self.is_setup, "Must call `trainer.setup` method before calling `trainer.train`."
@@ -266,9 +273,12 @@ class SimpleTrainer(BaseTrainer):
                         = self._controller_update(controller_steps,
                                                   finished_e_steps, finished_c_steps)
                     # update meters
-                    c_loss_meter.update(c_loss)
-                    rollout_stat_meters.update(rollout_stats)
-                    c_stat_meters.update(c_stats)
+                    if c_loss is not None:
+                        c_loss_meter.update(c_loss)
+                    if rollout_stats is not None:
+                        rollout_stat_meters.update(rollout_stats)
+                    if c_stats is not None:
+                        c_stat_meters.update(c_stats)
 
                     finished_c_steps += controller_steps
 
@@ -337,27 +347,28 @@ class SimpleTrainer(BaseTrainer):
         """
         rollouts = self.derive(n=self.derive_samples)
 
-        rewards = [r.get_perf() for r in rollouts]
+        rewards = [r.get_perf("reward") for r in rollouts]
         mean_rew = np.mean(rewards)
         idx = np.argmax(rewards)
-        other_perfs = {n: [r.perf[n] for r in rollouts] for n in rollouts[0].perf}
+        # other_perfs = {n: [r.perf[n] for r in rollouts] for n in rollouts[0].perf}
+        other_perfs = {n: [r.perf.get(n, None) for r in rollouts] for n in rollouts[0].perf}
 
         save_path = self._save_path("rollout/cell")
         if save_path is not None:
             # NOTE: If `train_dir` is None, the image will not be saved to tensorboard too
             fnames = rollouts[idx].plot_arch(save_path, label="epoch {}".format(self.epoch))
-            if not self.writer.is_none():
+            if not self.writer.is_none() and fnames is not None:
                 for cg_n, fname in fnames:
                     image = imageio.imread(fname)
                     self.writer.add_image("genotypes/{}".format(cg_n), image, self.epoch,
                                           dataformats="HWC")
 
         self.logger.info("TEST Epoch %3d: Among %d sampled archs: "
-                         "BEST (in reward): %.3f (mean: %.3f); Performance: %s",
+                         "BEST (in reward): %.5f (mean: %.5f); Performance: %s",
                          self.epoch, self.derive_samples, rewards[idx], mean_rew,
-                         "; ".join(["{}: {:.3f} (mean {:.3f})".format(
-                             n, other_perfs[n][idx],
-                             np.mean(other_perfs[n])) for n in rollouts[0].perf]))
+                         "; ".join(["{}: {} (mean {:.5f})".format(
+                             n, "{:.5f}".format(other_perfs[n][idx]) if other_perfs[n][idx] is not None else None,
+                             np.mean([perf for perf in other_perfs[n] if perf is not None])) for n in rollouts[0].perf]))
         self.logger.info("Saved this arch to %s.\nGenotype: %s",
                          save_path, rollouts[idx].genotype)
         self.controller.summary(rollouts, log=True, log_prefix="Rollouts Info: ", step=self.epoch)

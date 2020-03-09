@@ -1,6 +1,7 @@
 """
 Rollouts, the inferface of different components in the NAS system.
 """
+# pylint: disable=unused-import
 
 from aw_nas.utils.exception import expect
 from aw_nas.rollout.base import (
@@ -22,6 +23,10 @@ from aw_nas.rollout.dense import (
 from aw_nas.rollout.mnasnet import (
     MNasNetOFASearchSpace,
     MNasNetOFARollout
+)
+
+from aw_nas.rollout.compare import (
+    CompareRollout
 )
 
 def assert_rollout_type(type_name):

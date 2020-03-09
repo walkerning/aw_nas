@@ -171,7 +171,7 @@ class PopulationController(BaseController):
         # load mutation sampler state
         self.mutation_sampler.load(path)
 
-    def step(self, rollouts, optimizer):
+    def step(self, rollouts, optimizer, perf_name):
         """
         Update the performance of the rollouts into the population and assign index.
         Call `sampler.step`.

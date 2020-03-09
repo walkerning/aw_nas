@@ -19,6 +19,7 @@ except Exception:
     import Queue as queue
 
 from aw_nas import utils
+from aw_nas.utils import logger as _logger
 from aw_nas.base import Component
 from aw_nas.trainer.base import BaseTrainer
 from aw_nas.utils.exception import expect, ConfigException
@@ -31,6 +32,9 @@ class BaseDispatcher(Component):
 
     def __init__(self, schedule_cfg=None):
         super(BaseDispatcher, self).__init__(schedule_cfg)
+
+    def start_eval_rollouts(self, rollouts):
+        return [self.start_eval_rollout(r) for r in rollouts]
 
     @abc.abstractmethod
     def start_eval_rollout(self, rollout):
@@ -58,16 +62,6 @@ class BaseDispatcher(Component):
         """
 
 
-class RayDispatcher(BaseDispatcher):
-    NAME = "ray"
-
-    def start_eval_rollout(self, rollout):
-        pass
-
-    def get_finished_rollouts(self, timeout=None):
-        pass
-
-
 class MultiprocessDispatcher(BaseDispatcher):
     NAME = "multiprocess"
 
@@ -89,12 +83,13 @@ class MultiprocessDispatcher(BaseDispatcher):
         self.evaluator.set_device(str(gpu_id))
         while 1:
             rollout = self.req_queue.get()
-            random_salt = "".join([random.choice(string.ascii_letters + string.digits)
-                                   for n in range(16)])
-            ckpt_subdir = "{time}-{gpu}-{salt}".format(
-                time=datetime.now().strftime("%Y-%m-%d_%H-%M-%S"), gpu=gpu_id, salt=random_salt)
-            # handle output
-            rollout.set_ckpt_path(os.path.join(self.ckpt_dir, ckpt_subdir))
+            if self.ckpt_dir:
+                random_salt = "".join([random.choice(string.ascii_letters + string.digits)
+                                       for n in range(16)])
+                ckpt_subdir = "{time}-{gpu}-{salt}".format(
+                    time=datetime.now().strftime("%Y-%m-%d_%H-%M-%S"), gpu=gpu_id, salt=random_salt)
+                # handle output
+                rollout.set_ckpt_path(os.path.join(self.ckpt_dir, ckpt_subdir))
             evaled_rollout = self.evaluator.evaluate_rollouts([rollout], is_training=True)
             self.ans_queue.put(evaled_rollout)
 
@@ -158,7 +153,7 @@ class AsyncTrainer(BaseTrainer):
                  controller, evaluator, rollout_type="discrete",
                  dispatcher_type="multiprocess",
                  dispatcher_cfg=None,
-                 log_timeout=600,
+                 log_timeout=600.,
                  parallelism=4,
                  steps=1000,
                  schedule_cfg=None):
@@ -223,7 +218,8 @@ class AsyncTrainer(BaseTrainer):
               interleave_report_every=None):
         # TODO: handle load components
         assert train_dir is not None, \
-            "You'd better provide a path to save all the checkpoint using async trainer"
+            ("You'd better provide a path using `--train-dir` to save all the checkpoint "
+             "when using async trainer")
 
         self.train_dir = train_dir
         ckpt_dir = utils.makedir(os.path.join(train_dir, "checkpoints"))
@@ -271,3 +267,12 @@ class AsyncTrainer(BaseTrainer):
         # Possible dispatcher configs
         all_str += utils.component_sample_config_str("dispatcher", prefix="#   ") + "\n"
         return all_str
+
+
+_LOGGER = _logger.getChild("ray_dispatcher")
+try:
+    from aw_nas.trainer.ray_dispatcher import RayDispatcher
+except ImportError as e:
+    _LOGGER.warn(
+        ("Error importing module aw_nas.evaluator.ray_dispatcher: {}\n"
+         "Should install ray package first.").format(e))

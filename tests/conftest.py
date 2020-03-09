@@ -258,3 +258,10 @@ def mnasnet_ofa_super_net(request):
     device = "cuda"
     net = MNasNetSupernet(search_space, device, **cfg)
     return net
+
+@pytest.fixture(scope="session")
+def nasbench_search_space():
+    from aw_nas.common import get_search_space
+    # might take several minutes
+    search_space = get_search_space("nasbench-101")
+    return search_space
