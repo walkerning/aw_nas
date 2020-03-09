@@ -11,6 +11,7 @@ from torch.nn.parallel.scatter_gather import scatter_kwargs, gather
 from torch.nn.parallel.parallel_apply import parallel_apply
 from torch.cuda._utils import _get_device_index
 from torch.nn.parallel import DataParallel as _DataParallel
+from torch.nn.parallel import DistributedDataParallel as _DistributedDataParallel
 from torch.nn.parallel.replicate import (
     _replicatable_module,
     _broadcast_coalesced_reshape,
@@ -18,7 +19,7 @@ from torch.nn.parallel.replicate import (
     _is_script_method, _copy_scriptmodule_methods
 )
 
-__all__ = ["replicate", "DataParallel", "data_parallel"]
+__all__ = ["replicate", "DataParallel", "data_parallel", "DistributedDataParallel"]
 
 def replicate(network, devices, detach=False):
     if not _replicatable_module(network):
@@ -193,3 +194,9 @@ class DataParallel(_DataParallel):
         return data_parallel(_wrapper_module, inputs, device_ids=self.device_ids,
                              output_device=self.output_device,
                              dim=self.dim, module_kwargs={"callback": callback})
+
+class DistributedDataParallel(_DistributedDataParallel):
+    def replicate(self, module, device_ids):
+        replicas = replicate(module, device_ids, not torch.is_grad_enabled())
+        return replicas
+

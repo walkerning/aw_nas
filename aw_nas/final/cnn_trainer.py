@@ -5,12 +5,14 @@ import six
 
 import torch
 from torch import nn
+from torch.utils.data.distributed import DistributedSampler
 
 from aw_nas import utils
 from aw_nas.final.base import FinalTrainer
 from aw_nas.utils.common_utils import nullcontext
 from aw_nas.utils.exception import expect
 from aw_nas.utils import DataParallel
+from aw_nas.utils import DistributedDataParallel
 
 def _warmup_update_lr(optimizer, epoch, init_lr, warmup_epochs):
     """
@@ -24,6 +26,7 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
     NAME = "cnn_trainer"
 
     def __init__(self, model, dataset, device, gpus, objective,#pylint: disable=dangerous-default-value
+                 multiprocess=False,
                  epochs=600, batch_size=96,
                  optimizer_type="SGD", optimizer_kwargs=None,
                  learning_rate=0.025, momentum=0.9,
@@ -48,6 +51,7 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
         self.dataset = dataset
         self.device = device
         self.gpus = gpus
+        self.multiprocess = multiprocess
         self.objective = objective
         self._perf_func = self.objective.get_perfs
         self._perf_names = self.objective.perf_names()
@@ -76,12 +80,22 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
 
         _splits = self.dataset.splits()
 
-        self.train_queue = torch.utils.data.DataLoader(
-            _splits["train"], batch_size=batch_size, shuffle=True, pin_memory=True,
-            num_workers=workers_per_queue)
-        self.valid_queue = torch.utils.data.DataLoader(
-            _splits["test"], batch_size=batch_size, shuffle=False, pin_memory=True,
-            num_workers=workers_per_queue)
+        if self.multiprocess:
+            self.train_queue = torch.utils.data.DataLoader(
+                _splits["train"], batch_size=batch_size, pin_memory=True,
+                num_workers=workers_per_queue,
+                sampler=DistributedSampler(_splits["train"], shuffle=True))
+            self.valid_queue = torch.utils.data.DataLoader(
+                _splits["test"], batch_size=batch_size, pin_memory=True,
+                num_workers=workers_per_queue, shuffle=False)
+        else:
+            self.train_queue = torch.utils.data.DataLoader(
+                _splits["train"], batch_size=batch_size, pin_memory=True,
+                num_workers=workers_per_queue, shuffle=True)
+            self.valid_queue = torch.utils.data.DataLoader(
+                _splits["test"], batch_size=batch_size, pin_memory=True,
+                num_workers=workers_per_queue, shuffle=False)
+
 
         if self.model is not None:
             self.optimizer = self._init_optimizer()
@@ -120,6 +134,8 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
         self._is_setup = True
 
     def save(self, path):
+        if self.multiprocess and self.gpus[0] != 0:
+            return
         path = utils.makedir(path)
         if self.save_as_state_dict:
             torch.save(self.model.state_dict(), os.path.join(path, "model_state.pt"))
@@ -245,7 +261,13 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
         self.model.load_state_dict(checkpoint, strict=False)
 
     def _parallelize(self):
-        if len(self.gpus) >= 2:
+        if self.multiprocess:
+            self.parallel_model = DistributedDataParallel(self.model, device_ids=self.gpus, output_device=self.gpus[0]).to(self.device)
+            #for param in self.parallel_model.parameters():
+                #torch.distributed.broadcast(param, 0)
+            #for buffers in self.parallel_model.buffers():
+                #torch.distributed.broadcast(buffers, 0)
+        elif len(self.gpus) >= 2:
             self.parallel_model = DataParallel(self.model, self.gpus).to(self.device)
         else:
             self.parallel_model = self.model
@@ -305,6 +327,7 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                 logits = model(inputs)
                 loss = self._obj_loss(inputs, logits, target, model,
                                       add_evaluator_regularization=self.add_regularization)
+            #torch.distributed.all_reduce(loss, op=torch.distributed.ReduceOp.SUM)
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), self.grad_clip)
             optimizer.step()
