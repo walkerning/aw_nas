@@ -14,7 +14,10 @@ There are multiple actors that are working together in a NAS system, and they ca
 * evaluator
 * objective
 
-The interface between these components are somehow well-defined. TODO (what is Rollout)
+
+The interface between these components are somehow well-defined. We use a class `awnas.rollout.base.BaseRollout` to represent the interface object between all these components. Usually, a search space defines one or more rollout types (a subclass of `BaseRollout`). For example, the basic cell-based search space `cnn` (class `awnas.common.CNNSearchSpace`) corresponds to two rollout types: `discrete`discrete rollouts that are used in RL-based, EVO-based controllers, etc. (class `awnas.rollout.base.Rollout`); `differentiable` differentiable rollouts that are used in gradient-based NAS (class `awnas.rollout.base.DifferentiableRollout`).
+
+*TODO*: need a supported components list?
 
 ## Install
 
@@ -68,7 +71,43 @@ When running `awnas` program, it will assume the data of a dataset with `name=<N
 
 ### Run NAS search
 
+Try running a ENAS search (the results (including configuration backup, search log) in `<TRAIN_DIR>`):
+
+```
+awnas search examples/enas.yaml --gpu 0 --save-every 10 --train-dir <TRAIN_DIR>
+```
+
+There are several sections in the configuration file that describe the configurations of different components in the NAS framework. For example, in `examples/enas.yaml`, different configuration sections are organized as follows:
+
+1. a cell-based CNN **search space**: The search space is an extended version from the 5-primitive micro search space in the original ENAS paper.
+2. cifar-10 **dataset**
+3. RL-learned **controller** with the `embed_lstm` RNN network
+4. shared weights based **evaluator**
+5. shared weights based **weights manager**: super net
+6. classification **objective**
+7. **trainer**: the orchestration of the overall NAS search flow
+
+To generate a sample configuration file for searching, try ``awnas gen-sample-config`` utility. For example, if you want a sample search configuration for searching on NAS-Bench-101, run
+
+```
+awnas gen-sample-config -r nasbench-101 -d image ./sample_nb101.yaml
+```
+
+Then, check the `sample_nb101.yaml` file, for all the component types, all choices that declare to support the `nasbench-101` rollout type would be listed in the file. Delete what you do not need, uncomment what you need, change the default settings, and then that config can be used to run NAS on NAS-Bench-101.
+
 ### Derive
+
+```
+awnas derive
+```
+
+### Final Training of Cell-based Architecture
+
+`awnas.final` sub-package provides the final training functionality of cell-based architectures. `examples/cnn_templates/final_template.yaml` is a commonly-used configuration template for final training a cell-based architecture. To use that template, fill the ``final_model_cfg.genotypes` field with the genotype string derived from the search process. A genotype string example is
+```
+CNNGenotype(normal_0=[('dil_conv_3x3', 1, 2), ('skip_connect', 1, 2), ('sep_conv_3x3', 0, 3), ('sep_conv_3x3', 2, 3), ('skip_connect', 3, 4), ('sep_conv_3x3', 0, 4), ('sep_conv_5x5', 1, 5), ('sep_conv_5x5', 0, 5)], reduce_1=[('max_pool_3x3', 0, 2), ('dil_conv_5x5', 0, 2), ('avg_pool_3x3', 1, 3), ('avg_pool_3x3', 2, 3), ('sep_conv_5x5', 1, 4), ('avg_pool_3x3', 1, 4), ('sep_conv_3x3', 1, 5), ('dil_conv_5x5', 3, 5)], normal_0_concat=[2, 3, 4, 5], reduce_1_concat=[2, 3, 4, 5])
+```
+
 
 ## Develop New Components
 

@@ -19,6 +19,7 @@ import setproctitle
 import torch
 from torch.backends import cudnn
 
+import aw_nas
 from aw_nas.dataset import AVAIL_DATA_TYPES
 from aw_nas import utils, BaseRollout
 from aw_nas.common import rollout_from_genotype_str
@@ -151,7 +152,7 @@ def _set_gpu(gpu):
 @click.group(cls=_OrderedCommandGroup,
              help="The awnas NAS framework command line interface. "
              "Use `AWNAS_LOG_LEVEL` environment variable to modify the log level.")
-@click.version_option()
+@click.version_option(version=aw_nas.__version__)
 @click.option("--local_rank", default=-1, type=int,
               help="the rank of this process")
 def main(local_rank):
