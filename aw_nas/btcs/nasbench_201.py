@@ -49,7 +49,7 @@ class NasBench201SearchSpace(SearchSpace):
         self.num_possible_edges = self.num_vertices * (self.num_vertices - 1) // 2
         self.num_op_choices = len(self.ops_choices) # 5
         self.num_ops = self.num_vertices * (self.num_vertices - 1) // 2
-        self.idx = np.tril_indices(self.num_vertices, k=1)
+        self.idx = np.tril_indices(self.num_vertices, k=-1)
 
         if self.load_nasbench:
             self._init_nasbench()
@@ -186,7 +186,7 @@ class NasBench201Rollout(BaseRollout):
 class NasBench201RSController(BaseController):
     NAME = "nasbench-201-rs"
 
-    def __init__(self, search_space, device, rollout_type="nasbench-201", mode="eval",
+    def __init__(self, search_space, device, rollout_type="nasbench-201", mode="eval", check_valid=True, avoid_repeat=False,
                  schedule_cfg=None):
         super(NasBench201RSController, self).__init__(
             search_space, rollout_type, mode, schedule_cfg)
@@ -195,9 +195,16 @@ class NasBench201RSController(BaseController):
         self.mode = mode
         self.num_vertices = self.search_space.num_vertices
         self.cur_solution = self.search_space.random_sample_arch()
+        self.check_valid = check_valid
+        self.avoid_repeat = avoid_repeat
 
     def sample(self, n=1, batch_size=None):
         rollouts = []
+        if self.avoid_repeat:
+            indexes = np.random.choice(np.arange(15625), size=n, replace=False)
+            for i in indexes:
+                rollouts.append(NasBench201Rollout(self.search_space.api.str2matrix(self.search_space.api.query_by_index(i).arch_str), self.search_space))
+            return rollouts
         for i in range(n):
             while 1:
                 new_rollout = self.search_space.random_sample()
@@ -218,7 +225,7 @@ class NasBench201RSController(BaseController):
                     for output_ in valid_output:
                         if arch[output_][input_] > 1 and arch[output_][input_] < 4:
                             valid_arch = True
-                if valid_arch:
+                if valid_arch or not self.check_valid:
                     rollouts.append(new_rollout)
                     break
         return rollouts
