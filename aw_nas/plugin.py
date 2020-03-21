@@ -64,7 +64,7 @@ def _reload_plugins():
                     continue
                 mod_name, file_ext = os.path.splitext(
                     os.path.split(filepath)[-1])
-                if file_ext != ".py":
+                if file_ext != ".py" or mod_name.startswith("test_"):
                     continue
 
                 LOGGER.debug("Importing plugin module %s", filepath)
