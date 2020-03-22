@@ -25,6 +25,7 @@ from aw_nas.controller.base import BaseController
 from aw_nas.evaluator.arch_network import ArchEmbedder
 from aw_nas.utils import DenseGraphSimpleOpEdgeFlow, data_parallel, use_params
 from aw_nas.weights_manager.base import BaseWeightsManager, CandidateNet
+from aw_nas.final.base import FinalModel
 
 
 class NasBench201SearchSpace(SearchSpace):
@@ -1069,3 +1070,199 @@ class NB201SharedNet(BaseWeightsManager, nn.Module):
         return ["image"]
 
 
+class NB201GenotypeModel(FinalModel):
+    NAME = "nb201_final_model"
+
+    SCHEDULABLE_ATTRS = ["dropout_path_rate"]
+
+    def __init__(self, search_space, device, genotypes,
+                 num_classes=10, init_channels=36, stem_multiplier=1,
+                 dropout_rate=0.1, dropout_path_rate=0.2,
+                 auxiliary_head=False, auxiliary_cfg=None,
+                 use_stem="conv_bn_3x3", stem_stride=1, stem_affine=True,
+                 schedule_cfg=None):
+        super(NB201GenotypeModel, self).__init__(schedule_cfg)
+
+        self.search_space = search_space
+        self.device = device
+        assert isinstance(genotypes, str)
+        self.genotype_arch = self.search_space.api.str2matrix(genotypes)
+
+        self.num_classes = num_classes
+        self.init_channels = init_channels
+        self.stem_multiplier = stem_multiplier
+        self.use_stem = use_stem
+
+        # training
+        self.dropout_rate = dropout_rate
+        self.dropout_path_rate = dropout_path_rate
+        self.auxiliary_head = auxiliary_head
+
+        # search space configs
+        self._num_vertices = self.search_space.num_vertices
+        self._ops_choices = self.search_space.ops_choices
+        self._num_layers = self.search_space.num_layers
+
+        ## initialize sub modules
+        if not self.use_stem:
+            c_stem = 3
+        elif isinstance(self.use_stem, (list, tuple)):
+            self.stems = []
+            c_stem = self.stem_multiplier * self.init_channels
+            for i, stem_type in enumerate(self.use_stem):
+                c_in = 3 if i == 0 else c_stem
+                self.stems.append(ops.get_op(stem_type)(
+                    c_in, c_stem, stride=stem_stride, affine=stem_affine))
+            self.stems = nn.ModuleList(self.stems)
+        else:
+            c_stem = self.stem_multiplier * self.init_channels
+            self.stem = ops.get_op(self.use_stem)(3, c_stem,
+                                                  stride=stem_stride, affine=stem_affine)
+
+        self.cells = nn.ModuleList()
+        num_channels = self.init_channels
+        strides = [2 if self._is_reduce(i_layer) else 1 for i_layer in range(self._num_layers)]
+        for i_layer, stride in enumerate(strides):
+            _num_channels = num_channels if i_layer != 0 else c_stem
+            if stride > 1:
+                num_channels *= stride
+            _num_out_channels = num_channels
+            if stride == 1:
+                cell = NB201GenotypeCell(self.search_space,
+                                   self.genotype_arch,
+                                   layer_index=i_layer,
+                                   num_channels=_num_channels,
+                                   num_out_channels=_num_out_channels,
+                                   stride=stride)
+            else:
+                cell = ops.get_op("NB201ResidualBlock")(_num_channels, _num_out_channels, stride=2, affine=True)
+            # TODO: support specify concat explicitly
+            self.cells.append(cell)
+
+            if i_layer == (2 * self._num_layers) // 3 and self.auxiliary_head:
+                if auxiliary_head == "imagenet":
+                    self.auxiliary_net = AuxiliaryHeadImageNet(
+                        prev_num_channels[-1], num_classes, **(auxiliary_cfg or {}))
+                else:
+                    self.auxiliary_net = AuxiliaryHead(
+                        prev_num_channels[-1], num_classes, **(auxiliary_cfg or {}))
+        self.lastact = nn.Sequential(nn.BatchNorm2d(num_channels), nn.ReLU(inplace=True))
+        self.global_pooling = nn.AdaptiveAvgPool2d(1)
+        if self.dropout_rate and self.dropout_rate > 0:
+            self.dropout = nn.Dropout(p=self.dropout_rate)
+        else:
+            self.dropout = ops.Identity()
+        self.classifier = nn.Linear(num_channels,
+                                    self.num_classes)
+        self.to(self.device)
+
+        # for flops calculation
+        self.total_flops = 0
+        self._flops_calculated = False
+        self.set_hook()
+
+    def set_hook(self):
+        for name, module in self.named_modules():
+            if "auxiliary" in name:
+                continue
+            module.register_forward_hook(self._hook_intermediate_feature)
+
+    def _hook_intermediate_feature(self, module, inputs, outputs):
+        if not self._flops_calculated:
+            if isinstance(module, nn.Conv2d):
+                self.total_flops += 2* inputs[0].size(1) * outputs.size(1) * \
+                                    module.kernel_size[0] * module.kernel_size[1] * \
+                                    outputs.size(2) * outputs.size(3) / module.groups
+            elif isinstance(module, nn.Linear):
+                self.total_flops += 2 * inputs[0].size(1) * outputs.size(1)
+        else:
+            pass
+
+    def forward(self, inputs): #pylint: disable=arguments-differ
+        if not self.use_stem:
+            states = inputs
+        elif isinstance(self.use_stem, (list, tuple)):
+            stemed = inputs
+            for stem in self.stems:
+                stemed = stem(stemed)
+            states = stemed
+        else:
+            stemed = self.stem(inputs)
+            states = stemed
+
+        for layer_idx, cell in enumerate(self.cells):
+            states = cell(states, self.dropout_path_rate)
+            if layer_idx == 2 * self._num_layers // 3:
+                if self.auxiliary_head and self.training:
+                    logits_aux = self.auxiliary_net(states)
+        out = self.lastact(states)
+        out = self.global_pooling(out)
+        out = self.dropout(out)
+        logits = self.classifier(out.view(out.size(0), -1))
+        return logits
+
+        if not self._flops_calculated:
+            self.logger.info("FLOPS: flops num = %d M", self.total_flops/1.e6)
+            self._flops_calculated = True
+
+        if self.auxiliary_head and self.training:
+            return logits, logits_aux
+        return logits
+
+    @classmethod
+    def supported_data_types(cls):
+        return ["image"]
+
+    def _is_reduce(self, layer_idx):
+        return layer_idx in [(self._num_layers + 1) // 3, (self._num_layers + 1) * 2 // 3]
+
+
+class NB201GenotypeCell(nn.Module):
+    def __init__(self, search_space, genotype_arch, layer_index, num_channels, num_out_channels, stride):
+        super(NB201GenotypeCell, self).__init__()
+        self.search_space = search_space
+        self.arch = genotype_arch
+        self.stride = stride
+        self.is_reduce = stride != 1
+        self.num_channels = num_channels
+        self.num_out_channels = num_out_channels
+        self.layer_index = layer_index
+
+        self._vertices = self.search_space.num_vertices
+        self._primitives = self.search_space.ops_choices
+
+        self.edges = defaultdict(dict)
+        self.edge_mod = torch.nn.Module() # a stub wrapping module of all the edges
+        for from_ in range(self._vertices):
+            for to_ in range(from_ + 1, self._vertices):
+                self.edges[from_][to_] = ops.get_op(self._primitives[int(self.arch[to_][from_])])(self.num_channels, self.num_out_channels,
+                                                stride=self.stride, affine=False)
+                self.edge_mod.add_module("f_{}_t_{}".format(from_, to_), self.edges[from_][to_])
+        self._edge_name_pattern = re.compile("f_([0-9]+)_t_([0-9]+)")
+
+    def forward(self, inputs, dropout_path_rate): #pylint: disable=arguments-differ
+        states = [inputs]
+
+        for to_ in range(1, self._vertices):
+            state_to_ = 0.
+            for from_ in range(to_):
+                out = self.edges[from_][to_](states[from_])
+                if self.training and dropout_path_rate > 0:
+                    if not isinstance(op, ops.Identity):
+                        out = utils.drop_path(out, dropout_path_rate)
+                state_to_ = state_to_ + out
+            states.append(state_to_)
+
+        return states[-1]
+
+    def on_replicate(self):
+        # Although this edges is easy to understand, when paralleized,
+        # the reference relationship between `self.edge` and modules under `self.edge_mod`
+        # will not get updated automatically.
+
+        # So, after each replicate, we should initialize a new edges dict
+        # and update the reference manually.
+        self.edges = defaultdict(dict)
+        for edge_name, edge_mod in six.iteritems(self.edge_mod._modules):
+            from_, to_  = self._edge_name_pattern.match(edge_name).groups()
+            self.edges[int(from_)][int(to_)] = edge_mod
