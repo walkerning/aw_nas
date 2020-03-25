@@ -5,28 +5,28 @@ The main entrypoint of aw_nas.
 
 from __future__ import print_function
 
-import os
-import sys
-import random
-import shutil
 import functools
 import multiprocessing as mp
+import os
+import random
+import shutil
+import sys
 
+import aw_nas
 import click
-import yaml
 import numpy as np
 import setproctitle
 import torch
-from torch.backends import cudnn
-
-import aw_nas
-from aw_nas.dataset import AVAIL_DATA_TYPES
-from aw_nas import utils, BaseRollout
+import yaml
+from aw_nas import BaseRollout, utils
 from aw_nas.common import rollout_from_genotype_str
-from aw_nas.utils.vis_utils import WrapWriter
+from aw_nas.dataset import AVAIL_DATA_TYPES
 from aw_nas.utils import RegistryMeta
 from aw_nas.utils import logger as _logger
 from aw_nas.utils.exception import expect
+from aw_nas.utils.vis_utils import WrapWriter
+from torch.backends import cudnn
+from torch.nn.parallel import DistributedDataParallel
 
 # patch click.option to show the default values
 click.option = functools.partial(click.option, show_default=True)
@@ -245,6 +245,136 @@ def search(cfg_file, gpu, seed, load, save_every, interleave_report_every,
                   interleave_report_every=interleave_report_every)
     trainer.train()
 
+
+@main.command(help="Multiprocess searching for architecture.")
+@click.argument("cfg_file", required=True, type=str)
+@click.option("--seed", default=None, type=int,
+              help="the random seed to run training")
+@click.option("--load", default=None, type=str,
+              help="the directory to load checkpoint")
+@click.option("--save-every", default=None, type=int,
+              help="the number of epochs to save checkpoint every")
+@click.option("--interleave-report-every", default=50, type=int,
+              help="the number of interleave steps to report every, "
+              "only work in interleave training mode")
+@click.option("--train-dir", default=None, type=str,
+              help="the directory to save checkpoints")
+@click.option("--vis-dir", default=None, type=str,
+              help="the directory to save tensorboard events. "
+              "need `tensorboard` extra, `pip install aw_nas[tensorboard]`")
+@click.option("--develop", default=False, type=bool, is_flag=True,
+              help="in develop mode, will copy the `aw_nas` source files into train_dir for backup")
+def mpsearch(cfg_file, seed, load, save_every, interleave_report_every,
+           train_dir, vis_dir, develop):
+    # check dependency and initialize visualization writer
+    local_rank = int(os.environ["LOCAL_RANK"])
+    if vis_dir and local_rank == 0:
+        vis_dir = utils.makedir(vis_dir, remove=True)
+        try:
+            import tensorboardX
+        except ImportError:
+            LOGGER.error("Error importing module tensorboardX. Will IGNORE the `--vis-dir` option! "
+                         "Try installing the dependency manually, or `pip install aw_nas[vis]`")
+            _writer = None
+        else:
+            _writer = tensorboardX.SummaryWriter(log_dir=vis_dir)
+    else:
+        _writer = None
+    writer = WrapWriter(_writer)
+
+    if train_dir:
+        if local_rank == 0:
+            # backup config file, and if in `develop` mode, also backup the aw_nas source code
+            train_dir = utils.makedir(train_dir, remove=True)
+            shutil.copyfile(cfg_file, os.path.join(train_dir, "config.yaml"))
+
+            if develop:
+                import pkg_resources
+                src_path = pkg_resources.resource_filename("aw_nas", "")
+                backup_code_path = os.path.join(train_dir, "aw_nas")
+                if os.path.exists(backup_code_path):
+                    shutil.rmtree(backup_code_path)
+                LOGGER.info("Copy `aw_nas` source code to %s", backup_code_path)
+                shutil.copytree(src_path, backup_code_path, ignore=_onlycopy_py)
+
+        # add log file handler
+        log_file = os.path.join(train_dir, "search.log")
+        _logger.addFile(log_file)
+
+    LOGGER.info("CWD: %s", os.getcwd())
+    LOGGER.info("CMD: %s", " ".join(sys.argv))
+
+    setproctitle.setproctitle("awnas-search config: {}; train_dir: {}; vis_dir: {}; cwd: {}"\
+                              .format(cfg_file, train_dir, vis_dir, os.getcwd()))
+
+    # set gpu
+    _set_gpu(local_rank)
+    device = torch.cuda.current_device()
+    torch.distributed.init_process_group(backend="nccl")
+
+    LOGGER.info(("Start distributed parallel searching: (world size {}; MASTER {}:{})"
+                 " rank {} local_rank {} PID {}").format(
+                     int(os.environ["WORLD_SIZE"]), os.environ["MASTER_ADDR"],
+                     os.environ["MASTER_PORT"],
+                     os.environ["RANK"], local_rank, os.getpid()))
+
+    # set seed
+    if seed is not None:
+        LOGGER.info("Setting random seed: %d.", seed)
+        np.random.seed(seed)
+        random.seed(seed)
+        torch.manual_seed(seed)
+
+    # load components config
+    LOGGER.info("Loading configuration files.")
+    with open(cfg_file, "r") as f:
+        cfg = yaml.safe_load(f)
+
+    # initialize components
+    LOGGER.info("Initializing components.")
+    whole_dataset = _init_component(cfg, "dataset")
+    rollout_type = cfg["rollout_type"]
+
+    search_space = _init_component(cfg, "search_space")
+    controller = _init_component(cfg, "controller",
+                                        search_space=search_space, device=device,
+                                        rollout_type=rollout_type)
+
+    _data_type = whole_dataset.data_type()
+    
+    if _data_type == "sequence":
+        # get the num_tokens
+        num_tokens = whole_dataset.vocab_size
+        LOGGER.info("Dataset %s: vocabulary size: %d", whole_dataset.NAME, num_tokens)
+        weights_manager = _init_component(cfg, "weights_manager",
+                                search_space=search_space,
+                                device=device,
+                                gpus=[device],
+                                rollout_type=rollout_type,
+                                num_tokens=num_tokens)
+    else:
+        weights_manager = _init_component(cfg, "weights_manager",
+                                search_space=search_space,
+                                device=device, gpus=[device],
+                                rollout_type=rollout_type)
+    # check model support for data type
+    expect(_data_type in weights_manager.supported_data_types())
+
+    objective = _init_component(cfg, "objective", search_space=search_space)
+    # evaluator
+    evaluator = _init_component(cfg, "evaluator", dataset=whole_dataset,
+                                weights_manager=weights_manager, objective=objective,
+                                rollout_type=rollout_type)
+    expect(_data_type in evaluator.supported_data_types())
+
+    trainer = _init_component(cfg, "trainer",
+                              evaluator=evaluator, controller=controller,
+                              rollout_type=rollout_type)
+
+    # setup trainer and train
+    trainer.setup(load, save_every, train_dir, writer=writer,
+                  interleave_report_every=interleave_report_every)
+    trainer.train()
 
 def _dump(rollout, dump_mode, of):
     if dump_mode == "list":
