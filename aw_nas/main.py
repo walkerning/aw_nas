@@ -23,6 +23,7 @@ import aw_nas
 from aw_nas.dataset import AVAIL_DATA_TYPES
 from aw_nas import utils, BaseRollout
 from aw_nas.common import rollout_from_genotype_str
+from aw_nas.utils.common_utils import _OrderedCommandGroup
 from aw_nas.utils.vis_utils import WrapWriter
 from aw_nas.utils import RegistryMeta
 from aw_nas.utils import logger as _logger
@@ -30,24 +31,6 @@ from aw_nas.utils.exception import expect
 
 # patch click.option to show the default values
 click.option = functools.partial(click.option, show_default=True)
-
-# subclass `click.Group` to list commands in order
-class _OrderedCommandGroup(click.Group):
-    def __init__(self, *args, **kwargs):
-        self.cmd_names = []
-        super(_OrderedCommandGroup, self).__init__(*args, **kwargs)
-
-    def list_commands(self, ctx):
-        """reorder the list of commands when listing the help"""
-        commands = super(_OrderedCommandGroup, self).list_commands(ctx)
-        return sorted(commands, key=self.cmd_names.index)
-
-    def command(self, *args, **kwargs):
-        def decorator(func):
-            cmd = super(_OrderedCommandGroup, self).command(*args, **kwargs)(func)
-            self.cmd_names.append(cmd.name)
-            return cmd
-        return decorator
 
 LOGGER = _logger.getChild("main")
 
