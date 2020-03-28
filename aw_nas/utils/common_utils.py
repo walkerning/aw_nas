@@ -11,8 +11,9 @@ import functools
 import collections
 from collections import OrderedDict, namedtuple
 from contextlib import contextmanager
-import six
 
+import six
+import click
 import numpy as np
 import scipy
 import scipy.signal
@@ -108,6 +109,24 @@ class Context(object):
             .format(next_cell, next_step, next_conn, next_op_step)
 
 ## --- misc helpers ---
+# subclass `click.Group` to list commands in order
+class _OrderedCommandGroup(click.Group):
+    def __init__(self, *args, **kwargs):
+        self.cmd_names = []
+        super(_OrderedCommandGroup, self).__init__(*args, **kwargs)
+
+    def list_commands(self, ctx):
+        """reorder the list of commands when listing the help"""
+        commands = super(_OrderedCommandGroup, self).list_commands(ctx)
+        return sorted(commands, key=self.cmd_names.index)
+
+    def command(self, *args, **kwargs):
+        def decorator(func):
+            cmd = super(_OrderedCommandGroup, self).command(*args, **kwargs)(func)
+            self.cmd_names.append(cmd.name)
+            return cmd
+        return decorator
+
 @contextmanager
 def nullcontext():
     yield
