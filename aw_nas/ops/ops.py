@@ -3,11 +3,13 @@ NN operations.
 """
 #pylint: disable=arguments-differ,useless-super-delegation,invalid-name
 
-import torch
-from torch import nn
-import torch.nn.functional as F
-
 import numpy as np
+import torch
+import torch.nn.functional as F
+from collections import OrderedDict
+from aw_nas.utils.common_utils import get_sub_kernel, l1norm_order, make_divisible, _get_channel_mask
+from aw_nas.utils.exception import ConfigException, expect
+from torch import nn
 
 def avg_pool_3x3(C, C_out, stride, affine):
     assert C == C_out
@@ -26,6 +28,22 @@ def conv_7x1_1x7(C, C_out, stride, affine):
         nn.Conv2d(C, C, (7, 1), stride=(stride, 1), padding=(3, 0), bias=False),
         nn.BatchNorm2d(C, affine=affine)
     )
+
+class Hswish(nn.Module):
+    def __init__(self, inplace):
+        super(Hswish, self).__init__()
+        self.inplace = inplace
+
+    def forward(self, x):
+        return x * F.relu6(x + 3., inplace=self.inplace) / 6.
+
+class Hsigmoid(nn.Module):
+    def __init__(self, inplace):
+        super(Hsigmoid, self).__init__()
+        self.inplace = inplace
+
+    def forward(self, x):
+        return F.relu6(x + 3., inplace=self.inplace) / 6.
 
 PRIMITVE_FACTORY = {
     "none" : lambda C, C_out, stride, affine: Zero(stride),
@@ -89,7 +107,9 @@ PRIMITVE_FACTORY = {
     "tanh": lambda **kwargs: nn.Tanh(),
     "relu": lambda **kwargs: nn.ReLU(),
     "sigmoid": lambda **kwargs: nn.Sigmoid(),
-    "identity": lambda **kwargs: Identity()
+    "identity": lambda **kwargs: Identity(),
+    "h_swish": lambda **kwargs: Hswish(**kwargs),
+    "h_sigmoid": lambda **kwargs: Hsigmoid(**kwargs)
 }
 
 def register_primitive(name, func, override=False):
@@ -494,3 +514,361 @@ CONCAT_OPS = {
 
 def get_concat_op(type_):
     return CONCAT_OPS[type_]()
+
+
+class FlexibleLayer(object):
+    def __init__(self):
+        self.reset_mask()
+
+    def set_mask(self, *args, **kwargs):
+        raise NotImplementedError()
+
+    def reset_mask(self):
+        raise NotImplementedError()
+
+    def finalize(self):
+        raise NotImplementedError()
+
+
+class FlexiblePointLinear(nn.Conv2d, FlexibleLayer):
+    def __init__(self, in_channels, out_channels, kernel_size=1, stride=1, padding=0, dilation=1):
+        super(FlexiblePointLinear, self).__init__(in_channels, out_channels, kernel_size, stride, padding, dilation, groups=1, bias=False)
+        FlexibleLayer.__init__(self)
+
+    def _select_params(self, in_mask=None, out_mask=None):
+        if in_mask is None and out_mask is None:
+            return self.weight
+        if in_mask is None:
+            return self.weight[out_mask, :, :, :].contiguous()
+        if out_mask is None:
+            return self.weight[:, in_mask, :, :].contiguous()
+        return self.weight[out_mask, in_mask, :, :].contiguous()
+
+    def set_mask(self, in_mask, out_mask):
+        self.in_mask = in_mask
+        self.out_mask = out_mask
+    
+    def reset_mask(self):
+        self.in_mask = None
+        self.out_mask = None
+
+    def forward_mask(self, inputs, in_mask=None, out_mask=None):
+        filters = self._select_params(in_mask, out_mask)
+        padding = max(self.kernel_size) // 2
+        return F.conv2d(inputs, filters, padding=padding, stride=self.stride, dilation=self.dilation)
+
+    def forward(self, inputs):
+        return self.forward_mask(inputs, self.in_mask, self.out_mask)
+
+    def finalize(self):
+        """
+        The method should be called only after set_mask is called, or there will be no effect.
+        """
+        weight = self._select_params(self.in_mask, self.out_mask)
+        C_out, C_in, H, W = weight.shape
+        assert H == W
+        padding = H // 2
+        final_conv = nn.Conv2d(C_in, C_out, H, stride=self.stride, padding=padding, bias=False)
+        final_conv.weight.data.copy_(weight)
+        return final_conv
+
+class FlexibleDepthWiseConv(nn.Conv2d, FlexibleLayer):
+    def __init__(self, in_channels, kernel_sizes, stride=1, dilation=1, do_kernel_transform=True):
+        assert isinstance(kernel_sizes, (list, tuple))
+        kernel_sizes = sorted(kernel_sizes)
+        self.kernel_sizes = kernel_sizes
+        self.max_kernel_size = kernel_sizes[-1]
+        self.do_kernel_transform = do_kernel_transform
+        super(FlexibleDepthWiseConv, self).__init__(in_channels, in_channels, self.max_kernel_size, stride, dilation=dilation, groups=in_channels, bias=False)
+        if self.do_kernel_transform:
+            self.linear_7to5 = nn.Linear(5 * 5, 5 * 5)
+            self.linear_5to3 = nn.Linear(3 * 3, 3 * 3)
+
+        FlexibleLayer.__init__(self)
+        
+    def _select_channels(self, mask):
+        return self.weight[mask, :, :, :].contiguous()
+
+    def _transform_kernel(self, origin_filter, kernel_size):
+        expect(kernel_size in self.kernel_sizes, "The kernel_size must be one of 3, 5, 7, got {} instead".format(kernel_size), ValueError)
+        if origin_filter.shape[-1] == kernel_size:
+            return origin_filter
+        if not self.do_kernel_transform:
+            return get_sub_kernel(origin_filter, kernel_size)
+        cur_filter = origin_filter
+        expect(cur_filter.shape[-1] > kernel_size, "The kernel size must be less than origin kernel size {}, got {} instead.".format(origin_filter.shape[-1], kernel_size), ValueError)
+        for smaller, larger in reversed(list(zip(self.kernel_sizes[:-1], self.kernel_sizes[1:]))):
+            if cur_filter < larger:
+                continue
+            if kernel_size >= larger:
+                break
+            sub_filter = get_sub_kernel(origin_filter, smaller).view(sub_filter.shape[0], sub_filter.shape[1], -1)
+            sub_filter = sub_filter.view(-1, sub_filter.shape[-1])
+            sub_filter = getattr(self, f'linear_{larger}to{smaller}')(sub_filter)
+            sub_filter = sub_filter.view(origin_filter.shape[0], origin_filter.shape[1], smaller ** 2)
+            sub_filter = sub_filter.view(origin_filter.shape[0], origin_filter.shape[1], smaller, smaller)
+            cur_filter = sub_filter
+        return cur_filter
+
+    def _select_params(self, mask, kernel_size):
+        filters = self.weight
+        if mask is not None:
+            filters = self._select_channels(mask)
+        if kernel_size:
+            filters = self._transform_kernel(filters, kernel_size)
+        return filters
+
+    def set_mask(self, mask, kernel_size):
+        self.mask = mask
+        self._kernel_size = kernel_size
+
+    def reset_mask(self):
+        self.mask = None
+        self._kernel_size = self.max_kernel_size
+
+    def forward_mask(self, inputs, mask=None, kernel_size=None):
+        filters = self._select_params(mask, kernel_size)
+        padding = filters.shape[-1] // 2
+        groups = filters.shape[0]
+        return F.conv2d(inputs, filters, padding=padding, stride=self.stride, dilation=self.dilation, groups=groups)
+
+    def forward(self, inputs):
+        return self.forward_mask(inputs, self.mask, self._kernel_size)
+
+    def finalize(self):
+        """
+        The method should be called only after set_mask is called, or there will be no effect.
+        """
+        weight = self._select_params(self.mask, self._kernel_size)
+        C, _, _, _ = weight.shape
+        padding = max(self._kernel_size) // 2
+        final_conv = nn.Conv2d(C, C, self._kernel_size, stride=self.stride, padding=padding, groups=C, bias=False)
+        final_conv.weight.data.copy_(weight)
+        return final_conv
+
+
+class FlexibleBatchNorm2d(nn.BatchNorm2d, FlexibleLayer):
+    def __init__(self, num_features, eps=1e-05, momentum=0.1, affine=True):
+        super(FlexibleBatchNorm2d, self).__init__(num_features, eps, momentum, affine)
+        FlexibleLayer.__init__(self)
+
+    def _select_params(self, mask):
+        running_mean = self.running_mean[mask].contiguous()
+        running_var = self.running_mean[mask].contiguous()
+        weight = self.weight[mask].contiguous()
+        bias = self.bias[mask].contiguous()
+        return running_mean, running_var, weight, bias
+
+    def set_mask(self, mask):
+        self.mask = mask
+
+    def reset_mask(self):
+        self.mask = None
+    
+    def forward_mask(self, inputs, mask=None):
+        if mask is None or inputs.shape[1] == self.num_features:
+            return super().forward(inputs)
+        
+        """ _BatchNorm official code"""
+        if self.momentum is None:
+            exponential_average_factor = 0.0
+        else:
+            exponential_average_factor = self.momentum
+
+        if self.training and self.track_running_stats:
+            if self.num_batches_tracked is not None:
+                self.num_batches_tracked += 1
+                if self.momentum is None:  # use cumulative moving average
+                    exponential_average_factor = 1.0 / float(self.num_batches_tracked)
+                else:  # use exponential moving average
+                    exponential_average_factor = self.momentum
+        running_mean, running_var, weight, bias = self._select_params(mask)
+        return F.batch_norm(
+            inputs, running_mean, running_var, weight, bias,
+            self.training or not self.track_running_stats,
+            exponential_average_factor, self.eps)
+
+    def forward(self, inputs):
+        return self.forward_mask(inputs, self.mask)
+
+    def finalize(self):
+        """
+        The method should be called only after set_mask is called, or there will be no effect.
+        """
+        running_mean, running_var, weight, bias = self._select_params(self.mask)
+        feature_dim = weight.shape[0]
+        final_bn = nn.BatchNorm2d(feature_dim, self.eps, self.momentum, self.affine)
+        for var in ['running_mean', 'running_var', 'weight', 'bias']:
+            getattr(final_bn, var).copy_(eval(var))
+        return final_bn
+
+
+class SEModule(nn.Module):
+    def __init__(self, channel, reduction=4, reduction_layer=None, expand_layer=None):
+        super(SEModule, self).__init__()
+        self.channel = channel
+        self.reduction = reduction
+        mid_channel = make_divisible(channel // reduction, 8)
+
+        self.se = nn.Sequential(OrderedDict([
+            ('reduction', reduction_layer or nn.Conv2d(self.channel, mid_channel, 1, 1, 0, bias=False)),
+            ('relu', nn.ReLU(inplace=True)),
+            ('expand', expand_layer or nn.Conv2d(mid_channel, self.channel, 1, 1, 0, bias=False)),
+            ('activation', get_op('h_sigmoid')(inplace=True))
+        ]))
+
+    def forward(self, inputs):
+        out = inputs.mean(3, keepdim=True).mean(2, keepdim=True)
+        out = self.se(out)
+        return inputs * out
+
+
+class FlexibleSEModule(SEModule, FlexibleLayer):
+    def __init__(self, channel, reduction=4):
+        mid_channel = make_divisible(channel // reduction, 8)
+        reduction_layer = FlexiblePointLinear(channel, mid_channel, 1, 1, 0)
+        expand_layer = FlexiblePointLinear(mid_channel, channel, 1, 1, 0)
+        super(FlexibleSEModule, self).__init__(channel, reduction, reduction_layer, expand_layer)
+        FlexibleLayer.__init__(self)
+
+    def reset_mask(self):
+        self.se.reduction.reset_mask()
+        self.se.expand.reset_mask()
+
+    def set_mask(self, mask):
+        if mask is None:
+            return
+        channel = torch.Tensor(mask).to(torch.bool).sum().item()
+        mid_channel = make_divisible(channel // self.reduction, 8)
+        exp_mask = _get_channel_mask(self.se.expand.weight.data, mid_channel)
+        self.se.reduction.set_mask(mask, exp_mask)
+        self.se.expand.reset_mask(exp_mask, mask)
+        
+    def forward(self, inputs):
+        out = inputs.mean(3, keepdim=True).mean(2, keepdim=True)
+        out = self.se(out)
+        return inputs * out
+
+    def finalize(self):
+        reduction_layer = self.se.reduction.finalize()
+        expand_layer = self.se.expand_layer.finalize()
+        return SEModule(self.channel, self.reduction, reduction_layer, expand_layer)
+        
+
+class MobileNetV2Block(nn.Module):
+    def __init__(self, expansion, C, C_out, 
+                stride, 
+                kernel_size,
+                activation='relu',
+                inv_bottleneck=None,
+                depth_wise=None,
+                point_linear=None,
+                ):
+        super(MobileNetV2Block, self).__init__()
+        self.expansion = expansion
+        self.C = C
+        self.C_out = C_out 
+        self.C_inner = C * expansion
+        self.stride = stride
+        self.kernel_size = kernel_size
+        self.act_fn = get_op(activation)
+        
+        self.inv_bottleneck = None
+        if expansion != 1:
+            self.inv_bottleneck = inv_bottleneck or nn.Sequential(
+                nn.Conv2d(C, self.C_inner, 1, 1, 0, bias=False),
+                nn.BatchNorm2d(self.C_inner),
+                self.act_fn(inplace=True)
+            )
+        
+        self.depth_wise = depth_wise or nn.Sequential(
+            nn.Conv2d(self.C_inner, self.C_inner, self.kernel_size, stride, padding=self.kernel_size // 2, bias=False),
+            nn.BatchNorm2d(self.C_inner),
+            self.act_fn(inplace=True)
+        )
+
+        self.point_linear = point_linear or nn.Sequential(
+            nn.Conv2d(self.C_inner, C_out, 1, 1, 0, bias=False),
+            nn.BatchNorm2d(C_out)
+        )
+
+        self.shortcut = nn.Sequential()
+        self.has_conv_shortcut = False
+        if stride == 1 and C != C_out:
+            self.has_conv_shortcut = True
+            self.shortcut = nn.Sequential(
+                    nn.Conv2d(C, C_out, kernel_size=1,
+                            stride=1, padding=0, bias=False),
+                    nn.BatchNorm2d(C_out),
+                )
+
+    def forward(self, inputs):
+        out = inputs
+        if self.inv_bottleneck:
+            out = self.inv_bottleneck(out)
+        out = self.depth_wise(out)
+        out = self.point_linear(out)
+        if self.stride == 1:
+            out = out + self.shortcut(inputs)
+        return out
+
+
+class MobileNetV3Block(nn.Module):
+    def __init__(self, expansion, C, C_out, 
+                 stride, 
+                 kernel_size,
+                 activation='relu',
+                 use_se=False,
+                 inv_bottleneck=None,
+                 depth_wise=None,
+                 point_linear=None,
+                 se=None,
+                 ):
+        super(MobileNetV3Block, self).__init__()
+        self.expansion = expansion
+        self.C = C
+        self.C_out = C_out 
+        self.C_inner = C * expansion
+        self.stride = stride
+        self.kernel_size = kernel_size
+        self.act_fn = get_op(activation)
+        self.use_se = use_se
+        
+        self.inv_bottleneck = None
+        if expansion != 1:
+            self.inv_bottleneck = inv_bottleneck or nn.Sequential(
+                nn.Conv2d(C, self.C_inner, 1, 1, 0, bias=False),
+                nn.BatchNorm2d(self.C_inner),
+                self.act_fn(inplace=True)
+            )
+        
+        self.depth_wise = depth_wise or nn.Sequential(
+            nn.Conv2d(self.C_inner, self.C_inner, self.kernel_size, stride, self.kernel_size // 2, groups=self.C_inner, bias=False),
+            nn.BatchNorm2d(self.C_inner),
+            self.act_fn(inplace=True)
+        )
+
+        self.point_linear = point_linear or nn.Sequential(
+            nn.Conv2d(self.C_inner, C_out, 1, 1, 0, bias=False),
+            nn.BatchNorm2d(C_out)
+        )
+
+        self.se = None
+        if self.use_se:
+            self.se = se or SEModule(self.C_inner)
+        
+        self.shortcut = None
+        if stride == 1 and C == C_out:
+            self.shortcut = nn.Sequential()
+
+    def forward(self, inputs):
+        out = inputs
+        if self.inv_bottleneck:
+            out = self.inv_bottleneck(out)
+        out = self.depth_wise(out)
+        if self.se:
+            out = self.se(out)
+        out = self.point_linear(out)
+        if self.shortcut:
+            out = out + self.shortcut(inputs)
+        return out

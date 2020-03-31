@@ -1,9 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Shared weights super net.
+MNas super net.
 """
-
-from __future__ import print_function
 
 import itertools
 from collections import OrderedDict
@@ -18,6 +16,7 @@ from aw_nas.weights_manager.base import CandidateNet
 from aw_nas.weights_manager.shared import SharedNet, SharedCell, SharedOp
 from aw_nas.utils import data_parallel, use_params
 from aw_nas.ops import *
+
 
 __all__ = ["MNasNetCandidateNet", "MNasNetSupernet"]
 
@@ -87,8 +86,14 @@ class MNasNetSupernet(nn.Module):
     NAME = "mnasnet_supernet"
 
     def __init__(self, search_space, device, rollout_type='mnasnet',
-                 blocks=[6, 6, 6, 6, 6, 6], stride=[2, 2, 2, 1, 2, 1],
-                 expansion=[6, 6, 6, 6, 6, 6], channels=[16, 24, 40, 80, 96, 192, 320],
+                 multiprocess=False,
+                 blocks=[1, 4, 4, 4, 4, 4],
+                 strides=[1, 2, 2, 1, 2, 1],
+                 expansions=[6, 6, 6, 6, 6, 6],
+                 channels=[16, 24, 40, 80, 96, 192, 320],
+                 multi_ratio=1.,
+                 kernel_sizes=[3, 5, 7],
+                 do_kernel_transform=True,
                  num_classes=10, gpus=tuple()):
         super(MNasNetSupernet, self).__init__()
         self.search_space = search_space
@@ -99,8 +104,8 @@ class MNasNetSupernet(nn.Module):
         self._flops_calculated = False
         self.total_flops = 0
         self.blocks = blocks
-        self.stride = stride
-        self.expansion = expansion
+        self.stride = strides
+        self.expansion = expansions
         self.channels = channels
         self.cells = []
         self.sep_stem = nn.Sequential(nn.Conv2d(3, 32, kernel_size=3, stride=2, padding=1),
@@ -209,6 +214,8 @@ class MNasNetCandidateNet(CandidateNet):
     def forward(self, inputs, single=False): #pylint: disable=arguments-differ
         if single or not self.gpus or len(self.gpus) == 1:
             return self._forward(inputs)
+        if self.super_net.multiprocess:
+            return self.super_net.parallel_model.forward(inputs, self.rollout)
         # return data_parallel(self.super_net, (inputs, self.genotypes_grouped), self.gpus)
         return data_parallel(self, (inputs,), self.gpus, module_kwargs={"single": True})
 

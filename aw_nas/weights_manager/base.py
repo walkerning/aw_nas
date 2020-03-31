@@ -11,11 +11,12 @@ from torch import nn
 from aw_nas import Component, utils
 from aw_nas.utils.common_utils import nullcontext
 from aw_nas.utils.exception import expect, ConfigException
-
+from aw_nas.utils import DistributedDataParallel
+from aw_nas.utils import convert_model as convert_sync_bn
 class BaseWeightsManager(Component):
     REGISTRY = "weights_manager"
 
-    def __init__(self, search_space, device, rollout_type, schedule_cfg=None):
+    def __init__(self, search_space, device, rollout_type, multiprocess, gpus, schedule_cfg=None):
         super(BaseWeightsManager, self).__init__(schedule_cfg)
 
         self.search_space = search_space
@@ -24,6 +25,14 @@ class BaseWeightsManager(Component):
                "Unsupported `rollout_type`: {}".format(rollout_type),
                ConfigException) # supported rollout types
         self.rollout_type = rollout_type
+        self.multiprocess = multiprocess
+        self.gpus = gpus
+        object.__setattr__(self, 'parallel_model', self)
+
+    def _parallelize(self):
+        if self.multiprocess:
+            net = convert_sync_bn(self).to(self.device)
+            object.__setattr__(self, 'parallel_model', DistributedDataParallel(net, self.gpus))
 
     @abc.abstractmethod
     def set_device(self, device):

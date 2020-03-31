@@ -138,7 +138,7 @@ class SimpleTrainer(BaseTrainer):
                                     suggested, self.evaluator_steps)
 
         # init controller optimizer and scheduler
-        if controller_optimizer:
+        if self.rollout_type != "mnasnet_ofa":
             self.controller_optimizer = utils.init_optimizer(self.controller.parameters(),
                                                              controller_optimizer)
             self.controller_scheduler = utils.init_scheduler(self.controller_optimizer,
@@ -230,7 +230,7 @@ class SimpleTrainer(BaseTrainer):
     # ---- APIs ----
     @classmethod
     def supported_rollout_types(cls):
-        return ["discrete", "differentiable", "compare", "nasbench-101", "nasbench-201"]
+        return ["discrete", "differentiable", "compare", "nasbench-101", "nasbench-201", "mnasnet_ofa"]
 
     def train(self): #pylint: disable=too-many-branches
         assert self.is_setup, "Must call `trainer.setup` method before calling `trainer.train`."
