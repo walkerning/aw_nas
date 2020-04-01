@@ -35,11 +35,20 @@ class OFASupernet(BaseWeightsManager, nn.Module):
                  backbone_cfg={},
                  num_classes=10,
                  multiprocess=False, gpus=tuple(), schedule_cfg=None):
-        super(OFASupernet, self).__init__(search_space, device, rollout_type, multiprocess, gpus, schedule_cfg)
+        super(OFASupernet, self).__init__(search_space, device, rollout_type, schedule_cfg)
         nn.Module.__init__(self)
         self.backbone = BaseBackboneArch.get_class_(backbone_type)(device, schedule_cfg=schedule_cfg, **backbone_cfg)
 
+        self.multiprocess = multiprocess
+        self.gpus = gpus
+        object.__setattr__(self, 'parallel_model', self)
+
         self._parallelize()
+
+    def _parallelize(self):
+        if self.multiprocess:
+            net = convert_sync_bn(self).to(self.device)
+            object.__setattr__(self, 'parallel_model', DistributedDataParallel(net, self.gpus))
 
     def reset_flops(self):
         self._flops_calculated = False

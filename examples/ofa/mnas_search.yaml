@@ -120,7 +120,7 @@ trainer_cfg:
   # Schedulable attributes: controller_samples, derive_samples
   rollout_type: mnasnet_ofa
   epochs: 500
-  test_every: 1
+  test_every: 10
   controller_scheduler: null
   controller_samples: 1
   derive_samples: 8
