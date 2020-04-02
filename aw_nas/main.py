@@ -5,6 +5,7 @@ The main entrypoint of aw_nas.
 
 from __future__ import print_function
 
+import os
 import sys
 import random
 import shutil

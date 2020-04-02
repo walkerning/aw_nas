@@ -15,7 +15,7 @@ class OFAClassificationObjective(BaseObjective):
 
     SCHEDULABLE_ATTRS = ["soft_loss_coeff"]
 
-    def __init__(self, search_space, label_smooth=None, soft_loss_coeff=1.0, latency_coeff=1., reward='add', expect_latency=30, punishment='soft', latency_file=None, schedule_cfg=None):
+    def __init__(self, search_space, label_smooth=None, soft_loss_coeff=1.0, latency_coeff=1., reward="add", expect_latency=30, punishment="soft", latency_file=None, schedule_cfg=None):
         super(OFAClassificationObjective, self).__init__(search_space, schedule_cfg)
         self.label_smooth = label_smooth
         self.soft_loss_coeff = soft_loss_coeff
@@ -74,7 +74,7 @@ class OFAClassificationObjective(BaseObjective):
         Get top-1 acc.
         """
         cand_net.forward(inputs)
-        if hasattr(cand_net, 'elapse'):
+        if hasattr(cand_net, "elapse"):
             elapse = cand_net.elapse
         else:
             t0 = timeit.default_timer()
@@ -85,13 +85,13 @@ class OFAClassificationObjective(BaseObjective):
 
     def get_addition_reward(self, perf):
         latency_coeff = self.latency_coeff
-        if self.punishment == 'hard' and self.expect_latency > perf[2]:
+        if self.punishment == "hard" and self.expect_latency > perf[2]:
             return perf[0] + self.expect_latency / (self.expect_latency + 1) * latency_coeff
         return perf[0] + self.expect_latency / (perf[2] + 1) * latency_coeff
 
     def get_mult_reward(self, perf, log=False):
         latency_coeff = self.latency_coeff
-        if self.punishment == 'hard' and self.expect_latency > perf[2]:
+        if self.punishment == "hard" and self.expect_latency > perf[2]:
             latency_coeff = 0
 
         if not log:
@@ -101,11 +101,11 @@ class OFAClassificationObjective(BaseObjective):
     
     def get_reward(self, inputs, outputs, targets, cand_net):
         perf = self.get_perfs(inputs, outputs, targets, cand_net)
-        if self.reward == 'add':
+        if self.reward == "add":
             return self.get_addition_reward(perf)
-        elif self.reward == 'mult':
+        elif self.reward == "mult":
             return self.get_mult_reward(perf, log=False)
-        elif self.reward == 'log':
+        elif self.reward == "log":
             return self.get_mult_reward(perf, log=True)
         else:
             raise ValueError('No such reward, reward must be in ["add", "mult", "log"]')
@@ -121,11 +121,7 @@ class OFAClassificationObjective(BaseObjective):
         """
         loss = self._criterion(outputs, targets)
         if self.soft_loss_coeff > 0:
-            try:
-                outputs_all = cand_net.super_net.forward_all(inputs).detach()
-            except Exception as e:
-                import ipdb
-                ipdb.set_trace()
+            outputs_all = cand_net.super_net.forward_all(inputs).detach()
             
             soft = self.loss_soft(outputs, outputs_all)
             loss2 = loss + soft * self.soft_loss_coeff

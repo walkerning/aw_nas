@@ -254,7 +254,7 @@ def mnasnet_ofa_super_net(request):
     scfg = cfg.pop("search_space_cfg", {})
     from aw_nas.common import get_search_space
     from aw_nas.weights_manager import MNasNetSupernet
-    search_space = get_search_space(cls="mnasnet_ofa", **scfg)
+    search_space = get_search_space(cls="ofa", **scfg)
     device = "cuda"
     net = MNasNetSupernet(search_space, device, **cfg)
     return net

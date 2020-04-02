@@ -5,14 +5,14 @@ import six
 
 import torch
 from torch import nn
+from torch.utils.data.distributed import DistributedSampler
 
 from aw_nas import utils
 from aw_nas.final.base import FinalTrainer
 from aw_nas.utils.common_utils import nullcontext
 from aw_nas.utils.exception import expect
 from aw_nas.utils import DataParallel
-from aw_nas.utils.common_utils import transform_state_dict
-from torch.utils.data.distributed import DistributedSampler
+
 
 def _warmup_update_lr(optimizer, epoch, init_lr, warmup_epochs):
     """
@@ -122,8 +122,6 @@ class OFAFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
             assert self.model is not None
             if load_state_dict is not None:
                 self._load_state_dict(load_state_dict)
-            elif self.state_dict_path is not None:
-                self._load_and_transform_state_dict(self.state_dict_path)
 
             self.logger.info("param size = %f M",
                              utils.count_parameters(self.model)/1.e6)
@@ -138,20 +136,6 @@ class OFAFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
 
         self._is_setup = True
 
-        train = False
-        self.ratio = 0.3
-
-        # if train:
-
-        #     from nni.compression.torch import L1FilterPruner
-        #     self.pruner = L1FilterPruner(self.model, config_list=[{'sparsity':self.ratio, 'op_types': ['Conv2d']}])
-        #     self.pruner.compress()
-
-        # else:
-        #     from nni.compression.torch import apply_compression_results
-        #     apply_compression_results(self.model, 'mask_mbv3_{}.pth'.format(self.ratio))
-        #     self.logger.info("after pruning param size = %f M",
-        #                  utils.count_parameters(self.model)/1.e6)
 
     def save(self, path):
         path = utils.makedir(path)
@@ -168,7 +152,7 @@ class OFAFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
         if self.scheduler is not None:
             torch.save(self.scheduler.state_dict(), os.path.join(path, "scheduler.pt"))
         self.logger.info("Saved checkpoint to %s", path)
-        
+
     def load(self, path):
         # load the model
         m_path = os.path.join(path, "model.pt") if os.path.isdir(path) else path
@@ -176,8 +160,9 @@ class OFAFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
             m_path = os.path.join(path, "model_state.pt")
             self._load_state_dict(m_path)
         else:
-            self.model.load_state_dict(torch.load(m_path, map_location=torch.device("cpu")), strict=False)
-        
+            self.model.load_state_dict(torch.load(
+                m_path, map_location=torch.device("cpu")), strict=False)
+
         self.model.to(self.device)
         self._parallelize()
         log_strs = ["model from {}".format(m_path)]
@@ -237,7 +222,7 @@ class OFAFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
             self.on_epoch_end(epoch)
 
         self.save(os.path.join(self.train_dir, "final"))
-        
+
 
     def evaluate_split(self, split):
         if len(self.gpus) >= 2:
@@ -260,7 +245,8 @@ class OFAFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
 
     def _load_state_dict(self, path):
         # load state dict
-        # TODO: while training, we save sorted channels instead of sorting every step. How to pick channels while loading?
+        # TODO: while training, we save sorted channels instead of sorting every step.
+        # How to pick channels while loading?
         checkpoint = torch.load(path, map_location=torch.device("cpu"))
         extra_keys = set(checkpoint.keys()).difference(set(self.model.state_dict().keys()))
         if extra_keys:
@@ -280,33 +266,6 @@ class OFAFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                               .format(len(missing_keys)))
             self.logger.error(str(missing_keys))
         self.model.load_state_dict(checkpoint, strict=False)
-
-    
-    def _load_and_transform_state_dict(self, state_dict_path):
-        state_dict = None
-        if os.path.isdir(state_dict_path):
-            path = os.path.join(state_dict_path, "evaluator.pt")
-            if not os.path.exists(path):
-                path = os.path.join(state_dict_path, "evaluator")
-            model = torch.load(path, map_location=torch.device("cpu"))
-            if isinstance(model, dict):
-                state_dict = model['weights_manager']
-            else:
-                state_dict = model.weights_manager.state_dict()
-        else:
-            state_dict = torch.load(state_dict_path, map_location=torch.device("cpu"))
-        
-        new_weight_state_dict = transform_state_dict(state_dict, self.model.depth, self.model.width, self.model.kernel, self.model.layer_channels)
-        self.model.load_state_dict(new_weight_state_dict, strict=False)
-        
-        self.model.to(self.device)
-        self._parallelize()
-        log_strs = ["model from {}".format(state_dict_path)]
-
-        self.logger.info("param size = %f M",
-                         utils.count_parameters(self.model)/1.e6)
-        self.logger.info("Loaded checkpoint from %s: %s", state_dict_path, ", ".join(log_strs))
-        self.logger.info("Last epoch: %d", self.last_epoch)
 
     def _parallelize(self):
         if len(self.gpus) >= 2:
@@ -416,7 +375,6 @@ class OFAFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                                                 for perf_n, v in objective_perfs.avgs().items()]))
 
         return top1.avg, objs.avg, objective_perfs.avgs()
-
 
     def on_epoch_start(self, epoch):
         super(OFAFinalTrainer, self).on_epoch_start(epoch)

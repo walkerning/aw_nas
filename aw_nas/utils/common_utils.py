@@ -439,6 +439,8 @@ def make_divisible(v, divisor, min_val=None):
         new_v += divisor
     return new_v
 
+
+#---- OFA related utils ----
 def get_sub_kernel(kernel, sub_kernel_size):
     original_size = kernel.shape[-1]
     center = original_size // 2
@@ -446,12 +448,6 @@ def get_sub_kernel(kernel, sub_kernel_size):
     left = center - width
     right = center + width + 1
     return kernel[:, :, left:right, left:right].contiguous()
-
-def l1norm_order(filters):
-    norm = torch.sum(torch.abs(filters.data), dim=(0, 2, 3))
-    _, sorted_indices = torch.sort(norm, descending=True)
-    return sorted_indices
-
 
 def _get_channel_mask(filters, num_channels):
     norm_tensor = np.abs(filters.cpu().detach().numpy()).sum(axis=3).sum(axis=2).sum(axis=0)

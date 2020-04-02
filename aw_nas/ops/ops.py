@@ -7,7 +7,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from collections import OrderedDict
-from aw_nas.utils.common_utils import get_sub_kernel, l1norm_order, make_divisible, _get_channel_mask
+from aw_nas.utils.common_utils import get_sub_kernel, make_divisible, _get_channel_mask
 from aw_nas.utils.exception import ConfigException, expect
 from torch import nn
 
@@ -281,7 +281,7 @@ def forward_one_step(self, context=None, inputs=None):
     if op_ind < self._num_convs:
         for mod_ind in range(self._conv_mod_inds[op_ind-1]+1 if op_ind > 0 else 0,
                              self._conv_mod_inds[op_ind]+1):
-            # running from the last point(exclusive) to the #op_ind's point (inclusive)
+            # running from the last point(exclusive) to the #op_ind"s point (inclusive)
             inputs = self._modules[str(mod_ind)](inputs)
         if op_ind == self._num_convs - 1 and self._conv_mod_inds[-1] + 1 == modules_num:
             # if the last calculated module is already the last module in the Sequence container
@@ -604,7 +604,7 @@ class FlexibleDepthWiseConv(nn.Conv2d, FlexibleLayer):
                 break
             sub_filter = get_sub_kernel(origin_filter, smaller).view(sub_filter.shape[0], sub_filter.shape[1], -1)
             sub_filter = sub_filter.view(-1, sub_filter.shape[-1])
-            sub_filter = getattr(self, f'linear_{larger}to{smaller}')(sub_filter)
+            sub_filter = getattr(self, f"linear_{larger}to{smaller}")(sub_filter)
             sub_filter = sub_filter.view(origin_filter.shape[0], origin_filter.shape[1], smaller ** 2)
             sub_filter = sub_filter.view(origin_filter.shape[0], origin_filter.shape[1], smaller, smaller)
             cur_filter = sub_filter
@@ -641,7 +641,7 @@ class FlexibleDepthWiseConv(nn.Conv2d, FlexibleLayer):
         """
         weight = self._select_params(self.mask, self._kernel_size)
         C, _, _, _ = weight.shape
-        padding = max(self._kernel_size) // 2
+        padding = self._kernel_size // 2
         final_conv = nn.Conv2d(C, C, self._kernel_size, stride=self.stride, padding=padding, groups=C, bias=False)
         final_conv.weight.data.copy_(weight)
         return final_conv
@@ -653,11 +653,14 @@ class FlexibleBatchNorm2d(nn.BatchNorm2d, FlexibleLayer):
         FlexibleLayer.__init__(self)
 
     def _select_params(self, mask):
-        running_mean = self.running_mean[mask].contiguous()
-        running_var = self.running_mean[mask].contiguous()
-        weight = self.weight[mask].contiguous()
-        bias = self.bias[mask].contiguous()
-        return running_mean, running_var, weight, bias
+        if mask is not None:
+            running_mean = self.running_mean[mask].contiguous()
+            running_var = self.running_mean[mask].contiguous()
+            weight = self.weight[mask].contiguous()
+            bias = self.bias[mask].contiguous()
+            return running_mean, running_var, weight, bias
+        else:
+            return self.running_mean, self.running_var, self.weight, self.bias
 
     def set_mask(self, mask):
         self.mask = mask
@@ -698,8 +701,8 @@ class FlexibleBatchNorm2d(nn.BatchNorm2d, FlexibleLayer):
         running_mean, running_var, weight, bias = self._select_params(self.mask)
         feature_dim = weight.shape[0]
         final_bn = nn.BatchNorm2d(feature_dim, self.eps, self.momentum, self.affine)
-        for var in ['running_mean', 'running_var', 'weight', 'bias']:
-            getattr(final_bn, var).copy_(eval(var))
+        for var in ["running_mean", "running_var", "weight", "bias"]:
+            getattr(final_bn, var).data.copy_(eval(var))
         return final_bn
 
 
@@ -711,10 +714,10 @@ class SEModule(nn.Module):
         mid_channel = make_divisible(channel // reduction, 8)
 
         self.se = nn.Sequential(OrderedDict([
-            ('reduction', reduction_layer or nn.Conv2d(self.channel, mid_channel, 1, 1, 0, bias=False)),
-            ('relu', nn.ReLU(inplace=True)),
-            ('expand', expand_layer or nn.Conv2d(mid_channel, self.channel, 1, 1, 0, bias=False)),
-            ('activation', get_op('h_sigmoid')(inplace=True))
+            ("reduction", reduction_layer or nn.Conv2d(self.channel, mid_channel, 1, 1, 0, bias=False)),
+            ("relu", nn.ReLU(inplace=True)),
+            ("expand", expand_layer or nn.Conv2d(mid_channel, self.channel, 1, 1, 0, bias=False)),
+            ("activation", get_op("h_sigmoid")(inplace=True))
         ]))
 
     def forward(self, inputs):
@@ -751,7 +754,7 @@ class FlexibleSEModule(SEModule, FlexibleLayer):
 
     def finalize(self):
         reduction_layer = self.se.reduction.finalize()
-        expand_layer = self.se.expand_layer.finalize()
+        expand_layer = self.se.expand.finalize()
         return SEModule(self.channel, self.reduction, reduction_layer, expand_layer)
         
 
@@ -759,7 +762,7 @@ class MobileNetV2Block(nn.Module):
     def __init__(self, expansion, C, C_out, 
                 stride, 
                 kernel_size,
-                activation='relu',
+                activation="relu",
                 inv_bottleneck=None,
                 depth_wise=None,
                 point_linear=None,
@@ -817,7 +820,7 @@ class MobileNetV3Block(nn.Module):
     def __init__(self, expansion, C, C_out, 
                  stride, 
                  kernel_size,
-                 activation='relu',
+                 activation="relu",
                  use_se=False,
                  inv_bottleneck=None,
                  depth_wise=None,

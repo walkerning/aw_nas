@@ -632,13 +632,8 @@ from aw_nas.rollout import ( # pylint:disable=unused-import
     CompareRollout
 )
 
-# from aw_nas.rollout.dense import (
-#     DenseSearchSpace,
-#     DenseDiscreteRollout,
-#     DenseMutationRollout
-# )
-
-# from aw_nas.rollout.mnasnet import (
-#     MNasNetOFASearchSpace,
-#     MNasNetOFARollout
-# )
+from aw_nas.rollout.dense import (
+    DenseSearchSpace,
+    DenseDiscreteRollout,
+    DenseMutationRollout
+)
