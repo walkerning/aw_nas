@@ -45,7 +45,7 @@ class DenseRobSearchSpace(SearchSpace):
     def __init__(self, 
                  ## macro arch
                  num_cell_groups=2,
-                 num_init_nodes=2,
+                 num_init_nodes=1,
                  cell_layout=None,
                  reduce_cell_groups=None,
                  ## micro arch
@@ -120,8 +120,6 @@ class DenseRobSearchSpace(SearchSpace):
         arch = np.zeros((self._num_nodes, self._num_nodes))
         arch[self.idx] = np.random.randint(
             low=0, high=self.num_op_choices, size=self.num_possible_edges)
-        import ipdb
-        ipdb.set_trace()
         return arch
 
     def _random_sample_arch(self):
@@ -136,7 +134,7 @@ class DenseRobSearchSpace(SearchSpace):
         """Convert arch (controller representation) to genotype (semantic representation)"""
         cell_strs = []
         for cell_arch in arch:
-            node_strs = ["init_node~2"]
+            node_strs = ["init_node~{}".format(self.num_init_nodes)]
             for i_node in range(self.num_init_nodes, self._num_nodes):
                 node_strs.append("|" + "|".join(["{}~{}".format(
                     self.primitives[int(cell_arch[i_node, i_input])], i_input)
@@ -165,6 +163,7 @@ class DenseRobSearchSpace(SearchSpace):
         return DenseRobRollout(arch, search_space=self)
 
     def plot_arch(self, genotypes, filename, label, **kwargs):
+        # TODO: plot arch
         pass
 
     def distance(self, arch1, arch2):

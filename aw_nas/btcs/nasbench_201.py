@@ -1199,7 +1199,6 @@ class NB201GenotypeModel(FinalModel):
         out = self.global_pooling(out)
         out = self.dropout(out)
         logits = self.classifier(out.view(out.size(0), -1))
-        return logits
 
         if not self._flops_calculated:
             self.logger.info("FLOPS: flops num = %d M", self.total_flops/1.e6)
@@ -1235,8 +1234,9 @@ class NB201GenotypeCell(nn.Module):
         self.edge_mod = torch.nn.Module() # a stub wrapping module of all the edges
         for from_ in range(self._vertices):
             for to_ in range(from_ + 1, self._vertices):
-                self.edges[from_][to_] = ops.get_op(self._primitives[int(self.arch[to_][from_])])(self.num_channels, self.num_out_channels,
-                                                stride=self.stride, affine=False)
+                self.edges[from_][to_] = ops.get_op(self._primitives[int(self.arch[to_][from_])])(
+                    self.num_channels, self.num_out_channels, stride=self.stride, affine=False)
+
                 self.edge_mod.add_module("f_{}_t_{}".format(from_, to_), self.edges[from_][to_])
         self._edge_name_pattern = re.compile("f_([0-9]+)_t_([0-9]+)")
 
@@ -1246,7 +1246,8 @@ class NB201GenotypeCell(nn.Module):
         for to_ in range(1, self._vertices):
             state_to_ = 0.
             for from_ in range(to_):
-                out = self.edges[from_][to_](states[from_])
+                op = self.edges[from_][to_]
+                out = op(states[from_])
                 if self.training and dropout_path_rate > 0:
                     if not isinstance(op, ops.Identity):
                         out = utils.drop_path(out, dropout_path_rate)

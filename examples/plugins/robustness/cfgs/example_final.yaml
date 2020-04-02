@@ -1,0 +1,94 @@
+## ---- Component search_space ----
+# ---- Type dense_rob ----
+search_space_type: dense_rob
+search_space_cfg:
+  # Schedulable attributes: 
+  num_cell_groups: 5
+  num_init_nodes: 1
+  cell_layout: [0, 1, 2, 3, 4]
+  reduce_cell_groups: [1, 3]
+  num_steps: 4
+  concat_op: concat
+  concat_nodes: null
+  loose_end: false
+  primitives:
+  - none
+  - skip_connect
+  - sep_conv_3x3
+# ---- End Type dense_rob ----
+## ---- End Component search_space ----
+
+## ---- Component dataset ----
+# ---- Type cifar10 ----
+dataset_type: cifar10
+dataset_cfg:
+  # Schedulable attributes: 
+  cutout: null
+# ---- End Type cifar10 ----
+## ---- End Component dataset ----
+
+## ---- Component final_model ----
+# ---- Type dense_rob_final_model ----
+final_model_type: dense_rob_final_model
+final_model_cfg:
+  # Schedulable attributes: dropout_path_rate
+  genotypes: DenseRobGenotype(normal_0='init_node~1+|sep_conv_3x3~0|+|skip_connect~0|none~1|+|sep_conv_3x3~0|sep_conv_3x3~1|skip_connect~2|+|skip_connect~0|skip_connect~1|sep_conv_3x3~2|none~3|', reduce_1='init_node~1+|none~0|+|none~0|sep_conv_3x3~1|+|none~0|none~1|sep_conv_3x3~2|+|sep_conv_3x3~0|none~1|none~2|none~3|', normal_2='init_node~1+|sep_conv_3x3~0|+|sep_conv_3x3~0|skip_connect~1|+|skip_connect~0|none~1|skip_connect~2|+|skip_connect~0|sep_conv_3x3~1|sep_conv_3x3~2|skip_connect~3|', reduce_3='init_node~1+|skip_connect~0|+|skip_connect~0|skip_connect~1|+|none~0|sep_conv_3x3~1|sep_conv_3x3~2|+|skip_connect~0|skip_connect~1|sep_conv_3x3~2|skip_connect~3|', normal_4='init_node~1+|sep_conv_3x3~0|+|skip_connect~0|skip_connect~1|+|skip_connect~0|sep_conv_3x3~1|sep_conv_3x3~2|+|sep_conv_3x3~0|none~1|skip_connect~2|skip_connect~3|')
+  num_classes: 10
+  init_channels: 36
+  stem_multiplier: 1
+  dropout_rate: 0.1
+  dropout_path_rate: 0.2
+  use_stem: conv_bn_3x3
+  stem_stride: 1
+  stem_affine: true
+  schedule_cfg: null
+# ---- End Type dense_rob_final_model ----
+## ---- End Component final_model ----
+
+## ---- Component final_trainer ----
+# ---- Type cnn_trainer ----
+final_trainer_type: cnn_trainer
+final_trainer_cfg:
+  # Schedulable attributes: 
+  multiprocess: false
+  epochs: 600
+  batch_size: 96
+  optimizer_type: SGD
+  optimizer_kwargs: null
+  learning_rate: 0.025
+  momentum: 0.9
+  warmup_epochs: 0
+  optimizer_scheduler:
+    T_max: 600
+    eta_min: 0.001
+    type: CosineAnnealingLR
+  weight_decay: 0.0003
+  no_bias_decay: false
+  grad_clip: 5.0
+  auxiliary_head: false
+  auxiliary_weight: 0.4
+  add_regularization: false
+  save_as_state_dict: false
+  workers_per_queue: 2
+  eval_no_grad: false
+  schedule_cfg: null
+# ---- End Type cnn_trainer ----
+## ---- End Component final_trainer ----
+
+## ---- Component objective ----
+# ---- Type adversarial_robustness_objective ----
+objective_type: adversarial_robustness_objective
+objective_cfg:
+  # Schedulable attributes: 
+  epsilon: 0.03
+  n_step: 5
+  step_size: 0.0078
+  rand_init: false
+  adv_loss_coeff: 0.0
+  as_controller_regularization: false
+  as_evaluator_regularization: false
+  adv_reward_coeff: 0.0
+  schedule_cfg: null
+# ---- End Type adversarial_robustness_objective ----
+## ---- End Component objective ----
+
