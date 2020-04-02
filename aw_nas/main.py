@@ -5,28 +5,27 @@ The main entrypoint of aw_nas.
 
 from __future__ import print_function
 
-import functools
-import multiprocessing as mp
-import os
+import sys
 import random
 import shutil
-import sys
+import functools
+import multiprocessing as mp
 
-import aw_nas
 import click
+import yaml
 import numpy as np
 import setproctitle
 import torch
-import yaml
-from aw_nas import BaseRollout, utils
-from aw_nas.common import rollout_from_genotype_str
+from torch.backends import cudnn
+
+import aw_nas
 from aw_nas.dataset import AVAIL_DATA_TYPES
+from aw_nas import utils, BaseRollout
+from aw_nas.common import rollout_from_genotype_str
+from aw_nas.utils.vis_utils import WrapWriter
 from aw_nas.utils import RegistryMeta
 from aw_nas.utils import logger as _logger
 from aw_nas.utils.exception import expect
-from aw_nas.utils.vis_utils import WrapWriter
-from torch.backends import cudnn
-from torch.nn.parallel import DistributedDataParallel
 
 # patch click.option to show the default values
 click.option = functools.partial(click.option, show_default=True)

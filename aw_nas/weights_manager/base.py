@@ -11,8 +11,7 @@ from torch import nn
 from aw_nas import Component, utils
 from aw_nas.utils.common_utils import nullcontext
 from aw_nas.utils.exception import expect, ConfigException
-from aw_nas.utils import DistributedDataParallel
-from aw_nas.utils import convert_model as convert_sync_bn
+
 class BaseWeightsManager(Component):
     REGISTRY = "weights_manager"
 
