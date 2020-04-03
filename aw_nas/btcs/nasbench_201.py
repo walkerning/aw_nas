@@ -31,16 +31,16 @@ from aw_nas.final.base import FinalModel
 class NasBench201SearchSpace(SearchSpace):
     NAME = "nasbench-201"
 
-    def __init__(self, num_layers=17, vertices=4, load_nasbench=True):
-        super(NasBench201SearchSpace, self).__init__()
-
-        self.ops_choices = [
+    def __init__(self, num_layers=17, vertices=4, load_nasbench=True, ops_choices=(
             "none",
             "skip_connect",
             "nor_conv_1x1",
             "nor_conv_3x3",
-            "avg_pool_3x3"
-        ]
+            "avg_pool_3x3")
+            ):
+        super(NasBench201SearchSpace, self).__init__()
+
+        self.ops_choices = ops_choices
         self.ops_choice_to_idx = {choice: i for i, choice in enumerate(self.ops_choices)}
 
         self.load_nasbench = load_nasbench
@@ -80,7 +80,7 @@ class NasBench201SearchSpace(SearchSpace):
         return NasBench201Rollout(API.str2matrix(genotype), search_space=self)
 
     def plot_arch(self, genotypes, filename, label, plot_format="pdf", **kwargs):
-        matrix = API.str2matrix(genotypes)
+        matrix = self.str2matrix(genotypes)
 
         from graphviz import Digraph
         graph = Digraph(
@@ -125,6 +125,18 @@ class NasBench201SearchSpace(SearchSpace):
                 self.ops_choices[int(arch[i_node, i_input])], i_input)
                                              for i_input in range(0, i_node)]) + "|")
         return "+".join(node_strs)
+
+    def str2matrix(self, str_):
+        arch = np.zeros((self.num_vertices, self.num_vertices))
+        split_str = str_.split("+")
+        for ind, s in enumerate(split_str):
+            geno = [name for name in s.split("|") if name != ""]
+            for g in geno:
+                name, conn = g.split("~")
+                to_ = ind + 1
+                from_ = int(conn)
+                arch[to_][from_] = self.ops_choices.index(name)
+        return arch
 
     def _init_nasbench(self):
         # the arch -> performances dataset
@@ -224,7 +236,7 @@ class NasBench201RSController(BaseController):
                             valid_output.append(from_)
                 for input_ in valid_input:
                     for output_ in valid_output:
-                        if arch[output_][input_] > 1 and arch[output_][input_] < 4:
+                        if self.search_space.ops_choices[int(arch[output_][input_])].find("conv") != -1:
                             valid_arch = True
                 if valid_arch or not self.check_valid:
                     rollouts.append(new_rollout)
@@ -1009,7 +1021,7 @@ class NB201SharedNet(BaseWeightsManager, nn.Module):
         return ["nasbench-201"]
 
     def _is_reduce(self, layer_idx):
-        return layer_idx in [(self._num_layers + 1) // 3, (self._num_layers + 1) * 2 // 3]
+        return layer_idx in [(self._num_layers + 1) // 3 - 1, (self._num_layers + 1) * 2 // 3 - 1]
 
     def set_device(self, device):
         self.device = device
@@ -1213,7 +1225,7 @@ class NB201GenotypeModel(FinalModel):
         return ["image"]
 
     def _is_reduce(self, layer_idx):
-        return layer_idx in [(self._num_layers + 1) // 3, (self._num_layers + 1) * 2 // 3]
+        return layer_idx in [(self._num_layers + 1) // 3 - 1, (self._num_layers + 1) * 2 // 3 - 1]
 
 
 class NB201GenotypeCell(nn.Module):
