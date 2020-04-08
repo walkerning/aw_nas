@@ -142,7 +142,7 @@ class DPUCompiler(BaseHardwareCompiler):
             name, mode, output_elf))
         return output_elf
 
-    def compile(self, compile_name, net_cfg, result_dir): # TODO (@ttc): passin arguments from awnas-hw main
+    def compile(self, compile_name, net_cfg, result_dir): # TODO (@tcc): passin arguments from awnas-hw main
         # construct aw_nas final model
         search_space = _init_component(net_cfg, "search_space")
         model = _init_component(net_cfg, "final_model",
@@ -168,6 +168,6 @@ class DPUCompiler(BaseHardwareCompiler):
             debug=self._debug_output)
 
     def hwobj_net_to_primitive(self, hwobj_type, prof_result_file, prof_prim_file):
-        # TODO (@ttc)
+        # TODO (@tcc)
         pass
                                
