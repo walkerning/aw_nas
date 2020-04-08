@@ -5,6 +5,7 @@ import sys
 import shutil
 import logging
 import subprocess
+import yaml
 
 import torch
 from torch.autograd import Variable
@@ -59,6 +60,9 @@ class DPUCompiler(BaseHardwareCompiler):
         self.input_size = input_size
 
     def _run_pytorch_to_caffe(self, model, name, output_dir, input_size, debug):
+        # TODO: names of layers will be determined during the transfroming process
+        # However, net_to_primitive need the mapping between primitives and names of layers
+        # So the transforming process should allow users determining names of caffe model layers
         self.logger.info("-------- Run pytorch to caffe --------")
         inputs = Variable(torch.ones([1, 3, input_size, input_size]))
 
@@ -167,7 +171,35 @@ class DPUCompiler(BaseHardwareCompiler):
             compile_name, proto, caffemodel, dnnc_out_dir, self.dcf, self.mode,
             debug=self._debug_output)
 
-    def hwobj_net_to_primitive(self, hwobj_type, prof_result_file, prof_prim_file):
+    def hwobj_net_to_primitive(self, hwobj_type, prof_result_dir, prof_prim_file, prim_to_ops):
         # TODO (@tcc)
-        pass
-                               
+        # prof_result consists of all basic operators ,like conv_bn_relu, pooling and concat
+        # TODO: There need mapping that links basic ops' names with primitives.
+        
+        # parse result file
+        name_to_perf_dict = {}
+        for root, dirs, files in os.walk(prof_result_dir):
+            for file in files:
+                if file.startswith("._"):
+                    continue
+                with open(os.path.join(root, file), 'r') as fl:
+                    fl_lines = fl.readlines() 
+                    for line in fl_lines[3:-3]:
+                        split_line = [a for a in line.split(" ") if a != ""]
+                        if len(split_line) > 4:
+                            name, _, _, latency, *_ = split_line
+                            if not name.startswith("NodeName"):
+                                name_to_perf_dict[name] = name_to_perf_dict.get(name, []) + [float(latency)]
+        name_to_perf_dict = {k: sum(v) / len(v) for k, v in name_to_perf_dict.items()}
+
+        with open(prof_prim_file, 'r') as fr:
+            prof_prim =  yaml.load(fr)
+
+        prim_to_perf = {}
+        for prim in prof_prim:
+            # prim consists of prim_type, input_ch, output_ch, kernel, stride
+            # Now, use prim_to_ops mapping prim into basic ops' names
+            # Using function instead of dict to handle exceptions
+            names = prim_to_ops(prim)
+            prim_to_perf[prim] = sum([name_to_perf_dict[name] for name in names])
+        return prim_to_perf

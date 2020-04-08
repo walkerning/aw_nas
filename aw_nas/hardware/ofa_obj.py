@@ -6,10 +6,11 @@ from collections import namedtuple
 from aw_nas.hardware.base import MixinProfilingSearchSpace, BaseHardwareObjectiveModel
 from aw_nas.utils.common_utils import make_divisible
 
-OFAPrim = namedtuple('OFAPrim', ['prim_type', 'input_ch', 'output_ch', 'stride', 'spatial_size', 'kernel'])
+OFAPrim = namedtuple('OFAPrim', ['prim_type', 'input_ch', 'output_ch', 'stride', 'spatial_size', 'kernel', 'layer_idx'])
 
 def ofa_rollout_to_primitive(rollout, strides, channels, primitive_type):
     primitives = []
+    layer_idx = 1
     for i, (depth, s, c_in, c_out) in enumerate(
         zip(
             rollout.depth, 
@@ -25,7 +26,8 @@ def ofa_rollout_to_primitive(rollout, strides, channels, primitive_type):
             if i > 0:
                 c_in = c_out
                 s = 1
-            primitives.append(OFAPrim(primitive_type, c_in, c_out, s, width[j], kernel[j]))
+            primitives.append(OFAPrim(primitive_type, c_in, c_out, s, width[j], kernel[j], layer_idx))
+            layer_idx += 1
     return primitives
 
 class OFAHardwareObjectiveModel(BaseHardwareObjectiveModel):
@@ -104,4 +106,7 @@ class OFAMixinProfilingSearchSpace(MixinProfilingSearchSpace):
             primitives += self.fixed_primitives
         primitives = list(set(primitives))
         return primitives
+
+    def parse_profiling_primitives(self, prof_prims, prof_prims_cfg, hwobjmodel_cfg):
+        return OFAHardwareObjectiveModel(prof_prims, prof_prims_cfg, **hwobjmodel_cfg)
 
