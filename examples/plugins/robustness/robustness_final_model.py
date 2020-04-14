@@ -33,8 +33,8 @@ class DenseRobFinalModel(FinalModel):
         self.search_space = search_space
         self.device = device
         assert isinstance(genotypes, str)
-        self.genotypes = genotype_from_str(genotypes, self.search_space)
-        self.arch_list = self.search_space.rollout_from_genotype(self.genotypes).arch
+        genotypes = genotype_from_str(genotypes, self.search_space)
+        self.arch_list = self.search_space.rollout_from_genotype(genotypes).arch
 
         self.num_classes = num_classes
         self.init_channels = init_channels

@@ -74,7 +74,7 @@ class Rollout(BaseRollout):
         self.candidate_net = c_net
 
     def plot_arch(self, filename, label="", edge_labels=None):
-        return self.search_space.plot_arch(self.genotype_list(),
+        return self.search_space.plot_arch(self.genotype,
                                            filename,
                                            label=label,
                                            edge_labels=edge_labels)
@@ -139,7 +139,7 @@ class DifferentiableRollout(BaseRollout):
     def plot_arch(self, filename, label="", edge_labels=None):
         if edge_labels is None:
             edge_labels = self.discretized_arch_and_prob[1]
-        return self.search_space.plot_arch(self.genotype_list(),
+        return self.search_space.plot_arch(self.genotype,
                                            filename,
                                            label=label,
                                            edge_labels=edge_labels)

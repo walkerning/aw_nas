@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import torch
 
@@ -16,6 +17,29 @@ def test_ss():
     print(rollout.genotype)
     rollout_rec = ss.rollout_from_genotype(rollout.genotype)
 
+
+def test_ss_plot(tmp_path):
+    from aw_nas.common import get_search_space, plot_genotype
+    ss_cfgs = {
+        "cell_layout": [0, 1, 2, 3, 4, 5],
+        "num_init_nodes": 2,
+        "num_cell_groups": 6,
+        "reduce_cell_groups": [1, 3]
+    }
+    ss = get_search_space("dense_rob",  **ss_cfgs)
+
+    rollout = ss.random_sample()
+    path = os.path.join(str(tmp_path), "cell")
+    rollout.plot_arch(path, label="robnas cell example")
+    print(rollout.genotype)
+    print("Plot save to path: ", path)
+
+    rollout_2 = ss.random_sample()
+    path_2 = os.path.join(str(tmp_path), "cell_2")
+    plot_genotype(str(rollout_2.genotype), dest=path_2, cls="dense_rob",
+                  label="robnas cell example", **ss_cfgs)
+    print(rollout_2.genotype)
+    print("Plot save to path: ", path_2)
 
 def test_rob_final_model():
     from aw_nas.common import get_search_space

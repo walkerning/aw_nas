@@ -2,9 +2,11 @@
 Search space for robustness NAS
 """
 
+import os
+from collections import namedtuple
+
 import numpy as np
 
-from collections import namedtuple
 from aw_nas.common import SearchSpace
 from aw_nas.rollout.base import BaseRollout
 from aw_nas.utils.exception import expect, ConfigException
@@ -25,14 +27,25 @@ class DenseRobRollout(BaseRollout):
     def set_candidate_net(self, c_net):
         self.candidate_net = c_net
 
-    def plot_arch(self, filename, label="", edge_labels=None):
-        raise NotImplementedError()
-
     @property
     def genotype(self):
         if self._genotype is None:
             self._genotype = self.search_space.genotype(self.arch)
         return self._genotype
+
+
+    def plot_arch(self, filename, label="", edge_labels=None, plot_format="pdf"):
+        fnames = []
+        for i_cell, cell_arch in enumerate(self.arch):
+            fname = self.search_space.plot_cell(
+                cell_arch, os.path.join(filename, "{}".format(i_cell)),
+                label="{}cell {}".format(
+                    "{} - ".format(label) if label else "", i_cell),
+                edge_labels=edge_labels[i_cell] if edge_labels else None,
+                plot_format=plot_format)
+            fnames.append(("cell{}".format(i_cell), fname))
+        return fnames
+
 
 class DenseRobSearchSpace(SearchSpace):
     """
@@ -99,16 +112,16 @@ class DenseRobSearchSpace(SearchSpace):
             "reduce" if i in self.reduce_cell_groups else "normal", i)\
                                  for i in range(self.num_cell_groups)]
 
-        # check concat node
-        if self.concat_nodes is not None:
-            if isinstance(self.concat_nodes[0], int):
-                # same concat node specification for every cell groups
-                _concat_nodes = [self.concat_nodes] * self.num_cell_groups
-            for i_cg in range(self.num_cell_groups):
-                _num_steps = self.get_num_steps(i_cg)
-                expect(np.max(_concat_nodes[i_cg]) < num_init_nodes + _num_steps,
-                       "`concat_nodes` {} should be in range(0, {}+{}) for cell group {}"\
-                       .format(_concat_nodes[i_cg], num_init_nodes, _num_steps, i_cg))
+        # # check concat node
+        # if self.concat_nodes is not None:
+        #     if isinstance(self.concat_nodes[0], int):
+        #         # same concat node specification for every cell groups
+        #         _concat_nodes = [self.concat_nodes] * self.num_cell_groups
+        #     for i_cg in range(self.num_cell_groups):
+        #         _num_steps = self.get_num_steps(i_cg)
+        #         expect(np.max(_concat_nodes[i_cg]) < num_init_nodes + _num_steps,
+        #                "`concat_nodes` {} should be in range(0, {}+{}) for cell group {}"\
+        #                .format(_concat_nodes[i_cg], num_init_nodes, _num_steps, i_cg))
 
         self.genotype_type_name = "DenseRobGenotype"
         self.genotype_type = namedtuple(self.genotype_type_name, self.cell_group_names)
@@ -124,6 +137,47 @@ class DenseRobSearchSpace(SearchSpace):
 
     def _random_sample_arch(self):
         return [self._random_sample_cell_arch() for _ in range(self.num_cell_groups)]
+
+    def __getstate__(self):
+        state = super(DenseRobSearchSpace, self).__getstate__().copy()
+        del state["genotype_type"]
+        return state
+
+    def __setstate__(self, state):
+        super(DenseRobSearchSpace, self).__setstate__(state)
+        self.genotype_type = namedtuple(self.genotype_type_name, self.cell_group_names)
+
+    def plot_cell(self, matrix, filename, label="", edge_labels=None, plot_format="pdf"):
+        from graphviz import Digraph
+        graph = Digraph(
+            format=plot_format,
+            body=["label=\"{l}\"".format(l=label),
+                  "labelloc=top", "labeljust=left"],
+            edge_attr=dict(fontsize="20", fontname="times"),
+            node_attr=dict(style="filled", shape="rect",
+                           align="center", fontsize="20",
+                           height="0.5", width="0.5",
+                           penwidth="2", fontname="times"),
+            engine="dot")
+        graph.body.extend(["rankdir=LR"])
+        final_output_node = self._num_nodes
+        init_node = self.num_init_nodes
+        [graph.node(str(i), fillcolor="darkseagreen2") for i in range(0, init_node)]
+        [graph.node(str(i), fillcolor="lightblue") for i in range(init_node, final_output_node)]
+        graph.node(str(final_output_node), fillcolor="palegoldenrod")
+
+        for to_, from_ in zip(*self.idx):
+            op_name = self.primitives[int(matrix[to_, from_])]
+            if op_name == "none":
+                continue
+            graph.edge(str(from_), str(to_), label=op_name, fillcolor="gray")
+
+        # final concat edges
+        for node in range(init_node, final_output_node):
+            graph.edge(str(node), str(final_output_node), fillolor="gray")
+
+        graph.render(filename, view=False)
+        return filename + ".{}".format(plot_format)
 
     # ---- APIs ----
     def random_sample(self):
@@ -162,9 +216,9 @@ class DenseRobSearchSpace(SearchSpace):
             arch.append(cell_arch)
         return DenseRobRollout(arch, search_space=self)
 
-    def plot_arch(self, genotypes, filename, label, **kwargs):
-        # TODO: plot arch
-        pass
+    def plot_arch(self, genotypes, filename, label="", edge_labels=None, **kwargs):
+        return self.rollout_from_genotype(genotypes).plot_arch(
+            filename, label=label, edge_labels=edge_labels, **kwargs)
 
     def distance(self, arch1, arch2):
         raise NotImplementedError()

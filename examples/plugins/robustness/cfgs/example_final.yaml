@@ -3,10 +3,10 @@
 search_space_type: dense_rob
 search_space_cfg:
   # Schedulable attributes: 
-  num_cell_groups: 5
+  num_cell_groups: 8
   num_init_nodes: 1
-  cell_layout: [0, 1, 2, 3, 4]
-  reduce_cell_groups: [1, 3]
+  cell_layout: [0, 1, 2, 3, 4, 5, 6, 7]
+  reduce_cell_groups: [2, 5]
   num_steps: 4
   concat_op: concat
   concat_nodes: null
@@ -34,7 +34,7 @@ final_model_cfg:
   # Schedulable attributes: dropout_path_rate
   genotypes: DenseRobGenotype(normal_0='init_node~1+|sep_conv_3x3~0|+|skip_connect~0|none~1|+|sep_conv_3x3~0|sep_conv_3x3~1|skip_connect~2|+|skip_connect~0|skip_connect~1|sep_conv_3x3~2|none~3|', reduce_1='init_node~1+|none~0|+|none~0|sep_conv_3x3~1|+|none~0|none~1|sep_conv_3x3~2|+|sep_conv_3x3~0|none~1|none~2|none~3|', normal_2='init_node~1+|sep_conv_3x3~0|+|sep_conv_3x3~0|skip_connect~1|+|skip_connect~0|none~1|skip_connect~2|+|skip_connect~0|sep_conv_3x3~1|sep_conv_3x3~2|skip_connect~3|', reduce_3='init_node~1+|skip_connect~0|+|skip_connect~0|skip_connect~1|+|none~0|sep_conv_3x3~1|sep_conv_3x3~2|+|skip_connect~0|skip_connect~1|sep_conv_3x3~2|skip_connect~3|', normal_4='init_node~1+|sep_conv_3x3~0|+|skip_connect~0|skip_connect~1|+|skip_connect~0|sep_conv_3x3~1|sep_conv_3x3~2|+|sep_conv_3x3~0|none~1|skip_connect~2|skip_connect~3|')
   num_classes: 10
-  init_channels: 36
+  init_channels: 21
   stem_multiplier: 1
   dropout_rate: 0.1
   dropout_path_rate: 0.2
@@ -51,22 +51,22 @@ final_trainer_type: cnn_trainer
 final_trainer_cfg:
   # Schedulable attributes: 
   multiprocess: false
-  epochs: 600
-  batch_size: 96
+  epochs: 200
+  batch_size: 128
   optimizer_type: SGD
   optimizer_kwargs: null
-  learning_rate: 0.025
+  learning_rate: 0.05
   momentum: 0.9
   warmup_epochs: 0
   optimizer_scheduler:
-    T_max: 600
-    eta_min: 0.001
+    T_max: 200
+    eta_min: 0.0
     type: CosineAnnealingLR
   weight_decay: 0.0003
   no_bias_decay: false
   grad_clip: 5.0
   auxiliary_head: false
-  auxiliary_weight: 0.4
+  auxiliary_weight: 0.
   add_regularization: false
   save_as_state_dict: false
   workers_per_queue: 2
@@ -84,9 +84,9 @@ objective_cfg:
   n_step: 5
   step_size: 0.0078
   rand_init: false
-  adv_loss_coeff: 0.0
-  as_controller_regularization: false
-  as_evaluator_regularization: false
+  adv_loss_coeff: 0.5
+  as_controller_regularization: False
+  as_evaluator_regularization: True
   adv_reward_coeff: 0.0
   schedule_cfg: null
 # ---- End Type adversarial_robustness_objective ----

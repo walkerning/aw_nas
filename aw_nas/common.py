@@ -382,7 +382,7 @@ class CNNSearchSpace(CellSearchSpace):
 
     def plot_arch(self, genotypes, filename, label="", edge_labels=None, plot_format="pdf"): #pylint: disable=arguments-differ
         """Plot an architecture to files on disk"""
-
+        genotypes = list(genotypes._asdict().items())
         if edge_labels is None:
             edge_labels = [None] * self.num_cell_groups
         fnames = []
@@ -525,6 +525,7 @@ class RNNSearchSpace(CellSearchSpace):
     def plot_arch(self, genotypes, filename,
                   label="", edge_labels=None, plot_format="pdf"): #pylint: disable=arguments-differ
         """Plot an architecture to files on disk"""
+        genotypes = list(genotypes._asdict().items())
         expect(len(genotypes) == 2 and self.num_cell_groups == 1,
                "Current RNN search space only support one cell group")
         expect(self.num_init_nodes == 1, "Current RNN search space only support one init node")
@@ -597,11 +598,16 @@ def rollout_from_genotype_str(genotype_str, search_space):
 
 def plot_genotype(genotype, dest, cls, label="",
                   edge_labels=None, plot_format="pdf", **search_space_cfg):
+    #pylint: disable=eval-used,bare-except
     ss = get_search_space(cls, **search_space_cfg)
     if isinstance(genotype, str):
-        genotype = eval("ss.genotype_type({})".format(genotype)) # pylint: disable=eval-used
-        genotype = list(genotype._asdict().items())
-    expect(isinstance(genotype, (list, tuple)))
+        try:
+            genotype = eval("ss.genotype_type({})".format(genotype))
+        except:
+            genotype = re.search(r".+?Genotype\((.+)\)", genotype).group(1)
+            genotype = eval("ss.genotype_type({})".format(genotype))
+        # genotype = list(genotype._asdict().items())
+    # expect(isinstance(genotype, (list, tuple)))
     return ss.plot_arch(genotype, dest, label, edge_labels, plot_format=plot_format)
 
 def group_and_sort_by_to_node(cell_geno):
