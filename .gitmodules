@@ -1,0 +1,3 @@
+[submodule "aw_nas/utils/SynchronizedBatchNormPyTorch"]
+	path = aw_nas/utils/SynchronizedBatchNormPyTorch
+	url = git@github.com:vacancy/Synchronized-BatchNorm-PyTorch.git

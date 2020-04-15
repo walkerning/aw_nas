@@ -71,7 +71,7 @@ class Component(object):
                 new_value = utils.get_schedule_value(cfg, epoch)
                 setattr(self, name, new_value)
                 new_values.append((name, new_value))
-            _schedule_str = "\n\t".join(["{:10}: {:10}".format(n, v) for n, v in new_values])
+            _schedule_str = "\n\t".join(["{:10}: {:10}".format(n, str(v)) for n, v in new_values])
             self.logger.info("Epoch %3d on_epoch_start: schedule values:\n\t%s",
                              epoch, _schedule_str)
 

@@ -444,3 +444,35 @@ class LazyThreadLocal(six.moves._thread._local):
             return value
         raise AttributeError(("LazyThreadlocal object do not have attribute named {}, "
                               "also not specified in the lazy creator map.").format(name))
+
+
+def make_divisible(v, divisor, min_val=None):
+    """
+    ref: https://github.com/tensorflow/models/blob/master/research/slim/nets/mobilenet/mobilenet.py
+    """
+    if min_val is None:
+        min_val = divisor
+    new_v = max(min_val, int(v + divisor / 2) // divisor * divisor)
+    # Make sure that round down does not go down by more than 10%.
+    if new_v < 0.9 * v:
+        new_v += divisor
+    return new_v
+
+
+#---- OFA related utils ----
+def get_sub_kernel(kernel, sub_kernel_size):
+    original_size = kernel.shape[-1]
+    center = original_size // 2
+    width = sub_kernel_size // 2
+    left = center - width
+    right = center + width + 1
+    return kernel[:, :, left:right, left:right].contiguous()
+
+def _get_channel_mask(filters, num_channels):
+    norm_tensor = np.abs(filters.cpu().detach().numpy()).sum(axis=3).sum(axis=2).sum(axis=0)
+    norm_tensor = sorted(zip(range(len(norm_tensor)), norm_tensor), key=lambda x: x[1], reverse=True)
+    channel_order = [x[0] for x in norm_tensor]
+    mask = np.zeros(filters.shape[1], dtype=np.bool)
+    reserved_channels = channel_order[:num_channels]
+    mask[reserved_channels] = 1
+    return mask

@@ -69,7 +69,8 @@ class MNasNetOFASearchSpace(SearchSpace):
         return self.genotype_type(**dict(zip(self.block_names, geno_arch)))
 
     def rollout_from_genotype(self, genotype):
-        return MNasNetOFARollout(genotype, {}, self)
+        genotype_list = list(genotype._asdict().values())
+        return MNasNetOFARollout(genotype_list, {}, self)
 
     def supported_rollout_types(self):
         return ["ofa"]

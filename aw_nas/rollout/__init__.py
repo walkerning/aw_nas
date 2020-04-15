@@ -20,7 +20,7 @@ from aw_nas.rollout.dense import (
     DenseMutation,
     DenseDiscreteRollout
 )
-from aw_nas.rollout.mnasnet import (
+from aw_nas.rollout.ofa import (
     MNasNetOFASearchSpace,
     MNasNetOFARollout
 )

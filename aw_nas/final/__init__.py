@@ -6,3 +6,6 @@ from .rnn_trainer import RNNFinalTrainer
 from .rnn_model import RNNGenotypeModel
 
 from .dense import DenseGenotypeModel
+
+from .ofa_model import OFAGenotypeModel
+from .ofa_trainer import OFAFinalTrainer

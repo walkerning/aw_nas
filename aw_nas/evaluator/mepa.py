@@ -45,7 +45,7 @@ class LearnableLrOutPlaceSGD(Component, nn.Module):
                  max_grad_norm=None):
         nn.Module.__init__(self)
         Component.__init__(self, schedule_cfg=None)
-        assert init_learning_rate > 0., 'learning_rate should be positive.'
+        assert init_learning_rate > 0., "learning_rate should be positive."
         if adam_beta is not None:
             expect(isinstance(adam_beta, (list, tuple)) and len(adam_beta) == 2,
                    "Bad `betas` specification for Adam optimizer")
@@ -448,7 +448,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
 
     @classmethod
     def supported_rollout_types(cls):
-        return ["discrete", "differentiable", "compare"]
+        return ["discrete", "differentiable", "compare", "ofa"]
 
     def suggested_controller_steps_per_epoch(self):
         return len(self.controller_queue)
@@ -1036,7 +1036,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
             # init criterions according to weights manager's rollout type
             rollout_type = self.weights_manager.rollout_type
 
-        if rollout_type == "discrete":
+        if rollout_type == "discrete" or rollout_type == "ofa":
             self._reward_func = self.objective.get_reward
             self._reward_kwargs = {}
             self._scalar_reward_func = self._reward_func
