@@ -7,7 +7,7 @@ import yaml
 
 from aw_nas import utils
 from aw_nas.base import Component
-
+from aw_nas.common import SearchSpace
 class BaseHardwareCompiler(Component):
     REGISTRY = "hardware_compiler"
     
@@ -42,7 +42,8 @@ class BaseHardwareObjectiveModel(Component):
         pass
 
 
-class MixinProfilingSearchSpace(object):
+class MixinProfilingSearchSpace(Component):
+    REGISTRY = 'mixin_search_space'
 
     @abc.abstractmethod
     def generate_profiling_primitives(self):
