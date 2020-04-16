@@ -92,7 +92,7 @@ profiling_net_cfg:
         expansions: [1, 6, 6, 6, 6, 6]
         channels: [16, 16, 24, 32, 64, 96, 160, 320, 1280]
         mult_ratio: 1.
-        kernel_sizes: [3]
+        kernel_sizes: [3, 5, 7]
         num_classes: 10
         block_type: mbv3_block
 
@@ -133,7 +133,7 @@ profiling_net_cfg:
       backbone_type: mbv3_backbone
       layer_channels: [16, 16, 24, 32, 64, 96, 160, 320, 1280]
       strides: [1, 2, 2, 2, 1, 2]
-      max_kernel_size: 3
+      kernel_sizes: [3, 5, 7]
       ofa_state_dict: null
 
     final_trainer_type: ofa_final_trainer
