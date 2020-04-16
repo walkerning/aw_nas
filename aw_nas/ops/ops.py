@@ -35,7 +35,7 @@ class Hswish(nn.Module):
         self.inplace = inplace
 
     def forward(self, x):
-        return x * F.relu6(x + 3., inplace=self.inplace) / 6.
+        return x * F.relu6(x + 3., inplace=self.inplace) * (1 / 6.)
 
 class Hsigmoid(nn.Module):
     def __init__(self, inplace):
@@ -43,7 +43,7 @@ class Hsigmoid(nn.Module):
         self.inplace = inplace
 
     def forward(self, x):
-        return F.relu6(x + 3., inplace=self.inplace) / 6.
+        return F.relu6(x + 3., inplace=self.inplace) * (1 / 6.)
 
 PRIMITVE_FACTORY = {
     "none" : lambda C, C_out, stride, affine: Zero(stride),
@@ -542,7 +542,7 @@ class FlexiblePointLinear(nn.Conv2d, FlexibleLayer):
             return self.weight[out_mask, :, :, :].contiguous()
         if out_mask is None:
             return self.weight[:, in_mask, :, :].contiguous()
-        return self.weight[out_mask, in_mask, :, :].contiguous()
+        return self.weight[:, in_mask, :, :][out_mask, :, :, :].contiguous()
 
     def set_mask(self, in_mask, out_mask):
         self.in_mask = in_mask
@@ -590,7 +590,7 @@ class FlexibleDepthWiseConv(nn.Conv2d, FlexibleLayer):
         return self.weight[mask, :, :, :].contiguous()
 
     def _transform_kernel(self, origin_filter, kernel_size):
-        expect(kernel_size in self.kernel_sizes, "The kernel_size must be one of 3, 5, 7, got {} instead".format(kernel_size), ValueError)
+        expect(kernel_size in self.kernel_sizes, "The kernel_size must be one of {}, got {} instead".format(self.kernel_sizes, kernel_size), ValueError)
         if origin_filter.shape[-1] == kernel_size:
             return origin_filter
         if not self.do_kernel_transform:
@@ -598,11 +598,11 @@ class FlexibleDepthWiseConv(nn.Conv2d, FlexibleLayer):
         cur_filter = origin_filter
         expect(cur_filter.shape[-1] > kernel_size, "The kernel size must be less than origin kernel size {}, got {} instead.".format(origin_filter.shape[-1], kernel_size), ValueError)
         for smaller, larger in reversed(list(zip(self.kernel_sizes[:-1], self.kernel_sizes[1:]))):
-            if cur_filter < larger:
+            if cur_filter.shape[-1] < larger:
                 continue
             if kernel_size >= larger:
                 break
-            sub_filter = get_sub_kernel(origin_filter, smaller).view(sub_filter.shape[0], sub_filter.shape[1], -1)
+            sub_filter = get_sub_kernel(origin_filter, smaller).view(cur_filter.shape[0], cur_filter.shape[1], -1)
             sub_filter = sub_filter.view(-1, sub_filter.shape[-1])
             sub_filter = getattr(self, f"linear_{larger}to{smaller}")(sub_filter)
             sub_filter = sub_filter.view(origin_filter.shape[0], origin_filter.shape[1], smaller ** 2)
@@ -745,7 +745,7 @@ class FlexibleSEModule(SEModule, FlexibleLayer):
         mid_channel = make_divisible(channel // self.reduction, 8)
         exp_mask = _get_channel_mask(self.se.expand.weight.data, mid_channel)
         self.se.reduction.set_mask(mask, exp_mask)
-        self.se.expand.reset_mask(exp_mask, mask)
+        self.se.expand.set_mask(exp_mask, mask)
         
     def forward(self, inputs):
         out = inputs.mean(3, keepdim=True).mean(2, keepdim=True)

@@ -6,7 +6,7 @@ import numpy as np
 
 from aw_nas import utils
 from aw_nas.rollout.base import Rollout
-from aw_nas.common import SearchSpace
+from aw_nas.common import SearchSpace, genotype_from_str
 
 
 class MNasNetOFASearchSpace(SearchSpace):
@@ -69,8 +69,30 @@ class MNasNetOFASearchSpace(SearchSpace):
         return self.genotype_type(**dict(zip(self.block_names, geno_arch)))
 
     def rollout_from_genotype(self, genotype):
+        if isinstance(genotype, str):
+            genotype = genotype_from_str(genotype, self)
         genotype_list = list(genotype._asdict().values())
-        return MNasNetOFARollout(genotype_list, {}, self)
+
+        depth = genotype[:len(self.num_cell_groups)]
+        width = []
+        kernel = []
+        ind = len(self.num_cell_groups)
+        for i, max_depth in zip(depth, self.num_cell_groups):
+            width_list = []
+            kernel_list = []
+            for j in range(max_depth):
+                if j < i:
+                    try:
+                        width_list.append(genotype[ind][0])
+                        kernel_list.append(genotype[ind][1])
+                    except Exception:
+                        width_list.append(genotype[ind])
+                        kernel_list.append(3)
+                ind += 1
+            width.append(width_list)
+            kernel.append(kernel_list)
+        arch = {"depth": depth, "width": width, "kernel": kernel}
+        return MNasNetOFARollout(arch, {}, self)
 
     def supported_rollout_types(self):
         return ["ofa"]
@@ -131,6 +153,6 @@ class MNasNetOFARollout(Rollout):
             for i, c in enumerate(num_cell_groups)
         ]
         arch["kernel"] = [
-            np.random.choice(kernel_choice, size=c).tolist() for c in num_cell_groups
+            [3] + np.random.choice(kernel_choice, size=c - 1).tolist() for c in num_cell_groups
         ]
         return arch

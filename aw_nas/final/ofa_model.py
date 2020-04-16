@@ -18,7 +18,7 @@ class OFAGenotypeModel(FinalModel):
     def __init__(self, search_space, device, genotypes,
                  backbone_type="mbv2_backbone",
                  ofa_state_dict=None,
-                 max_kernel_size=7,
+                 kernel_sizes=[3, 5, 7],
                  num_classes=10, layer_channels=tuple(), strides=tuple(), mult_ratio=1.,
                  schedule_cfg=None):
         super(OFAGenotypeModel, self).__init__(schedule_cfg)
@@ -33,7 +33,8 @@ class OFAGenotypeModel(FinalModel):
         self.num_classes = num_classes
         self.layer_channels = layer_channels
         self.strides = strides
-        self.max_kernel_size = max_kernel_size
+        self.kernel_sizes = kernel_sizes
+        self.max_kernel_size = max(self.kernel_sizes)
 
         self.depth, self.width, self.kernel = self.parse(self.genotypes)
         self.backbone_type = backbone_type
@@ -55,11 +56,12 @@ class OFAGenotypeModel(FinalModel):
         ofa_state_dict includes all params and weights of FlexibileArch
         """
         flexible_backbone = BaseBackboneArch.get_class_(self.backbone_type)(
-            device=self.device, channels=self.layer_channels, kernel_sizes=[self.max_kernel_size],
+            device=self.device, channels=self.layer_channels, kernel_sizes=self.kernel_sizes,
             mult_ratio=self.mult_ratio)
-        state_dict = torch.load(ofa_state_dict, map_location="cpu")
-        state_dict = state_dict.get("weights_manager", state_dict)
-        flexible_backbone.load_state_dict(state_dict, strict=strict)
+        if ofa_state_dict:
+            state_dict = torch.load(ofa_state_dict, map_location="cpu")
+            state_dict = state_dict.get("weights_manager", state_dict)
+            flexible_backbone.load_state_dict(state_dict, strict=strict)
         return flexible_backbone
 
     def load_geno_state_dict(self, ofa_state_dict, depth, width, kernel, strict=True):
@@ -106,3 +108,14 @@ class OFAGenotypeModel(FinalModel):
             width.append(width_list)
             kernel.append(kernel_list)
         return depth, width, kernel
+
+    def layer_idx_to_named_modules(self, idx):
+        stage_idx, block_idx = idx
+        prefix = f"backbone.cells.{stage_idx}.{block_idx}"
+        m = self
+        for name in prefix.split('.'):
+            m = getattr(m, name)
+        for n, sub_m in m.named_modules():
+            if not n:
+                yield prefix
+            yield '.'.join([prefix, n])

@@ -9,10 +9,15 @@ import pandas as pd
 
 from aw_nas.hardware.base import (BaseHardwareObjectiveModel,
                                   MixinProfilingSearchSpace)
+from aw_nas.utils.exception import expect
 
-OFAPrim = namedtuple("OFAPrim", ["prim_type", "input_ch", "output_ch", "stride", "spatial_size", "kernel", "stage_idx"])
+ofa_prim_keys = ["prim_type", "input_ch", "output_ch", "stride", "spatial_size", "kernel", "stage_idx", "block_idx"]
+OFAPrim = namedtuple("OFAPrim", ofa_prim_keys)
+OFAPrim.__new__.__defaults__ = (None, ) * len(ofa_prim_keys)
+OFAPrim.clear_idx = lambda self: OFAPrim(*self[:len(ofa_prim_keys) - 2])
+OFAPrim.idx = lambda self: self[-2:]
 
-def ofa_rollout_to_primitive(rollout, strides, channels, primitive_type):
+def ofa_rollout_to_primitive(rollout, strides, channels, primitive_type, keep_idx=True):
     primitives = []
     for i, (depth, s, c_in, c_out) in enumerate(
         zip(
@@ -22,14 +27,16 @@ def ofa_rollout_to_primitive(rollout, strides, channels, primitive_type):
             channels[1:])
         ):
         for j, width, kernel in zip(
-            range(d), 
+            range(depth), 
             rollout.width[i], 
             rollout.kernel[i]
         ):
             if i > 0:
                 c_in = c_out
                 s = 1
-            primitives.append(OFAPrim(primitive_type, c_in, c_out, s, width[j], kernel[j], i))
+            stage_idx = i if keep_idx else None
+            block_idx = j if keep_idx else None
+            primitives.append(OFAPrim(primitive_type, c_in, c_out, s, width, kernel, stage_idx, block_idx))
     return primitives
 
 class OFAHardwareObjectiveModel(BaseHardwareObjectiveModel):
@@ -54,6 +61,8 @@ class OFAHardwareObjectiveModel(BaseHardwareObjectiveModel):
         self._perf_model = None
 
     def _orgnize_table(self):
+        # key: a namedtuple. OFAPrim
+        # value: a namedtuple. self.Perf
         self._table = {self.default_prim_type: {}}
         for prim in self.prof_prims:
             prim_type = prim["prim_type"]
@@ -61,16 +70,16 @@ class OFAHardwareObjectiveModel(BaseHardwareObjectiveModel):
                 self._table[prim_type] = {}
             sub_table = self._table[prim_type]
 
-            perf = self.Perf(*[prim[f] for f in self.performances])
+            perf = self.Perf(*[prim.get(f, 0.)  for f in self.performances])
             if prim_type == self.default_prim_type:
-                prim = OFAPrim(*[prim[f] for f in OFAPrim._fields])
+                prim = OFAPrim(*[prim.get(f, None) for f in OFAPrim._fields])
             else:
                 prim = tuple([prim[k] for k in prim if k not in self.performances])
             sub_table[prim] = perf
 
 
     def predict(self, rollout):
-        primtives = ofa_rollout_to_primitive(rollout, self.strides, self.channels, self.default_prim_type)
+        primtives = ofa_rollout_to_primitive(rollout, self.strides, self.channels, self.default_prim_type, False)
         perfs = []
         for prim in primtives:
             perf = self._table[prim.prim_type].get(prim)
@@ -101,7 +110,7 @@ class OFAMixinProfilingSearchSpace(MixinProfilingSearchSpace):
         self.primitive_type = primitive_type
         self.fixed_primitives = fixed_primitives
 
-    def traverse_search_space(self, sample=None):
+    def _traverse_search_space(self, sample=None):
         depths = self.search_space.num_cell_groups
         widths = self.search_space.expansions
 
@@ -120,30 +129,35 @@ class OFAMixinProfilingSearchSpace(MixinProfilingSearchSpace):
     def generate_profiling_primitives(self, sample=None, as_dict=True):
         channels = [c * self.mult_ratio for c in self.base_channels]
         primitives = []
-        for w, k, stage, i in self.traverse_search_space(sample):
+        for w, k, stage, i in self._traverse_search_space(sample):
             primitives.append(OFAPrim(self.primitive_type, channels[stage + i], channels[stage + 1], 1 if i else self.strides[stage], w, k, stage))
         if self.fixed_primitives is not None:
             primitives += self.fixed_primitives
         primitives = list(set(primitives))
         if as_dict:
-            primitives = [p._asdict() for p in primitives]
+            primitives = [dict(p._asdict()) for p in primitives]
         return primitives
 
     def parse_profiling_primitives(self, prof_prims, prof_prims_cfg, hwobjmodel_cfg):
         return OFAHardwareObjectiveModel(prof_prims, prof_prims_cfg, **hwobjmodel_cfg)
+
+    def rollout_to_primitive(self, rollout, keep_idx=False):
+        channels = [c * self.mult_ratio for c in self.base_channels]
+        return ofa_rollout_to_primitive(rollout, self.strides, channels, self.primitive_type, keep_idx)
     
     def primitives_to_genotypes(self, prof_prims, sample=None):
         """
         prof_prims: list of dict
         """
         prims_df = pd.DataFrame(prof_prims)
+        expect(None not in prims_df['stage_idx'], "stage_idx should be specified for each primitive during the assembling process", ValueError)
         if sample is None:
             sample = np.inf
         ith_arch = 0
         idx = set(range(len(prims_df)))
         while len(idx) > 0 and ith_arch < sample:
             ith_arch += 1
-            arch = {"depth": self.search_space.num_cell_groups, "width": [[1],], "kernel": [[3,]]}
+            arch = {"depth": self.search_space.num_cell_groups, "width": [[1,],], "kernel": [[3,],]}
             cur_stage = 0
             for stage, depth in enumerate(arch["depth"][1:], 1):
                 w = []
@@ -152,11 +166,12 @@ class OFAMixinProfilingSearchSpace(MixinProfilingSearchSpace):
                 norm_layers = prims_df.query(f"stage_idx=={stage} and input_ch == output_ch")
                 if len(stride_layers) == 0 or len(norm_layers) == 0:
                     raise StopIteration()
+                # the first block of the stage
                 stride_l = stride_layers.sample(1)
                 w.append(stride_l["spatial_size"].values[0])
                 k.append(stride_l["kernel"].values[0])
                 idx.remove(stride_l.index.values[0])
-                
+                # other blocks
                 norm_l = norm_layers.sample(depth - 1)
                 w.extend(norm_l["spatial_size"].values.tolist())
                 k.extend(norm_l["kernel"].values.tolist())
@@ -165,7 +180,11 @@ class OFAMixinProfilingSearchSpace(MixinProfilingSearchSpace):
                 prims_df = prims_df.loc[idx, :]
                 arch["width"].append(w)
                 arch["kernel"].append(k)
-            yield self.search_space.genotype(arch)
+            yield str(self.search_space.genotype(arch))
+        
+        
+
+
 
 
 

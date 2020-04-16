@@ -91,14 +91,12 @@ class FlexibleMobileNetV2Block(MobileNetV2Block, FlexibleBlock):
         if expansion != self.expansion:
             filters = self.point_linear[0].weight.data
             mask = _get_channel_mask(filters, self.C * expansion)
-
-            for m in self.modules():
-                if isinstance(m, FlexibleBatchNorm2d):
-                    m.set_mask(mask)
             if self.inv_bottleneck:
                 self.inv_bottleneck[0].set_mask(None, mask)
+                self.inv_bottleneck[1].set_mask(None, mask)
 
             self.depth_wise[0].set_mask(mask, kernel_size)
+            self.depth_wise[1].set_mask(mask, kernel_size)
             self.point_linear[0].set_mask(mask, None)
 
     def forward_rollout(self, inputs, expansion, kernel_size):
@@ -217,12 +215,11 @@ class FlexibleMobileNetV3Block(MobileNetV3Block, FlexibleBlock):
         if expansion != self.expansion:
             filters = self.point_linear[0].weight.data
             mask = _get_channel_mask(filters, self.C * expansion)
-            for m in self.modules():
-                if isinstance(m, FlexibleBatchNorm2d):
-                    m.set_mask(mask)
             if self.inv_bottleneck:
                 self.inv_bottleneck[0].set_mask(None, mask)
+                self.inv_bottleneck[1].set_mask(mask)
             self.depth_wise[0].set_mask(mask, kernel_size)
+            self.depth_wise[1].set_mask(mask)
             self.point_linear[0].set_mask(mask, None)
             if self.se:
                 self.se.set_mask(mask)
@@ -585,7 +582,7 @@ class MobileNetV3Arch(BaseBackboneArch):
         out = self.conv_head(out)
         out = out.mean(3, keepdim=True).mean(2, keepdim=True)
         out = self.conv_final(out)
-        out = torch.squeeze(out)
+        out = torch.flatten(out, 1)
         return self.classifier(out)
 
     def finalize(self, blocks, expansions, kernel_sizes):

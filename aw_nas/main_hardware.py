@@ -67,6 +67,7 @@ def genprof(cfg_file, hwobj_cfg_file, result_dir, compile_hardware):
     LOGGER.info("Save the list of profiling primitives to %s", prof_prim_fname)
 
     # assemble profiling nets
+    # the primitives can actually be mapped to layers in model during the assembling process
     prof_net_cfgs = assemble_profiling_nets(mss, prof_prims, **lat_cfg["profiling_net_cfg"])
     prof_net_cfgs = list(prof_net_cfgs)
     prof_net_dir = utils.makedir(os.path.join(result_dir, "prof_nets"), remove=True)
@@ -79,6 +80,7 @@ def genprof(cfg_file, hwobj_cfg_file, result_dir, compile_hardware):
     LOGGER.info("Save the profiling net configs to directory %s", prof_net_dir)
 
     # optional (hardware specific): call hardware-specific compiling process
+    # TODO: Could pytorch_to_caffe be decoupled with specific hardware?
     hw_cfgs = lat_cfg.get("hardware_compilers", [])
     if compile_hardware:
         hw_cfgs.extend([{"hardware_compiler_type": hw_name, 'hardware_compiler_cfg': {'input_size': 224}} for hw_name in compile_hardware])
@@ -94,24 +96,32 @@ def genprof(cfg_file, hwobj_cfg_file, result_dir, compile_hardware):
             hw_res_dir = utils.makedir(os.path.join(hw_compile_dir, "{}-{}".format(i_hw, hw_name)))
             for i_net, prof_cfg in enumerate(prof_net_cfgs):
                 res_dir = utils.makedir(os.path.join(hw_res_dir, str(i_net)))
-                # TODO (@tcc): if need some meta infomation about the correspondance of
+                # TODO (@tcc): if need some meta infomation about the correspondance o0
                 # profiling net layer (net_idx, layer_idx) <=> profiling primitive (prim_idx)
                 # can save another meta info file, change the interface here
-                hw_compiler.compile("{}-{}-{}".format(i_hw, hw_name, i_net), prof_cfg, res_dir)
+                hw_compiler.compile(mss, "{}-{}-{}".format(i_hw, hw_name, i_net), prof_cfg, res_dir)
 
 
 @main.command(help="Parse raw net hwobj results to primitive latencies")
 @click.argument("hw_cfg_file", required=True, type=str)
-@click.argument("prof_result_file", required=True, type=str)
+@click.argument("prof_result_dir", required=True, type=str)
 @click.argument("prof_prim_file", required=True, type=str)
 @click.argument("prim_to_ops_file", required=True, type=str)
 @click.argument("--hwobj-type", default="latency")
 @click.option("--result-file", required=True,
               help="Save the raw hwobj of profiling primitives to RESULT_FILE.")
-def net2primitive(hw_cfg_file, prof_result_file, prof_prim_file, prim_to_ops_file, hwobj_type, result_file):
+def net2primitive(hw_cfg_file, prof_result_dir, prof_prim_file, prim_to_ops_file, hwobj_type, result_file):
     """
     Hardware specific conversion, parse the latencies of the profiling networks
     into the latencies of the primitives.
+
+    -- prof_result_dir:
+        -- net1
+            -- latency_file1
+            -- latency_file2
+            -- ...
+        -- net2
+        -- ...
     """
 
     with open(hw_cfg_file, "r") as hw_cfg_f:
@@ -123,11 +133,15 @@ def net2primitive(hw_cfg_file, prof_result_file, prof_prim_file, prim_to_ops_fil
     LOGGER.info("Constructed hardware compiler {}{}".format(
         hw_name, ":{}".format(hw_kwargs) if hw_kwargs else ""))
 
-    with open(prim_to_ops_file, 'rb') as fr:
+    with open(prim_to_ops_file, "rb") as fr:
         prim_to_ops = pickle.load(fr)
-    # TODO (@tcc): load meta info
-    prim_latencies = hw_compiler.hwobj_net_to_primitive(
-        hwobj_type, prof_result_file, prof_prim_file, prim_to_ops)
+    # TODO: (@tcc): load meta info
+    # meta info: prim_to_ops is saved at generated profiling final-yaml folder for each net
+    prim_latencies = []
+    for _dir in os.listdir(prof_result_dir):
+        if os.path.isdir(_dir):
+            prim_latencies.append(hw_compiler.hwobj_net_to_primitive(
+                _dir, prof_prim_file, prim_to_ops))
     with open(result_file, "w") as w_f:
         yaml.dump(prim_latencies, w_f)
 

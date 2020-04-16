@@ -1,3 +1,6 @@
 [submodule "aw_nas/utils/SynchronizedBatchNormPyTorch"]
 	path = aw_nas/utils/SynchronizedBatchNormPyTorch
 	url = git@github.com:vacancy/Synchronized-BatchNorm-PyTorch.git
+[submodule "aw_nas/utils/pytorch2caffe"]
+	path = aw_nas/utils/pytorch2caffe
+	url = git@github.com:TangChangcheng/pytorch2caffe.git
