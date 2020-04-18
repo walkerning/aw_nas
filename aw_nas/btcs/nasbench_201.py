@@ -199,7 +199,7 @@ class NasBench201Rollout(BaseRollout):
 class NasBench201RSController(BaseController):
     NAME = "nasbench-201-rs"
 
-    def __init__(self, search_space, device, rollout_type="nasbench-201", mode="eval", check_valid=True, avoid_repeat=False,
+    def __init__(self, search_space, device, rollout_type="nasbench-201", mode="eval", check_valid=True, avoid_repeat=False, fair=False, deiso=False,
                  schedule_cfg=None):
         super(NasBench201RSController, self).__init__(
             search_space, rollout_type, mode, schedule_cfg)
@@ -208,37 +208,71 @@ class NasBench201RSController(BaseController):
         self.mode = mode
         self.num_vertices = self.search_space.num_vertices
         self.cur_solution = self.search_space.random_sample_arch()
+        self.num_op_choices = self.search_space.num_op_choices
+        self.num_ops = self.search_space.num_ops
         self.check_valid = check_valid
         self.avoid_repeat = avoid_repeat
-
+        self.fair = fair
+        self.deiso = deiso
+        base_dir = os.path.join(utils.get_awnas_dir("AWNAS_DATA", "data"), "nasbench-201")
+        if self.deiso:
+            fo = open(os.path.join(base_dir, "isom{}.txt".format(self.num_op_choices)))
+            self.lines = fo.readlines()
+            fo.close()
+            arch_num_list = [106, 1093, 5833]
+            self.arch_num = arch_num_list[self.num_op_choices - 3]
+           
+    def check_valid_arch(self, arch):
+        valid_arch = False
+        valid_input = [0]
+        for to_ in range(1, self.num_vertices):
+            for input_ in valid_input:
+                if arch[to_][input_] > 0:
+                    valid_input.append(to_)
+                    break
+        valid_output = [self.search_space.num_vertices - 1]
+        for from_ in range(self.search_space.num_vertices - 2, -1, -1):
+            for output_ in valid_output:
+                if arch[output_][from_] > 0:
+                    valid_output.append(from_)
+        for input_ in valid_input:
+            for output_ in valid_output:
+                if self.search_space.ops_choices[int(arch[output_][input_])].find("conv") != -1:
+                    valid_arch = True
+        return valid_arch
+                
     def sample(self, n=1, batch_size=None):
         rollouts = []
         if self.avoid_repeat:
-            indexes = np.random.choice(np.arange(15625), size=n, replace=False)
-            for i in indexes:
-                rollouts.append(NasBench201Rollout(self.search_space.api.str2matrix(self.search_space.api.query_by_index(i).arch_str), self.search_space))
+            if self.deiso:
+                assert n == self.arch_num
+                for i in range(n):
+                    line = self.lines[i].strip()
+                    rollouts.append(NasBench201Rollout(self.search_space.str2matrix(line), self.search_space))
+            else:
+                indexes = np.random.choice(np.arange(15625), size=n, replace=False)
+                for i in indexes:
+                    rollouts.append(NasBench201Rollout(self.search_space.api.str2matrix(self.search_space.api.query_by_index(i).arch_str), self.search_space))
+            return rollouts
+        if self.fair:
+            assert n == self.num_op_choices
+            archs = np.zeros(self.num_ops, self.num_op_choices)
+            for i in range(self.num_ops):
+                archs[i, :] = np.random.permutation(np.arange(self.num_op_choices))
+            for i in range(self.num_op_choices):
+                arch = np.zeros(self.num_vertices, self.num_vertices)
+                ind = 0
+                for from_ in range(self.num_vertices - 1):
+                    for to_ in range(from_ + 1, self.num_vertices):
+                        arch[to_, from_] = archs[ind, i]
+                        ind += 1
+                if self.check_valid_arch(arch) or not self.check_valid:
+                    rollouts.append(NasBench201Rollout(arch, self.search_space))
             return rollouts
         for i in range(n):
             while 1:
                 new_rollout = self.search_space.random_sample()
-                arch = new_rollout.arch
-                valid_arch = False
-                valid_input = [0]
-                for to_ in range(1, self.search_space.num_vertices):
-                    for input_ in valid_input:
-                        if arch[to_][input_] > 0:
-                            valid_input.append(to_)
-                            break
-                valid_output = [self.search_space.num_vertices - 1]
-                for from_ in range(self.search_space.num_vertices - 2, -1, -1):
-                    for output_ in valid_output:
-                        if arch[output_][from_] > 0:
-                            valid_output.append(from_)
-                for input_ in valid_input:
-                    for output_ in valid_output:
-                        if self.search_space.ops_choices[int(arch[output_][input_])].find("conv") != -1:
-                            valid_arch = True
-                if valid_arch or not self.check_valid:
+                if self.check_valid_arch(new_rollout.arch) or not self.check_valid:
                     rollouts.append(new_rollout)
                     break
         return rollouts

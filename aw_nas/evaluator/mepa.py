@@ -246,7 +246,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
             # data queue configs: (surrogate, mepa, controller)
             data_portion=(0.1, 0.4, 0.5), mepa_as_surrogate=False,
             shuffle_data_before_split=True,
-            workers_per_queue=2,
+            workers_per_queue=1,
             # only work for differentiable controller now
             rollout_batch_size=1,
             # only for rnn data
@@ -590,14 +590,16 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
             surrogate_data_list = [next(self.surrogate_queue) for _ in range(num_surrogate_step)]
         holdout_data = next(self.controller_queue) if self.report_cont_data_diagnostics else None
 
-        for _ in range(self.mepa_samples):
+        # sample rollout
+        rollouts = controller.sample(n=self.mepa_samples, batch_size=self.rollout_batch_size)
+        num_rollouts = len(rollouts)
+
+        for _ in range(num_rollouts):
             # surrogate data iterator
             surrogate_iter = iter(surrogate_data_list) if self.use_same_surrogate_data \
                              else self.surrogate_queue
 
-            # sample rollout
-            rollout = controller.sample(batch_size=self.rollout_batch_size)[0]
-
+            rollout = rollouts[0]
             # assemble candidate net
             cand_net = self.weights_manager.assemble_candidate(rollout)
 
@@ -654,6 +656,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
 
             # record stats of this arch
             report_stats.append(res)
+            del(rollouts[0])
 
         if self.schedule_every_batch:
             # schedule learning rate every evaluator step
