@@ -51,8 +51,10 @@ def genprof(cfg_file, hwobj_cfg_file, result_dir, compile_hardware):
         ss_cfg = yaml.load(ss_cfg_f)
     with open(hwobj_cfg_file, "r") as lat_cfg_f:
         lat_cfg = yaml.load(lat_cfg_f)
-    ss = get_search_space(ss_cfg["search_space_type"], **ss_cfg["search_space_cfg"])
-    mss = MixinProfilingSearchSpace.get_class_(lat_cfg["mixin_search_space_type"])(search_space=ss, **lat_cfg["mixin_search_space_cfg"])
+
+    ss = get_search_space(lat_cfg["mixin_search_space_type"], **ss_cfg["search_space_cfg"], **lat_cfg["mixin_search_space_cfg"])
+    expect(isinstance(ss, MixinProfilingSearchSpace),
+           "search space must be a subclass of MixinProfilingsearchspace")
 
     result_dir = utils.makedir(result_dir)
     # copy cfg files
@@ -60,7 +62,7 @@ def genprof(cfg_file, hwobj_cfg_file, result_dir, compile_hardware):
     shutil.copyfile(hwobj_cfg_file, os.path.join(result_dir, "hwobj_config.yaml"))
     
     # generate profiling primitive list
-    prof_prims = mss.generate_profiling_primitives(**lat_cfg["profiling_primitive_cfg"])
+    prof_prims = list(ss.generate_profiling_primitives(**lat_cfg["profiling_primitive_cfg"]))
     prof_prim_fname = os.path.join(result_dir, "prof_prims.yaml")
     with open(prof_prim_fname, "w") as prof_prim_f:
         yaml.dump(prof_prims, prof_prim_f)
@@ -68,7 +70,7 @@ def genprof(cfg_file, hwobj_cfg_file, result_dir, compile_hardware):
 
     # assemble profiling nets
     # the primitives can actually be mapped to layers in model during the assembling process
-    prof_net_cfgs = assemble_profiling_nets(mss, prof_prims, **lat_cfg["profiling_net_cfg"])
+    prof_net_cfgs = assemble_profiling_nets(prof_prims, **lat_cfg["profiling_net_cfg"])
     prof_net_cfgs = list(prof_net_cfgs)
     prof_net_dir = utils.makedir(os.path.join(result_dir, "prof_nets"), remove=True)
     prof_fnames = []
@@ -99,7 +101,7 @@ def genprof(cfg_file, hwobj_cfg_file, result_dir, compile_hardware):
                 # TODO (@tcc): if need some meta infomation about the correspondance o0
                 # profiling net layer (net_idx, layer_idx) <=> profiling primitive (prim_idx)
                 # can save another meta info file, change the interface here
-                hw_compiler.compile(mss, "{}-{}-{}".format(i_hw, hw_name, i_net), prof_cfg, res_dir)
+                hw_compiler.compile("{}-{}-{}".format(i_hw, hw_name, i_net), prof_cfg, res_dir)
 
 
 @main.command(help="Parse raw net hwobj results to primitive latencies")

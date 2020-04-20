@@ -10,6 +10,7 @@ import yaml
 
 import torch
 
+from collections import namedtuple
 
 from torch.autograd import Variable
 
@@ -18,6 +19,8 @@ from aw_nas.main import _init_component
 from aw_nas.utils.exception import expect, ConfigException
 from aw_nas.hardware.base import BaseHardwareCompiler
 from aw_nas.utils.log import LEVEL as _LEVEL
+from aw_nas.rollout.general import GeneralSearchSpace
+from aw_nas.hardware.utils import Prim
 
 try:
     from aw_nas.utils.pytorch2caffe import pytorch_to_caffe
@@ -154,7 +157,7 @@ class DPUCompiler(BaseHardwareCompiler):
             name, mode, output_elf))
         return output_elf
 
-    def compile(self, mixin_search_space, compile_name, net_cfg, result_dir): 
+    def compile(self, compile_name, net_cfg, result_dir): 
         # TODO: (@tcc): passin arguments from awnas-hw main
         # construct aw_nas final model
 
@@ -163,9 +166,11 @@ class DPUCompiler(BaseHardwareCompiler):
             return
         
         search_space = _init_component(net_cfg, "search_space")
+        assert isinstance(search_space, GeneralSearchSpace)
         model = _init_component(net_cfg, "final_model",
                                 search_space=search_space, device="cuda:{}".format(self.gpu))
-        rollout = mixin_search_space.search_space.rollout_from_genotype(net_cfg["final_model_cfg"]["genotypes"])
+
+        rollout = search_space.rollout_from_genotype(net_cfg["final_model_cfg"]["genotypes"])
         
         # pytorch to caffe
         input_size = self.input_size
@@ -175,12 +180,11 @@ class DPUCompiler(BaseHardwareCompiler):
             input_size=input_size, debug=self._debug_output)
         
         # map prims to torch layers, and combining with torch layer to caffe layer name.
-        prims = mixin_search_space.rollout_to_primitive(rollout, keep_idx=True)
+        prims = rollout.genotype_list()
         prims_to_torch_layers = {}
-        for prim in prims:
-            idx = prim.idx()
+        for idx, prim in enumerate(prims):
             torch_layer_names = list(model.layer_idx_to_named_modules(idx))
-            prims_to_torch_layers[prim.clear_idx()] = torch_layer_names
+            prims_to_torch_layers[Prim(**prim)] = torch_layer_names
 
         prims_to_caffe_name = {}
         for prim, torch_layers in prims_to_torch_layers.items():
@@ -216,7 +220,7 @@ class DPUCompiler(BaseHardwareCompiler):
 
         # parse result file
         if perf_fn is None:
-            perf_fn = lambda split_line: {"name": split_line[0], "latency": float(split_line[3])}
+            perf_fn = lambda split_line: (split_line[0], {"latency": float(split_line[3])})
         name_to_perf_dict = {}
         Perf = namedtuple("Perf", perf_types)
         for root, dirs, files in os.walk(prof_result_dir):
@@ -228,7 +232,7 @@ class DPUCompiler(BaseHardwareCompiler):
                     for line in fl_lines[3:-3]:
                         split_line = [a for a in line.split(" ") if a != ""]
                         if len(split_line) > 4:
-                            performance = perf_fn(split_line)
+                            name, performance = perf_fn(split_line)
                             if not name.startswith("NodeName"):
                                 if name not in name_to_perf_dict:
                                     name_to_perf_dict[name] = Perf([], [])

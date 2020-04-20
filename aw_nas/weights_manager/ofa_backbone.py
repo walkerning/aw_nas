@@ -8,6 +8,7 @@ from torch import nn
 
 from aw_nas import Component
 from aw_nas.ops import *
+from aw_nas.ops.baseline_ops import MobileNetV2Block, MobileNetV3Block
 from aw_nas.utils import make_divisible
 from aw_nas.utils.common_utils import _get_channel_mask
 from aw_nas.utils.exception import ConfigException, expect
@@ -38,8 +39,8 @@ class FlexibleMobileNetV2Block(MobileNetV2Block, FlexibleBlock):
         stride,
         kernel_sizes=(3, 5, 7),
         do_kernel_transform=True,
-        activation="relu",
         affine=True,
+        activation="relu",
         schedule_cfg=None,
     ):
         FlexibleBlock.__init__(self, schedule_cfg)
@@ -49,6 +50,7 @@ class FlexibleMobileNetV2Block(MobileNetV2Block, FlexibleBlock):
         self.kernel_sizes = sorted(kernel_sizes)
         self.kernel_size = self.kernel_sizes[-1]
         self.do_kernel_transform = do_kernel_transform
+        self.affine = affine
 
         inv_bottleneck = None
         if expansion != 1:
@@ -79,6 +81,7 @@ class FlexibleMobileNetV2Block(MobileNetV2Block, FlexibleBlock):
             C_out,
             stride,
             self.kernel_size,
+            affine,
             activation,
             inv_bottleneck,
             depth_wise,
@@ -133,6 +136,7 @@ class FlexibleMobileNetV2Block(MobileNetV2Block, FlexibleBlock):
             self.C_out,
             self.stride,
             self.kernel_size,
+            self.affine,
             self.activation,
             inv_bottleneck,
             depth_wise,
@@ -149,8 +153,8 @@ class FlexibleMobileNetV3Block(MobileNetV3Block, FlexibleBlock):
         stride, 
         kernel_sizes=(3, 5, 7), 
         do_kernel_transform=True, 
-        activation="relu",
         affine=True,
+        activation="relu",
         use_se=False,
         schedule_cfg=None
     ):
@@ -165,6 +169,7 @@ class FlexibleMobileNetV3Block(MobileNetV3Block, FlexibleBlock):
         self.kernel_size = self.kernel_sizes[-1]
         self.do_kernel_transform = do_kernel_transform
         self.use_se = use_se
+        self.affine = affine
 
         self.act_fn = get_op(activation)
 
@@ -261,6 +266,7 @@ class FlexibleMobileNetV3Block(MobileNetV3Block, FlexibleBlock):
             self.C_out,
             self.stride,
             self.kernel_size,
+            self.affine,
             self.activation,
             self.use_se,
             inv_bottleneck,
