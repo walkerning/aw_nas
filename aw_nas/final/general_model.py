@@ -8,6 +8,7 @@ from __future__ import print_function
 import re
 from collections import defaultdict
 
+import copy
 import six
 import numpy as np
 import torch
@@ -29,8 +30,10 @@ class GeneralGenotypeModel(FinalModel):
         self.search_space = search_space
         self.device = device
 
-        assert isinstance(genotypes, str)
-        self.genotypes = list(genotype_from_str(genotypes, self.search_space))
+        if isinstance(genotypes, str):
+            self.genotypes = list(genotype_from_str(genotypes, self.search_space))
+        else:
+            self.genotypes = copy.deepcopy(genotypes)
         model = []
         for geno in self.genotypes:
             op = geno.pop("prim_type")

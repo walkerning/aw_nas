@@ -68,9 +68,6 @@ class DPUCompiler(BaseHardwareCompiler):
         self.input_size = input_size
 
     def _run_pytorch_to_caffe(self, model, name, output_dir, input_size, debug):
-        # TODO: names of layers will be determined during the transfroming process
-        # However, net_to_primitive need the mapping between primitives and names of layers
-        # So the transforming process should allow users determining names of caffe model layers
         self.logger.info("-------- Run pytorch to caffe --------")
         inputs = Variable(torch.ones([1, 3, input_size, input_size]))
 
@@ -87,6 +84,12 @@ class DPUCompiler(BaseHardwareCompiler):
         out_torch_to_caffe = "{}/{}_torch2caffe.pkl".format(output_dir, name)
         pytorch_to_caffe.save_prototxt(out_proto)
         pytorch_to_caffe.save_caffemodel(out_caffemodel)
+        with open(out_proto, 'r') as fr:
+            a = fr.read()
+        a = a.replace('input: "blob1"\ninput_dim: 1\ninput_dim: 3\ninput_dim: %d\ninput_dim: %d' % (input_size, input_size), 
+                      'layer {\n\tname: "blob1"\n\ttype: "Input"\n\ttop: "blob1"\n\tinput_param {\n\t\tshape {\n\t\t\tdim: 1\n\t\t\tdim: 3\n\t\t\tdim: %d\n\t\t\tdim: %d\n\t\t}\n\t}\n}' % (input_size, input_size))
+        with open(out_proto, 'w') as fw:
+            fw.write(a)
         with open(out_torch_to_caffe, 'wb') as fw:
             pickle.dump(pytorch_to_caffe.torch_to_caffe_names, fw, pickle.HIGHEST_PROTOCOL)
         self.logger.info("Finish convert pytorch model to caffe, check {}, {} and {}.".format(
@@ -158,7 +161,6 @@ class DPUCompiler(BaseHardwareCompiler):
         return output_elf
 
     def compile(self, compile_name, net_cfg, result_dir): 
-        # TODO: (@tcc): passin arguments from awnas-hw main
         # construct aw_nas final model
 
         if pytorch_to_caffe is None:
@@ -210,12 +212,11 @@ class DPUCompiler(BaseHardwareCompiler):
         return proto, caffemodel, prims_to_caffe_name
 
     def hwobj_net_to_primitive(self, prof_result_dir, prof_prim_file, prim_to_ops, perf_fn=None, perf_types=("latency",)):
-        # TODO (@tcc)
         # prof_result consists of all basic operators ,like conv_bn_relu, pooling and concat
-        # TODO: There need mapping that links basic ops' names with primitives.
         """
         prof_result_dir: consist of some measurement result files that repeat measuring many times for a single model
-        prof_prim_file: 
+        prof_prim_file: all primitives that need to be profiled.
+        prim_to_op: primitive(tuple) to the names of caffe layers
         """
 
         # parse result file
@@ -250,7 +251,7 @@ class DPUCompiler(BaseHardwareCompiler):
             # prim consists of prim_type, input_ch, output_ch, kernel, stride
             # Now, use prim_to_ops mapping prim into basic ops' names
             # Using function instead of dict to handle exceptions
-            names = prim_to_ops(prim)
+            names = prim_to_ops(Prim(**prim))
             if len(set.intersection(names, name_to_perf_dict)) == 0:
                 self.logger.debug(f"prims {prim} is not measured.")
                 continue

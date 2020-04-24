@@ -82,7 +82,6 @@ def genprof(cfg_file, hwobj_cfg_file, result_dir, compile_hardware):
     LOGGER.info("Save the profiling net configs to directory %s", prof_net_dir)
 
     # optional (hardware specific): call hardware-specific compiling process
-    # TODO: Could pytorch_to_caffe be decoupled with specific hardware?
     hw_cfgs = lat_cfg.get("hardware_compilers", [])
     if compile_hardware:
         hw_cfgs.extend([{"hardware_compiler_type": hw_name, 'hardware_compiler_cfg': {'input_size': 224}} for hw_name in compile_hardware])
@@ -137,7 +136,6 @@ def net2primitive(hw_cfg_file, prof_result_dir, prof_prim_file, prim_to_ops_file
 
     with open(prim_to_ops_file, "rb") as fr:
         prim_to_ops = pickle.load(fr)
-    # TODO: (@tcc): load meta info
     # meta info: prim_to_ops is saved at generated profiling final-yaml folder for each net
     prim_latencies = []
     for _dir in os.listdir(prof_result_dir):
