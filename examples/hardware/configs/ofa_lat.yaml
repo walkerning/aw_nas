@@ -3,24 +3,35 @@ mixin_search_space_cfg:
   base_channels: [16, 16, 24, 32, 64, 96, 160, 320, 1280]
   mult_ratio: 1.
   strides: [1, 2, 2, 2, 1, 2]
-  primitive_type: 'mbv3_block'
+  # activation: ["relu", "relu", "relu", "h_swish", "h_swish", "h_swish"]
+  # use_se: [false, false, true, false, true, true]
+  primitive_type: 'mobilenet_v2_block'
+  fixed_primitives: null
 
 profiling_primitive_cfg:
   sample: null # or int
   as_dict: true # if set false, the return value is a namedtuple
+  spatial_size: 112
+  base_channels: [16, 16, 24, 32, 64, 96, 160, 320, 1280]
+  mult_ratio: 1.
+  strides: [1, 2, 2, 2, 1, 2]
+  activation: ["relu", "relu", "relu", "h_swish", "h_swish", "h_swish"]
+  use_se: [false, false, true, false, true, true]
+  primitive_type: 'mobilenet_v3_block'
+  
+
+hwobjmodel_type: ofa
+hwobjmodel_cfg: {}
+  
 
 profiling_net_cfg:
   base_cfg_template:
-    rollout_type: ofa
+    rollout_type: general
     ## ---- Component search_space ----
     # ---- Type ofa ----
-    search_space_type: ofa
+    search_space_type: general
     search_space_cfg:
-      num_cell_groups: [1, 4, 4, 4, 4, 4]
-      expansions: [1, 6, 6, 6, 6, 6]
-      kernel_choice: [3, 5, 7]
-      width_choice: [4, 3, 2]
-      depth_choice: [4, 3, 2]
+      primitives: []
 
 
     # ---- End Type mnsanet_ofa ----
@@ -92,7 +103,7 @@ profiling_net_cfg:
         expansions: [1, 6, 6, 6, 6, 6]
         channels: [16, 16, 24, 32, 64, 96, 160, 320, 1280]
         mult_ratio: 1.
-        kernel_sizes: [3]
+        kernel_sizes: [3, 5, 7]
         num_classes: 10
         block_type: mbv3_block
 
@@ -113,7 +124,7 @@ profiling_net_cfg:
     trainer_type: simple
     trainer_cfg:
       # Schedulable attributes: controller_samples, derive_samples
-      rollout_type: ofa
+      rollout_type: general
       epochs: 500
       test_every: 10
       controller_scheduler: null
@@ -128,13 +139,9 @@ profiling_net_cfg:
     # ---- End Type simple ----
     ## ---- End Component trainer ----
 
-    final_model_type: ofa_final_model
+    final_model_type: general_final_model
     final_model_cfg:
-      backbone_type: mbv3_backbone
-      layer_channels: [16, 16, 24, 32, 64, 96, 160, 320, 1280]
-      strides: [1, 2, 2, 2, 1, 2]
-      max_kernel_size: 3
-      ofa_state_dict: null
+      {}
 
     final_trainer_type: ofa_final_trainer
     final_trainer_cfg:

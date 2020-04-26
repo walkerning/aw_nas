@@ -35,7 +35,7 @@ class Hswish(nn.Module):
         self.inplace = inplace
 
     def forward(self, x):
-        return x * F.relu6(x + 3., inplace=self.inplace) / 6.
+        return x * F.relu6(x + 3., inplace=self.inplace) * (1 / 6.)
 
 class Hsigmoid(nn.Module):
     def __init__(self, inplace):
@@ -43,7 +43,7 @@ class Hsigmoid(nn.Module):
         self.inplace = inplace
 
     def forward(self, x):
-        return F.relu6(x + 3., inplace=self.inplace) / 6.
+        return F.relu6(x + 3., inplace=self.inplace) * (1 / 6.)
 
 PRIMITVE_FACTORY = {
     "none" : lambda C, C_out, stride, affine: Zero(stride),
@@ -103,13 +103,15 @@ PRIMITVE_FACTORY = {
         nn.BatchNorm2d(C_out)
     ),
 
+    "se_module": lambda channel, reduction=4: SEModule(channel, reduction),
+
     # activations
-    "tanh": lambda **kwargs: nn.Tanh(),
-    "relu": lambda **kwargs: nn.ReLU(),
-    "sigmoid": lambda **kwargs: nn.Sigmoid(),
-    "identity": lambda **kwargs: Identity(),
-    "h_swish": lambda **kwargs: Hswish(**kwargs),
-    "h_sigmoid": lambda **kwargs: Hsigmoid(**kwargs)
+    "tanh": lambda *args, **kwargs: nn.Tanh(*args, **kwargs),
+    "relu": lambda *args, **kwargs: nn.ReLU(*args, **kwargs),
+    "sigmoid": lambda *args, **kwargs: nn.Sigmoid(*args, **kwargs),
+    "identity": lambda *args, **kwargs: Identity(*args, **kwargs),
+    "h_swish": lambda *args, **kwargs: Hswish(*args, **kwargs),
+    "h_sigmoid": lambda *args, **kwargs: Hsigmoid(*args, **kwargs)
 }
 
 def register_primitive(name, func, override=False):
@@ -516,6 +518,7 @@ def get_concat_op(type_):
     return CONCAT_OPS[type_]()
 
 
+# ---- added for OFA ----
 class FlexibleLayer(object):
     def __init__(self):
         self.reset_mask()
@@ -542,7 +545,7 @@ class FlexiblePointLinear(nn.Conv2d, FlexibleLayer):
             return self.weight[out_mask, :, :, :].contiguous()
         if out_mask is None:
             return self.weight[:, in_mask, :, :].contiguous()
-        return self.weight[out_mask, in_mask, :, :].contiguous()
+        return self.weight[:, in_mask, :, :][out_mask, :, :, :].contiguous()
 
     def set_mask(self, in_mask, out_mask):
         self.in_mask = in_mask
@@ -590,7 +593,7 @@ class FlexibleDepthWiseConv(nn.Conv2d, FlexibleLayer):
         return self.weight[mask, :, :, :].contiguous()
 
     def _transform_kernel(self, origin_filter, kernel_size):
-        expect(kernel_size in self.kernel_sizes, "The kernel_size must be one of 3, 5, 7, got {} instead".format(kernel_size), ValueError)
+        expect(kernel_size in self.kernel_sizes, "The kernel_size must be one of {}, got {} instead".format(self.kernel_sizes, kernel_size), ValueError)
         if origin_filter.shape[-1] == kernel_size:
             return origin_filter
         if not self.do_kernel_transform:
@@ -598,11 +601,11 @@ class FlexibleDepthWiseConv(nn.Conv2d, FlexibleLayer):
         cur_filter = origin_filter
         expect(cur_filter.shape[-1] > kernel_size, "The kernel size must be less than origin kernel size {}, got {} instead.".format(origin_filter.shape[-1], kernel_size), ValueError)
         for smaller, larger in reversed(list(zip(self.kernel_sizes[:-1], self.kernel_sizes[1:]))):
-            if cur_filter < larger:
+            if cur_filter.shape[-1] < larger:
                 continue
             if kernel_size >= larger:
                 break
-            sub_filter = get_sub_kernel(origin_filter, smaller).view(sub_filter.shape[0], sub_filter.shape[1], -1)
+            sub_filter = get_sub_kernel(origin_filter, smaller).view(cur_filter.shape[0], cur_filter.shape[1], -1)
             sub_filter = sub_filter.view(-1, sub_filter.shape[-1])
             sub_filter = getattr(self, f"linear_{larger}to{smaller}")(sub_filter)
             sub_filter = sub_filter.view(origin_filter.shape[0], origin_filter.shape[1], smaller ** 2)
@@ -745,7 +748,7 @@ class FlexibleSEModule(SEModule, FlexibleLayer):
         mid_channel = make_divisible(channel // self.reduction, 8)
         exp_mask = _get_channel_mask(self.se.expand.weight.data, mid_channel)
         self.se.reduction.set_mask(mask, exp_mask)
-        self.se.expand.reset_mask(exp_mask, mask)
+        self.se.expand.set_mask(exp_mask, mask)
         
     def forward(self, inputs):
         out = inputs.mean(3, keepdim=True).mean(2, keepdim=True)
@@ -757,121 +760,3 @@ class FlexibleSEModule(SEModule, FlexibleLayer):
         expand_layer = self.se.expand.finalize()
         return SEModule(self.channel, self.reduction, reduction_layer, expand_layer)
         
-
-class MobileNetV2Block(nn.Module):
-    def __init__(self, expansion, C, C_out, 
-                stride, 
-                kernel_size,
-                activation="relu",
-                inv_bottleneck=None,
-                depth_wise=None,
-                point_linear=None,
-                ):
-        super(MobileNetV2Block, self).__init__()
-        self.expansion = expansion
-        self.C = C
-        self.C_out = C_out 
-        self.C_inner = C * expansion
-        self.stride = stride
-        self.kernel_size = kernel_size
-        self.act_fn = get_op(activation)
-        
-        self.inv_bottleneck = None
-        if expansion != 1:
-            self.inv_bottleneck = inv_bottleneck or nn.Sequential(
-                nn.Conv2d(C, self.C_inner, 1, 1, 0, bias=False),
-                nn.BatchNorm2d(self.C_inner),
-                self.act_fn(inplace=True)
-            )
-        
-        self.depth_wise = depth_wise or nn.Sequential(
-            nn.Conv2d(self.C_inner, self.C_inner, self.kernel_size, stride, padding=self.kernel_size // 2, bias=False),
-            nn.BatchNorm2d(self.C_inner),
-            self.act_fn(inplace=True)
-        )
-
-        self.point_linear = point_linear or nn.Sequential(
-            nn.Conv2d(self.C_inner, C_out, 1, 1, 0, bias=False),
-            nn.BatchNorm2d(C_out)
-        )
-
-        self.shortcut = nn.Sequential()
-        self.has_conv_shortcut = False
-        if stride == 1 and C != C_out:
-            self.has_conv_shortcut = True
-            self.shortcut = nn.Sequential(
-                    nn.Conv2d(C, C_out, kernel_size=1,
-                            stride=1, padding=0, bias=False),
-                    nn.BatchNorm2d(C_out),
-                )
-
-    def forward(self, inputs):
-        out = inputs
-        if self.inv_bottleneck:
-            out = self.inv_bottleneck(out)
-        out = self.depth_wise(out)
-        out = self.point_linear(out)
-        if self.stride == 1:
-            out = out + self.shortcut(inputs)
-        return out
-
-
-class MobileNetV3Block(nn.Module):
-    def __init__(self, expansion, C, C_out, 
-                 stride, 
-                 kernel_size,
-                 activation="relu",
-                 use_se=False,
-                 inv_bottleneck=None,
-                 depth_wise=None,
-                 point_linear=None,
-                 se=None,
-                 ):
-        super(MobileNetV3Block, self).__init__()
-        self.expansion = expansion
-        self.C = C
-        self.C_out = C_out 
-        self.C_inner = C * expansion
-        self.stride = stride
-        self.kernel_size = kernel_size
-        self.act_fn = get_op(activation)
-        self.use_se = use_se
-        
-        self.inv_bottleneck = None
-        if expansion != 1:
-            self.inv_bottleneck = inv_bottleneck or nn.Sequential(
-                nn.Conv2d(C, self.C_inner, 1, 1, 0, bias=False),
-                nn.BatchNorm2d(self.C_inner),
-                self.act_fn(inplace=True)
-            )
-        
-        self.depth_wise = depth_wise or nn.Sequential(
-            nn.Conv2d(self.C_inner, self.C_inner, self.kernel_size, stride, self.kernel_size // 2, groups=self.C_inner, bias=False),
-            nn.BatchNorm2d(self.C_inner),
-            self.act_fn(inplace=True)
-        )
-
-        self.point_linear = point_linear or nn.Sequential(
-            nn.Conv2d(self.C_inner, C_out, 1, 1, 0, bias=False),
-            nn.BatchNorm2d(C_out)
-        )
-
-        self.se = None
-        if self.use_se:
-            self.se = se or SEModule(self.C_inner)
-        
-        self.shortcut = None
-        if stride == 1 and C == C_out:
-            self.shortcut = nn.Sequential()
-
-    def forward(self, inputs):
-        out = inputs
-        if self.inv_bottleneck:
-            out = self.inv_bottleneck(out)
-        out = self.depth_wise(out)
-        if self.se:
-            out = self.se(out)
-        out = self.point_linear(out)
-        if self.shortcut:
-            out = out + self.shortcut(inputs)
-        return out

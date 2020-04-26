@@ -1,112 +1,179 @@
-
 import copy
 import pickle
 from collections import namedtuple
 from itertools import count, product
+from functools import reduce
 
 import numpy as np
 import pandas as pd
 
-from aw_nas.hardware.base import (BaseHardwareObjectiveModel,
-                                  MixinProfilingSearchSpace)
+from aw_nas.hardware.base import BaseHardwareObjectiveModel, MixinProfilingSearchSpace
+from aw_nas.hardware.utils import Prim
 
-OFAPrim = namedtuple("OFAPrim", ["prim_type", "input_ch", "output_ch", "stride", "spatial_size", "kernel", "stage_idx"])
+from aw_nas.utils.exception import expect
+from aw_nas.utils import logger as _logger
+from aw_nas.rollout.ofa import MNasNetOFASearchSpace
 
-def ofa_rollout_to_primitive(rollout, strides, channels, primitive_type):
+logger = _logger.getChild("ofa_obj")
+
+
+def ofa_rollout_to_primitive(
+    rollout,
+    spatial_size,
+    primitive_type,
+    strides,
+    channels,
+    activation=None,
+    use_se=None,
+):
     primitives = []
-    for i, (depth, s, c_in, c_out) in enumerate(
+    if activation is None:
+        activation = [None] * len(rollout.depth)
+    if use_se is None:
+        use_se = [None] * len(rollout.depth)
+    sizes = [
+        round(spatial_size / reduce(lambda p, q: p * q, strides[:i]))
+        for i in range(1, len(strides) + 1)
+    ]
+    for i, (depth, size, s, c_in, c_out, act, se) in enumerate(
         zip(
-            rollout.depth, 
-            strides, 
-            channels[:-1], 
-            channels[1:])
-        ):
-        for j, width, kernel in zip(
-            range(d), 
-            rollout.width[i], 
-            rollout.kernel[i]
-        ):
+            rollout.depth,
+            sizes,
+            strides,
+            channels[:-1],
+            channels[1:],
+            activation,
+            use_se,
+        )
+    ):
+        for j, width, kernel in zip(range(depth), rollout.width[i], rollout.kernel[i]):
             if i > 0:
                 c_in = c_out
                 s = 1
-            primitives.append(OFAPrim(primitive_type, c_in, c_out, s, width[j], kernel[j], i))
+            primitives.append(
+                Prim(
+                    primitive_type,
+                    size,
+                    c_in,
+                    c_out,
+                    s,
+                    kernel,
+                    activation=act,
+                    use_se=se,
+                    expansion=width,
+                )
+            )
     return primitives
 
+
 class OFAHardwareObjectiveModel(BaseHardwareObjectiveModel):
-    def __init__(self, prof_prims, prof_prims_cfg, schedule_cfg):
+    NAME = "ofa"
+
+    def __init__(
+        self,
+        prof_prims,
+        prof_prims_cfg,
+        base_channels,
+        mult_ratio,
+        strides,
+        activation=None,
+        use_se=None,
+        spatial_size=112,
+        schedule_cfg=None,
+    ):
         super(OFAHardwareObjectiveModel, self).__init__(schedule_cfg)
-        assert "base_channels" in prof_prims_cfg
-        assert "mult_ratio" in prof_prims_cfg
-        assert "strides" in prof_prims_cfg
-        self.default_prim_type = prof_prims_cfg.get("default_prim_type", "default")
+        self.default_prim_type = prof_prims_cfg.get(
+            "default_prim_type", "mobilenet_v2_block"
+        )
         self.performances = prof_prims_cfg.get("performances", ["latency"])
 
         self.prof_prims = prof_prims
         self.prof_prims_cfg = prof_prims_cfg
-        self.channels = [c * prof_prims_cfg["mult_ratio"] for c in prof_prims["base_channels"]]
+        self.channels = [
+            c * prof_prims_cfg["mult_ratio"] for c in prof_prims["base_channels"]
+        ]
         self.strides = prof_prims_cfg["strides"]
+        self.activation = prof_prims_cfg.get("activation")
+        self.use_se = prof_prims_cfg.get("use_se")
+        self.spatial_size = prof_prims_cfg.get("spatial_size", 112)
 
         self.Perf = namedtuple("Performances", self.performances)
 
         self._orgnize_table()
 
-        # TODO: @z_c
-        self._perf_model = None
-
     def _orgnize_table(self):
-        self._table = {self.default_prim_type: {}}
+        # key: a namedtuple. Prim
+        # value: a namedtuple. self.Perf
+        self._table = {}
         for prim in self.prof_prims:
-            prim_type = prim["prim_type"]
-            if prim_type not in self._table:
-                self._table[prim_type] = {}
-            sub_table = self._table[prim_type]
-
-            perf = self.Perf(*[prim[f] for f in self.performances])
-            if prim_type == self.default_prim_type:
-                prim = OFAPrim(*[prim[f] for f in OFAPrim._fields])
-            else:
-                prim = tuple([prim[k] for k in prim if k not in self.performances])
-            sub_table[prim] = perf
-
+            perf = self.Perf(
+                *[prim.pop(f) if f in prim else 0.0 for f in self.performances]
+            )
+            prim = Prim(**prim)
+            self._table[prim] = perf
 
     def predict(self, rollout):
-        primtives = ofa_rollout_to_primitive(rollout, self.strides, self.channels, self.default_prim_type)
+        primtives = ofa_rollout_to_primitive(
+            rollout,
+            self.default_prim_type,
+            self.spatial_size,
+            self.strides,
+            self.channels,
+            self.activation,
+            self.use_se,
+        )
         perfs = []
         for prim in primtives:
             perf = self._table[prim.prim_type].get(prim)
             if perf is None:
-                perf = self._perf_model(prim) # TODO: latency model
+                logger.warn(
+                    f"primitive {prim} is not found in the table, return default value 0."
+                )
+                perf = self.Perf(*[0.0 for f in self.performances])
             perfs.append(perf)
         # assert that each of performances is float
         perfs = np.array(perfs)
         return perfs.sum(axis=0)
 
     def save(self, path):
-        pickle.dump({"table": self._table, "model": self._perf_model.dumps()}, path)
+        pickle.dump({"table": self._table}, path)
 
     def load(self, path):
         m = pickle.load(path)
         self._table = m["table"]
-        self._perf_model.loads(m["model"])
 
-class OFAMixinProfilingSearchSpace(MixinProfilingSearchSpace):
-    NAME = 'ofa_mixin'
 
-    def __init__(self, search_space, base_channels, mult_ratio, strides, primitive_type, fixed_primitives=None, schedule_cfg=None):
-        super(OFAMixinProfilingSearchSpace, self).__init__(schedule_cfg=schedule_cfg)
-        self.search_space = search_space
-        self.base_channels = base_channels
-        self.mult_ratio = mult_ratio
-        self.strides = strides
-        self.primitive_type = primitive_type
+class OFAMixinProfilingSearchSpace(MNasNetOFASearchSpace, MixinProfilingSearchSpace):
+    NAME = "ofa_mixin"
+
+    def __init__(
+        self,
+        width_choice,
+        depth_choice,
+        kernel_choice,
+        num_cell_groups,
+        expansions,
+        fixed_primitives=None,
+        schedule_cfg=None,
+    ):
+        super(OFAMixinProfilingSearchSpace, self).__init__(
+            width_choice,
+            depth_choice,
+            kernel_choice,
+            num_cell_groups,
+            expansions,
+            schedule_cfg=schedule_cfg,
+        )
+        MixinProfilingSearchSpace.__init__(self, schedule_cfg=schedule_cfg)
+
         self.fixed_primitives = fixed_primitives
 
-    def traverse_search_space(self, sample=None):
-        depths = self.search_space.num_cell_groups
-        widths = self.search_space.expansions
+    def _traverse_search_space(self, sample=None):
+        depths = self.num_cell_groups
+        widths = self.expansions
 
-        width_choice = self.search_space.width_choice
-        kernel_choice = self.search_space.kernel_choice
+        width_choice = self.width_choice
+        kernel_choice = self.kernel_choice
 
         # the first stage is excluded since it is fixed as d = 1, w = 1, k = 3
         producted = product(width_choice, kernel_choice, range(1, len(depths)), (0, 1))
@@ -117,60 +184,46 @@ class OFAMixinProfilingSearchSpace(MixinProfilingSearchSpace):
         for p in producted:
             yield p
 
-    def generate_profiling_primitives(self, sample=None, as_dict=True):
-        channels = [c * self.mult_ratio for c in self.base_channels]
+    def generate_profiling_primitives(
+        self,
+        base_channels,
+        mult_ratio,
+        strides,
+        activation=None,
+        use_se=None,
+        primitive_type="mobilenet_v2_block",
+        spatial_size=112,
+        sample=None,
+        as_dict=True,
+    ):
+        channels = [c * mult_ratio for c in base_channels]
         primitives = []
-        for w, k, stage, i in self.traverse_search_space(sample):
-            primitives.append(OFAPrim(self.primitive_type, channels[stage + i], channels[stage + 1], 1 if i else self.strides[stage], w, k, stage))
+        activation = activation or [None,] * len(strides)
+        use_se = use_se or [None,] * len(strides)
+        sizes = [
+            round(spatial_size / reduce(lambda p, q: p * q, strides[:i]))
+            for i in range(1, len(strides) + 1)
+        ]
+        for w, k, stage, i in self._traverse_search_space(sample):
+            primitives.append(
+                Prim(
+                    primitive_type,
+                    sizes[stage - 1],
+                    channels[stage + i],
+                    channels[stage + 1],
+                    1 if i else strides[stage],
+                    k,
+                    activation=activation[stage],
+                    use_se=use_se[stage],
+                    expansion=w,
+                )
+            )
         if self.fixed_primitives is not None:
             primitives += self.fixed_primitives
         primitives = list(set(primitives))
         if as_dict:
-            primitives = [p._asdict() for p in primitives]
+            primitives = [dict(p._asdict()) for p in primitives]
         return primitives
 
     def parse_profiling_primitives(self, prof_prims, prof_prims_cfg, hwobjmodel_cfg):
         return OFAHardwareObjectiveModel(prof_prims, prof_prims_cfg, **hwobjmodel_cfg)
-    
-    def primitives_to_genotypes(self, prof_prims, sample=None):
-        """
-        prof_prims: list of dict
-        """
-        prims_df = pd.DataFrame(prof_prims)
-        if sample is None:
-            sample = np.inf
-        ith_arch = 0
-        idx = set(range(len(prims_df)))
-        while len(idx) > 0 and ith_arch < sample:
-            ith_arch += 1
-            arch = {"depth": self.search_space.num_cell_groups, "width": [[1],], "kernel": [[3,]]}
-            cur_stage = 0
-            for stage, depth in enumerate(arch["depth"][1:], 1):
-                w = []
-                k = []
-                stride_layers = prims_df.query(f"stage_idx=={stage} and input_ch != output_ch")
-                norm_layers = prims_df.query(f"stage_idx=={stage} and input_ch == output_ch")
-                if len(stride_layers) == 0 or len(norm_layers) == 0:
-                    raise StopIteration()
-                stride_l = stride_layers.sample(1)
-                w.append(stride_l["spatial_size"].values[0])
-                k.append(stride_l["kernel"].values[0])
-                idx.remove(stride_l.index.values[0])
-                
-                norm_l = norm_layers.sample(depth - 1)
-                w.extend(norm_l["spatial_size"].values.tolist())
-                k.extend(norm_l["kernel"].values.tolist())
-                idx = idx.difference(norm_l.index.values)
-
-                prims_df = prims_df.loc[idx, :]
-                arch["width"].append(w)
-                arch["kernel"].append(k)
-            yield self.search_space.genotype(arch)
-
-
-
-
-
-
-
-
