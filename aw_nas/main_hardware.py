@@ -52,6 +52,7 @@ def genprof(cfg_file, hwobj_cfg_file, result_dir, compile_hardware):
     with open(hwobj_cfg_file, "r") as lat_cfg_f:
         lat_cfg = yaml.load(lat_cfg_f)
     ss = get_search_space(ss_cfg["search_space_type"], **ss_cfg["search_space_cfg"])
+    mss = MixinProfilingSearchSpace.get_class_(lat_cfg["mixin_search_space_type"])(search_space=ss, **lat_cfg["mixin_search_space_cfg"])
 
     result_dir = utils.makedir(result_dir)
     # copy cfg files
@@ -59,14 +60,15 @@ def genprof(cfg_file, hwobj_cfg_file, result_dir, compile_hardware):
     shutil.copyfile(hwobj_cfg_file, os.path.join(result_dir, "hwobj_config.yaml"))
     
     # generate profiling primitive list
-    prof_prims = ss.generate_profiling_primitives(**lat_cfg["profiling_primitive_cfg"])
+    prof_prims = mss.generate_profiling_primitives(**lat_cfg["profiling_primitive_cfg"])
     prof_prim_fname = os.path.join(result_dir, "prof_prims.yaml")
     with open(prof_prim_fname, "w") as prof_prim_f:
         yaml.dump(prof_prims, prof_prim_f)
     LOGGER.info("Save the list of profiling primitives to %s", prof_prim_fname)
 
     # assemble profiling nets
-    prof_net_cfgs = assemble_profiling_nets(prof_prims, **lat_cfg["profiling_net_cfg"])
+    prof_net_cfgs = assemble_profiling_nets(mss, prof_prims, **lat_cfg["profiling_net_cfg"])
+    prof_net_cfgs = list(prof_net_cfgs)
     prof_net_dir = utils.makedir(os.path.join(result_dir, "prof_nets"), remove=True)
     prof_fnames = []
     for i_net, prof_net_cfg in enumerate(prof_net_cfgs):
@@ -79,7 +81,7 @@ def genprof(cfg_file, hwobj_cfg_file, result_dir, compile_hardware):
     # optional (hardware specific): call hardware-specific compiling process
     hw_cfgs = lat_cfg.get("hardware_compilers", [])
     if compile_hardware:
-        hw_cfgs.append([{"hardware_compiler_type": hw_name} for hw_name in compile_hardware])
+        hw_cfgs.extend([{"hardware_compiler_type": hw_name, 'hardware_compiler_cfg': {'input_size': 224}} for hw_name in compile_hardware])
     if hw_cfgs:
         hw_compile_dir = utils.makedir(os.path.join(result_dir, "hardwares"), remove=True)
         LOGGER.info("Call hardware compilers: total %d", len(hw_cfgs))
@@ -90,22 +92,23 @@ def genprof(cfg_file, hwobj_cfg_file, result_dir, compile_hardware):
             LOGGER.info("{}: Constructed hardware compiler {}{}".format(
                 i_hw, hw_name, ":{}".format(hw_kwargs) if hw_kwargs else ""))
             hw_res_dir = utils.makedir(os.path.join(hw_compile_dir, "{}-{}".format(i_hw, hw_name)))
-            for i_net, prof_fname in enumerate(prof_fnames):
-                res_dir = utils.makedir(os.path.join(hw_res_dir, i_net))
-                # TODO (@ttc): if need some meta infomation about the correspondance of
+            for i_net, prof_cfg in enumerate(prof_net_cfgs):
+                res_dir = utils.makedir(os.path.join(hw_res_dir, str(i_net)))
+                # TODO (@tcc): if need some meta infomation about the correspondance of
                 # profiling net layer (net_idx, layer_idx) <=> profiling primitive (prim_idx)
                 # can save another meta info file, change the interface here
-                hw_compiler.compile("{}-{}-{}".format(i_hw, hw_name, i_net), prof_fname, res_dir)
+                hw_compiler.compile("{}-{}-{}".format(i_hw, hw_name, i_net), prof_cfg, res_dir)
 
 
 @main.command(help="Parse raw net hwobj results to primitive latencies")
 @click.argument("hw_cfg_file", required=True, type=str)
 @click.argument("prof_result_file", required=True, type=str)
 @click.argument("prof_prim_file", required=True, type=str)
+@click.argument("prim_to_ops_file", required=True, type=str)
 @click.argument("--hwobj-type", default="latency")
 @click.option("--result-file", required=True,
               help="Save the raw hwobj of profiling primitives to RESULT_FILE.")
-def net2primitive(hw_cfg_file, prof_result_file, prof_prim_file, hwobj_type, result_file):
+def net2primitive(hw_cfg_file, prof_result_file, prof_prim_file, prim_to_ops_file, hwobj_type, result_file):
     """
     Hardware specific conversion, parse the latencies of the profiling networks
     into the latencies of the primitives.
@@ -120,9 +123,11 @@ def net2primitive(hw_cfg_file, prof_result_file, prof_prim_file, hwobj_type, res
     LOGGER.info("Constructed hardware compiler {}{}".format(
         hw_name, ":{}".format(hw_kwargs) if hw_kwargs else ""))
 
-    # TODO (@ttc): load meta info
+    with open(prim_to_ops_file, 'rb') as fr:
+        prim_to_ops = pickle.load(fr)
+    # TODO (@tcc): load meta info
     prim_latencies = hw_compiler.hwobj_net_to_primitive(
-        hwobj_type, prof_result_file, prof_prim_file)
+        hwobj_type, prof_result_file, prof_prim_file, prim_to_ops)
     with open(result_file, "w") as w_f:
         yaml.dump(prim_latencies, w_f)
 
@@ -140,13 +145,14 @@ def genmodel(cfg_file, hwobj_cfg_file, prof_prim_file, result_file):
     with open(hwobj_cfg_file, "r") as lat_cfg_f:
         lat_cfg = yaml.load(lat_cfg_f)
     ss = get_search_space(ss_cfg["search_space_type"], **ss_cfg["search_space_cfg"])
-    expect(isinstance(ss, MixinProfilingSearchSpace),
+    mss = MixinProfilingSearchSpace.get_class_(lat_cfg["mixin_search_space_type"])(search_space=ss, **lat_cfg["mixin_search_space_cfg"])
+    expect(isinstance(mss, MixinProfilingSearchSpace),
            "search space must be a subclass of MixinProfilingsearchspace")
 
     with open(prof_prim_file) as prof_prim_f:
         prof_prim_latencies = yaml.load(prof_prim_f)
 
-    hwobj_model = ss.parse_profiling_primitives(
+    hwobj_model = mss.parse_profiling_primitives(
         prof_prim_latencies,
         lat_cfg["profiling_primitive_cfg"], lat_cfg["hwobjmodel_type"], lat_cfg["hwobjmodel_cfg"])
     hwobj_model.save(result_file)
