@@ -158,15 +158,14 @@ def genmodel(cfg_file, hwobj_cfg_file, prof_prim_file, result_file):
         ss_cfg = yaml.load(ss_cfg_f)
     with open(hwobj_cfg_file, "r") as lat_cfg_f:
         lat_cfg = yaml.load(lat_cfg_f)
-    ss = get_search_space(ss_cfg["search_space_type"], **ss_cfg["search_space_cfg"])
-    mss = MixinProfilingSearchSpace.get_class_(lat_cfg["mixin_search_space_type"])(search_space=ss, **lat_cfg["mixin_search_space_cfg"])
-    expect(isinstance(mss, MixinProfilingSearchSpace),
+    ss = get_search_space(ss_cfg["search_space_type"], **ss_cfg["search_space_cfg"], **lat_cfg["mixin_search_space_cfg"])
+    expect(isinstance(ss, MixinProfilingSearchSpace),
            "search space must be a subclass of MixinProfilingsearchspace")
 
     with open(prof_prim_file) as prof_prim_f:
         prof_prim_latencies = yaml.load(prof_prim_f)
 
-    hwobj_model = mss.parse_profiling_primitives(
+    hwobj_model = ss.parse_profiling_primitives(
         prof_prim_latencies,
         lat_cfg["profiling_primitive_cfg"], lat_cfg["hwobjmodel_type"], lat_cfg["hwobjmodel_cfg"])
     hwobj_model.save(result_file)

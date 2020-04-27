@@ -1,18 +1,19 @@
-import copy
+# -*- coding: utf-8 -*-
 import pickle
 from collections import namedtuple
-from itertools import count, product
+from itertools import product
 from functools import reduce
 
 import numpy as np
-import pandas as pd
 
 from aw_nas.hardware.base import BaseHardwareObjectiveModel, MixinProfilingSearchSpace
 from aw_nas.hardware.utils import Prim
 
 from aw_nas.utils.exception import expect
 from aw_nas.utils import logger as _logger
+from aw_nas.utils import make_divisible
 from aw_nas.rollout.ofa import MNasNetOFASearchSpace
+
 
 logger = _logger.getChild("ofa_obj")
 
@@ -73,12 +74,6 @@ class OFAHardwareObjectiveModel(BaseHardwareObjectiveModel):
         self,
         prof_prims,
         prof_prims_cfg,
-        base_channels,
-        mult_ratio,
-        strides,
-        activation=None,
-        use_se=None,
-        spatial_size=112,
         schedule_cfg=None,
     ):
         super(OFAHardwareObjectiveModel, self).__init__(schedule_cfg)
@@ -89,8 +84,11 @@ class OFAHardwareObjectiveModel(BaseHardwareObjectiveModel):
 
         self.prof_prims = prof_prims
         self.prof_prims_cfg = prof_prims_cfg
+
+        self.mult_ratio = prof_prims_cfg["mult_ratio"]
+        self.base_channels = prof_prims_cfg["base_channels"]
         self.channels = [
-            c * prof_prims_cfg["mult_ratio"] for c in prof_prims["base_channels"]
+            make_divisible(c * self.mult_ratio, 8) for c in self.base_channels
         ]
         self.strides = prof_prims_cfg["strides"]
         self.activation = prof_prims_cfg.get("activation")

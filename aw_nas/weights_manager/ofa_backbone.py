@@ -434,15 +434,16 @@ class MobileNetV2Arch(BaseBackboneArch):
         return self.classifier(out).flatten(1)
 
     def finalize(self, blocks, expansions, kernel_sizes):
-        """
-        this process is irreversible
-        """
+        cells = []
         for i, cell in enumerate(self.cells):
+            cells.append([])
             for j, block in enumerate(cell):
                 if j >= blocks[i]:
                     break
                 block.set_mask(expansions[i][j], kernel_sizes[i][j])
-                self.cells[i][j] = block.finalize()
+                cells[-1].append(block.finalize())
+            cells[-1] = nn.ModuleList(cells[-1])
+        self.cells = nn.ModuleList(cells)
         return self
 
 
