@@ -1,50 +1,55 @@
 import pytest
 
-@pytest.mark.parametrize("case", [
-    {
-        "genotypes": [
-            {
-                "prim_type": "mobilenet_v2_block", 
-                "C": 16,
-                "C_out": 24,
-                "spatial_size": 112,
-                "expansion": 6,
-                "stride": 1,
-                "kernel_size": 3,
-            }
-        ],
-        "arch": [
-            {
-                "prim_type": "mobilenet_v2_block", 
-                "C": 16,
-                "C_out": 24,
-                "spatial_size": 112,
-                "expansion": 6,
-                "stride": 1,
-                "kernel_size": 3,
-            }
-        ]
-    },
-    {
-        "genotypes": '[{"prim_type": "mobilenet_v3_block", "C": 16,"C_out": 24, "spatial_size": 112, "expansion": 4, "use_se": True, "stride": 2, "kernel_size": 3, "activation": "relu"}]',
-        "arch": [
-            {
-                "prim_type": "mobilenet_v3_block", 
-                "C": 16,
-                "C_out": 24, 
-                "spatial_size": 112, 
-                "expansion": 4, 
-                "use_se": True,
-                "stride": 2,
-                "kernel_size": 3,
-                "activation": "relu"
-            }
-        ]
-    }
-])
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        {
+            "genotypes": [
+                {
+                    "prim_type": "mobilenet_v2_block",
+                    "C": 16,
+                    "C_out": 24,
+                    "spatial_size": 112,
+                    "expansion": 6,
+                    "stride": 1,
+                    "kernel_size": 3,
+                }
+            ],
+            "arch": [
+                {
+                    "prim_type": "mobilenet_v2_block",
+                    "C": 16,
+                    "C_out": 24,
+                    "spatial_size": 112,
+                    "expansion": 6,
+                    "stride": 1,
+                    "kernel_size": 3,
+                }
+            ],
+        },
+        {
+            "genotypes": '[{"prim_type": "mobilenet_v3_block", "C": 16,"C_out": 24, "spatial_size": 112, "expansion": 4, "use_se": True, "stride": 2, "kernel_size": 3, "activation": "relu"}]',
+            "arch": [
+                {
+                    "prim_type": "mobilenet_v3_block",
+                    "C": 16,
+                    "C_out": 24,
+                    "spatial_size": 112,
+                    "expansion": 4,
+                    "use_se": True,
+                    "stride": 2,
+                    "kernel_size": 3,
+                    "activation": "relu",
+                }
+            ],
+        },
+    ],
+)
 def test_general_rollout(case):
     from aw_nas.common import get_search_space
     from aw_nas.final.general_model import GeneralGenotypeModel
+
     ss = get_search_space("general", primitives=[])
     genotype = ss.genotype(case["arch"])
     rollout = ss.rollout_from_genotype(genotype)
@@ -54,36 +59,46 @@ def test_general_rollout(case):
     model = GeneralGenotypeModel(ss, "cuda", genotype)
 
 
-@pytest.mark.parametrize("case", [
-    {
-        "search_space_cfg": {
-            "width_choice": [3, 4, 6],
-            "depth_choice": [2, 3, 4],
-            "kernel_choice": [3, 5, 7],
-            "num_cell_groups": [1, 4, 4, 4, 4, 4],
-            "expansions": [1, 6, 6, 6, 6, 6],
-        },
-        "prof_prim_cfg": {
-            "spatial_size": 112,
-            "base_channels": [16, 16, 24, 32, 64, 96, 160, 320, 1280],
-            "mult_ratio": 1.,
-            "strides": [1, 2, 2, 2, 1, 2],
-            "activation": ["relu", "relu", "relu", "h_swish", "h_swish", "h_swish"],
-            "use_se": [False, False, True, False, True, True],
-            "primitive_type": 'mobilenet_v3_block',
-        },
-    }
-])
+@pytest.mark.parametrize(
+    "case",
+    [
+        {
+            "search_space_cfg": {
+                "width_choice": [3, 4, 6],
+                "depth_choice": [2, 3, 4],
+                "kernel_choice": [3, 5, 7],
+                "num_cell_groups": [1, 4, 4, 4, 4, 4],
+                "expansions": [1, 6, 6, 6, 6, 6],
+            },
+            "prof_prim_cfg": {
+                "spatial_size": 112,
+                "base_channels": [16, 16, 24, 32, 64, 96, 160, 320, 1280],
+                "mult_ratio": 1.0,
+                "strides": [1, 2, 2, 2, 1, 2],
+                "activation": ["relu", "relu", "relu", "h_swish", "h_swish", "h_swish"],
+                "use_se": [False, False, True, False, True, True],
+                "primitive_type": "mobilenet_v3_block",
+            },
+        }
+    ],
+)
 def test_genprof(case):
     from aw_nas.common import get_search_space, genotype_from_str
     from aw_nas.hardware.base import MixinProfilingSearchSpace
     from aw_nas.hardware.utils import Prim, assemble_profiling_nets
     from aw_nas.rollout.general import GeneralSearchSpace
+
     ss = get_search_space("ofa_mixin", **case["search_space_cfg"])
     assert isinstance(ss, MixinProfilingSearchSpace)
     primitives = ss.generate_profiling_primitives(**case["prof_prim_cfg"])
     cfg = case["search_space_cfg"]
-    assert len(primitives) == len(cfg["width_choice"]) * len(cfg["kernel_choice"]) * len(cfg["num_cell_groups"][1:]) * 2
+    assert (
+        len(primitives)
+        == len(cfg["width_choice"])
+        * len(cfg["kernel_choice"])
+        * len(cfg["num_cell_groups"][1:])
+        * 2
+    )
     fields = {f for f in Prim._fields if not f == "kwargs"}
     for prim in primitives:
         assert isinstance(prim, dict)
@@ -98,68 +113,76 @@ def test_genprof(case):
         if isinstance(genotype, str):
             genotype = genotype_from_str(genotype, gss)
         counts += len(genotype)
-        is_channel_consist = [c["C_out"] == n["C"] for c, n in zip(genotype[:-1], genotype[1:])]
+        is_channel_consist = [
+            c["C_out"] == n["C"] for c, n in zip(genotype[:-1], genotype[1:])
+        ]
         assert all(is_channel_consist)
 
         spatial_size = [g["spatial_size"] for g in genotype]
         stride = [g["stride"] for g in genotype]
-        is_size_consist = [round(c_size / s) == n_size for s, c_size, n_size in zip(stride, spatial_size[:-1], spatial_size[1:])]
+        is_size_consist = [
+            round(c_size / s) == n_size
+            for s, c_size, n_size in zip(stride, spatial_size[:-1], spatial_size[1:])
+        ]
         assert all(is_size_consist)
-    
+
     assert counts >= len(primitives)
 
 
-@pytest.mark.parametrize("case", [
-    {
-        "search_space_cfg": {
-            "width_choice": [3, 4, 6],
-            "depth_choice": [2, 3, 4],
-            "kernel_choice": [3, 5, 7],
-            "num_cell_groups": [1, 4, 4, 4, 4, 4],
-            "expansions": [1, 6, 6, 6, 6, 6],
-        },
-        "prof_prim_cfg": {
-            "spatial_size": 112,
-            "base_channels": [16, 16, 24, 32, 64, 96, 160, 320, 1280],
-            "mult_ratio": 1.,
-            "strides": [1, 2, 2, 2, 1, 2],
-            "activation": ["relu", "relu", "relu", "h_swish", "h_swish", "h_swish"],
-            "use_se": [False, False, True, False, True, True],
-            "primitive_type": 'mobilenet_v3_block',
-            "performances": ["latency", ]
-        },
-        "hwobjmodel_type": "ofa",
-        "hwobjmodel_cfg": {},
-        "prof_prim_latencies": [
-            {
-                "prim_type": "mobilenet_v3_block", 
-                "C": 16,
-                "C_out": 24, 
-                "spatial_size": 112, 
-                "expansion": 4, 
-                "use_se": True,
-                "stride": 2,
-                "kernel_size": 3,
-                "activation": "relu",
-                "latency": 12.5
+@pytest.mark.parametrize(
+    "case",
+    [
+        {
+            "search_space_cfg": {
+                "width_choice": [3, 4, 6],
+                "depth_choice": [2, 3, 4],
+                "kernel_choice": [3, 5, 7],
+                "num_cell_groups": [1, 4, 4, 4, 4, 4],
+                "expansions": [1, 6, 6, 6, 6, 6],
             },
-        ],
-    }
-])
+            "prof_prim_cfg": {
+                "spatial_size": 112,
+                "base_channels": [16, 16, 24, 32, 64, 96, 160, 320, 1280],
+                "mult_ratio": 1.0,
+                "strides": [1, 2, 2, 2, 1, 2],
+                "activation": ["relu", "relu", "relu", "h_swish", "h_swish", "h_swish"],
+                "use_se": [False, False, True, False, True, True],
+                "primitive_type": "mobilenet_v3_block",
+                "performances": ["latency",],
+            },
+            "hwobjmodel_type": "ofa",
+            "hwobjmodel_cfg": {},
+            "prof_prim_latencies": [
+                {
+                    "prim_type": "mobilenet_v3_block",
+                    "C": 16,
+                    "C_out": 24,
+                    "spatial_size": 112,
+                    "expansion": 4,
+                    "use_se": True,
+                    "stride": 2,
+                    "kernel_size": 3,
+                    "activation": "relu",
+                    "latency": 12.5,
+                },
+            ],
+        }
+    ],
+)
 def test_gen_model(case):
     from aw_nas.common import get_search_space
     from aw_nas.hardware.base import MixinProfilingSearchSpace
     from aw_nas.hardware.utils import Prim, assemble_profiling_nets
     from aw_nas.rollout.general import GeneralSearchSpace
+
     ss = get_search_space("ofa_mixin", **case["search_space_cfg"])
     assert isinstance(ss, MixinProfilingSearchSpace)
-
 
     prof_prim_latencies = case["prof_prim_latencies"]
 
     hwobj_model = ss.parse_profiling_primitives(
-        prof_prim_latencies,
-        case["prof_prim_cfg"], case["hwobjmodel_cfg"])
+        prof_prim_latencies, case["prof_prim_cfg"], case["hwobjmodel_cfg"]
+    )
 
     for prim, perf in hwobj_model._table.items():
         assert isinstance(prim, Prim)

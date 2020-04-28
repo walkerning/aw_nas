@@ -71,10 +71,7 @@ class OFAHardwareObjectiveModel(BaseHardwareObjectiveModel):
     NAME = "ofa"
 
     def __init__(
-        self,
-        prof_prims,
-        prof_prims_cfg,
-        schedule_cfg=None,
+        self, prof_prims, prof_prims_cfg, schedule_cfg=None,
     ):
         super(OFAHardwareObjectiveModel, self).__init__(schedule_cfg)
         self.default_prim_type = prof_prims_cfg.get(

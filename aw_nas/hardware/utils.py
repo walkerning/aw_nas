@@ -4,7 +4,6 @@ import copy
 import json
 import yaml
 import numpy as np
-import pandas as pd
 
 from collections import namedtuple
 
@@ -78,10 +77,7 @@ def assemble_profiling_nets(
     profiling_primitives = sorted(
         profiling_primitives, key=lambda x: (x["C"], x["stride"])
     )
-    geno_df = pd.DataFrame(profiling_primitives)
     ith_arch = 0
-    max_channal = int(geno_df.iloc[-1, :]["C_out"])
-
     glue_layer = lambda spatial_size, C, C_out, stride=1: {
         "prim_type": "conv_1x1",
         "spatial_size": spatial_size,
@@ -92,16 +88,18 @@ def assemble_profiling_nets(
     }
 
     # use C as the index of df to accelerate query
-    geno_df["idx"] = geno_df.index
-    geno_df["c_idx"] = geno_df["C"]
-    geno_df = geno_df.set_index(["c_idx", "idx"])
+    available_idx = list(range(len(profiling_primitives)))
+    channel_to_idx = {}
+    for i, prim in enumerate(profiling_primitives):
+        channel_to_idx[prim["C"]] = channel_to_idx.get(prim["C"], []) + [i]
+    channel_to_idx = {k: set(v) for k, v in channel_to_idx.items()}
 
-    while len(geno_df) > 0 and ith_arch < sample:
+    while len(available_idx) > 0 and ith_arch < sample:
         ith_arch += 1
         geno = []
 
         # the first conv layer reduing the size of feature map.
-        sampled_prim = geno_df.iloc[0, :]
+        sampled_prim = profiling_primitives[available_idx[0]]
         cur_channel = int(sampled_prim["C"])
         first_cov_op = {
             "prim_type": "conv_3x3",
@@ -115,39 +113,43 @@ def assemble_profiling_nets(
         geno.append(first_cov_op)
 
         for _ in range(max_layers):
-            if len(geno_df) == 0:
+            if len(available_idx) == 0:
                 break
 
             try:
                 # find layer which has exactly same channel number and spatial size with the previous one
-                sampled_prim = (
-                    geno_df.loc[(cur_channel, slice(None)), :]
-                    .query(f"spatial_size == {cur_size}")
-                    .iloc[0]
-                )
+                idx = channel_to_idx[cur_channel]
+                if len(idx) == 0:
+                    raise ValueError
+                for i in idx:
+                    sampled_prim = profiling_primitives[i]
+                    if sampled_prim["spatila_size"] == cur_size:
+                        break
+                else:
+                    raise ValueError
             except:
                 # or find a layer which has arbitrary channel number but has smaller spatial size
                 # we need to assure that spatial size decreases as the layer number (or upsample layer will be needed.)
-                available_layer = geno_df.query(f"spatial_size <= {cur_size}")
-                if len(available_layer) == 0:
+                for i in available_idx:
+                    if profiling_primitives[i]["spatial_size"] <= cur_size:
+                        sampled_prim = profiling_primitives[i]
+                        break
+                else:
                     break
 
-                available_layer = available_layer[
-                    available_layer["spatial_size"]
-                    == available_layer["spatial_size"].max()
-                ].iloc[0]
-                out_channel = int(available_layer["C"])
-                spatial_size = int(available_layer["spatial_size"])
+                out_channel = int(sampled_prim["C"])
+                spatial_size = int(sampled_prim["spatial_size"])
                 stride = int(round(cur_size / spatial_size))
                 assert isinstance(stride, int) and stride > 0, f"stride: {stride}"
                 geno.append(glue_layer(cur_size, cur_channel, out_channel, stride))
-                sampled_prim = available_layer
 
             cur_channel = int(sampled_prim["C_out"])
             cur_size = int(round(sampled_prim["spatial_size"] / sampled_prim["stride"]))
-            geno_df = geno_df.drop(sampled_prim.name)
 
-            geno.append(json.loads(sampled_prim.to_json()))
+            available_idx.remove(i)
+            channel_to_idx[sampled_prim["C"]].remove(i)
+
+            geno.append(sampled_prim)
 
         base_cfg_template["final_model_cfg"]["genotypes"] = geno
         yield copy.deepcopy(base_cfg_template)
