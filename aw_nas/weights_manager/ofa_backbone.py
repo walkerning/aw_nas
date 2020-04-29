@@ -8,6 +8,7 @@ from torch import nn
 
 from aw_nas import Component
 from aw_nas.ops import *
+from aw_nas.ops.baseline_ops import MobileNetV2Block, MobileNetV3Block
 from aw_nas.utils import make_divisible
 from aw_nas.utils.common_utils import _get_channel_mask
 from aw_nas.utils.exception import ConfigException, expect
@@ -38,8 +39,8 @@ class FlexibleMobileNetV2Block(MobileNetV2Block, FlexibleBlock):
         stride,
         kernel_sizes=(3, 5, 7),
         do_kernel_transform=True,
-        activation="relu",
         affine=True,
+        activation="relu",
         schedule_cfg=None,
     ):
         FlexibleBlock.__init__(self, schedule_cfg)
@@ -49,6 +50,7 @@ class FlexibleMobileNetV2Block(MobileNetV2Block, FlexibleBlock):
         self.kernel_sizes = sorted(kernel_sizes)
         self.kernel_size = self.kernel_sizes[-1]
         self.do_kernel_transform = do_kernel_transform
+        self.affine = affine
 
         inv_bottleneck = None
         if expansion != 1:
@@ -79,6 +81,7 @@ class FlexibleMobileNetV2Block(MobileNetV2Block, FlexibleBlock):
             C_out,
             stride,
             self.kernel_size,
+            affine,
             activation,
             inv_bottleneck,
             depth_wise,
@@ -91,14 +94,12 @@ class FlexibleMobileNetV2Block(MobileNetV2Block, FlexibleBlock):
         if expansion != self.expansion:
             filters = self.point_linear[0].weight.data
             mask = _get_channel_mask(filters, self.C * expansion)
-
-            for m in self.modules():
-                if isinstance(m, FlexibleBatchNorm2d):
-                    m.set_mask(mask)
             if self.inv_bottleneck:
                 self.inv_bottleneck[0].set_mask(None, mask)
+                self.inv_bottleneck[1].set_mask(None, mask)
 
             self.depth_wise[0].set_mask(mask, kernel_size)
+            self.depth_wise[1].set_mask(mask, kernel_size)
             self.point_linear[0].set_mask(mask, None)
 
     def forward_rollout(self, inputs, expansion, kernel_size):
@@ -135,6 +136,7 @@ class FlexibleMobileNetV2Block(MobileNetV2Block, FlexibleBlock):
             self.C_out,
             self.stride,
             self.kernel_size,
+            self.affine,
             self.activation,
             inv_bottleneck,
             depth_wise,
@@ -151,8 +153,8 @@ class FlexibleMobileNetV3Block(MobileNetV3Block, FlexibleBlock):
         stride, 
         kernel_sizes=(3, 5, 7), 
         do_kernel_transform=True, 
-        activation="relu",
         affine=True,
+        activation="relu",
         use_se=False,
         schedule_cfg=None
     ):
@@ -167,6 +169,7 @@ class FlexibleMobileNetV3Block(MobileNetV3Block, FlexibleBlock):
         self.kernel_size = self.kernel_sizes[-1]
         self.do_kernel_transform = do_kernel_transform
         self.use_se = use_se
+        self.affine = affine
 
         self.act_fn = get_op(activation)
 
@@ -217,12 +220,11 @@ class FlexibleMobileNetV3Block(MobileNetV3Block, FlexibleBlock):
         if expansion != self.expansion:
             filters = self.point_linear[0].weight.data
             mask = _get_channel_mask(filters, self.C * expansion)
-            for m in self.modules():
-                if isinstance(m, FlexibleBatchNorm2d):
-                    m.set_mask(mask)
             if self.inv_bottleneck:
                 self.inv_bottleneck[0].set_mask(None, mask)
+                self.inv_bottleneck[1].set_mask(mask)
             self.depth_wise[0].set_mask(mask, kernel_size)
+            self.depth_wise[1].set_mask(mask)
             self.point_linear[0].set_mask(mask, None)
             if self.se:
                 self.se.set_mask(mask)
@@ -264,6 +266,7 @@ class FlexibleMobileNetV3Block(MobileNetV3Block, FlexibleBlock):
             self.C_out,
             self.stride,
             self.kernel_size,
+            self.affine,
             self.activation,
             self.use_se,
             inv_bottleneck,
@@ -431,15 +434,16 @@ class MobileNetV2Arch(BaseBackboneArch):
         return self.classifier(out).flatten(1)
 
     def finalize(self, blocks, expansions, kernel_sizes):
-        """
-        this process is irreversible
-        """
+        cells = []
         for i, cell in enumerate(self.cells):
+            cells.append([])
             for j, block in enumerate(cell):
                 if j >= blocks[i]:
                     break
                 block.set_mask(expansions[i][j], kernel_sizes[i][j])
-                self.cells[i][j] = block.finalize()
+                cells[-1].append(block.finalize())
+            cells[-1] = nn.ModuleList(cells[-1])
+        self.cells = nn.ModuleList(cells)
         return self
 
 
@@ -585,7 +589,7 @@ class MobileNetV3Arch(BaseBackboneArch):
         out = self.conv_head(out)
         out = out.mean(3, keepdim=True).mean(2, keepdim=True)
         out = self.conv_final(out)
-        out = torch.squeeze(out)
+        out = torch.flatten(out, 1)
         return self.classifier(out)
 
     def finalize(self, blocks, expansions, kernel_sizes):

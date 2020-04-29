@@ -108,6 +108,28 @@ awnas derive
 CNNGenotype(normal_0=[('dil_conv_3x3', 1, 2), ('skip_connect', 1, 2), ('sep_conv_3x3', 0, 3), ('sep_conv_3x3', 2, 3), ('skip_connect', 3, 4), ('sep_conv_3x3', 0, 4), ('sep_conv_5x5', 1, 5), ('sep_conv_5x5', 0, 5)], reduce_1=[('max_pool_3x3', 0, 2), ('dil_conv_5x5', 0, 2), ('avg_pool_3x3', 1, 3), ('avg_pool_3x3', 2, 3), ('sep_conv_5x5', 1, 4), ('avg_pool_3x3', 1, 4), ('sep_conv_3x3', 1, 5), ('dil_conv_5x5', 3, 5)], normal_0_concat=[2, 3, 4, 5], reduce_1_concat=[2, 3, 4, 5])
 ```
 
+### Plugin mechanism
+
+
+## Hardware related: Hardware profiling and parsing
+
+TODO: insert a good-looking figure, and describe the interface files
+
+`aw_nas` provide a command-line interface `awnas-hw` to orchestrate the hardware-related objective (e.g., latency, energy, etc.) profiling and parsing flow. A complete workflow example is illustrated as follows.
+
+TODO: a complete step-by-step example
+
+`BaseHardwareObjectiveModel`
+
+### Implement the interface for new search spaces
+We provide a mixin class `ProfilingSearchSpace`. This interface has two methods that must be implemented:
+* `generate_profiling_primitives`: profiling cfgs => return the profiling primitive list
+* `parse_profiling_primitives`: primitive hw-related objective list, profiling/hwobj model cfgs => hwobj model
+
+You might need to implement the hardware-related objective model class for the new search space. You can reuse some codes in `aw_nas/hardware/hw_obj_models`.
+
+### Implement the interface for new hardwares
+To implement hardware-specific compilation and parsing process, create a new class inheriting `BaseHardwareCompiler`, implement the `compile` and `hwobj_net_to_primitive` methods. As stated before, you can put your new hardware implementation python file into the `AWNAS_HOME/plugins`, to make it accessible by `aw_nas`.
 
 ## Develop New Components
 
