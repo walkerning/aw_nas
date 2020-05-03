@@ -438,6 +438,9 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
             self.diag_all_inner_c_accs = []
             self.diag_all_inner_c_losses = []
 
+        # for plateau lr scheduler
+        self.plateau_scheduler_loss = []
+
     # ---- APIs ----
     @classmethod
     def supported_data_types(cls):
@@ -679,6 +682,8 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
 
         del all_gradients
 
+        if isinstance(self.mepa_scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+            self.plateau_scheduler_loss.append(report_stats[0][1])
         # return stats
         return OrderedDict(zip(
             utils.flatten_list(["reward", "loss", self._perf_names]),
@@ -693,7 +698,13 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
 
         if not self.schedule_every_batch:
             # scheduler step is 0-based, epoch of aw_nas components is 1-based
-            self._scheduler_step(epoch - 1, log=True)
+            if isinstance(self.mepa_scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                if len(self.plateau_scheduler_loss) > 0:
+                    self._scheduler_step(np.mean(self.plateau_scheduler_loss), log=True)
+                    self.plateau_scheduler_loss = []
+            else:
+                self._scheduler_step(epoch - 1, log=True)
+
         else:
             self._scheduler_step(self.step, log=True)
 
@@ -1132,7 +1143,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
         lr_str = ""
         if self.mepa_scheduler is not None:
             self.mepa_scheduler.step(step)
-            lr_str += "mepa LR: {:.5f}; ".format(self.mepa_scheduler.get_lr()[0])
+            lr_str += "mepa LR: {:.5f}; ".format(self.mepa_optimizer.param_groups[0]['lr'])
         if self.surrogate_scheduler is not None:
             self.surrogate_scheduler.step(step)
             lr_str += "surrogate LR: {:.5f};".format(self.surrogate_scheduler.get_lr()[0])

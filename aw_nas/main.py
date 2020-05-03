@@ -510,7 +510,9 @@ def eval_arch(cfg_file, arch_file, load, gpu, seed, save_plot, save_state_dict, 
 @click.option("--seed", default=None, type=int,
               help="the random seed to run training")
 @click.option("--dump-mode", default="str", type=click.Choice(["list", "str"]))
-def derive(cfg_file, load, out_file, n, save_plot, test, steps, gpu, seed, dump_mode):
+@click.option("--runtime-save", default=False, type=bool, is_flag=True,
+              help="If false, the results are saved after all rollouts tested")
+def derive(cfg_file, load, out_file, n, save_plot, test, steps, gpu, seed, dump_mode, runtime_save):
     LOGGER.info("CWD: %s", os.getcwd())
     LOGGER.info("CMD: %s", " ".join(sys.argv))
 
@@ -562,7 +564,10 @@ def derive(cfg_file, load, out_file, n, save_plot, test, steps, gpu, seed, dump_
         LOGGER.info("Loading from disk...")
         trainer.setup(load=load)
         LOGGER.info("Deriving and testing...")
-        rollouts = trainer.derive(n, steps)
+        if runtime_save:
+            rollouts = trainer.derive(n, steps, out_file=out_file)
+        else:
+            rollouts = trainer.derive(n, steps)
         accs = [r.get_perf() for r in rollouts]
         idxes = np.argsort(accs)[::-1]
         with open(out_file, "w") as of:

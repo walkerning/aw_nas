@@ -216,12 +216,23 @@ class NasBench201RSController(BaseController):
         self.deiso = deiso
         base_dir = os.path.join(utils.get_awnas_dir("AWNAS_DATA", "data"), "nasbench-201")
         if self.deiso:
+            fo = open(os.path.join(base_dir, "non-isom{}.txt".format(self.num_op_choices)))
+            self.lines = fo.readlines()
+            fo.close()
+            arch_num_list = [106, 1093, 6466]
+            self.arch_num = arch_num_list[self.num_op_choices - 3]
+        elif self.avoid_repeat and self.num_op_choices != 5:
             fo = open(os.path.join(base_dir, "isom{}.txt".format(self.num_op_choices)))
             self.lines = fo.readlines()
             fo.close()
-            arch_num_list = [106, 1093, 5833]
+            arch_num_list = [729, 4096]
             self.arch_num = arch_num_list[self.num_op_choices - 3]
-           
+
+    def random_sample_nonisom(self):
+        ind = np.random.randint(low=0, high=self.arch_num)
+        arch = self.search_space.str2matrix(self.lines[ind].strip())
+        return NasBench201Rollout(arch, self.search_space)
+
     def check_valid_arch(self, arch):
         valid_arch = False
         valid_input = [0]
@@ -244,7 +255,7 @@ class NasBench201RSController(BaseController):
     def sample(self, n=1, batch_size=None):
         rollouts = []
         if self.avoid_repeat:
-            if self.deiso:
+            if self.deiso or self.num_op_choices != 5:
                 assert n == self.arch_num
                 for i in range(n):
                     line = self.lines[i].strip()
@@ -256,11 +267,11 @@ class NasBench201RSController(BaseController):
             return rollouts
         if self.fair:
             assert n == self.num_op_choices
-            archs = np.zeros(self.num_ops, self.num_op_choices)
+            archs = np.zeros([self.num_ops, self.num_op_choices])
             for i in range(self.num_ops):
                 archs[i, :] = np.random.permutation(np.arange(self.num_op_choices))
             for i in range(self.num_op_choices):
-                arch = np.zeros(self.num_vertices, self.num_vertices)
+                arch = np.zeros([self.num_vertices, self.num_vertices])
                 ind = 0
                 for from_ in range(self.num_vertices - 1):
                     for to_ in range(from_ + 1, self.num_vertices):
@@ -271,7 +282,10 @@ class NasBench201RSController(BaseController):
             return rollouts
         for i in range(n):
             while 1:
-                new_rollout = self.search_space.random_sample()
+                if self.deiso:
+                    new_rollout = self.random_sample_nonisom()
+                else:
+                    new_rollout = self.search_space.random_sample()
                 if self.check_valid_arch(new_rollout.arch) or not self.check_valid:
                     rollouts.append(new_rollout)
                     break
@@ -826,6 +840,11 @@ class NB201CandidateNet(CandidateNet):
         self.genotype_arch = rollout.arch
         self.genotype = rollout.genotype
  
+    def reset_flops(self):
+        self._flops_calculated = False
+        self.total_flops = 0
+        self.super_net.reset_flops()
+
     def get_device(self):
         return self._device
 

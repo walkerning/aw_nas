@@ -9,6 +9,8 @@ from __future__ import division
 from functools import partial
 from collections import OrderedDict
 import imageio
+import os
+import yaml
 
 import numpy as np
 import torch
@@ -374,17 +376,45 @@ class SimpleTrainer(BaseTrainer):
         self.controller.summary(rollouts, log=True, log_prefix="Rollouts Info: ", step=self.epoch)
         return rollouts
 
-    def derive(self, n, steps=None):
+    def derive(self, n, steps=None, out_file=None):
         # # some scheduled value will be used in test too, e.g. surrogate_lr, gumbel temperature...
         # called in `load` method already
         # self.on_epoch_start(self.epoch)
         with self.controller.begin_mode("eval"):
             rollouts = self.controller.sample(n)
-            for i_sample in range(n):
+            save_dict = {}
+            if out_file:
+                if os.path.exists(out_file):
+                    fin = open(out_file)
+                    lines = fin.readlines()
+                    reward = None
+                    arch = None
+                    for i in range(len(lines)):
+                        if i % 3 == 0:
+                            reward = float(lines[i][lines[i].find("Reward")+7:lines[i].find(")")])
+                        elif i % 3 == 1:
+                            arch = lines[i].strip()[3:-1]
+                        else:
+                            save_dict[arch] = reward
+                    fin.close()
+                    os.system("cp {} {}".format(out_file, out_file+".tmp"))
+                fo = open(out_file, 'w')
+            for i_sample in range(len(rollouts)):
+                if out_file and rollouts[i_sample].genotype in save_dict.keys():
+                    fo.write("# ---- Arch {} (Reward {}) ----\n".format(i_sample, save_dict[rollouts[i_sample].genotype]))
+                    yaml.safe_dump([str(rollouts[i_sample].genotype)], fo)
+                    fo.write("\n")
+                    continue
                 rollouts[i_sample] = self.evaluator.evaluate_rollouts([rollouts[i_sample]],
                                                                       is_training=False,
                                                                       eval_batches=steps)[0]
                 print("Finish test {}/{}\r".format(i_sample+1, n), end="")
+                if out_file:
+                    fo.write("# ---- Arch {} (Reward {}) ----\n".format(i_sample, rollouts[i_sample].get_perf()))
+                    yaml.safe_dump([str(rollouts[i_sample].genotype)], fo)
+                    fo.write("\n")
+            if out_file:
+                fo.close()
         return rollouts
 
     def save(self, path):
