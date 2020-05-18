@@ -55,7 +55,7 @@ class BaseTrainer(Component):
         """
 
     @abc.abstractmethod
-    def derive(self, n, steps=None):
+    def derive(self, n, steps=None, out_file=None):
         """
         Derive some architectures.
         """

@@ -164,7 +164,7 @@ class ArchNetworkTrainer(BaseTrainer):
     def test(self):
         pass
 
-    def derive(self, n, steps=None):
+    def derive(self, n, steps=None, out_file=None):
         pass
 
     def _save_path(self, name=""):

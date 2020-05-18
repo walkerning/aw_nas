@@ -7,6 +7,7 @@ import re
 import six
 import copy
 import random
+import pickle
 import collections
 from collections import defaultdict
 
@@ -199,7 +200,7 @@ class NasBench201Rollout(BaseRollout):
 class NasBench201RSController(BaseController):
     NAME = "nasbench-201-rs"
 
-    def __init__(self, search_space, device, rollout_type="nasbench-201", mode="eval", check_valid=True, avoid_repeat=False, fair=False, deiso=False,
+    def __init__(self, search_space, device, rollout_type="nasbench-201", mode="eval", check_valid=True, avoid_repeat=False, fair=False, deiso=False, op_type=0, pickle_file="", text_file="",
                  schedule_cfg=None):
         super(NasBench201RSController, self).__init__(
             search_space, rollout_type, mode, schedule_cfg)
@@ -214,19 +215,17 @@ class NasBench201RSController(BaseController):
         self.avoid_repeat = avoid_repeat
         self.fair = fair
         self.deiso = deiso
-        base_dir = os.path.join(utils.get_awnas_dir("AWNAS_DATA", "data"), "nasbench-201")
-        if self.deiso:
-            fo = open(os.path.join(base_dir, "non-isom{}.txt".format(self.num_op_choices)))
+        self.pickle_file = pickle_file
+        self.text_file = text_file
+        if self.text_file:
+            fo = open(self.text_file)
             self.lines = fo.readlines()
             fo.close()
-            arch_num_list = [106, 1093, 6466]
-            self.arch_num = arch_num_list[self.num_op_choices - 3]
-        elif self.avoid_repeat and self.num_op_choices != 5:
-            fo = open(os.path.join(base_dir, "isom{}.txt".format(self.num_op_choices)))
-            self.lines = fo.readlines()
+            self.arch_num = len(self.lines)
+        elif self.pickle_file:
+            fo = open(self.pickle_file, "rb")
+            self.lines = pickle.load(fo)
             fo.close()
-            arch_num_list = [729, 4096]
-            self.arch_num = arch_num_list[self.num_op_choices - 3]
 
     def random_sample_nonisom(self):
         ind = np.random.randint(low=0, high=self.arch_num)
@@ -260,6 +259,9 @@ class NasBench201RSController(BaseController):
                 for i in range(n):
                     line = self.lines[i].strip()
                     rollouts.append(NasBench201Rollout(self.search_space.str2matrix(line), self.search_space))
+            elif self.pickle_file:
+                for line in self.lines:
+                    rollouts.append(NasBench201Rollout(line[0], self.search_space))
             else:
                 indexes = np.random.choice(np.arange(15625), size=n, replace=False)
                 for i in indexes:
@@ -284,6 +286,8 @@ class NasBench201RSController(BaseController):
             while 1:
                 if self.deiso:
                     new_rollout = self.random_sample_nonisom()
+                elif self.pickle_file:
+                    new_rollout = NasBench201Rollout(self.lines[np.random.randint(0, len(self.lines))][0], self.search_space)
                 else:
                     new_rollout = self.search_space.random_sample()
                 if self.check_valid_arch(new_rollout.arch) or not self.check_valid:
@@ -777,11 +781,23 @@ class NB201SharedCell(nn.Module):
 
     def forward(self, inputs, genotype):
         states_ = [inputs]
+        valid_input = [0]
+        for to_ in range(1, self.search_space.num_vertices):
+            for input_ in valid_input:
+                if genotype[to_][input_] > 0:
+                    valid_input.append(to_)
+                    break
+        valid_output = [self.search_space.num_vertices - 1]
+        for from_ in range(self.search_space.num_vertices - 2, -1, -1):
+            for output_ in valid_output:
+                if genotype[output_][from_] > 0:
+                    valid_output.append(from_)
         for to_ in range(1, self._vertices):
-            state_ = 0.
+            state_ = torch.zeros(inputs.shape).to(inputs.device)
             for from_ in range(to_):
-                out = self.edges[from_][to_](states_[from_], int(genotype[to_][from_]))
-                state_ = state_ + out
+                if from_ in valid_input and to_ in valid_output:
+                    out = self.edges[from_][to_](states_[from_], int(genotype[to_][from_]))
+                    state_ = state_ + out
             states_.append(state_)
         return states_[-1]
 
