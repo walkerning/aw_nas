@@ -25,9 +25,11 @@ from aw_nas.rollout.base import BaseRollout
 from aw_nas.evaluator.base import BaseEvaluator
 from aw_nas.controller.base import BaseController
 from aw_nas.evaluator.arch_network import ArchEmbedder
-from aw_nas.utils import DenseGraphSimpleOpEdgeFlow, data_parallel, use_params
+from aw_nas.utils import DenseGraphSimpleOpEdgeFlow, DenseGraphConvolution, data_parallel, use_params
 from aw_nas.weights_manager.base import BaseWeightsManager, CandidateNet
 from aw_nas.final.base import FinalModel
+
+VERTICES = 4
 
 
 class NasBench201SearchSpace(SearchSpace):
@@ -518,6 +520,74 @@ class NasBench201SAController(BaseController):
 
 
 # ---- embedders for NASBench-201 ----
+class NasBench201_LineGraphEmbedder(ArchEmbedder):
+    NAME = "nb201-linegcn"
+
+    def __init__(self, search_space, op_embedding_dim=48, hid_dim=96,
+                 gcn_out_dims=[128, 128], dropout=0.,
+                 gcn_kwargs=None,
+                 use_bn=False,
+                 use_cat=False,
+                 schedule_cfg=None):
+        super(NasBench201_LineGraphEmbedder, self).__init__(schedule_cfg)
+
+        self.search_space = search_space
+
+        # configs
+        self.op_embedding_dim = op_embedding_dim
+        self.hid_dim = hid_dim
+        self.gcn_out_dims = gcn_out_dims
+        self.use_bn = use_bn
+        self.dropout = dropout
+        self.use_cat = use_cat
+
+        self.vertices = self.search_space.num_vertices
+        self.num_op_choices = self.search_space.num_op_choices
+
+        self.op_emb = nn.Embedding(self.num_op_choices, self.op_embedding_dim)
+        self.x_hidden = nn.Linear(self.op_embedding_dim, self.hid_dim)
+
+        # init graph convolutions
+        self.gcns = []
+        self.bns = []
+        in_dim = self.hid_dim
+        for dim in self.gcn_out_dims:
+            self.gcns.append(DenseGraphConvolution(in_dim, dim, **(gcn_kwargs or {})))
+            in_dim = dim
+            if self.use_bn:
+                self.bns.append(nn.BatchNorm1d(self.vertices))
+        self.gcns = nn.ModuleList(self.gcns)
+        if self.use_bn:
+            self.bns = nn.ModuleList(self.bns)
+        self.num_gcn_layers = len(self.gcns)
+        self.out_dim = in_dim * (1 if not self.use_cat else 6)
+
+        adj = torch.tensor(
+            np.array([[0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0],
+                      [1, 0, 0, 0, 0, 0], [1, 0, 0, 0, 0, 0], [0, 1, 0, 1, 0, 0]],
+                     dtype=np.float32))
+        self.register_buffer("adj", adj)
+        self.idx = list(zip(*[[1, 0], [2, 0], [3, 0], [2, 1], [3, 1], [3, 2]]))
+
+    def embed_and_transform_arch(self, archs):
+        op_inds = self.op_emb.weight.new([arch[self.idx] for arch in archs]).long()
+        embs = self.op_emb(op_inds) # batch_size x 6 x op_embedding_dim
+        b_size = embs.shape[0]
+        x = self.x_hidden(embs)
+        adjs = self.adj.unsqueeze(0).repeat([b_size, 1, 1])
+        return adjs, x
+
+    def forward(self, archs):
+        adjs, x = self.embed_and_transform_arch(archs)
+        y = x
+        for i_layer, gcn in enumerate(self.gcns):
+            y = gcn(y, adjs)
+            if i_layer != self.num_gcn_layers - 1:
+                y = F.relu(y)
+            y = F.dropout(y, self.dropout, training=self.training)
+        return y.reshape(y.shape[0], -1) if self.use_cat else torch.mean(y, dim=1)
+
+
 class NasBench201_LSTMSeqEmbedder(ArchEmbedder):
     NAME = "nb201-lstm"
 

@@ -7,7 +7,14 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 from torch.autograd import Variable
-from torchvision.ops import nms
+import torchvision
+try:
+    from torchvision.ops import nms
+except ModuleNotFoundError:
+    from aw_nas.utils import log as _log
+    _log.logger.getChild("ssd").warn(
+        "Detection task functionalities cannot be used, update torchvision version to >=0.4.0. "
+        "current: %s", str(torchvision.__version__))
 
 from aw_nas.objective.base import BaseObjective
 from aw_nas.utils.torch_utils import accuracy

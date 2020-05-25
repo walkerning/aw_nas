@@ -14,6 +14,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
+import nasbench
 from nasbench import api
 from nasbench.lib import graph_util, config
 
@@ -814,6 +815,128 @@ class NasBench101_SimpleSeqEmbedder(ArchEmbedder):
             x_2 = np.array([arch[1] for arch in archs])
             x = np.concatenate([x_1, x_2], axis=-1)
         return self._placeholder_tensor.new(x)
+
+class NasBench101ReNASEmbedder(ArchEmbedder):
+    NAME = "nb101-renas"
+
+    def __init__(self, search_space, use_type_matrix_only=False, schedule_cfg=None):
+        super(NasBench101ReNASEmbedder, self).__init__(schedule_cfg)
+
+        self.search_space = search_space
+        self.use_type_matrix_only = use_type_matrix_only
+        # calculate FLOPs of each cell
+        self.conv1 = nn.Conv2d(1 if self.use_type_matrix_only else 19,
+                                38, kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm2d(38)
+        self.conv2 = nn.Conv2d(38, 128, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm2d(128)
+        self.out_dim = 6272 # 128 * 7 * 7
+
+        # for now, i hard code these infos...
+        # 0 -> 2, 1 -> 3, 2 -> 4, 3(none) -> 0
+        self.op_ind_map = np.array([2, 3, 4, 0])
+        self.kernel_mul = np.array([0, 0, 1, 9, 0, 0]) # 1x1, 3x3 conv
+
+    def _calculate_flops(self, op_ind):
+        pass
+
+    def _compute_vertex_channels(self, input_channels, output_channels, matrix):
+        """Copied from nasbench.lib.model_builder
+
+        Computes the number of channels at every vertex.
+
+        Given the input channels and output channels, this calculates the number of
+        channels at each interior vertex. Interior vertices have the same number of
+        channels as the max of the channels of the vertices it feeds into. The output
+        channels are divided amongst the vertices that are directly connected to it.
+        When the division is not even, some vertices may receive an extra channel to
+        compensate.
+
+        Args:
+          input_channels: input channel count.
+          output_channels: output channel count.
+          matrix: adjacency matrix for the module (pruned by model_spec).
+
+        Returns:
+          list of channel counts, in order of the vertices.
+        """
+        num_vertices = np.shape(matrix)[0]
+
+        vertex_channels = [0] * num_vertices
+        vertex_channels[0] = input_channels
+        vertex_channels[num_vertices - 1] = output_channels
+        # if num_vertices == 2:
+        #     # Edge case where module only has input and output vertices
+        #   return vertex_channels
+
+        # Compute the in-degree ignoring input, axis 0 is the src vertex and axis 1 is
+        # the dst vertex. Summing over 0 gives the in-degree count of each vertex.
+        in_degree = np.sum(matrix[1:], axis=0)
+        interior_channels = output_channels // in_degree[num_vertices - 1]
+        correction = output_channels % in_degree[num_vertices - 1]  # Remainder to add
+
+        # Set channels of vertices that flow directly to output
+        for v in range(1, num_vertices - 1):
+            if matrix[v, num_vertices - 1]:
+                vertex_channels[v] = interior_channels
+                if correction:
+                    vertex_channels[v] += 1
+                    correction -= 1
+
+        # Set channels for all other vertices to the max of the out edges, going
+        # backwards. (num_vertices - 2) index skipped because it only connects to
+        # output.
+        for v in range(num_vertices - 3, 0, -1):
+            if not matrix[v, num_vertices - 1]:
+                for dst in range(v + 1, num_vertices - 1):
+                    if matrix[v, dst]:
+                        vertex_channels[v] = max(vertex_channels[v], vertex_channels[dst])
+                        assert vertex_channels[v] > 0
+
+        # Sanity check, verify that channels never increase and final channels add up.
+        final_fan_in = 0
+        for v in range(1, num_vertices - 1):
+            if matrix[v, num_vertices - 1]:
+                final_fan_in += vertex_channels[v]
+            for dst in range(v + 1, num_vertices - 1):
+                if matrix[v, dst]:
+                    assert vertex_channels[v] >= vertex_channels[dst]
+        assert final_fan_in == output_channels or num_vertices == 2
+        # num_vertices == 2 means only input/output nodes, so 0 fan-in
+
+        return vertex_channels
+
+    def embed_and_transform_arch(self, archs):
+        arch_feats = []
+        for arch in archs:
+            op_inds = np.concatenate([[1], self.op_ind_map[arch[1]], [5]])
+            if not self.use_type_matrix_only:
+                features = []
+                for c_pair in [(128, 128), (128, 256), (256, 256), (256, 512), (512, 512)]:
+                    # o_cs = nasbench.lib.model_builder.compute_vertex_channels(*c_pair, arch[0])
+                    o_cs = self._compute_vertex_channels(*c_pair, arch[0])
+                    # the ReNAS paper do not specifiy how they handle this
+                    spatial_sz = 28 / (c_pair[1] // 128)
+                    spatial_mul = spatial_sz * spatial_sz
+                    params = self.kernel_mul[op_inds] * arch[0] * o_cs * o_cs 
+                    # add 1x1 projection params/flops from the input node
+                    params[0] = params[0] + arch[0][0] * o_cs[0] * o_cs # 1x1
+                    flops = params * spatial_mul
+                    features.append([flops, params])
+                arch_feats.append(np.stack([
+                    op_inds * arch[0]] +\
+                    features[0] * 3 + features[1] + features[2] * 2 +\
+                    features[3] + features[4] * 2))
+            else:
+                arch_feats.append(np.expand_dims(op_inds * arch[0], axis=0))
+        ims = torch.FloatTensor(np.stack(arch_feats)).to(self.conv1.weight.device)
+        return ims
+
+    def forward(self, archs):
+        ims = self.embed_and_transform_arch(archs)
+        ims = F.relu(self.bn2(self.conv2(F.relu(self.bn1(self.conv1(ims))))))
+        return ims.reshape([ims.shape[0], -1])
+
 
 class NasBench101ArchEmbedder(ArchEmbedder):
     NAME = "nb101-gcn"

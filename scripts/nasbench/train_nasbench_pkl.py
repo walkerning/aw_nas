@@ -341,7 +341,14 @@ def valid(val_loader, model, args, funcs=[]):
     model.eval()
     all_scores = []
     true_accs = []
+    if args.save_emb:
+        logging.info("embedding dimension: %d", model.arch_embedder.out_dim)
+        all_embs = np.zeros((0, model.arch_embedder.out_dim), dtype=np.float32)
+
     for step, (archs, accs, _) in enumerate(val_loader):
+        if args.save_emb:
+            all_embs = np.concatenate(
+                (all_embs, model.arch_embedder(archs).detach().cpu().numpy()), axis=0)
         scores = list(model.predict(archs).cpu().data.numpy())
         all_scores += scores
         true_accs += list(accs)
@@ -349,6 +356,9 @@ def valid(val_loader, model, args, funcs=[]):
     if args.save_predict is not None:
         with open(args.save_predict, "wb") as wf:
             pickle.dump((true_accs, all_scores), wf)
+    if args.save_emb is not None:
+        with open(args.save_emb, "wb") as wf:
+            pickle.dump((all_embs, true_accs), wf)
 
     corr = stats.kendalltau(true_accs, all_scores).correlation
     funcs_res = [func(true_accs, all_scores) for func in funcs]
@@ -372,6 +382,7 @@ def main(argv):
                         help=("for pairwise compartor, the evaluation is slow,"
                               " only evaluate in the final epochs"))
     parser.add_argument("--save-predict", default=None, help="Save the predict scores")
+    parser.add_argument("--save-emb", default=None, help="Save the arch embedding")
     parser.add_argument("--valfile", default=None, help="Specificy another validation arch pikle file")
     parser.add_argument("--valhash", default=False, action="store_true")
     args = parser.parse_args(argv)
