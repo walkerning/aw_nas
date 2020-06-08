@@ -448,7 +448,8 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
 
     @classmethod
     def supported_rollout_types(cls):
-        return ["discrete", "differentiable", "compare", "ofa"]
+        return ["discrete", "differentiable", "compare", "ofa"] +\
+            cls.registered_supported_rollouts_()
 
     def suggested_controller_steps_per_epoch(self):
         return len(self.controller_queue)
