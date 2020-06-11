@@ -17,6 +17,7 @@ import click
 import numpy as np
 import scipy
 import scipy.signal
+import torch
 
 from aw_nas.utils.registry import RegistryMeta
 from aw_nas.utils.exception import expect, ConfigException
@@ -160,17 +161,16 @@ class Ticker(object):
     def __init__(self, name):
         self.name = name
         self.total_time = 0.
-        self.cur_time = None
-        self.tick()
+        self.cur_time = time.time()
         self.logger = _logger.getChild("ticker_{}".format(name))
 
     def tick(self, message=""):
         cur_time = time.time()
-        if self.cur_time is not None:
-            elapsed = cur_time - self.cur_time
-            self.logger.debug("Ticker %s: %s: %.6f s", self.name, message, elapsed)
-            self.total_time += elapsed
+        elapsed = cur_time - self.cur_time
+        self.logger.debug("Ticker %s: %s: %.6f s", self.name, message, elapsed)
+        self.total_time += elapsed
         self.cur_time = cur_time
+        return elapsed
 
 class OrderedStats(object):
     def __init__(self):
@@ -217,6 +217,21 @@ class keydefaultdict(collections.defaultdict): #pylint: disable=invalid-name
             raise KeyError(key)
         ret = self[key] = self.default_factory(key) #pylint: disable=not-callable
         return ret
+
+def tick(register_attr):
+    def _timer(func):
+        @functools.wraps(func)
+        def method(self, *args, **kwargv):
+            torch.cuda.synchronize()
+            start = time.time()
+            out = func(self, *args, **kwargv)
+            torch.cuda.synchronize()
+            elapse = time.time() - start
+            elapse *= 1000
+            object.__setattr__(self, register_attr, elapse)
+            return out
+        return method
+    return _timer
 
 
 ## --- math utils ---

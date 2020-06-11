@@ -6,6 +6,7 @@ A general model whose architecture is described by a genotype.
 from __future__ import print_function
 
 import re
+import timeit
 from collections import defaultdict
 
 import copy
@@ -19,7 +20,7 @@ from aw_nas.ops import get_op
 from aw_nas.common import genotype_from_str, group_and_sort_by_to_node
 from aw_nas.final.base import FinalModel
 from aw_nas.utils.exception import expect, ConfigException
-from aw_nas.utils.common_utils import Context
+from aw_nas.utils.common_utils import Context, tick, Ticker
 
 
 class GeneralGenotypeModel(FinalModel):
@@ -35,18 +36,23 @@ class GeneralGenotypeModel(FinalModel):
         else:
             self.genotypes = copy.deepcopy(genotypes)
         model = []
-        for geno in self.genotypes:
+        for geno in copy.deepcopy(self.genotypes):
             op = geno.pop("prim_type")
             geno.pop("spatial_size")
             model += [get_op(op)(**geno)]
-        self.model = nn.Sequential(*model)
+
+        self.model = nn.ModuleList(model)
 
         self.model.apply(utils.init_weight)
-
         self.model.to(self.device)
 
-    def forward(self, inputs):
-        return self.model(inputs)
+    def forward(self, inputs, callback=None):
+        for sub_m in self.model:
+            out = sub_m(inputs)
+            if callback:
+                callback(inputs, out, sub_m)
+            inputs = out
+        return out
 
     @classmethod
     def supported_data_types(cls):
