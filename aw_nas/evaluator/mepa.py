@@ -1037,17 +1037,19 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
             # init criterions according to weights manager's rollout type
             rollout_type = self.weights_manager.rollout_type
 
-        if rollout_type == "discrete" or rollout_type == "ofa":
-            self._reward_func = self.objective.get_reward
-            self._reward_kwargs = {}
-            self._scalar_reward_func = self._reward_func
-        elif rollout_type == "differentiable":
+        if rollout_type == "differentiable":
+            # NOTE: only handle differentiable rollout differently
             self._reward_func = partial(self.objective.get_loss,
                                         add_controller_regularization=True,
                                         add_evaluator_regularization=False)
             self._reward_kwargs = {"detach_arch": False}
             self._scalar_reward_func = lambda *args, **kwargs: \
                 utils.get_numpy(self._reward_func(*args, **kwargs))
+        else: # rollout_type in {"discrete", "ofa"} and outer-registered supported rollout types
+            self._reward_func = self.objective.get_reward
+            self._reward_kwargs = {}
+            self._scalar_reward_func = self._reward_func
+
         self._perf_names = self.objective.perf_names()
         # criterion funcs for meta parameter training
         self._mepa_loss_func = partial(self.objective.get_loss,
