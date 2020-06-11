@@ -1,5 +1,7 @@
 import pytest
 
+import torch
+
 
 @pytest.mark.parametrize(
     "case",
@@ -57,6 +59,20 @@ def test_general_rollout(case):
     assert rollout == ss.rollout_from_genotype(case["genotypes"])
 
     model = GeneralGenotypeModel(ss, "cuda", genotype)
+    
+    inputs = torch.rand([1, case["arch"][0]["C"], case["arch"][0]["spatial_size"], case["arch"][0]["spatial_size"]])
+    gpu_performance = model.analyze_elapses(inputs.cuda(), use_cuda=True, forward_time=1)
+    for prim in gpu_performance["primitives"]:
+        print(prim["elapse"])
+        assert prim["elapse"] > 0
+    print(gpu_performance["async_elapse"], gpu_performance["sync_elapse"])
+    assert gpu_performance["async_elapse"] < gpu_performance["sync_elapse"]
+
+    model = model.to("cpu")
+    cpu_performance = model.analyze_elapses(inputs.cpu(), use_cuda=False, forward_time=1)
+    for prim in cpu_performance["primitives"]:
+        assert prim["elapse"] > 0
+    print(cpu_performance["async_elapse"], cpu_performance["sync_elapse"])
 
 
 @pytest.mark.parametrize(
