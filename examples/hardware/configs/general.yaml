@@ -119,10 +119,7 @@ trainer_cfg:
 
 final_model_type: general_final_model
 final_model_cfg:
-  genotypes: "
-    ['avg_pool_3x3', 10, 10, 2, True],
-    ['h_swish', True]
-  "
+  genotypes: '[{"prim_type": "mobilenet_v3_block", "C": 16,"C_out": 24, "spatial_size": 112, "expansion": 4, "use_se": True, "stride": 2, "kernel_size": 3, "activation": "relu"}]'
 
 final_trainer_type: ofa_final_trainer
 final_trainer_cfg:

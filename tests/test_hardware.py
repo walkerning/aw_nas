@@ -2,7 +2,6 @@ import pytest
 
 import torch
 
-
 @pytest.mark.parametrize(
     "case",
     [
@@ -51,6 +50,7 @@ import torch
 def test_general_rollout(case):
     from aw_nas.common import get_search_space
     from aw_nas.final.general_model import GeneralGenotypeModel
+    from aw_nas.hardware.elapse import analyze_elapses
 
     ss = get_search_space("general", primitives=[])
     genotype = ss.genotype(case["arch"])
@@ -59,9 +59,10 @@ def test_general_rollout(case):
     assert rollout == ss.rollout_from_genotype(case["genotypes"])
 
     model = GeneralGenotypeModel(ss, "cuda", genotype)
-    
-    inputs = torch.rand([1, case["arch"][0]["C"], case["arch"][0]["spatial_size"], case["arch"][0]["spatial_size"]])
-    gpu_performance = model.analyze_elapses(inputs.cuda(), use_cuda=True, forward_time=1)
+
+    inputs = torch.rand([1, case["arch"][0]["C"], case["arch"][0]["spatial_size"],
+                         case["arch"][0]["spatial_size"]])
+    gpu_performance = analyze_elapses(model, inputs.cuda(), use_cuda=True, forward_time=1)
     for prim in gpu_performance["primitives"]:
         print(prim["elapse"])
         assert prim["elapse"] > 0
@@ -69,7 +70,7 @@ def test_general_rollout(case):
     assert gpu_performance["async_elapse"] < gpu_performance["sync_elapse"]
 
     model = model.to("cpu")
-    cpu_performance = model.analyze_elapses(inputs.cpu(), use_cuda=False, forward_time=1)
+    cpu_performance = analyze_elapses(model, inputs.cpu(), use_cuda=False, forward_time=1)
     for prim in cpu_performance["primitives"]:
         assert prim["elapse"] > 0
     print(cpu_performance["async_elapse"], cpu_performance["sync_elapse"])

@@ -46,7 +46,6 @@ class GeneralGenotypeModel(FinalModel):
         self.model.apply(utils.init_weight)
         self.model.to(self.device)
 
-    @tick("_forward_elapse")
     def forward(self, inputs, callback=None):
         for sub_m in self.model:
             out = sub_m(inputs)
@@ -54,36 +53,6 @@ class GeneralGenotypeModel(FinalModel):
                 callback(inputs, out, sub_m)
             inputs = out
         return out
-
-    def analyze_elapses(self, inputs, use_cuda=True, forward_time=100):
-        for _ in range(2):
-            self.forward(inputs)
-            torch.cuda.synchronize()
-
-        def callback(inputs, out, model):
-            if use_cuda:
-                torch.cuda.synchronize()
-            elapses.append(ticker.tick() * 1000)
-
-        all_elapses = []
-        async_elapse = 0.
-        sync_elapse = 0.
-        for _ in range(forward_time):
-            ticker = Ticker("general_forward")
-            elapses = []
-            self.forward(inputs, callback=callback)
-            self.forward(inputs)
-            all_elapses.append(elapses)
-            async_elapse += self._forward_elapse
-            sync_elapse += ticker.total_time * 1000
-        mean_elapse = np.array(all_elapses).mean(axis=0)
-        async_elapse /= forward_time
-        sync_elapse /= forward_time
-
-        genotypes = [{"elapse": elapse, **geno} for elapse, geno in zip(mean_elapse, self.genotypes)]
-
-        return {"primitives": genotypes, "async_elapse": async_elapse, "sync_elapse": sync_elapse}
-
 
     @classmethod
     def supported_data_types(cls):
