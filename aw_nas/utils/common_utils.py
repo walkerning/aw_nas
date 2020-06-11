@@ -220,6 +220,7 @@ class keydefaultdict(collections.defaultdict): #pylint: disable=invalid-name
 
 def tick(register_attr):
     def _timer(func):
+        @functools.wraps(func)
         def method(self, *args, **kwargv):
             torch.cuda.synchronize()
             start = time.time()

@@ -13,8 +13,17 @@ import torch
                     "C_out": 24,
                     "spatial_size": 112,
                     "expansion": 6,
-                    "stride": 1,
+                    "stride": 2,
                     "kernel_size": 3,
+                },
+                {
+                    "prim_type": "mobilenet_v2_block",
+                    "C": 24,
+                    "C_out": 24,
+                    "spatial_size": 56,
+                    "expansion": 3,
+                    "stride": 1,
+                    "kernel_size": 5,
                 }
             ],
             "arch": [
@@ -24,8 +33,17 @@ import torch
                     "C_out": 24,
                     "spatial_size": 112,
                     "expansion": 6,
-                    "stride": 1,
+                    "stride": 2,
                     "kernel_size": 3,
+                },
+                {
+                    "prim_type": "mobilenet_v2_block",
+                    "C": 24,
+                    "C_out": 24,
+                    "spatial_size": 56,
+                    "expansion": 3,
+                    "stride": 1,
+                    "kernel_size": 5,
                 }
             ],
         },
@@ -50,7 +68,7 @@ import torch
 def test_general_rollout(case):
     from aw_nas.common import get_search_space
     from aw_nas.final.general_model import GeneralGenotypeModel
-    from aw_nas.hardware.elapse import analyze_elapses
+    from aw_nas.utils.elapse_utils import analyze_elapses
 
     ss = get_search_space("general", primitives=[])
     genotype = ss.genotype(case["arch"])
@@ -66,14 +84,14 @@ def test_general_rollout(case):
     for prim in gpu_performance["primitives"]:
         print(prim["elapse"])
         assert prim["elapse"] > 0
-    print(gpu_performance["async_elapse"], gpu_performance["sync_elapse"])
+    print("GPU elapse: ", gpu_performance["async_elapse"], gpu_performance["sync_elapse"])
     assert gpu_performance["async_elapse"] < gpu_performance["sync_elapse"]
 
     model = model.to("cpu")
     cpu_performance = analyze_elapses(model, inputs.cpu(), use_cuda=False, forward_time=1)
     for prim in cpu_performance["primitives"]:
         assert prim["elapse"] > 0
-    print(cpu_performance["async_elapse"], cpu_performance["sync_elapse"])
+    print("CPU elapse: ", cpu_performance["async_elapse"], cpu_performance["sync_elapse"])
 
 
 @pytest.mark.parametrize(
@@ -126,7 +144,7 @@ def test_genprof(case):
     counts = 0
     for net in nets:
         genotype = net["final_model_cfg"]["genotypes"]
-        assert isinstance(genotype, str) or isinstance(genotype, list)
+        assert isinstance(genotype, (list, str))
         if isinstance(genotype, str):
             genotype = genotype_from_str(genotype, gss)
         counts += len(genotype)
@@ -189,8 +207,7 @@ def test_genprof(case):
 def test_gen_model(case):
     from aw_nas.common import get_search_space
     from aw_nas.hardware.base import MixinProfilingSearchSpace
-    from aw_nas.hardware.utils import Prim, assemble_profiling_nets
-    from aw_nas.rollout.general import GeneralSearchSpace
+    from aw_nas.hardware.utils import Prim
 
     ss = get_search_space("ofa_mixin", **case["search_space_cfg"])
     assert isinstance(ss, MixinProfilingSearchSpace)
