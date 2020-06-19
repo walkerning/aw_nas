@@ -2,6 +2,7 @@
 """Base class definition of OFA Backbone."""
 
 import abc
+import copy
 
 import torch
 from torch import nn
@@ -482,6 +483,7 @@ class MobileNetV2Arch(BaseBackboneArch):
 
     def finalize(self, blocks, expansions, kernel_sizes):
         cells = []
+        finalized_model = copy.deepcopy(self)
         for i, cell in enumerate(self.cells):
             cells.append([])
             for j, block in enumerate(cell):
@@ -490,8 +492,31 @@ class MobileNetV2Arch(BaseBackboneArch):
                 block.set_mask(expansions[i][j], kernel_sizes[i][j])
                 cells[-1].append(block.finalize())
             cells[-1] = nn.ModuleList(cells[-1])
-        self.cells = nn.ModuleList(cells)
-        return self
+        finalized_model.cells = nn.ModuleList(cells)
+        return finalized_model
+
+    def extract_features(self, inputs, p_levels, rollout=None, drop_connect_rate=0.0):
+        out = self.stem(inputs)
+        level_indexes = feature_level_to_stage_index(self.strides)
+        features = []
+        for i, cell in enumerate(self.cells):
+            for j, block in enumerate(cell):
+                if rollout is None:
+                    out = block(out, drop_connect_rate)
+                else:
+                    if j >= rollout.depth[i]:
+                        break
+                    out = block.forward_rollout(
+                        out, rollout.width[i][j], rollout.kernel[i][j], drop_connect_rate
+                    )
+            features.append(out)
+        out = self.conv_head(out)
+        features[-1] = out
+        return [features[level_indexes[p]] for p in p_levels], out
+
+    def get_feature_channel_num(self, p_levels):
+        level_indexes = feature_level_to_stage_index(self.strides)
+        return [self.channels[level_indexes[p]] for p in p_levels]
 
     def get_features(self, inputs, p_levels, rollout=None):
         out = self.stem(inputs)
@@ -676,6 +701,7 @@ class MobileNetV3Arch(BaseBackboneArch):
 
     def finalize(self, blocks, expansions, kernel_sizes):
         cells = []
+        finalized_model = copy.deepcopy(self)
         for i, cell in enumerate(self.cells):
             cells.append([])
             for j, block in enumerate(cell):
@@ -684,22 +710,22 @@ class MobileNetV3Arch(BaseBackboneArch):
                 block.set_mask(expansions[i][j], kernel_sizes[i][j])
                 cells[-1].append(block.finalize())
             cells[-1] = nn.ModuleList(cells[-1])
-        self.cells = nn.ModuleList(cells)
-        return self
+        finalized_model.cells = nn.ModuleList(cells)
+        return finalized_model
 
-    def get_features(self, inputs, p_levels, rollout=None):
+    def extract_features(self, inputs, p_levels, rollout=None, drop_connect_rate=0.0):
         out = self.stem(inputs)
         level_indexes = feature_level_to_stage_index(self.strides)
         features = []
         for i, cell in enumerate(self.cells):
             for j, block in enumerate(cell):
                 if rollout is None:
-                    out = block(out)
+                    out = block(out, drop_connect_rate)
                 else:
                     if j >= rollout.depth[i]:
                         break
                     out = block.forward_rollout(
-                        out, rollout.width[i][j], rollout.kernel[i][j]
+                        out, rollout.width[i][j], rollout.kernel[i][j], drop_connect_rate
                     )
             features.append(out)
         out = self.conv_head(out)

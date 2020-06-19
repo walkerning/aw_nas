@@ -152,7 +152,7 @@ class MNasNetOFARollout(Rollout):
             ).tolist()
             for i, c in enumerate(num_cell_groups)
         ]
-        arch["kernel"] = [
-            [3] + np.random.choice(kernel_choice, size=c - 1).tolist() for c in num_cell_groups
+        arch["kernel"] = [[3]] + [
+            np.random.choice(kernel_choice, size=c).tolist() for c in num_cell_groups[1:]
         ]
         return arch
