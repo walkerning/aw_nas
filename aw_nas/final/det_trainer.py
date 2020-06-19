@@ -21,8 +21,6 @@ from torch.autograd import Variable
 from torch.utils.data.distributed import DistributedSampler
 
 
-
-
 class DetectionFinalTrainer(OFAFinalTrainer): #pylint: disable=too-many-instance-attributes
     NAME = "det_final_trainer"
 

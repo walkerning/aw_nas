@@ -32,7 +32,7 @@ class SSDNorm(nn.Module):
         self.l2norm = ops.L2Norm(channel, scale)
 
     def forward(self, features):
-        ft = self.norm(features[0])
+        ft = self.l2norm(features[0])
         return [ft] + features[1:]
 
 class Extras(nn.Module):

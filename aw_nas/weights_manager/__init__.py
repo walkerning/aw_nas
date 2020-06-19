@@ -14,3 +14,5 @@ from aw_nas.weights_manager.stub import *
 
 from aw_nas.weights_manager.ofa import *
 from aw_nas.weights_manager.ofa_backbone import *
+
+from aw_nas.weights_manager.detection import *

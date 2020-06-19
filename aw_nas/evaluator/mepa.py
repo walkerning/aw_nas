@@ -251,6 +251,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
             rollout_batch_size=1,
             # only for rnn data
             bptt_steps=35,
+            multiprocess=False,
             schedule_cfg=None):
         super(MepaEvaluator, self).__init__(dataset, weights_manager,
                                             objective, rollout_type, schedule_cfg)
@@ -282,6 +283,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
 
         self._data_type = self.dataset.data_type()
         self._device = self.weights_manager.device
+        self.multiprocess = multiprocess
 
         # configs
         self.batch_size = batch_size
@@ -482,6 +484,9 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
         else:
             eval_rollouts = rollouts
 
+        if not self.controller_queue or len(self.controller_queue) == 0:
+            return rollouts
+
         if is_training: # the returned reward will be used for training controller
             # get one data batch from controller queue
             cont_data = next(self.controller_queue)
@@ -589,7 +594,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
 
         if self.use_same_surrogate_data:
             surrogate_data_list = [next(self.surrogate_queue) for _ in range(num_surrogate_step)]
-        holdout_data = next(self.controller_queue) if self.report_cont_data_diagnostics else None
+        holdout_data = next(self.controller_queue) if self.report_cont_data_diagnostics and self.controller_queue else None
 
         for _ in range(self.mepa_samples):
             # surrogate data iterator
@@ -1100,7 +1105,8 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
                                         data_type=self._data_type,
                                         drop_last=self.rollout_batch_size > 1,
                                         shuffle=self.shuffle_data_before_split,
-                                        num_workers=self.workers_per_queue)
+                                        num_workers=self.workers_per_queue,
+                                        multiprocess=self.multiprocess)
         if mepa_as_surrogate:
             # use mepa data queue as surrogate data queue
             self.surrogate_queue = self.mepa_queue

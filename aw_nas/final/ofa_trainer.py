@@ -11,7 +11,17 @@ from aw_nas import utils
 from aw_nas.final.base import FinalTrainer
 from aw_nas.utils.common_utils import nullcontext
 from aw_nas.utils.exception import expect
-from aw_nas.utils import DataParallel
+from aw_nas.utils import DataParallel, DistributedDataParallel
+
+from aw_nas.utils.torch_utils import calib_bn
+
+
+try:
+    from aw_nas.utils.SynchronizedBatchNormPyTorch.sync_batchnorm import (
+        convert_model as convert_sync_bn,
+    )
+except ImportError:
+    convert_sync_bn = lambda m: m
 
 
 def _warmup_update_lr(optimizer, epoch, init_lr, warmup_epochs):
@@ -44,6 +54,7 @@ class OFAFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                  save_as_state_dict=False,
                  workers_per_queue=2,
                  eval_no_grad=True,
+                 calib_bn_setup=True,
                  schedule_cfg=None):
         super(OFAFinalTrainer, self).__init__(schedule_cfg)
 
@@ -72,6 +83,7 @@ class OFAFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
         self.add_regularization = add_regularization
         self.save_as_state_dict = save_as_state_dict
         self.eval_no_grad = eval_no_grad
+        self.calib_bn_setup = calib_bn_setup
 
         # for optimizer
         self.weight_decay = weight_decay
@@ -84,21 +96,23 @@ class OFAFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
 
         _splits = self.dataset.splits()
 
+        train_kwargs = getattr(_splits["train"], "kwargs", {})
+        test_kwargs = getattr(_splits["test"], "kwargs", train_kwargs)
         if self.multiprocess:
             self.train_queue = torch.utils.data.DataLoader(
                 _splits["train"], batch_size=batch_size, pin_memory=True,
                 num_workers=workers_per_queue,
-                sampler=DistributedSampler(_splits["train"], shuffle=True))
+                sampler=DistributedSampler(_splits["train"], shuffle=True), **train_kwargs)
             self.valid_queue = torch.utils.data.DataLoader(
                 _splits["test"], batch_size=batch_size, pin_memory=True,
-                num_workers=workers_per_queue, shuffle=False)
+                num_workers=workers_per_queue, shuffle=False, **test_kwargs)
         else:
             self.train_queue = torch.utils.data.DataLoader(
                 _splits["train"], batch_size=batch_size, pin_memory=True,
-                num_workers=workers_per_queue, shuffle=True)
+                num_workers=workers_per_queue, shuffle=True, **train_kwargs)
             self.valid_queue = torch.utils.data.DataLoader(
                 _splits["test"], batch_size=batch_size, pin_memory=True,
-                num_workers=workers_per_queue, shuffle=False)
+                num_workers=workers_per_queue, shuffle=False, **test_kwargs)
 
         if self.model is not None:
             self.optimizer = self._init_optimizer()
@@ -111,6 +125,9 @@ class OFAFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
         self.report_every = None
         self.train_dir = None
         self._is_setup = False
+
+        if self.calib_bn_setup:
+            self.model = calib_bn(self.model, self.train_queue)
 
     def setup(self, load=None, load_state_dict=None,
               save_every=None, train_dir=None, report_every=50):
@@ -138,6 +155,9 @@ class OFAFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
 
 
     def save(self, path):
+        rank = (os.environ.get("LOCAL_RANK"))
+        if rank is not None and rank != '0':
+            return
         path = utils.makedir(path)
         if self.save_as_state_dict:
             torch.save(self.model.state_dict(), os.path.join(path, "model_state.pt"))
@@ -160,7 +180,7 @@ class OFAFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
             m_path = os.path.join(path, "model_state.pt")
             self._load_state_dict(m_path)
         else:
-            self.model.load_state_dict(torch.load(
+            res = self.model.load_state_dict(torch.load(
                 m_path, map_location=torch.device("cpu")), strict=False)
 
         self.model.to(self.device)
@@ -190,8 +210,7 @@ class OFAFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
         self.logger.info("Last epoch: %d", self.last_epoch)
 
     def train(self):
-        if len(self.gpus) >= 2:
-            self._forward_once_for_flops(self.model)
+        self._forward_once_for_flops(self.model)
         for epoch in range(self.last_epoch+1, self.epochs+1):
             self.epoch = epoch
             self.on_epoch_start(epoch)
@@ -252,23 +271,14 @@ class OFAFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
         if extra_keys:
             self.logger.error("%d extra keys in checkpoint! "
                               "Make sure the genotype match", len(extra_keys))
-        missing_keys = {key for key in set(self.model.state_dict().keys())\
-                        .difference(checkpoint.keys()) \
-                        if "auxiliary" not in key}
-        if missing_keys:
-            self.logger.error(("{} missing keys will not be loaded! Check your genotype, "
-                               "This should be due to you're using the state dict dumped by"
-                               " `awnas eval-arch --save-state-dict` in an old version, "
-                               "and your genotype actually skip some "
-                               "cells, which might means, many parameters of your "
-                               "sub-network is not actually active, "
-                               "and this genotype might not be so effective.")
-                              .format(len(missing_keys)))
-            self.logger.error(str(missing_keys))
-        self.model.load_state_dict(checkpoint, strict=False)
+        mismatch = self.model.load_state_dict(checkpoint, strict=False)
+        self.logger.info(mismatch)
 
     def _parallelize(self):
-        if len(self.gpus) >= 2:
+        if self.multiprocess:
+            net = convert_sync_bn(self.model).to(self.device)
+            self.parallel_model = DistributedDataParallel(net, self.gpus, find_unused_parameters=True)
+        elif len(self.gpus) >= 2:
             self.parallel_model = DataParallel(self.model, self.gpus).to(self.device)
         else:
             self.parallel_model = self.model

@@ -37,16 +37,14 @@ class HeadModel(nn.Module):
         if self.norm:
             features = self.norm(features)
         features = self.extras(features)
-        expect(len(features) == len(self.regression_headers) == len(self.classification_headers),
-            'features and headers must have the exactly same length, got {}, {}, {} instead.'.format(len(features), len(self.regression_headers), len(self.classification_headers)), ValueError)
 
-        confidences = []
-        locations = []
-        for feat, l, c in zip(features, self.regression_headers, self.classification_headers):
-            locations.append(l(feat).permute(0, 2, 3, 1).contiguous())
-            confidences.append(c(feat).permute(0, 2, 3, 1).contiguous())
-        locations = torch.cat([t.view(t.size(0), -1) for t in locations], 1).view(x.shape[0], -1, 4)
-        confidences = torch.cat([t.view(t.size(0), -1) for t in confidences], 1).view(x.shape[0], -1, self.num_classes)
+        batch_size = features[0].shape[0]
+
+        confidences = [feat.permute(0, 2, 3, 1).contiguous() for feat in self.classification_headers(features)]
+        locations = [feat.permute(0, 2, 3, 1).contiguous() for feat in self.regression_headers(features)]
+
+        confidences = torch.cat([t.view(t.size(0), -1) for t in confidences], 1).view(batch_size, -1, self.num_classes)
+        locations = torch.cat([t.view(t.size(0), -1) for t in locations], 1).view(batch_size, -1, 4)
         return confidences, locations
 
     def _init_weights(self):
@@ -90,8 +88,7 @@ class PredictModel(nn.Module):
                 boxes = decoded_boxes[l_mask].view(-1, 4)
                 # idx of highest scoring and non-overlapping boxes per class
                 box_prob = torch.cat([boxes, scores.view(-1, 1)], 1)
-                ids = nms(box_prob.cpu().detach().numpy(),
-                          self.nms_thresh, self.top_k)
+                ids = nms(boxes, scores, self.nms_thresh)
                 output[i][cls_idx] = torch.cat((boxes[ids], scores[ids].unsqueeze(1)), 1)
         return output
 
