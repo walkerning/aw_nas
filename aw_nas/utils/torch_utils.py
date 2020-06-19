@@ -1,3 +1,4 @@
+import copy
 import math
 from contextlib import contextmanager
 
@@ -10,8 +11,10 @@ import torch.nn.functional as F
 import torch.utils.data
 from torch.optim.lr_scheduler import _LRScheduler
 
+from aw_nas.utils.common_utils import AverageMeter
 from aw_nas.utils.exception import expect
 from aw_nas.utils.lr_scheduler import get_scheduler_cls
+from torch.utils.data.distributed import DistributedSampler
 
 
 ## --- model/training utils ---
@@ -492,7 +495,7 @@ def get_inf_iterator(iterable, callback):
     return InfIterator(iterable, [callback])
 
 def prepare_data_queues(splits, queue_cfg_lst, data_type="image", drop_last=False,
-                        shuffle=True, num_workers=2):
+                        shuffle=True, num_workers=2, multiprocess=False):
     """
     Further partition the dataset splits, prepare different data queues.
 
@@ -515,22 +518,25 @@ def prepare_data_queues(splits, queue_cfg_lst, data_type="image", drop_last=Fals
         callback = cfg.get("callback", None)
 
         if portion == 0:
-            queues.append(None)
+            queues.append([])
             continue
 
         used_portion = used_portions[split]
         indices = dset_indices[split]
         size = dset_sizes[split]
+        d_kwargs = getattr(dset_splits[split], 'kwargs', {})
+        subset_indices = indices[int(size*used_portion):int(size*(used_portion+portion))]
         if data_type == "image":
             kwargs = {
                 "batch_size": batch_size,
                 "pin_memory": True,
                 "num_workers": num_workers,
-                "sampler": torch.utils.data.SubsetRandomSampler(
-                    indices[int(size*used_portion):int(size*(used_portion+portion))]),
+                "sampler": torch.utils.data.SubsetRandomSampler(subset_indices) \
+                        if not multiprocess else CustomDistributedSampler(split, subset_indices),
                 "drop_last": drop_last,
-                "timeout": 10
+                "timeout": 0,
             }
+            kwargs.update(d_kwargs)
             queue = get_inf_iterator(torch.utils.data.DataLoader(
                 dset_splits[split], **kwargs), callback)
         else: # data_type == "sequence"
@@ -547,6 +553,7 @@ def prepare_data_queues(splits, queue_cfg_lst, data_type="image", drop_last=Fals
                 "num_workers": 0,
                 "shuffle": False
             }
+            kwargs.update(d_kwargs)
             queue = get_inf_iterator(torch.utils.data.DataLoader(
                 dataset, **kwargs), callback)
 
@@ -651,5 +658,142 @@ def get_numpy(arr):
 def count_parameters(model):
     return sum(p.nelement() for name, p in model.named_parameters() if "auxiliary" not in name)
 
+def _to_device(data, device):
+    if isinstance(data, torch.Tensor):
+        return data.to(device)
+    elif isinstance(data, (tuple, list)):
+        return [_to_device(d, device) for d in data]
+    else:
+        return torch.tensor(data).to(device)
+
 def to_device(datas, device):
-    return [data.to(device) for data in datas]
+    return [_to_device(data, device) for data in datas]
+
+def weights_init(m):
+    if isinstance(m, torch.nn.Conv2d):
+        torch.nn.init.kaiming_uniform_(m.weight.data)
+        if m.bias is not None:
+            torch.nn.init.constant_(m.bias.data, 0)
+    elif isinstance(m, torch.nn.Linear):
+        m.weight.data.normal_(0, 0.01)
+        if m.bias is not None:
+            m.bias.data.zero_()
+
+def unique(tensor, return_indices=False):
+    assert len(tensor.shape) == 1, "Only one dim arrary implemented."
+    idx = []
+    prev = -float("inf")
+    for i, t in enumerate(tensor):
+        if t == prev:
+            continue
+        prev = t
+        idx.append(i)
+    uniqued = tensor[idx]
+    if return_indices:
+        return uniqued, idx
+    return uniqued
+
+
+class CustomDistributedSampler(DistributedSampler):
+    def __init__(self, dataset, indices, *args, **kwargvs):
+        super(CustomDistributedSampler, self).__init__(dataset, *args, **kwargvs)
+        self.indices = indices
+        self.num_samples = int(math.ceil(len(self.indices) * 1.0 / self.num_replicas))
+        self.total_size = self.num_samples * self.num_replicas
+
+    def __iter__(self):
+        # deterministically shuffle based on epoch
+        g = torch.Generator()
+        g.manual_seed(self.epoch)
+        indices = [self.indices[i] for i in torch.randperm(len(self.indices), generator=g)]
+
+        # add extra samples to make it evenly divisible
+        indices += indices[:(self.total_size - len(indices))]
+        assert len(indices) == self.total_size
+
+        # subsample
+        offset = self.num_samples * self.rank
+        indices = indices[offset:offset + self.num_samples]
+        assert len(indices) == self.num_samples
+
+        return iter(indices)
+
+def drop_connect(inputs, p, training):
+    """ Drop connect. """
+    if not training: 
+        return inputs
+    batch_size = inputs.shape[0]
+    keep_prob = 1 - p
+    random_tensor = keep_prob
+    random_tensor += torch.rand([batch_size, 1, 1, 1], dtype=inputs.dtype, device=inputs.device)
+    binary_tensor = torch.floor(random_tensor)
+    output = inputs / keep_prob * binary_tensor
+    return output
+
+def accumulate_bn(inputs, running_means, running_vars):
+    batch_size = inputs.shape[0]
+    batch_mean = inputs.mean(0, keepdim=True).mean(2, keepdim=True).mean(3, keepdim=True)  # 1, C, 1, 1
+    batch_var = (inputs - batch_mean) * (inputs - batch_mean)
+    batch_var = batch_var.mean(0, keepdim=True).mean(2, keepdim=True).mean(3, keepdim=True)
+    
+    batch_mean = torch.squeeze(batch_mean)
+    batch_var = torch.squeeze(batch_var)
+
+    running_means.update(batch_mean.data, batch_size)
+    running_vars.update(batch_var.data, batch_size)
+    return batch_mean, batch_var
+
+def calib_bn(model, data_queue, max_inputs=2000):
+    from aw_nas.ops import FlexibleBatchNorm2d
+    """
+    Adopted from once-for-all.
+    """
+    num_inputs = 0
+    bn_running_mean = {}
+    bn_running_var = {}
+    data_queue = iter(data_queue)
+
+    new_model = copy.deepcopy(model)
+    forward_model = copy.deepcopy(model)
+
+    def forward_factory(bn, running_means, running_vars):
+        def forward(inputs):
+            batch_mean, batch_var = accumulate_bn(inputs, running_means, running_vars)
+            if isinstance(bn, nn.BatchNorm2d):
+                # forward method of an instance of nn.BatchNorm2d in FlexibleBatchNorm will not be called
+                return F.batch_norm(
+                        inputs, batch_mean, batch_var, bn.weight,
+                        bn.bias, False,
+                        0.0, bn.eps,
+                    )
+            elif isinstance(bn, FlexibleBatchNorm2d):
+                return bn.forward_mask(inputs, bn.mask)
+            else:
+                raise ValueError
+        return forward
+
+    for name, m in forward_model.named_modules():
+        if not isinstance(m, (nn.BatchNorm2d, FlexibleBatchNorm2d)):
+            continue
+        bn_running_mean[name] = AverageMeter()
+        bn_running_var[name] = AverageMeter()
+        m.forward = forward_factory(m, bn_running_mean[name], bn_running_var[name])
+
+    with torch.no_grad():
+        num_inputs = 0
+        for inputs, _ in data_queue:
+            inputs = inputs.to(forward_model.get_device())
+            forward_model(inputs)
+            num_inputs += inputs.shape[0]
+            if num_inputs > max_inputs:
+                break
+    
+    for name, m in new_model.named_modules():
+        if name in bn_running_mean and not bn_running_mean[name].is_empty():
+            feature_dim = bn_running_mean[name].avg.shape[0]
+            assert isinstance(m, (nn.BatchNorm2d, FlexibleBatchNorm2d))
+            if hasattr(m, "flex_bn"):
+                m = m.flex_bn
+            m.running_mean.data[:feature_dim].copy_(bn_running_mean[name].avg)
+            m.running_var.data[:feature_dim].copy_(bn_running_var[name].avg)
+    return new_model

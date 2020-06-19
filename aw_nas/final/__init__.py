@@ -10,4 +10,7 @@ from .dense import DenseGenotypeModel
 from .ofa_model import OFAGenotypeModel
 from .ofa_trainer import OFAFinalTrainer
 
+from .ssd_model import SSDFinalModel, SSDHeadFinalModel
+from .det_trainer import DetectionFinalTrainer
+
 from .general_model import GeneralGenotypeModel
