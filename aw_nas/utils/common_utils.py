@@ -7,6 +7,7 @@ import time
 import copy
 import shutil
 import inspect
+import itertools
 import functools
 import collections
 from collections import OrderedDict, namedtuple
