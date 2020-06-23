@@ -18,4 +18,4 @@ tensorboardX==1.6
 torch==1.2.0
 torchvision==0.2.2.post3
 
--e .[vis]
+-e .[vis,det]
