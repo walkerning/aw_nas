@@ -5,6 +5,7 @@ import pickle
 import xml.etree.ElementTree as ET
 from datetime import datetime
 
+import cv2
 import numpy as np
 import six
 from torchvision import datasets, transforms
@@ -15,13 +16,6 @@ from aw_nas.dataset.voc_eval import do_python_eval, write_voc_results_file
 from aw_nas.utils import logger
 from aw_nas.utils.box_utils import *
 from aw_nas.utils.torch_utils import Cutout
-
-_LOGGER = _logger.getChild("dataset.voc")
-
-try:
-    import cv2
-except ImportError as e:
-    _LOGGER.warn("Error importing dependencies for voc: {}\n".format(e))
 
 CLASSES = ('__background__', 'aeroplane', 'bicycle', 'bird', 'boat', 'bottle',
            'bus', 'car', 'cat', 'chair', 'cow', 'diningtable', 'dog', 'horse',

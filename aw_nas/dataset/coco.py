@@ -5,23 +5,16 @@ import pickle
 import sys
 import uuid
 
+import cv2
 import numpy as np
 import torch
 import torch.utils.data as data
 import torchvision.transforms as transforms
+from pycocotools.coco import COCO
+from pycocotools.cocoeval import COCOeval
 
 from aw_nas.dataset.base import BaseDataset
 from aw_nas.dataset.transform import *
-from aw_nas.utils import logger as _logger
-
-_LOGGER = _logger.getChild("dataset.coco")
-
-try:
-    import cv2
-    from pycocotools.coco import COCO
-    from pycocotools.cocoeval import COCOeval
-except ImportError as e:
-    _LOGGER.warn("Error importing dependencies for coco: {}\n".format(e))
 
 min_keypoints_per_image = 10
 
