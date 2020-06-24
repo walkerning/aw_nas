@@ -32,6 +32,7 @@ class FinalModel(Component, nn.Module):
     def __init__(self, schedule_cfg):
         super(FinalModel, self).__init__(schedule_cfg)
         nn.Module.__init__(self)
+        self.device = None
 
     @utils.abstractclassmethod
     def supported_data_types(cls):

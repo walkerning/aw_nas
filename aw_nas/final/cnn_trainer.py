@@ -12,7 +12,15 @@ from aw_nas.final.base import FinalTrainer
 from aw_nas.utils.common_utils import nullcontext
 from aw_nas.utils.exception import expect
 from aw_nas.utils import DataParallel
-from aw_nas.utils import DistributedDataParallel
+from aw_nas.utils import DistributedDataParallel, DistributedDataParallel
+from aw_nas.utils.torch_utils import calib_bn
+
+try:
+    from aw_nas.utils.SynchronizedBatchNormPyTorch.sync_batchnorm import (
+        convert_model as convert_sync_bn,
+    )
+except ImportError:
+    convert_sync_bn = lambda m: m
 
 def _warmup_update_lr(optimizer, epoch, init_lr, warmup_epochs):
     """
@@ -43,6 +51,7 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                  save_as_state_dict=False,
                  workers_per_queue=2,
                  eval_no_grad=True,
+                 calib_bn_setup=True,
                  schedule_cfg=None):
         super(CNNFinalTrainer, self).__init__(schedule_cfg)
 
@@ -79,22 +88,24 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
         self._criterion = nn.CrossEntropyLoss().to(self.device)
 
         _splits = self.dataset.splits()
+        train_kwargs = getattr(_splits["train"], "kwargs", {})
+        test_kwargs = getattr(_splits["test"], "kwargs", train_kwargs)
 
         if self.multiprocess:
             self.train_queue = torch.utils.data.DataLoader(
                 _splits["train"], batch_size=batch_size, pin_memory=True,
                 num_workers=workers_per_queue,
-                sampler=DistributedSampler(_splits["train"], shuffle=True))
+                sampler=DistributedSampler(_splits["train"], shuffle=True), **train_kwargs)
             self.valid_queue = torch.utils.data.DataLoader(
                 _splits["test"], batch_size=batch_size, pin_memory=True,
-                num_workers=workers_per_queue, shuffle=False)
+                num_workers=workers_per_queue, shuffle=False, **test_kwargs)
         else:
             self.train_queue = torch.utils.data.DataLoader(
                 _splits["train"], batch_size=batch_size, pin_memory=True,
-                num_workers=workers_per_queue, shuffle=True)
+                num_workers=workers_per_queue, shuffle=True, **train_kwargs)
             self.valid_queue = torch.utils.data.DataLoader(
                 _splits["test"], batch_size=batch_size, pin_memory=True,
-                num_workers=workers_per_queue, shuffle=False)
+                num_workers=workers_per_queue, shuffle=False, **test_kwargs)
 
 
         if self.model is not None:
@@ -108,6 +119,9 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
         self.report_every = None
         self.train_dir = None
         self._is_setup = False
+
+        if self.calib_bn_setup:
+            self.model = calib_bn(self.model, self.train_queue)
 
     def setup(self, load=None, load_state_dict=None,
               save_every=None, train_dir=None, report_every=50):
@@ -134,7 +148,8 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
         self._is_setup = True
 
     def save(self, path):
-        if self.multiprocess and self.gpus[0] != 0:
+        rank = (os.environ.get("LOCAL_RANK"))
+        if rank is not None and rank != '0':
             return
         path = utils.makedir(path)
         if self.save_as_state_dict:
@@ -262,11 +277,8 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
 
     def _parallelize(self):
         if self.multiprocess:
-            self.parallel_model = DistributedDataParallel(self.model, device_ids=self.gpus, output_device=self.gpus[0]).to(self.device)
-            #for param in self.parallel_model.parameters():
-                #torch.distributed.broadcast(param, 0)
-            #for buffers in self.parallel_model.buffers():
-                #torch.distributed.broadcast(buffers, 0)
+            net = convert_sync_bn(self.model).to(self.device)
+            self.parallel_model = DistributedDataParallel(net, self.gpus, find_unused_parameters=True)
         elif len(self.gpus) >= 2:
             self.parallel_model = DataParallel(self.model, self.gpus).to(self.device)
         else:

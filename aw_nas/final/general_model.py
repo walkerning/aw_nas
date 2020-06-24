@@ -43,7 +43,6 @@ class GeneralGenotypeModel(FinalModel):
 
         self.model = nn.ModuleList(model)
 
-        self.model.apply(utils.init_weight)
         self.model.to(self.device)
 
     def forward(self, inputs, callback=None):

@@ -615,7 +615,7 @@ def eval_arch(cfg_file, arch_file, load, gpu, seed, save_plot, save_state_dict, 
 
 @main.command(help="Derive architectures.")
 @click.argument("cfg_file", required=True, type=str)
-@click.option("--load", required=False, type=str,
+@click.option("--load", required=True, type=str,
               help="the directory to load checkpoint")
 @click.option("-o", "--out-file", required=True, type=str,
               help="the file to write the derived genotypes to")

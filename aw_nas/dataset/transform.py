@@ -3,7 +3,8 @@ import torch
 
 from aw_nas.dataset.data_augmentation import Preproc
 
-class TrainAugmentation:
+
+class TrainAugmentation(object):
     def __init__(self, size, mean, std):
         """
         Args:
@@ -25,7 +26,7 @@ class TrainAugmentation:
         return self.preproc(img, boxes, labels)
 
 
-class TestTransform:
+class TestTransform(object):
     def __init__(self, size, mean=0.0, std=1.0):
         self.preproc = Preproc(size, mean, std, -1)
 

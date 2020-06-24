@@ -9,24 +9,24 @@ import numpy as np
 import six
 import torch
 import torch.nn.functional as F
-from aw_nas import utils
-from aw_nas.final.base import FinalTrainer
-from aw_nas.final.ofa_trainer import OFAFinalTrainer, _warmup_update_lr
-from aw_nas.final.ssd_model import PredictModel
-from aw_nas.utils import DataParallel, logger, box_utils
-from aw_nas.utils.common_utils import nullcontext
-from aw_nas.utils.exception import expect
 from torch import nn
 from torch.autograd import Variable
 from torch.utils.data.distributed import DistributedSampler
 
+from aw_nas import utils
+from aw_nas.final.base import FinalTrainer
+from aw_nas.final.cnn_trainer import CNNFinalTrainer
+from aw_nas.final.ssd_model import PredictModel
+from aw_nas.utils import DataParallel, box_utils, logger
+from aw_nas.utils.common_utils import nullcontext
+from aw_nas.utils.exception import expect
 
-class DetectionFinalTrainer(OFAFinalTrainer): #pylint: disable=too-many-instance-attributes
+
+class DetectionFinalTrainer(CNNFinalTrainer): #pylint: disable=too-many-instance-attributes
     NAME = "det_final_trainer"
 
     def __init__(self, model, dataset, device, gpus, objective,#pylint: disable=dangerous-default-value
-                 state_dict_path=None,
-                 multiprocess=False, use_gn=False,
+                 multiprocess=False,
                  epochs=600, batch_size=96,
                  optimizer_type="SGD", optimizer_kwargs=None,
                  learning_rate=0.025, momentum=0.9,
@@ -51,8 +51,8 @@ class DetectionFinalTrainer(OFAFinalTrainer): #pylint: disable=too-many-instance
 
         self.freeze_base_net = freeze_base_net
         self.base_net_lr = base_net_lr
-        super(DetectionFinalTrainer, self).__init__(model, dataset, device, gpus, objective, state_dict_path,
-                multiprocess, use_gn,
+        super(DetectionFinalTrainer, self).__init__(model, dataset, device, gpus, objective,
+                multiprocess,
                 epochs, batch_size,
                 optimizer_type, optimizer_kwargs,
                 learning_rate, momentum,
@@ -123,41 +123,6 @@ class DetectionFinalTrainer(OFAFinalTrainer): #pylint: disable=too-many-instance
     @classmethod
     def supported_data_types(cls):
         return ["image"]
-
-    def train(self):
-        # if len(self.gpus) >= 2:
-        #     self._forward_once_for_flops(self.model)
-        for epoch in range(self.last_epoch+1, self.epochs+1):
-            self.epoch = epoch
-            self.on_epoch_start(epoch)
-
-            if epoch < self.warmup_epochs:
-                _warmup_update_lr(self.optimizer, epoch, self.learning_rate, self.warmup_epochs)
-            else:
-                if self.scheduler is not None:
-                    self.scheduler.step()
-            self.logger.info("epoch %d lr %e", epoch, self.optimizer.param_groups[0]["lr"])
-
-            train_acc, train_obj = self.train_epoch(self.train_queue, self.parallel_model,
-                                                    self._criterion, self.optimizer,
-                                                    self.device, epoch)
-            self.logger.info("train_acc %f ; train_obj %f", train_acc, train_obj)
-
-            if epoch % self.eval_every == 0:
-                valid_acc, valid_obj, valid_perfs = self.infer_epoch(self.valid_queue,
-                                                                    self.parallel_model,
-                                                                    self._criterion, self.device)
-                self.logger.info("valid_acc %f ; valid_obj %f ; valid performances: %s",
-                                valid_acc, valid_obj,
-                                "; ".join(
-                                    ["{}: {:.3f}".format(n, v) for n, v in valid_perfs.items()]))
-
-            if self.save_every and epoch % self.save_every == 0:
-                path = os.path.join(self.train_dir, str(epoch))
-                self.save(path)
-            self.on_epoch_end(epoch)
-
-        self.save(os.path.join(self.train_dir, "final"))
 
     def train_epoch(self, train_queue, model, criterion, optimizer, device, epoch):
         expect(self._is_setup, "trainer.setup should be called first")
