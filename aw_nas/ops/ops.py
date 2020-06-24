@@ -772,6 +772,8 @@ class FlexibleSEModule(SEModule, FlexibleLayer):
         expand_layer = self.se.expand.finalize()
         return SEModule(self.channel, self.reduction, reduction_layer, expand_layer)
 
+
+# ---- added for SSD ----
 class L2Norm(nn.Module):
     def __init__(self,n_channels, scale):
         super(L2Norm,self).__init__()

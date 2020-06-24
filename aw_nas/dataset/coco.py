@@ -10,21 +10,22 @@ import numpy as np
 import torch
 import torch.utils.data as data
 import torchvision.transforms as transforms
-
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 
 from aw_nas.dataset.base import BaseDataset
 from aw_nas.dataset.transform import *
 
-
 min_keypoints_per_image = 10
+
 
 def _count_visible_keypoints(anno):
     return sum(sum(1 for v in ann["keypoints"][2::3] if v > 0) for ann in anno)
 
+
 def _has_only_empty_bbox(anno):
     return all(any(o <= 1 for o in obj["bbox"][2:]) for obj in anno)
+
 
 def has_valid_annotation(anno):
     # if it's empty, there is no annotation
@@ -43,8 +44,8 @@ def has_valid_annotation(anno):
         return True
     return False
 
-class COCODetection(data.Dataset):
 
+class COCODetection(data.Dataset):
     """COCO Detection Dataset Object
 
     input is image, target is annotation
@@ -60,9 +61,15 @@ class COCODetection(data.Dataset):
         dataset_name (string, optional): which dataset to load
             (default: 'VOC2007')
     """
-
-    def __init__(self, root, image_sets, transform=None, target_transform=None, is_test=False, max_images=None,
-                 remove_no_anno=False, dataset_name="COCO"):
+    def __init__(self,
+                 root,
+                 image_sets,
+                 transform=None,
+                 target_transform=None,
+                 is_test=False,
+                 max_images=None,
+                 remove_no_anno=False,
+                 dataset_name="COCO"):
         self.root = root
         self.cache_path = os.path.join(self.root, "cache")
         self.image_set = image_sets
@@ -74,42 +81,43 @@ class COCODetection(data.Dataset):
         self.image_indexes = list()
         self.annotations = list()
         self._view_map = {
-            "minival2014" : "val2014",          # 5k val2014 subset
-            "valminusminival2014" : "val2014",  # val2014 \setminus minival2014
-            "test-dev2015" : "test2015",
+            "minival2014": "val2014",  # 5k val2014 subset
+            "valminusminival2014": "val2014",  # val2014 \setminus minival2014
+            "test-dev2015": "test2015",
         }
 
         # self.data_name = list()
         # self.data_len = list()
         for (year, image_set) in image_sets:
-            coco_name = image_set+year
+            coco_name = image_set + year
             data_name = (self._view_map[coco_name]
-                        if coco_name in self._view_map
-                        else coco_name)
+                         if coco_name in self._view_map else coco_name)
             annofile = self._get_ann_file(coco_name)
             _COCO = COCO(annofile)
             self._COCO = _COCO
             self.coco_name = coco_name
             cats = _COCO.loadCats(_COCO.getCatIds())
-            self._classes = tuple(["__background__"] + [c["name"] for c in cats])
+            self._classes = tuple(["__background__"] +
+                                  [c["name"] for c in cats])
             self.num_classes = len(self._classes)
-            self._class_to_ind = dict(zip(self._classes, range(self.num_classes)))
-            self._class_to_coco_cat_id = dict(zip([c["name"] for c in cats],
-                                                  _COCO.getCatIds()))
+            self._class_to_ind = dict(
+                zip(self._classes, range(self.num_classes)))
+            self._class_to_coco_cat_id = dict(
+                zip([c["name"] for c in cats], _COCO.getCatIds()))
             indexes = _COCO.getImgIds()
-            
+
             if image_set.find("test") != -1:
                 print("test set will not load annotations!")
             else:
-                annos, indexes = self._load_coco_annotations(coco_name, indexes, _COCO, remove_no_anno=remove_no_anno)
+                annos, indexes = self._load_coco_annotations(
+                    coco_name, indexes, _COCO, remove_no_anno=remove_no_anno)
                 self.annotations.extend(annos)
-            
+
             self.image_indexes.extend(indexes)
             self.img_paths.extend(self._load_coco_img_path(coco_name, indexes))
-        
+
         self.image_indexes = self.image_indexes[:max_images]
         self.img_paths = self.img_paths[:max_images]
-
 
         def collate_fn(batch):
             inputs = [b[0] for b in batch]
@@ -118,7 +126,6 @@ class COCODetection(data.Dataset):
             return inputs, targets
 
         self.kwargs = {"collate_fn": collate_fn}
-
 
     def image_path_from_index(self, name, index):
         """
@@ -130,8 +137,7 @@ class COCODetection(data.Dataset):
         #              str(index).zfill(12) + '.jpg')
         # change Example image path for index=119993 to images/train2017/000000119993.jpg
         file_name = (str(index).zfill(12) + ".jpg")
-        image_path = os.path.join(self.root,
-                              name, file_name)
+        image_path = os.path.join(self.root, name, file_name)
         assert os.path.exists(image_path), \
                 "Path does not exist: {}".format(image_path)
         return image_path
@@ -140,10 +146,14 @@ class COCODetection(data.Dataset):
         prefix = "instances" if name.find("test") == -1 \
                 else "image_info"
         return os.path.join(self.root, "annotations",
-                        prefix + "_" + name + ".json")
+                            prefix + "_" + name + ".json")
 
-    def _load_coco_annotations(self, coco_name, indexes, _COCO, remove_no_anno=False):
-        cache_file = os.path.join(self.cache_path, coco_name+"_gt_roidb.pkl")
+    def _load_coco_annotations(self,
+                               coco_name,
+                               indexes,
+                               _COCO,
+                               remove_no_anno=False):
+        cache_file = os.path.join(self.cache_path, coco_name + "_gt_roidb.pkl")
         if os.path.exists(cache_file):
             with open(cache_file, "rb") as fid:
                 roidb, valid_indexes = pickle.load(fid)
@@ -151,17 +161,19 @@ class COCODetection(data.Dataset):
             return roidb, valid_indexes
 
         print("parsing gt roidb for {}".format(coco_name))
-        gt_roidb = [(index, self._annotation_from_index(index, _COCO, remove_no_anno))
+        gt_roidb = [(index,
+                     self._annotation_from_index(index, _COCO, remove_no_anno))
                     for index in indexes]
         valid_indexes = [index for index, anno in gt_roidb if anno is not None]
         gt_roidb = [anno for index, anno in gt_roidb if anno is not None]
         with open(cache_file, "wb") as fid:
-            pickle.dump([gt_roidb, valid_indexes], fid, pickle.HIGHEST_PROTOCOL)
+            pickle.dump([gt_roidb, valid_indexes], fid,
+                        pickle.HIGHEST_PROTOCOL)
         print("wrote gt roidb to {}".format(cache_file))
         return gt_roidb, valid_indexes
 
     def _load_coco_img_path(self, coco_name, indexes):
-        cache_file=os.path.join(self.cache_path, coco_name + "_img_path.pkl")
+        cache_file = os.path.join(self.cache_path, coco_name + "_img_path.pkl")
         if os.path.exists(cache_file):
             with open(cache_file, "rb") as fid:
                 img_path = pickle.load(fid)
@@ -169,14 +181,18 @@ class COCODetection(data.Dataset):
             return img_path
 
         print("parsing img path for {}".format(coco_name))
-        img_path = [self.image_path_from_index(coco_name, index)
-                    for index in indexes]
+        img_path = [
+            self.image_path_from_index(coco_name, index) for index in indexes
+        ]
         with open(cache_file, "wb") as fid:
             pickle.dump(img_path, fid, pickle.HIGHEST_PROTOCOL)
         print("wrote img path to {}".format(cache_file))
         return img_path
 
-    def _annotation_from_index(self, index, _COCO, remove_images_without_annotations=False):
+    def _annotation_from_index(self,
+                               index,
+                               _COCO,
+                               remove_images_without_annotations=False):
         """
         Loads COCO bounding-box instance annotations. Crowd instances are
         handled by marking their overlaps (with all categories) to -1. This
@@ -188,7 +204,8 @@ class COCODetection(data.Dataset):
 
         annIds = _COCO.getAnnIds(imgIds=index, iscrowd=None)
         objs = _COCO.loadAnns(annIds)
-        if remove_images_without_annotations and not has_valid_annotation(objs):
+        if remove_images_without_annotations and not has_valid_annotation(
+                objs):
             return None
         # Sanitize bboxes -- some are invalid
         valid_objs = []
@@ -239,7 +256,7 @@ class COCODetection(data.Dataset):
 
         if self.target_transform is not None:
             boxes, labels = self.target_transform(boxes, labels)
-        
+
         img = torch.from_numpy(img).to(torch.float)
         boxes = torch.from_numpy(boxes).to(torch.float)
         labels = torch.from_numpy(labels).to(torch.long)
@@ -262,7 +279,6 @@ class COCODetection(data.Dataset):
         img_path = self.img_paths[index]
         return cv2.imread(img_path, cv2.IMREAD_COLOR)
 
-
     def pull_anno(self, index):
         '''Returns the original annotation of image at index
 
@@ -280,7 +296,6 @@ class COCODetection(data.Dataset):
             anno = self.target_transform(anno)
         return anno
 
-
     def pull_tensor(self, index):
         '''Returns the original image at an index in tensor form
 
@@ -297,9 +312,10 @@ class COCODetection(data.Dataset):
     def _print_detection_eval_metrics(self, coco_eval):
         IoU_lo_thresh = 0.5
         IoU_hi_thresh = 0.95
+
         def _get_thr_ind(coco_eval, thr):
-            ind = np.where((coco_eval.params.iouThrs > thr - 1e-5) &
-                           (coco_eval.params.iouThrs < thr + 1e-5))[0][0]
+            ind = np.where((coco_eval.params.iouThrs > thr - 1e-5)
+                           & (coco_eval.params.iouThrs < thr + 1e-5))[0][0]
             iou_thr = coco_eval.params.iouThrs[ind]
             assert np.isclose(iou_thr, thr)
             return ind
@@ -313,13 +329,14 @@ class COCODetection(data.Dataset):
             coco_eval.eval["precision"][ind_lo:(ind_hi + 1), :, :, 0, 2]
         ap_default = np.mean(precision[precision > -1])
         print("~~~~ Mean and per-category AP @ IoU=[{:.2f},{:.2f}] "
-               "~~~~".format(IoU_lo_thresh, IoU_hi_thresh))
+              "~~~~".format(IoU_lo_thresh, IoU_hi_thresh))
         print("{:.1f}".format(100 * ap_default))
         for cls_ind, cls in enumerate(self._classes):
             if cls == "__background__":
                 continue
             # minus 1 because of __background__
-            precision = coco_eval.eval["precision"][ind_lo:(ind_hi + 1), :, cls_ind - 1, 0, 2]
+            precision = coco_eval.eval["precision"][ind_lo:(ind_hi + 1), :,
+                                                    cls_ind - 1, 0, 2]
             ap = np.mean(precision[precision > -1])
             print("{:.1f}".format(100 * ap))
 
@@ -354,11 +371,12 @@ class COCODetection(data.Dataset):
             ys = dets[:, 1]
             ws = dets[:, 2] - xs + 1
             hs = dets[:, 3] - ys + 1
-            results.extend(
-              [{"image_id" : index,
-                "category_id" : cat_id,
-                "bbox" : [xs[k], ys[k], ws[k], hs[k]],
-                "score" : scores[k]} for k in range(dets.shape[0])])
+            results.extend([{
+                "image_id": index,
+                "category_id": cat_id,
+                "bbox": [xs[k], ys[k], ws[k], hs[k]],
+                "score": scores[k]
+            } for k in range(dets.shape[0])])
         return results
 
     def _write_coco_results_file(self, all_boxes, res_file):
@@ -370,12 +388,13 @@ class COCODetection(data.Dataset):
         for cls_ind, cls in enumerate(self._classes):
             if cls == "__background__":
                 continue
-            print("Collecting {} results ({:d}/{:d})".format(cls, cls_ind,
-                                                          self.num_classes ))
+            print("Collecting {} results ({:d}/{:d})".format(
+                cls, cls_ind, self.num_classes))
             coco_cat_id = self._class_to_coco_cat_id[cls]
             # coco_cat_id: 1~90
-            results.extend(self._coco_results_one_category(all_boxes[coco_cat_id],
-                                                           coco_cat_id))
+            results.extend(
+                self._coco_results_one_category(all_boxes[coco_cat_id],
+                                                coco_cat_id))
             '''
             if cls_ind ==30:
                 res_f = res_file+ '_1.json'
@@ -390,26 +409,35 @@ class COCODetection(data.Dataset):
             json.dump(results, fid)
 
     def evaluate_detections(self, all_boxes, output_dir, eval_ids=None):
-        res_file = os.path.join(output_dir, ("detections_" +
-                                         self.coco_name +
-                                         "_results"))
+        res_file = os.path.join(output_dir,
+                                ("detections_" + self.coco_name + "_results"))
         res_file += ".json"
         self._write_coco_results_file(all_boxes, res_file)
         # Only do evaluation on non-test sets
         if self.coco_name.find("test") == -1:
-            return self._do_detection_eval(res_file, output_dir, eval_ids or self.image_indexes)
+            return self._do_detection_eval(res_file, output_dir, eval_ids
+                                           or self.image_indexes)
         # Optionally cleanup results json file
 
 
 class COCODataset(BaseDataset):
     NAME = "coco"
 
-    def __init__(self, load_train_only=False, class_name_file=None,
-                 random_choose=False, random_seed=123,
+    def __init__(self,
+                 load_train_only=False,
+                 class_name_file=None,
+                 random_choose=False,
+                 random_seed=123,
                  train_sets=[("2017", "train")],
                  test_sets=[("2017", "val")],
-                 train_crop_size=300, test_crop_size=300, image_mean=[0.485, 0.456, 0.406], image_std=[0.229, 0.224, 0.225],
-                 iou_threshold=0.5, keep_difficult=False, max_images=None, remove_no_anno=False):
+                 train_crop_size=300,
+                 test_crop_size=300,
+                 image_mean=[0.485, 0.456, 0.406],
+                 image_std=[0.229, 0.224, 0.225],
+                 iou_threshold=0.5,
+                 keep_difficult=False,
+                 max_images=None,
+                 remove_no_anno=False):
         super(COCODataset, self).__init__()
         self.load_train_only = load_train_only
         self.train_data_dir = self.data_dir
@@ -417,16 +445,27 @@ class COCODataset(BaseDataset):
 
         self.iou_threshold = iou_threshold
 
-        train_transform = TrainAugmentation(train_crop_size, np.array(image_mean), np.array(image_std))
-        test_transform = TestTransform(test_crop_size, np.array(image_mean), np.array(image_std))
+        train_transform = TrainAugmentation(train_crop_size,
+                                            np.array(image_mean),
+                                            np.array(image_std))
+        test_transform = TestTransform(test_crop_size, np.array(image_mean),
+                                       np.array(image_std))
 
         self.datasets = {}
-        self.datasets["train"] = COCODetection(self.train_data_dir, train_sets, train_transform, remove_no_anno=remove_no_anno)
+        self.datasets["train"] = COCODetection(self.train_data_dir,
+                                               train_sets,
+                                               train_transform,
+                                               remove_no_anno=remove_no_anno)
 
         if not self.load_train_only:
-            self.test_data_dir = self.data_dir 
-            self.datasets["test"] = COCODetection(self.test_data_dir, test_sets, test_transform, 
-                                                  is_test=True, max_images=max_images, remove_no_anno=remove_no_anno)
+            self.test_data_dir = self.data_dir
+            self.datasets["test"] = COCODetection(
+                self.test_data_dir,
+                test_sets,
+                test_transform,
+                is_test=True,
+                max_images=max_images,
+                remove_no_anno=remove_no_anno)
 
     def splits(self):
         return self.datasets
@@ -447,4 +486,5 @@ class COCODataset(BaseDataset):
 
     def evaluate_detections(self, all_boxes, output_dir):
         dataset = self.datasets.get("test", self.datasets["train"])
-        return dataset.evaluate_detections(all_boxes, output_dir, dataset.image_indexes)
+        return dataset.evaluate_detections(all_boxes, output_dir,
+                                           dataset.image_indexes)

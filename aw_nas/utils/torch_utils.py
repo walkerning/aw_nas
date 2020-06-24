@@ -600,16 +600,6 @@ def init_scheduler(optimizer, cfg):
         return sch_cls(optimizer, **cfg)
     return None
 
-def init_weight(m):
-    if isinstance(m, nn.Linear):
-        nn.init.xavier_normal_(m.weight)
-        nn.init.constant_(m.bias, 0)
-    elif isinstance(m, nn.Conv2d):
-        nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-    elif isinstance(m, nn.BatchNorm2d):
-        nn.init.constant_(m.weight, 1)
-        nn.init.constant_(m.bias, 0)
-
 
 # def _new_step_tensor(scheduler, epoch=None):
 #     scheduler.ori_step(epoch)
@@ -679,22 +669,13 @@ def weights_init(m):
         if m.bias is not None:
             m.bias.data.zero_()
 
-def unique(tensor, return_indices=False):
-    assert len(tensor.shape) == 1, "Only one dim arrary implemented."
-    idx = []
-    prev = -float("inf")
-    for i, t in enumerate(tensor):
-        if t == prev:
-            continue
-        prev = t
-        idx.append(i)
-    uniqued = tensor[idx]
-    if return_indices:
-        return uniqued, idx
-    return uniqued
-
 
 class CustomDistributedSampler(DistributedSampler):
+    """
+    This sampler is the mix of SubsetSampler and DistributedSampler.
+    Because DistributedSampler does not support sample a subset of dataset,
+    which is required by function `prepare_data_queues` during the search process.
+    """
     def __init__(self, dataset, indices, *args, **kwargvs):
         super(CustomDistributedSampler, self).__init__(dataset, *args, **kwargvs)
         self.indices = indices
@@ -730,6 +711,8 @@ def drop_connect(inputs, p, training):
     output = inputs / keep_prob * binary_tensor
     return output
 
+
+# ------ for bn calibration ------
 def accumulate_bn(inputs, running_means, running_vars):
     batch_size = inputs.shape[0]
     batch_mean = inputs.mean(0, keepdim=True).mean(2, keepdim=True).mean(3, keepdim=True)  # 1, C, 1, 1
