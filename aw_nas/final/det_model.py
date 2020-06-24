@@ -1,16 +1,9 @@
 from __future__ import print_function
 
 import torch
-
 from torch import nn
-from torchvision.ops import nms
-
-from aw_nas.ops import ops
-from aw_nas.utils import weights_init
-from aw_nas.utils import box_utils
 
 from aw_nas.utils.exception import ConfigException, expect
-
 
 class HeadModel(nn.Module):
     def __init__(self,
@@ -33,10 +26,9 @@ class HeadModel(nn.Module):
             self.norm = None
         expect(
             None not in [extras, regression_headers, classification_headers],
-            'Extras, regression_headers and classification_headers must be provided, got None instead.',
+            "Extras, regression_headers and classification_headers must be provided, "
+            "got None instead.",
             ConfigException)
-
-        self._init_weights()
 
     def forward(self, features):
         expect(isinstance(features, (list, tuple)),
@@ -61,8 +53,3 @@ class HeadModel(nn.Module):
         locations = torch.cat([t.view(t.size(0), -1) for t in locations],
                               1).view(batch_size, -1, 4)
         return confidences, locations
-
-    def _init_weights(self):
-        self.extras.apply(weights_init)
-        self.regression_headers.apply(weights_init)
-        self.classification_headers.apply(weights_init)

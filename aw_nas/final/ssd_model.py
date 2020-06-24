@@ -5,24 +5,14 @@ A cell-based model whose architecture is described by a genotype.
 
 from __future__ import print_function
 
-import re
-from collections import defaultdict
-
-import numpy as np
-import six
 import torch
-import torch.nn.functional as F
-
 from torch import nn
 
-from aw_nas import ops, utils
-from aw_nas.common import genotype_from_str, group_and_sort_by_to_node
+from aw_nas import ops
 from aw_nas.final.base import FinalModel
-from aw_nas.final.det_model import HeadModel, PredictModel
-from aw_nas.final.ofa_model import OFAGenotypeModel
+from aw_nas.final.det_model import HeadModel
 from aw_nas.ops import MobileNetV3Block, SeperableConv2d
-from aw_nas.utils import (RegistryMeta, logger, box_utils, make_divisible, feature_level_to_stage_index)
-from aw_nas.utils.common_utils import Context, nullcontext
+from aw_nas.utils import RegistryMeta, logger
 from aw_nas.utils.exception import ConfigException, expect
 
 
@@ -32,14 +22,15 @@ class SSDNorm(nn.Module):
         self.l2norm = ops.L2Norm(channel, scale)
 
     def forward(self, features):
-        ft = self.l2norm(features[0])
-        return [ft] + features[1:]
+        ft0_l2norm = self.l2norm(features[0])
+        return [ft0_l2norm] + features[1:]
 
 class Extras(nn.Module):
     def __init__(self, expansions, channels):
         super(Extras, self).__init__()
         self.blocks = nn.ModuleList([
-            MobileNetV3Block(exp, in_channels, out_channels, stride=2, affine=True, kernel_size=3, activation='relu')
+            MobileNetV3Block(exp, in_channels, out_channels, stride=2, affine=True,
+                             kernel_size=3, activation='relu')
             for exp, in_channels, out_channels in zip(expansions, channels[:-1], channels[1:])
             ])
 
@@ -64,12 +55,12 @@ class Classifier(nn.Module):
 
     def forward(self, features):
         return [conv(ft) for ft, conv in zip(features, self.convs)]
-         
+
 
 class SSDHeadFinalModel(FinalModel):
     NAME = "ssd_head_final_model"
 
-    def __new__(cls, device, num_classes, 
+    def __new__(cls, device, num_classes,
                  feature_channels,
                  expansions=[0.5, 0.5, 0.5, 0.5],
                  channels=[512, 256, 256, 64],
@@ -87,10 +78,13 @@ class SSDHeadFinalModel(FinalModel):
         multi_ratio = [len(r) * 2 + 2 for r in aspect_ratios]
         regression_headers = Classifier(4, head_channels, multi_ratio)
         classification_headers = Classifier(num_classes, head_channels, multi_ratio)
-        
-        expect(None not in [extras, regression_headers, classification_headers], 'Extras, regression_headers and classification_headers must be provided, got None instead.', ConfigException)
+
+        expect(None not in [extras, regression_headers, classification_headers],
+               "Extras, regression_headers and classification_headers must be provided, "
+               "got None instead.", ConfigException)
         head = HeadModel(device, num_classes=num_classes,
-                                            extras=extras, regression_headers=regression_headers, classification_headers=classification_headers, norm=norm)
+                         extras=extras, regression_headers=regression_headers,
+                         classification_headers=classification_headers, norm=norm)
         if pretrained_path:
             mismatch = head.load_state_dict(torch.load(pretrained_path, "cpu"), strict=False)
             logger.info(mismatch)
@@ -121,7 +115,8 @@ class SSDFinalModel(FinalModel):
         self.feature_levels = feature_levels
 
         genotypes = backbone_cfg.pop("genotypes")
-        self.backbone = RegistryMeta.get_class('final_model', backbone_type)(search_space, device, **backbone_cfg)
+        self.backbone = RegistryMeta.get_class('final_model', backbone_type)(
+            search_space, device, **backbone_cfg)
 
         feature_channels = self.backbone.get_feature_channel_num(feature_levels)
         self.head = SSDHeadFinalModel(device, num_classes, feature_channels, **head_cfg)
@@ -141,7 +136,7 @@ class SSDFinalModel(FinalModel):
         self._flops_calculated = False
         self.set_hook()
 
-    def finalize(self, genotypes): 
+    def finalize(self, genotypes):
         self.backbone.finalize(genotypes)
         return self
 
@@ -153,9 +148,9 @@ class SSDFinalModel(FinalModel):
         self.backbone.load_supernet_state_dict(backbone_state, filter_regex=r".*classifier.*")
         self.head.load_state_dict(head_state, strict=strict)
         return self.backbone, self.head
-        
+
     def set_hook(self):
-        for name, module in self.named_modules():
+        for _, module in self.named_modules():
             module.register_forward_hook(self._hook_intermediate_feature)
 
     def _hook_intermediate_feature(self, module, inputs, outputs):
@@ -174,6 +169,6 @@ class SSDFinalModel(FinalModel):
         return ["image"]
 
     def forward(self, inputs):
-        features, feature = self.backbone.extract_features(inputs, [4, 5])
+        features, _ = self.backbone.extract_features(inputs, [4, 5])
         confidences, locations = self.head(features)
         return confidences, locations

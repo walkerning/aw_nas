@@ -1,9 +1,6 @@
-import json
 import os
-import os.path
+import json
 import pickle
-import sys
-import uuid
 
 import cv2
 import numpy as np
@@ -380,10 +377,6 @@ class COCODetection(data.Dataset):
         return results
 
     def _write_coco_results_file(self, all_boxes, res_file):
-        # [{"image_id": 42,
-        #   "category_id": 18,
-        #   "bbox": [258.15,41.29,348.26,243.78],
-        #   "score": 0.236}, ...]
         results = []
         for cls_ind, cls in enumerate(self._classes):
             if cls == "__background__":
@@ -395,15 +388,6 @@ class COCODetection(data.Dataset):
             results.extend(
                 self._coco_results_one_category(all_boxes[coco_cat_id],
                                                 coco_cat_id))
-            '''
-            if cls_ind ==30:
-                res_f = res_file+ '_1.json'
-                print('Writing results json to {}'.format(res_f))
-                with open(res_f, 'w') as fid:
-                    json.dump(results, fid)
-                results = []
-            '''
-        #res_f2 = res_file+'_2.json'
         print("Writing results json to {}".format(res_file))
         with open(res_file, "w") as fid:
             json.dump(results, fid)

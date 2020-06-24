@@ -1,23 +1,12 @@
 # -*- coding: utf-8 -*-
 
-import functools
 import os
-import pickle
-import timeit
 
-import numpy as np
-import six
 import torch
-import torch.nn.functional as F
 from torch import nn
-from torch.autograd import Variable
-from torch.utils.data.distributed import DistributedSampler
 
 from aw_nas import utils
-from aw_nas.final.base import FinalTrainer
 from aw_nas.final.cnn_trainer import CNNFinalTrainer
-from aw_nas.final.ssd_model import PredictModel
-from aw_nas.utils import DataParallel, box_utils, logger
 from aw_nas.utils.common_utils import nullcontext
 from aw_nas.utils.exception import expect
 
@@ -173,10 +162,11 @@ class DetectionFinalTrainer(CNNFinalTrainer): #pylint: disable=too-many-instance
                 # targets = targets.to(device)
 
                 predictions = model.forward(inputs)
-                classification_loss, regression_loss = criterion(inputs, predictions, targets, model)
+                classification_loss, regression_loss = criterion(
+                    inputs, predictions, targets, model)
 
                 prec1, prec5 = self._acc_func(inputs, predictions, targets, model)
-                
+
                 perfs = self._perf_func(inputs, predictions, targets, model)
                 objective_perfs.update(dict(zip(self._perf_names, perfs)))
                 n = inputs.size(0)
@@ -186,7 +176,8 @@ class DetectionFinalTrainer(CNNFinalTrainer): #pylint: disable=too-many-instance
                 top5.update(prec5.item(), n)
 
                 if step % self.report_every == 0:
-                    self.logger.info("valid %03d %e %e;  %.2f%%; %.2f%%; %s", step, cls_objs.avg, loc_objs.avg, top1.avg, top5.avg,
+                    self.logger.info("valid %03d %e %e;  %.2f%%; %.2f%%; %s",
+                                     step, cls_objs.avg, loc_objs.avg, top1.avg, top5.avg,
                                      "; ".join(["{}: {:.3f}".format(perf_n, v) \
                                                 for perf_n, v in objective_perfs.avgs().items()]))
         stats = self.dataset.evaluate_detections(self.objective.all_boxes, self.eval_dir)

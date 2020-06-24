@@ -15,7 +15,6 @@ from aw_nas.utils.common_utils import _get_channel_mask
 from aw_nas.utils.exception import ConfigException, expect
 
 
-
 class FlexibleBlock(Component, nn.Module):
     REGISTRY = "ofa_block"
 
@@ -148,12 +147,12 @@ class FlexibleMobileNetV2Block(MobileNetV2Block, FlexibleBlock):
 class FlexibleMobileNetV3Block(MobileNetV3Block, FlexibleBlock):
     NAME = "mbv3_block"
     def __init__(self, 
-        expansion, 
-        C, 
-        C_out, 
-        stride, 
-        kernel_sizes=(3, 5, 7), 
-        do_kernel_transform=True, 
+        expansion,
+        C,
+        C_out,
+        stride,
+        kernel_sizes=(3, 5, 7),
+        do_kernel_transform=True,
         affine=True,
         activation="relu",
         use_se=False,
@@ -665,15 +664,6 @@ class MobileNetV3Arch(BaseBackboneArch):
                 )
             )
         return nn.ModuleList(cell)
-
-    def flatten(self):
-        flattened = [self.stem]
-        for i, cell in enumerate(self.cells):
-            for j, block in enumerate(cell):
-                flattened.append(block)
-        flattened.append(self.conv_head)
-        flattened.append(self.conv_final)
-        return nn.ModuleList(flattened)
 
     def forward(self, inputs):
         return self.forward_rollout(inputs)

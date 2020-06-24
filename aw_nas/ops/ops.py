@@ -789,6 +789,9 @@ class L2Norm(nn.Module):
         return out
         
 def SeperableConv2d(in_channels, out_channels, kernel_size=1, stride=1, padding=0, relu6=False):
+    """
+    A simple separable conv for SSD.
+    """
     act_fn = nn.ReLU6 if relu6 else nn.ReLU
     return nn.Sequential(
         nn.Conv2d(in_channels=in_channels, out_channels=in_channels, kernel_size=kernel_size,

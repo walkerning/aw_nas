@@ -1,10 +1,9 @@
-import logging
 import os
-import pathlib
 import pickle
-import xml.etree.ElementTree as ET
-from datetime import datetime
+import pathlib
+import logging
 
+import xml.etree.ElementTree as ET
 import cv2
 import numpy as np
 import six
@@ -12,10 +11,8 @@ from torchvision import datasets, transforms
 
 from aw_nas.dataset.base import BaseDataset
 from aw_nas.dataset.transform import *
-from aw_nas.dataset.voc_eval import do_python_eval, write_voc_results_file
 from aw_nas.utils import logger
 from aw_nas.utils.box_utils import *
-from aw_nas.utils.torch_utils import Cutout
 
 CLASSES = ('__background__', 'aeroplane', 'bicycle', 'bird', 'boat', 'bottle',
            'bus', 'car', 'cat', 'chair', 'cow', 'diningtable', 'dog', 'horse',

@@ -1,16 +1,13 @@
 # -*- coding: utf-8 -*-
-import os
 
 from math import sqrt
 from itertools import product
 
-import numpy as np
-
 import torch
 import torch.nn.functional as F
-
 from torch import nn
 from torch.autograd import Variable
+from torchvision.ops import nms
 
 from aw_nas.objective.base import BaseObjective
 from aw_nas.utils.torch_utils import accuracy
@@ -108,7 +105,7 @@ class SSDObjective(BaseObjective):
         Get mAP.
         """
         # FIXME: this method does not actually calculate mAP, but detection boxes
-        # of current batch only. After all batch's boxes are calculated, passing them 
+        # of current batch only. After all batch's boxes are calculated, passing them
         # to method `evaluate_detections`
         confidences, regression = outputs
         detections = self.predictor(confidences, regression, inputs.shape[-1])
@@ -130,17 +127,9 @@ class SSDObjective(BaseObjective):
         acc = self.get_acc(inputs, outputs, targets, cand_net)
         if not cand_net.training:
             self.get_mAP(inputs, outputs, targets, cand_net)
-        return acc
+        return [acc[0].item()]
 
     def get_reward(self, inputs, outputs, targets, cand_net, final=False):
-        # FIXME: how to pass dataset to this objective?
-        if final:
-            eval_dir = os.environ['HOME']
-            pid = os.getpid()
-            eval_dir = os.path.join(eval_dir, '.det_exp', str(pid))
-            os.makedirs(eval_dir, exist_ok=True)
-            state = self.dataset.evaluate_detections(self.all_boxes, eval_dir)
-            return state[0]
         return 0.
 
     def get_loss(self,

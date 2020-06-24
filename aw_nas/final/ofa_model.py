@@ -17,7 +17,8 @@ from aw_nas.weights_manager.ofa_backbone import BaseBackboneArch
 
 class OFAGenotypeModel(FinalModel):
     NAME = "ofa_final_model"
-    def __init__(self, search_space, device, 
+
+    def __init__(self, search_space, device,
                  genotypes=None,
                  backbone_type="mbv2_backbone",
                  backbone_cfg=None,
@@ -53,10 +54,10 @@ class OFAGenotypeModel(FinalModel):
 
     def extract_features(self, inputs, p_levels=(4, 5), drop_connect_rate=0.0):
         return self.backbone.extract_features(inputs, p_levels, drop_connect_rate=drop_connect_rate)
-    
+
     def get_feature_channel_num(self, p_level):
         return self.backbone.get_feature_channel_num(p_level)
-    
+
     def load_state_dict(self, model, strict=True):
         keys = model.keys()
         for key in keys:
@@ -78,7 +79,7 @@ class OFAGenotypeModel(FinalModel):
             if filter_regex is not None:
                 regex = re.compile(filter_regex)
                 state_dict = {k: v for k, v in state_dict.items() if not regex.match(k)}
-            mismatch = self.load_state_dict(state_dict, strict=filter_regex is None)     
+            mismatch = self.load_state_dict(state_dict, strict=filter_regex is None)
             self.logger.info("loading supernet: " + str(mismatch))
         return self
 
@@ -136,7 +137,7 @@ class OFAGenotypeModel(FinalModel):
         m = self
         for name in prefix.split('.'):
             m = getattr(m, name)
-        for n, sub_m in m.named_modules():
+        for n, _ in m.named_modules():
             if not n:
                 yield prefix
             yield '.'.join([prefix, n])

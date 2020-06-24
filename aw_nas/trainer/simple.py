@@ -138,10 +138,13 @@ class SimpleTrainer(BaseTrainer):
                                     suggested, self.evaluator_steps)
 
         # init controller optimizer and scheduler
-        self.controller_optimizer = utils.init_optimizer(self.controller.parameters(),
-                                                         controller_optimizer)
-        self.controller_scheduler = utils.init_scheduler(self.controller_optimizer,
-                                                         controller_scheduler)
+        self.controller_scheduler = None
+        self.controller_optimizer = None
+        if isinstance(self.controller, torch.nn.Module):
+            self.controller_optimizer = utils.init_optimizer(self.controller.parameters(),
+                                                            controller_optimizer)
+            self.controller_scheduler = utils.init_scheduler(self.controller_optimizer,
+                                                            controller_scheduler)
 
         # states and other help attributes
         self.last_epoch = 0

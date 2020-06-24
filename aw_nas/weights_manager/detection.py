@@ -2,7 +2,6 @@
 Super net for detection tasks.
 """
 
-import six
 import torch
 from torch import nn
 
@@ -15,7 +14,6 @@ from aw_nas.utils.common_utils import make_divisible, nullcontext
 from aw_nas.utils.exception import expect, ConfigException
 from aw_nas.utils import DistributedDataParallel
 from aw_nas.weights_manager.base import BaseWeightsManager, CandidateNet
-from aw_nas.weights_manager.ofa_backbone import BaseBackboneArch
 
 try:
     from aw_nas.utils.SynchronizedBatchNormPyTorch.sync_batchnorm import (
@@ -137,7 +135,7 @@ class DetectionBackboneCandidateNet(CandidateNet):
         self._device = self.super_net.device
         self.gpus = gpus
         self.multiprocess = self.super_net.multiprocess
-    
+
     def get_device(self):
         return self._device
 

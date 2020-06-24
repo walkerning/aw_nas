@@ -12,7 +12,7 @@ from aw_nas.final.base import FinalTrainer
 from aw_nas.utils.common_utils import nullcontext
 from aw_nas.utils.exception import expect
 from aw_nas.utils import DataParallel
-from aw_nas.utils import DistributedDataParallel, DistributedDataParallel
+from aw_nas.utils import DistributedDataParallel
 from aw_nas.utils.torch_utils import calib_bn
 
 try:
@@ -77,6 +77,7 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
         self.add_regularization = add_regularization
         self.save_as_state_dict = save_as_state_dict
         self.eval_no_grad = eval_no_grad
+        self.calib_bn_setup = calib_bn_setup
 
         # for optimizer
         self.weight_decay = weight_decay
@@ -278,7 +279,8 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
     def _parallelize(self):
         if self.multiprocess:
             net = convert_sync_bn(self.model).to(self.device)
-            self.parallel_model = DistributedDataParallel(net, self.gpus, find_unused_parameters=True)
+            self.parallel_model = DistributedDataParallel(
+                net, self.gpus, find_unused_parameters=True)
         elif len(self.gpus) >= 2:
             self.parallel_model = DataParallel(self.model, self.gpus).to(self.device)
         else:
