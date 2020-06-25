@@ -5,22 +5,12 @@ A general model whose architecture is described by a genotype.
 
 from __future__ import print_function
 
-import re
-import timeit
-from collections import defaultdict
-
 import copy
-import six
-import numpy as np
-import torch
 from torch import nn
 
-from aw_nas import utils
 from aw_nas.ops import get_op
-from aw_nas.common import genotype_from_str, group_and_sort_by_to_node
+from aw_nas.common import genotype_from_str
 from aw_nas.final.base import FinalModel
-from aw_nas.utils.exception import expect, ConfigException
-from aw_nas.utils.common_utils import Context, tick, Ticker
 
 
 class GeneralGenotypeModel(FinalModel):
@@ -43,7 +33,6 @@ class GeneralGenotypeModel(FinalModel):
 
         self.model = nn.ModuleList(model)
 
-        self.model.apply(utils.init_weight)
         self.model.to(self.device)
 
     def forward(self, inputs, callback=None):

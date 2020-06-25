@@ -123,9 +123,9 @@ final_model_cfg:
   layer_channels: [16, 16, 24, 32, 64, 96, 160, 320, 1280]
   strides: [1, 2, 2, 2, 1, 2]
   kernel_sizes: [3, 5, 7]
-  ofa_state_dict: /home/tangchangcheng/projects/experiments/debug_back/1/evaluator
+  ofa_state_dict: null
 
-final_trainer_type: ofa_final_trainer
+final_trainer_type: cnn_trainer
 final_trainer_cfg:
   batch_size: 64
   epochs: 30

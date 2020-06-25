@@ -58,7 +58,7 @@ class OFASupernet(BaseWeightsManager, nn.Module):
         if self.multiprocess:
             net = convert_sync_bn(self).to(self.device)
             object.__setattr__(
-                self, "parallel_model", DistributedDataParallel(net, self.gpus)
+                self, "parallel_model", DistributedDataParallel(net, self.gpus, find_unused_parameters=True)
             )
 
     def reset_flops(self):
@@ -67,6 +67,9 @@ class OFASupernet(BaseWeightsManager, nn.Module):
 
     def forward(self, inputs, rollout=None):
         return self.backbone.forward_rollout(inputs, rollout)
+
+    def extract_features(self, inputs, p_levels, rollout=None):
+        return self.backbone.extract_features(inputs, p_levels, rollout)
 
     def set_hook(self):
         for name, module in self.named_modules():
@@ -101,9 +104,6 @@ class OFASupernet(BaseWeightsManager, nn.Module):
     @classmethod
     def supported_data_types(cls):
         return ["image"]
-
-    def state_dict(self):
-        return self.backbone.state_dict()
 
     def save(self, path):
         torch.save(
@@ -161,14 +161,11 @@ class OFACandidateNet(CandidateNet):
         return out
 
     def forward(self, inputs, single=False):  # pylint: disable=arguments-differ
-        if single or not self.gpus or len(self.gpus) == 1:
-            return self._forward(inputs)
-
         if self.multiprocess:
             out = self.super_net.parallel_model.forward(inputs, self.rollout)
         elif len(self.gpus) > 1:
             out = data_parallel(
                 self, (inputs,), self.gpus, module_kwargs={"single": True}
             )
-
-        return out
+        else:
+            return self._forward(inputs)

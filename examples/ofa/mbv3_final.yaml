@@ -134,7 +134,7 @@ final_model_cfg:
   max_kernel_size: 3
   ofa_state_dict: null
 
-final_trainer_type: ofa_final_trainer
+final_trainer_type: cnn_trainer
 final_trainer_cfg:
   batch_size: 64
   epochs: 30

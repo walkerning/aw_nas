@@ -37,7 +37,8 @@ INSTALL_REQUIRES = [
 ]
 
 EXTRAS_REQUIRE = {
-    "vis": ["tensorboardX<=1.6"]
+    "vis": ["tensorboardX<=1.6"],
+    "det": ["opencv-python", "pycocotools", "torchvision>=0.4.0"]
 }
 
 TESTS_REQUIRE = [

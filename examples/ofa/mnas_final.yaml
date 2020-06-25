@@ -133,7 +133,7 @@ final_model_cfg:
   strides: [1, 2, 2, 2, 1, 2]
   max_kernel_size: 3
 
-final_trainer_type: ofa_final_trainer
+final_trainer_type: cnn_trainer
 final_trainer_cfg:
   batch_size: 32
   epochs: 30

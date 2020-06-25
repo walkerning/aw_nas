@@ -19,6 +19,7 @@ import setproctitle
 import torch
 from torch.backends import cudnn
 
+
 import aw_nas
 from aw_nas.dataset import AVAIL_DATA_TYPES
 from aw_nas import utils, BaseRollout
@@ -251,6 +252,11 @@ def mpsearch(cfg_file, seed, load, save_every, interleave_report_every,
            train_dir, vis_dir, develop):
     # check dependency and initialize visualization writer
     local_rank = int(os.environ["LOCAL_RANK"])
+    # set gpu
+    _set_gpu(local_rank)
+    device = torch.cuda.current_device()
+    torch.distributed.init_process_group(backend="nccl", rank=int(os.environ["RANK"]), world_size=int(os.environ["WORLD_SIZE"]))
+
     if vis_dir and local_rank == 0:
         vis_dir = utils.makedir(vis_dir, remove=True)
         try:
@@ -280,8 +286,12 @@ def mpsearch(cfg_file, seed, load, save_every, interleave_report_every,
                 LOGGER.info("Copy `aw_nas` source code to %s", backup_code_path)
                 shutil.copytree(src_path, backup_code_path, ignore=_onlycopy_py)
 
+    torch.distributed.barrier()
+
+    if train_dir:
         # add log file handler
-        log_file = os.path.join(train_dir, "search.log")
+        log_file = os.path.join(train_dir, "search{}.log".format(
+            "" if local_rank == 0 else "_{}".format(local_rank)))
         _logger.addFile(log_file)
 
     LOGGER.info("CWD: %s", os.getcwd())
@@ -289,11 +299,6 @@ def mpsearch(cfg_file, seed, load, save_every, interleave_report_every,
 
     setproctitle.setproctitle("awnas-search config: {}; train_dir: {}; vis_dir: {}; cwd: {}"\
                               .format(cfg_file, train_dir, vis_dir, os.getcwd()))
-
-    # set gpu
-    _set_gpu(local_rank)
-    device = torch.cuda.current_device()
-    torch.distributed.init_process_group(backend="nccl")
 
     LOGGER.info(("Start distributed parallel searching: (world size {}; MASTER {}:{})"
                  " rank {} local_rank {} PID {}").format(
@@ -312,6 +317,9 @@ def mpsearch(cfg_file, seed, load, save_every, interleave_report_every,
     LOGGER.info("Loading configuration files.")
     with open(cfg_file, "r") as f:
         cfg = yaml.safe_load(f)
+
+    cfg["weights_manager_cfg"]["multiprocess"] = True
+    cfg["evaluator_cfg"]["multiprocess"] = True
 
     # initialize components
     LOGGER.info("Initializing components.")
@@ -355,6 +363,8 @@ def mpsearch(cfg_file, seed, load, save_every, interleave_report_every,
                               rollout_type=rollout_type)
 
     # setup trainer and train
+    if local_rank != 0:
+        save_every = None
     trainer.setup(load, save_every, train_dir, writer=writer,
                   interleave_report_every=interleave_report_every)
     trainer.train()
@@ -669,8 +679,8 @@ def derive(cfg_file, load, out_file, n, save_plot, test, steps, gpu, seed, dump_
                 _dump(r, dump_mode, of)
                 of.write("\n")
     else:
-        trainer = _init_components_from_cfg(cfg, device, from_controller=True,
-                                            search_space=search_space, controller=controller)[-1]
+        trainer = _init_components_from_cfg(cfg, device)[-1]#, from_controller=True,
+                                            #search_space=search_space, controller=controller)[-1]
 
         LOGGER.info("Loading from disk...")
         trainer.setup(load=load)
@@ -688,6 +698,7 @@ def derive(cfg_file, load, out_file, n, save_plot, test, steps, gpu, seed, dump_
                     )
                 of.write("# ---- Arch {} (Reward {}) ----\n".format(i, rollout.get_perf()))
                 _dump(rollout, dump_mode, of)
+                yaml.safe_dump([{"reward": rollout.get_perf()}], of)
                 of.write("\n")
 
 
@@ -706,12 +717,20 @@ def derive(cfg_file, load, out_file, n, save_plot, test, steps, gpu, seed, dump_
               help="the directory to save checkpoints")
 def mptrain(seed, cfg_file, load, load_state_dict, save_every, train_dir):
     local_rank = int(os.environ["LOCAL_RANK"])
+    # set gpu
+    _set_gpu(local_rank)
+    device = torch.cuda.current_device()
+    torch.distributed.init_process_group(backend="nccl")
+
     if train_dir:
         # backup config file, and if in `develop` mode, also backup the aw_nas source code
         if local_rank == 0:
             train_dir = utils.makedir(train_dir, remove=False)
             shutil.copyfile(cfg_file, os.path.join(train_dir, "train_config.yaml"))
+    
+    torch.distributed.barrier()
 
+    if train_dir:
         # add log file handler
         log_file = os.path.join(train_dir, "train{}.log".format(
             "" if local_rank == 0 else "_{}".format(local_rank)))
@@ -722,11 +741,6 @@ def mptrain(seed, cfg_file, load, load_state_dict, save_every, train_dir):
 
     setproctitle.setproctitle("awnas-train config: {}; train_dir: {}; cwd: {}"\
                               .format(cfg_file, train_dir, os.getcwd()))
-
-    # set gpu
-    _set_gpu(local_rank)
-    device = torch.cuda.current_device()
-    torch.distributed.init_process_group(backend="nccl")
 
     LOGGER.info(("Start distributed parallel training: (world size {}; MASTER {}:{})"
                  " rank {} local_rank {} PID {}").format(
@@ -745,6 +759,8 @@ def mptrain(seed, cfg_file, load, load_state_dict, save_every, train_dir):
     LOGGER.info("Loading configuration files.")
     with open(cfg_file, "r") as f:
         cfg = yaml.safe_load(f)
+
+    cfg["final_trainer_cfg"]["multiprocess"] = True
 
     # initialize components
     LOGGER.info("Initializing components.")
@@ -778,6 +794,8 @@ def mptrain(seed, cfg_file, load, load_state_dict, save_every, train_dir):
 
     # start training
     LOGGER.info("Start training.")
+    if local_rank != 0:
+        save_every = None
     trainer.setup(load, load_state_dict, save_every, train_dir)
     trainer.train()
 

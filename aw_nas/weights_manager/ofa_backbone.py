@@ -2,6 +2,7 @@
 """Base class definition of OFA Backbone."""
 
 import abc
+import copy
 
 import torch
 from torch import nn
@@ -12,7 +13,6 @@ from aw_nas.ops.baseline_ops import MobileNetV2Block, MobileNetV3Block
 from aw_nas.utils import make_divisible, feature_level_to_stage_index
 from aw_nas.utils.common_utils import _get_channel_mask
 from aw_nas.utils.exception import ConfigException, expect
-
 
 
 class FlexibleBlock(Component, nn.Module):
@@ -45,7 +45,6 @@ class FlexibleMobileNetV2Block(MobileNetV2Block, FlexibleBlock):
     ):
         FlexibleBlock.__init__(self, schedule_cfg)
         self.activation = activation
-        act_fn = get_op(activation)(inplace=True)
         C_inner = C * expansion
         self.kernel_sizes = sorted(kernel_sizes)
         self.kernel_size = self.kernel_sizes[-1]
@@ -57,7 +56,7 @@ class FlexibleMobileNetV2Block(MobileNetV2Block, FlexibleBlock):
             inv_bottleneck = nn.Sequential(
                 FlexiblePointLinear(C, C_inner, 1, 1, 0),
                 FlexibleBatchNorm2d(C_inner, affine=affine),
-                act_fn,
+                get_op(activation)(inplace=True),
             )
 
         depth_wise = nn.Sequential(
@@ -68,7 +67,7 @@ class FlexibleMobileNetV2Block(MobileNetV2Block, FlexibleBlock):
                 do_kernel_transform=do_kernel_transform,
             ),
             FlexibleBatchNorm2d(C_inner, affine=affine),
-            act_fn,
+            get_op(activation)(inplace=True),
         )
 
         point_linear = nn.Sequential(
@@ -148,12 +147,12 @@ class FlexibleMobileNetV2Block(MobileNetV2Block, FlexibleBlock):
 class FlexibleMobileNetV3Block(MobileNetV3Block, FlexibleBlock):
     NAME = "mbv3_block"
     def __init__(self, 
-        expansion, 
-        C, 
-        C_out, 
-        stride, 
-        kernel_sizes=(3, 5, 7), 
-        do_kernel_transform=True, 
+        expansion,
+        C,
+        C_out,
+        stride,
+        kernel_sizes=(3, 5, 7),
+        do_kernel_transform=True,
         affine=True,
         activation="relu",
         use_se=False,
@@ -172,14 +171,12 @@ class FlexibleMobileNetV3Block(MobileNetV3Block, FlexibleBlock):
         self.use_se = use_se
         self.affine = affine
 
-        self.act_fn = get_op(activation)(inplace=True)
-
         inv_bottleneck = None
         if expansion != 1:
             inv_bottleneck = nn.Sequential(
                 FlexiblePointLinear(C, self.C_inner, 1, 1, 0),
                 FlexibleBatchNorm2d(self.C_inner, affine=affine),
-                self.act_fn,
+                get_op(activation)(inplace=True),
             )
 
         depth_wise = nn.Sequential(
@@ -190,7 +187,7 @@ class FlexibleMobileNetV3Block(MobileNetV3Block, FlexibleBlock):
                 do_kernel_transform=do_kernel_transform,
             ),
             FlexibleBatchNorm2d(self.C_inner, affine=affine),
-            self.act_fn,
+            get_op(activation)(inplace=True),
         )
 
         point_linear = nn.Sequential(
@@ -482,6 +479,7 @@ class MobileNetV2Arch(BaseBackboneArch):
 
     def finalize(self, blocks, expansions, kernel_sizes):
         cells = []
+        finalized_model = copy.deepcopy(self)
         for i, cell in enumerate(self.cells):
             cells.append([])
             for j, block in enumerate(cell):
@@ -490,8 +488,31 @@ class MobileNetV2Arch(BaseBackboneArch):
                 block.set_mask(expansions[i][j], kernel_sizes[i][j])
                 cells[-1].append(block.finalize())
             cells[-1] = nn.ModuleList(cells[-1])
-        self.cells = nn.ModuleList(cells)
-        return self
+        finalized_model.cells = nn.ModuleList(cells)
+        return finalized_model
+
+    def extract_features(self, inputs, p_levels, rollout=None, drop_connect_rate=0.0):
+        out = self.stem(inputs)
+        level_indexes = feature_level_to_stage_index(self.strides)
+        features = []
+        for i, cell in enumerate(self.cells):
+            for j, block in enumerate(cell):
+                if rollout is None:
+                    out = block(out, drop_connect_rate)
+                else:
+                    if j >= rollout.depth[i]:
+                        break
+                    out = block.forward_rollout(
+                        out, rollout.width[i][j], rollout.kernel[i][j], drop_connect_rate
+                    )
+            features.append(out)
+        out = self.conv_head(out)
+        features[-1] = out
+        return [features[level_indexes[p]] for p in p_levels], out
+
+    def get_feature_channel_num(self, p_levels):
+        level_indexes = feature_level_to_stage_index(self.strides)
+        return [self.channels[level_indexes[p]] for p in p_levels]
 
     def get_features(self, inputs, p_levels, rollout=None):
         out = self.stem(inputs)
@@ -644,15 +665,6 @@ class MobileNetV3Arch(BaseBackboneArch):
             )
         return nn.ModuleList(cell)
 
-    def flatten(self):
-        flattened = [self.stem]
-        for i, cell in enumerate(self.cells):
-            for j, block in enumerate(cell):
-                flattened.append(block)
-        flattened.append(self.conv_head)
-        flattened.append(self.conv_final)
-        return nn.ModuleList(flattened)
-
     def forward(self, inputs):
         return self.forward_rollout(inputs)
 
@@ -676,6 +688,7 @@ class MobileNetV3Arch(BaseBackboneArch):
 
     def finalize(self, blocks, expansions, kernel_sizes):
         cells = []
+        finalized_model = copy.deepcopy(self)
         for i, cell in enumerate(self.cells):
             cells.append([])
             for j, block in enumerate(cell):
@@ -684,22 +697,22 @@ class MobileNetV3Arch(BaseBackboneArch):
                 block.set_mask(expansions[i][j], kernel_sizes[i][j])
                 cells[-1].append(block.finalize())
             cells[-1] = nn.ModuleList(cells[-1])
-        self.cells = nn.ModuleList(cells)
-        return self
+        finalized_model.cells = nn.ModuleList(cells)
+        return finalized_model
 
-    def get_features(self, inputs, p_levels, rollout=None):
+    def extract_features(self, inputs, p_levels, rollout=None, drop_connect_rate=0.0):
         out = self.stem(inputs)
         level_indexes = feature_level_to_stage_index(self.strides)
         features = []
         for i, cell in enumerate(self.cells):
             for j, block in enumerate(cell):
                 if rollout is None:
-                    out = block(out)
+                    out = block(out, drop_connect_rate)
                 else:
                     if j >= rollout.depth[i]:
                         break
                     out = block.forward_rollout(
-                        out, rollout.width[i][j], rollout.kernel[i][j]
+                        out, rollout.width[i][j], rollout.kernel[i][j], drop_connect_rate
                     )
             features.append(out)
         out = self.conv_head(out)

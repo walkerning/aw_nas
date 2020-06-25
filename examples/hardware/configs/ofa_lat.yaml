@@ -137,7 +137,7 @@ profiling_net_cfg:
     final_model_cfg:
       {}
 
-    final_trainer_type: ofa_final_trainer
+    final_trainer_type: cnn_trainer
     final_trainer_cfg:
       batch_size: 64
       epochs: 30
