@@ -85,7 +85,7 @@ weights_manager_cfg:
     blocks: [1, 4, 4, 4, 4, 4]
     strides: [1, 2, 2, 2, 1, 2]
     expansions: [1, 6, 6, 6, 6, 6]
-    channels: [32, 16, 24, 32, 64, 96, 160, 320, 1280]
+    layer_channels: [32, 16, 24, 32, 64, 96, 160, 320, 1280]
     mult_ratio: 1.
     kernel_sizes: [7, 5, 3]
     num_classes: 10

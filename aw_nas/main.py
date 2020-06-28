@@ -10,7 +10,6 @@ import sys
 import random
 import shutil
 import functools
-import multiprocessing as mp
 
 import click
 import yaml

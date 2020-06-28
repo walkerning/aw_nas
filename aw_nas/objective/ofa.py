@@ -15,7 +15,9 @@ class OFAClassificationObjective(BaseObjective):
 
     SCHEDULABLE_ATTRS = ["soft_loss_coeff"]
 
-    def __init__(self, search_space, label_smooth=None, soft_loss_coeff=1.0, latency_coeff=1., reward="add", expect_latency=30, punishment="soft", latency_file=None, schedule_cfg=None):
+    def __init__(self, search_space, label_smooth=None, soft_loss_coeff=1.0, latency_coeff=1.,
+                 reward="add", expect_latency=30, punishment="soft", latency_file=None,
+                 is_finetune=False, schedule_cfg=None):
         super(OFAClassificationObjective, self).__init__(search_space, schedule_cfg)
         self.label_smooth = label_smooth
         self.soft_loss_coeff = soft_loss_coeff
@@ -26,7 +28,9 @@ class OFAClassificationObjective(BaseObjective):
         self.expect_latency = expect_latency
         self.reward = reward
         self.punishment = punishment
-        decode = lambda x:[int(x[0]), int(x[1]), int(x[2]), int(x[3]), float(x[4])]
+        self.is_finetune = is_finetune
+
+        decode = lambda x: [int(x[0]), int(x[1]), int(x[2]), int(x[3]), float(x[4])]
         if self.latency_file is not None:
             with open(self.latency_file, "r") as f:
                 lines = f.readlines()
@@ -64,8 +68,9 @@ class OFAClassificationObjective(BaseObjective):
                         latency += ele[4]
                         break
                 else:
+                    self.logger.warn("Can't find element for {} {} {} {}".format(
+                        in_channel, out_channel, expansion, stride))
                     continue
-                    print("Can't find element for {} {} {} {}".format(in_channel, out_channel, expansion, stride))
         return latency
 
 
@@ -77,9 +82,9 @@ class OFAClassificationObjective(BaseObjective):
         if hasattr(cand_net, "elapse"):
             elapse = cand_net.elapse
         else:
-            t0 = timeit.default_timer()
+            t_0 = timeit.default_timer()
             cand_net.forward(inputs)
-            elapse = timeit.default_timer() - t0
+            elapse = timeit.default_timer() - t_0
 
         return float(accuracy(outputs, targets)[0]) / 100, self.latency(cand_net), 1000 * elapse
 
@@ -98,7 +103,7 @@ class OFAClassificationObjective(BaseObjective):
             return perf[0] * ((self.expect_latency / perf[2]) ** latency_coeff)
         return perf[0] * ((self.expect_latency / np.log(1 + perf[2])) ** latency_coeff)
 
-    
+
     def get_reward(self, inputs, outputs, targets, cand_net):
         perf = self.get_perfs(inputs, outputs, targets, cand_net)
         if self.reward == "add":
@@ -120,9 +125,9 @@ class OFAClassificationObjective(BaseObjective):
             targets: labels
         """
         loss = self._criterion(outputs, targets)
-        if self.soft_loss_coeff > 0:
+        if self.soft_loss_coeff > 0 and not self.is_finetune:
+            # do not calculate soft loss during finetuning
             outputs_all = cand_net.super_net.forward_all(inputs).detach()
-            
             soft = self.loss_soft(outputs, outputs_all, self.soft_loss_coeff)
             loss2 = loss + soft * self.soft_loss_coeff
             return loss2
