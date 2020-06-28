@@ -23,12 +23,12 @@ search_space_cfg:
 ## ---- End Component search_space ----
 
 ## ---- Component dataset ----
-# ---- Type cifar10 ----
-dataset_type: cifar10
+# ---- Type cifar100 ----
+dataset_type: cifar100
 dataset_cfg:
   # Schedulable attributes:
   cutout: null
-# ---- End Type cifar10 ----
+# ---- End Type cifar100 ----
 ## ---- End Component dataset ----
 
 ## ---- Component controller ----
@@ -89,7 +89,7 @@ weights_manager_cfg:
     layer_channels: [16, 16, 24, 40, 80, 112, 160, 960, 1280]
     mult_ratio: 1.
     kernel_sizes: [3, 5, 7]
-    num_classes: 10
+    num_classes: 100
     block_type: mbv3_block
     stem_stride: 1
   multiprocess: false

@@ -123,7 +123,7 @@ class OFAClassificationObjective(BaseObjective):
         if self.soft_loss_coeff > 0:
             outputs_all = cand_net.super_net.forward_all(inputs).detach()
             
-            soft = self.loss_soft(outputs, outputs_all)
+            soft = self.loss_soft(outputs, outputs_all, self.soft_loss_coeff)
             loss2 = loss + soft * self.soft_loss_coeff
             return loss2
         return loss
@@ -136,9 +136,9 @@ class SoftCrossEntropy(nn.Module):
     def __init__(self):
         super(SoftCrossEntropy, self).__init__()
 
-    def forward(self, inputs, targets):
-        log_likelihood = -F.log_softmax(inputs, dim=1)
-        likelihood = F.softmax(targets, dim=1)
+    def forward(self, inputs, targets, temperature=1.):
+        log_likelihood = -F.log_softmax(inputs / temperature, dim=1)
+        likelihood = F.softmax(targets / temperature, dim=1)
         sample_num, class_num = targets.shape
         loss = torch.sum(torch.mul(log_likelihood, likelihood)) / sample_num
         return loss
