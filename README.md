@@ -76,6 +76,7 @@ When running `awnas` program, it will assume the data of a dataset with `name=<N
 * Cifar-10/Cifar-100: No specific preparation needed.
 * PTB: `bash scripts/get_data.sh ptb`, the ptb data will be downloaded under `${DATA_BASE}/ptb` directory. By default `${DATA_BASE}` will be `~/awnas/data`.
 * Tiny-ImageNet: `bash scripts/get_data.sh tiny-imagenet`, the tiny-imagenet data will be downloaded under `${DATA_BASE}/tiny-imagenet` directory.
+* Detection datasets VOC/COCO: `bash scripts/get_data.sh voc` and `bash scripts/get_data.sh coco`
 
 ### Run NAS search
 
