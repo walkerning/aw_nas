@@ -6,9 +6,11 @@ The main entrypoint of aw_nas.
 from __future__ import print_function
 
 import os
+import re
 import sys
 import random
 import shutil
+import pprint
 import functools
 
 import click
@@ -624,7 +626,7 @@ def eval_arch(cfg_file, arch_file, load, gpu, seed, save_plot, save_state_dict, 
               help="If specified, save the plot of the rollouts to this path")
 @click.option("--test", default=False, type=bool, is_flag=True,
               help="If false, only the controller is loaded and use to sample rollouts; "
-              "Otherwise, weights_manager/trainer is also loaded and test these rollouts.")
+              "Otherwise, weights_manager/trainer are also loaded to test these rollouts.")
 @click.option("--steps", default=None, type=int,
               help="number of batches to eval for each arch, default to be the whole derive queue.")
 @click.option("--gpu", default=0, type=int,
@@ -999,6 +1001,44 @@ def gen_final_sample_config(out_file, data_type):
             out_f.write(utils.component_sample_config_str(comp_name, prefix="# ",
                                                           filter_funcs=filter_funcs))
             out_f.write("\n")
+
+@main.command(help="Print registry information.")
+@click.option("-t", "--table", default=[], multiple=True,
+              type=click.Choice(RegistryMeta.avail_tables()),
+              help="If specified, only print classes of the corresponding registries/tables.")
+@click.option("-n", "--name", default=[], multiple=True,
+              help="If specified, only print the information of the corresponding classes in the registry.")
+@click.option("-r", "--regex", default=False, type=bool, is_flag=True,
+              help="If specified, match registry and class name using regex")
+@click.option("-v", "--verbose", default=False, type=bool, is_flag=True,
+              help="Print the documentation of the classes")
+def registry(table, name, regex, verbose):
+    if table:
+        if regex:
+            registry_names = [table_name for table_name in RegistryMeta.avail_tables()
+                              if any(re.match(s_table, table_name) is not None
+                                     for s_table in table)]
+        else:
+            registry_names = table
+    else:
+        registry_names = RegistryMeta.avail_tables()
+
+    print("Registries\n================")
+    for registry_name in registry_names:
+        avails = RegistryMeta.registry_dct[registry_name]
+        print("**{}**".format(registry_name))
+        for class_name, class_ in avails.items():
+            if name:
+                if (regex and not any(
+                        re.match(s_name, class_name) is not None for s_name in name)) or \
+                        (not regex and not class_name in name):
+                    # not match
+                    continue
+
+            print("{}: {}".format(class_name, str(class_)))
+            if verbose:
+                print(class_.__doc__)
+        print("----------------")
 
 
 if __name__ == "__main__":

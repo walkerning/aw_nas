@@ -23,14 +23,14 @@ PACKAGES = find_packages(exclude=["tests.*", "tests"])
 
 # dependencies
 INSTALL_REQUIRES = [
-    "torch>=1.0.0", # torch
-    "torchvision",  # torch
-    "numpy",        # math lib
-    "scipy",        # math lib
-    "six",          # 2-3 compatability
-    "PyYaml",       # config file parsing
-    "click",        # command line interface
-    "graphviz",     # visualize architecture dag
+    "torch>=1.0.0,<1.5.0", # torch
+    "torchvision",         # torchvision
+    "numpy",               # math lib
+    "scipy",               # math lib
+    "six",                 # 2-3 compatability
+    "PyYaml",              # config file parsing
+    "click",               # command line interface
+    "graphviz",            # visualize architecture dag
     # other utils
     "imageio",
     "setproctitle"
