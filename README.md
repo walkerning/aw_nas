@@ -40,28 +40,26 @@ After installation, you can run `awnas --help` to see what sub-commands are avai
 Output of an example run (version 0.3.dev3):
 
 ```
-02/18 12:28:53 PM btc              WARNING: Error importing module nasbench: No module named 'nasbench'
-Should install the NASBench 101 package following https://github.com/google-research/nasbench
-02/18 12:28:53 PM btc              WARNING: Error importing module nasbench_201: No module named 'nas_201_api'
-Should install the NASBench 201 package following https://github.com/D-X-Y/NAS-Bench-201
-02/18 12:28:53 PM plugin              INFO: Check plugins under /home/foxfi/awnas/plugins
-02/18 12:28:53 PM plugin              INFO: Loaded plugins:
+07/04 11:41:44 PM plugin              INFO: Check plugins under /home/foxfi/awnas/plugins
+07/04 11:41:44 PM plugin              INFO: Loaded plugins:
 Usage: awnas [OPTIONS] COMMAND [ARGS]...
 
   The awnas NAS framework command line interface. Use `AWNAS_LOG_LEVEL`
   environment variable to modify the log level.
 
 Options:
-  --version  Show the version and exit.
+  --version             Show the version and exit.
   --local_rank INTEGER  the rank of this process  [default: -1]
-  --help     Show this message and exit.
+  --help                Show this message and exit.
 
 Commands:
   search                   Searching for architecture.
+  mpsearch                 Multiprocess searching for architecture.
   random-sample            Random sample architectures.
   sample                   Sample architectures, pickle loading controller...
   eval-arch                Eval architecture from file.
   derive                   Derive architectures.
+  mptrain                  Train an architecture.
   train                    Train an architecture.
   test                     Test a final-trained model.
   gen-sample-config        Dump the sample configuration.
@@ -146,10 +144,10 @@ See [Develop New Components](doc/development.md) for the development guide of ne
 
 ## Researches
 We use this code base to finish the following researches
-* Wenshuo Li*, Xuefei Ning*, Guangjun Ge, Xiaoming Chen, Yu Wang, Huazhong Yang, FTT-NAS: Discovering Fault-Tolerant Neural Architecture. ASPDAC 2020.
-* Shulin Zeng, Hanbo Sun, Yu Xing, Xuefei Ning, Yi Shan, Xiaoming Chen, Yu Wang, Huazhong Yang, Black Box Search Space Profiling for Accelerator-Aware Neural Architecture Search. ASPDAC 2020.
-* Xuefei Ning, Guangjun Ge, Wenshuo Li, Zhenhua Zhu, Yin Zheng, Xiaoming Chen, Zhen Gao, Yu Wang, and Huazhong Yang, FTT-NAS: Discovering Fault-Tolerant Neural Architecture. https://arxiv.org/abs/2003.10375, 2020.
-* Xuefei Ning, Yin Zheng, Tianchen Zhao, Yu Wang, Huazhong Yang,  A Generic Graph-based Neural Architecture Encoding Scheme for Predictor-based NAS , in https://arxiv.org/abs/2004.01899, 2020.
+* Wenshuo Li*, Xuefei Ning*, Guangjun Ge, Xiaoming Chen, Yu Wang, Huazhong Yang, FTT-NAS: Discovering Fault-Tolerant Neural Architecture, in ASP-DAC 2020.
+* Shulin Zeng*, Hanbo Sun*, Yu Xing, Xuefei Ning, Yi Shan, Xiaoming Chen, Yu Wang, Huazhong Yang, Black Box Search Space Profiling for Accelerator-Aware Neural Architecture Search, in ASP-DAC 2020.
+* Xuefei Ning, Guangjun Ge, Wenshuo Li, Zhenhua Zhu, Yin Zheng, Xiaoming Chen, Zhen Gao, Yu Wang, and Huazhong Yang, FTT-NAS: Discovering Fault-Tolerant Neural Architecture, in https://arxiv.org/abs/2003.10375, 2020.
+* Xuefei Ning, Yin Zheng, Tianchen Zhao, Yu Wang, Huazhong Yang, A Generic Graph-based Neural Architecture Encoding Scheme for Predictor-based NAS, in ECCV 2020, https://arxiv.org/abs/2004.01899
 
 
 See the sub-directories under `examples/research/` for more details.

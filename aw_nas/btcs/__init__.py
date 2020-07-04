@@ -9,7 +9,7 @@ try:
     from aw_nas.btcs import nasbench_101
 except ImportError as e:
     _LOGGER.warn(
-        ("Error importing module nasbench: {}\n"
+        ("Cannot import module nasbench: {}\n"
          "Should install the NASBench 101 package following "
          "https://github.com/google-research/nasbench").format(e))
 
@@ -17,7 +17,7 @@ try:
     from aw_nas.btcs import nasbench_201
 except ImportError as e:
     _LOGGER.warn(
-        ("Error importing module nasbench_201: {}\n"
+        ("Cannot import module nasbench_201: {}\n"
          "Should install the NASBench 201 package following "
          "https://github.com/D-X-Y/NAS-Bench-201").format(e))
         

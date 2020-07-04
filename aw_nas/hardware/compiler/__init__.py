@@ -5,4 +5,4 @@ _LOGGER = _logger.getChild("hardware.compiler")
 try:
     from aw_nas.hardware.compiler import dpu
 except ImportError as e:
-    _LOGGER.warn("Error importing hardware compiler for dpu: {}\n".format(e))
+    _LOGGER.warn("Cannot import hardware compiler for dpu: {}\n".format(e))

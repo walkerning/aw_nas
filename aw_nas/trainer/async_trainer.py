@@ -274,5 +274,5 @@ try:
     from aw_nas.trainer.ray_dispatcher import RayDispatcher
 except ImportError as e:
     _LOGGER.warn(
-        ("Error importing module aw_nas.evaluator.ray_dispatcher: {}\n"
+        ("Cannot import module aw_nas.evaluator.ray_dispatcher: {}\n"
          "Should install ray package first.").format(e))

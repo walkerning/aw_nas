@@ -45,7 +45,6 @@ class BaseHardwareObjectiveModel(Component):
 
 
 class MixinProfilingSearchSpace(SearchSpace):
-    NAME = "mixin_search_space"
 
     @abc.abstractmethod
     def generate_profiling_primitives(self):

@@ -172,7 +172,7 @@ def search(cfg_file, gpu, seed, load, save_every, interleave_report_every,
         try:
             import tensorboardX
         except ImportError:
-            LOGGER.error("Error importing module tensorboardX. Will IGNORE the `--vis-dir` option! "
+            LOGGER.error("Cannot import module tensorboardX. Will IGNORE the `--vis-dir` option! "
                          "Try installing the dependency manually, or `pip install aw_nas[vis]`")
             _writer = None
         else:
@@ -263,7 +263,7 @@ def mpsearch(cfg_file, seed, load, save_every, interleave_report_every,
         try:
             import tensorboardX
         except ImportError:
-            LOGGER.error("Error importing module tensorboardX. Will IGNORE the `--vis-dir` option! "
+            LOGGER.error("Cannot import module tensorboardX. Will IGNORE the `--vis-dir` option! "
                          "Try installing the dependency manually, or `pip install aw_nas[vis]`")
             _writer = None
         else:

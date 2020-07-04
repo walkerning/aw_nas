@@ -285,7 +285,7 @@ def namedtuple_with_defaults(name, fields, defaults):
     if sys.version_info.major == 3 and (
             sys.version_info.minor > 7 or
             (sys.version_info.minor == 7 and sys.version_info.micro >= 6)):
-        return namedtuple(name, fields, defaults)
+        return namedtuple(name, fields, defaults=defaults)
     type_ = namedtuple(name, fields)
     if defaults:
         type_.__new__.__defaults__ = tuple(defaults)
@@ -486,7 +486,8 @@ def get_sub_kernel(kernel, sub_kernel_size):
 
 def _get_channel_mask(filters, num_channels):
     norm_tensor = np.abs(filters.cpu().detach().numpy()).sum(axis=3).sum(axis=2).sum(axis=0)
-    norm_tensor = sorted(zip(range(len(norm_tensor)), norm_tensor), key=lambda x: x[1], reverse=True)
+    norm_tensor = sorted(zip(range(len(norm_tensor)), norm_tensor),
+                         key=lambda x: x[1], reverse=True)
     channel_order = [x[0] for x in norm_tensor]
     mask = np.zeros(filters.shape[1], dtype=np.bool)
     reserved_channels = channel_order[:num_channels]

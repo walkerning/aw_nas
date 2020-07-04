@@ -17,7 +17,7 @@ try:
     from .det_trainer import DetectionFinalTrainer
 except ImportError as e:
     _LOGGER.warn(
-        ("Error importing module detection: {}\n"
+        ("Cannot import module detection: {}\n"
          "Should install EXTRAS_REQUIRE `det`").format(e))
 
 
