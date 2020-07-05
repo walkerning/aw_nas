@@ -52,6 +52,7 @@ class NasBench201SearchSpace(SearchSpace):
         self.num_op_choices = len(self.ops_choices) # 5
         self.num_ops = self.num_vertices * (self.num_vertices - 1) // 2
         self.idx = np.tril_indices(self.num_vertices, k=-1)
+        self.genotype_type = str
 
         if self.load_nasbench:
             self._init_nasbench()
@@ -65,6 +66,10 @@ class NasBench201SearchSpace(SearchSpace):
         super(NasBench201SearchSpace, self).__setstate__(state)
         if self.load_nasbench:
             self._init_nasbench()
+
+    # optional API
+    def genotype_from_str(self, genotype_str):
+        return genotype_str
 
     # ---- APIs ----
     def random_sample(self):
@@ -169,6 +174,7 @@ class NasBench201SearchSpace(SearchSpace):
 
 class NasBench201Rollout(BaseRollout):
     NAME = "nasbench-201"
+    supported_components = [("controller", "rl"), ("evaluator", "mepa")]
 
     def __init__(self, matrix, search_space):
         super(NasBench201Rollout, self).__init__()

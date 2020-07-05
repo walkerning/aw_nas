@@ -392,13 +392,14 @@ class SimpleTrainer(BaseTrainer):
                     for i in range(len(lines)):
                         if lines[i].find("Arch") != -1 and lines[i].find("Reward") != -1:
                             reward = float(lines[i][lines[i].find("Reward")+7:lines[i].find(")")])
-                        elif lines[i].find("-") != -1:
-                            arch = lines[i].strip()[3:-1]
+                        elif lines[i].startswith("-"):
+                            arch = lines[i]
                         else:
                             if lines[i] == "\n":
+                                arch = yaml.load(arch)[0]
                                 save_dict[arch] = reward
                             else:
-                                arch += lines[i].strip()[3:-1]
+                                arch += lines[i]
                     fin.close()
                     os.system("cp {} {}".format(out_file, out_file+".tmp"))
                 fo = open(out_file, 'w')
@@ -407,6 +408,7 @@ class SimpleTrainer(BaseTrainer):
                     fo.write("# ---- Arch {} (Reward {}) ----\n".format(i_sample, save_dict[str(rollouts[i_sample].genotype)]))
                     yaml.safe_dump([str(rollouts[i_sample].genotype)], fo)
                     fo.write("\n")
+                    rollouts[i_sample].set_perf(save_dict[str(rollouts[i_sample].genotype)])
                     continue
                 rollouts[i_sample] = self.evaluator.evaluate_rollouts([rollouts[i_sample]],
                                                                       is_training=False,

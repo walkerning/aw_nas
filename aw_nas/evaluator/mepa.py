@@ -451,7 +451,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
 
     @classmethod
     def supported_rollout_types(cls):
-        return ["discrete", "differentiable", "compare", "nasbench-201"]
+        return ["discrete", "differentiable", "compare"]
 
     def suggested_controller_steps_per_epoch(self):
         return len(self.controller_queue)
@@ -597,12 +597,12 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
         rollouts = controller.sample(n=self.mepa_samples, batch_size=self.rollout_batch_size)
         num_rollouts = len(rollouts)
 
-        for _ in range(num_rollouts):
+        for _ind in range(num_rollouts):
             # surrogate data iterator
             surrogate_iter = iter(surrogate_data_list) if self.use_same_surrogate_data \
                              else self.surrogate_queue
 
-            rollout = rollouts[0]
+            rollout = rollouts[_ind]
             # assemble candidate net
             cand_net = self.weights_manager.assemble_candidate(rollout)
 
@@ -659,7 +659,6 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
 
             # record stats of this arch
             report_stats.append(res)
-            del(rollouts[0])
 
         if self.schedule_every_batch:
             # schedule learning rate every evaluator step

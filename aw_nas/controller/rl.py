@@ -174,7 +174,7 @@ class RLController(BaseController, nn.Module):
 
     @classmethod
     def supported_rollout_types(cls):
-        return ["discrete", "nasbench-201"]
+        return [assert_rollout_type("discrete")]
 
     # ---- Override some components functionality: dispatch to controller_networks and agents ----
     def on_epoch_start(self, epoch):

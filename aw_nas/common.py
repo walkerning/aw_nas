@@ -587,6 +587,9 @@ def get_search_space(cls, **cfg):
 def genotype_from_str(genotype_str, search_space):
     #pylint: disable=eval-used,bare-except
     genotype_str = str(genotype_str)
+    if hasattr(search_space, "genotype_from_str"):
+        # If search space
+        return search_space.genotype_from_str(genotype_str)
     try:
         return eval("search_space.genotype_type({})".format(genotype_str))
     except:

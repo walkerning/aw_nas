@@ -5,9 +5,9 @@ referred https://github.com/automl/nas_benchmarks/blob/master/tabular_benchmarks
 """
 
 import os
+import re
 import random
 import collections
-import pickle
 
 import numpy as np
 import torch
@@ -31,19 +31,22 @@ VERTICES = 7
 MAX_EDGES = 9
 _nasbench_cfg = config.build_config()
 
+def _literal_np_array(arr):
+    return "np.array({})".format(np.array2string(arr, separator=",").replace("\n", " "))
+
 class _ModelSpec(api.ModelSpec):
     def __repr__(self):
-        return "ModelSpec(matrix={}, ops={}; original_matrix={}, original_ops={})".format(
-            self.matrix, self.ops, self.original_matrix, self.original_ops)
+        return "_ModelSpec({}, {}; pruned_matrix={}, pruned_ops={})".format(
+            _literal_np_array(self.original_matrix), self.original_ops, _literal_np_array(self.matrix), self.ops)
 
-    def hash_spec(self):
+    def hash_spec(self, *args, **kwargs):
         return super(_ModelSpec, self).hash_spec(_nasbench_cfg["available_ops"])
 
 class NasBench101SearchSpace(SearchSpace):
     NAME = "nasbench-101"
 
     def __init__(self, multi_fidelity=False, load_nasbench=True,
-                 compare_reduced=True, compare_use_hash=False):
+                 compare_reduced=True, compare_use_hash=False, validate_spec=True):
         super(NasBench101SearchSpace, self).__init__()
 
         self.ops_choices = [
@@ -67,6 +70,7 @@ class NasBench101SearchSpace(SearchSpace):
         self.num_op_choices = len(self.ops_choices) # 3 + 1 (none)
         self.num_ops = self.num_vertices - 2 # 5
         self.idx = np.triu_indices(self.num_vertices, k=1)
+        self.validate_spec = validate_spec
 
         if self.load_nasbench:
             self._init_nasbench()
@@ -110,9 +114,10 @@ class NasBench101SearchSpace(SearchSpace):
             ops[0] = "input"
             ops[-1] = "output"
             spec = _ModelSpec(matrix=matrix, ops=ops)
-            if self.nasbench.is_valid(spec):
-                return NasBench101Rollout(
-                    spec.original_matrix, ops=self.op_to_idx(spec.original_ops), search_space=self)
+            if self.validate_spec and not self.nasbench.is_valid(spec):
+                continue
+            return NasBench101Rollout(
+                spec.original_matrix, ops=self.op_to_idx(spec.original_ops), search_space=self)
 
     def _random_sample_me(self):
         while 1:
@@ -133,6 +138,10 @@ class NasBench101SearchSpace(SearchSpace):
             else:
                 return rollout
 
+    # optional API
+    def genotype_from_str(self, genotype_str):
+        return eval(re.search("(_ModelSpec\(.+);", genotype_str).group(1) + ")")
+
     # ---- APIs ----
     def random_sample(self):
         return self._random_sample_ori()
@@ -144,7 +153,6 @@ class NasBench101SearchSpace(SearchSpace):
         return self.construct_modelspec(edges=None, matrix=matrix, ops=ops)
 
     def rollout_from_genotype(self, genotype):
-        # return NasBench101Rollout(genotype.matrix, ops=self.op_to_idx(genotype.ops),
         return NasBench101Rollout(genotype.original_matrix,
                                   ops=self.op_to_idx(genotype.original_ops),
                                   search_space=self)
@@ -360,9 +368,15 @@ class NasBench101Controller(BaseController):
         rollouts = []
         if self.mode == "eval":
             # Return n archs seen(self.gt_rollouts) with best rewards
+            # If number of the evaluated rollouts is smaller than n,
+            # return random sampled rollouts
             self.logger.info("Return the best {} rollouts in the population".format(n))
+            sampled_rollouts = []
+            n_evaled = len(self.gt_rollouts)
+            if n_evaled < n:
+                sampled_rollouts = [self.search_space.random_sample() for _ in range(n - n_evaled)]
             best_inds = np.argpartition(self.gt_scores, -n)[-n:]
-            return [self.gt_rollouts[ind] for ind in best_inds]
+            return sampled_rollouts + [self.gt_rollouts[ind] for ind in best_inds]
 
         if self.avoid_repeat:
             assert batch_size is None

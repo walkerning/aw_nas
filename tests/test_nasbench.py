@@ -133,7 +133,7 @@ def test_nasbench(nasbench_search_space):
     # try training for several epochs using update_predict
     true_scores = np.random.rand(len(rollouts))
     for i_step in range(5):
-        loss = comparator.update_predict([(r.arch, r.perf["reward"]) for r in rollouts],
+        loss = comparator.update_predict([r.arch for r in rollouts],
                                          true_scores)
         print("update predict {}: {:.4f}".format(i_step, loss))
 
