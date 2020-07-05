@@ -14,11 +14,15 @@ class BaseController(Component):
         super(BaseController, self).__init__(schedule_cfg)
 
         self.search_space = search_space
-        expect(rollout_type in self.supported_rollout_types(),
+        expect(rollout_type in self.all_supported_rollout_types(),
                "Unsupported `rollout_type`: {}".format(rollout_type),
                ConfigException) # supported rollout types
         self.rollout_type = rollout_type
         self.mode = mode
+
+    @classmethod
+    def all_supported_rollout_types(cls):
+        return cls.registered_supported_rollouts_() + cls.supported_rollout_types()
 
     @contextlib.contextmanager
     def begin_mode(self, mode):

@@ -68,7 +68,7 @@ def train_listwise(train_data, model, epoch, args):
     # num_batches = max(1, getattr(
     #     args, "num_batch_per_epoch",
     #     round(num_data / (args.batch_size * args.list_length) * args.max_compare_ratio)))
-    num_batches = max(16, getattr(
+    num_batches = max(8, getattr(
         args, "num_batch_per_epoch",
         round(num_data / (args.batch_size * args.list_length) * args.max_compare_ratio)))
     logging.info("Number of batches: {:d}".format(num_batches))
@@ -254,6 +254,16 @@ def test_xp(true_scores, predict_scores):
             reorder_true_scores[arch_inds],
             reorder_predict_scores[arch_inds]).correlation))
     return p_corrs
+
+def minn_at_k(true_scores, predict_scores, ks=[1, 5, 10, 20]):
+    true_scores = np.array(true_scores)
+    predict_scores = np.array(predict_scores)
+    num_archs = len(true_scores)
+    true_ranks = np.zeros(num_archs)
+    true_ranks[np.argsort(true_scores)] = np.arange(num_archs)[::-1]
+    predict_best_inds = np.argsort(predict_scores)[::-1]
+    minn_at_ks = [(k, int(np.min(true_ranks[predict_best_inds[:k]])) + 1) for k in ks]
+    return minn_at_ks
 
 def test_xk(true_scores, predict_scores):
     true_inds = np.argsort(true_scores)[::-1]

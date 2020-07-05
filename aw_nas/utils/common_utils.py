@@ -7,15 +7,18 @@ import time
 import copy
 import shutil
 import inspect
+import itertools
 import functools
 import collections
 from collections import OrderedDict, namedtuple
 from contextlib import contextmanager
-import six
 
+import six
+import click
 import numpy as np
 import scipy
 import scipy.signal
+import torch
 
 from aw_nas.utils.registry import RegistryMeta
 from aw_nas.utils.exception import expect, ConfigException
@@ -108,6 +111,24 @@ class Context(object):
             .format(next_cell, next_step, next_conn, next_op_step)
 
 ## --- misc helpers ---
+# subclass `click.Group` to list commands in order
+class _OrderedCommandGroup(click.Group):
+    def __init__(self, *args, **kwargs):
+        self.cmd_names = []
+        super(_OrderedCommandGroup, self).__init__(*args, **kwargs)
+
+    def list_commands(self, ctx):
+        """reorder the list of commands when listing the help"""
+        commands = super(_OrderedCommandGroup, self).list_commands(ctx)
+        return sorted(commands, key=self.cmd_names.index)
+
+    def command(self, *args, **kwargs):
+        def decorator(func):
+            cmd = super(_OrderedCommandGroup, self).command(*args, **kwargs)(func)
+            self.cmd_names.append(cmd.name)
+            return cmd
+        return decorator
+
 @contextmanager
 def nullcontext():
     yield
@@ -141,17 +162,16 @@ class Ticker(object):
     def __init__(self, name):
         self.name = name
         self.total_time = 0.
-        self.cur_time = None
-        self.tick()
+        self.cur_time = time.time()
         self.logger = _logger.getChild("ticker_{}".format(name))
 
     def tick(self, message=""):
         cur_time = time.time()
-        if self.cur_time is not None:
-            elapsed = cur_time - self.cur_time
-            self.logger.debug("Ticker %s: %s: %.6f s", self.name, message, elapsed)
-            self.total_time += elapsed
+        elapsed = cur_time - self.cur_time
+        self.logger.debug("Ticker %s: %s: %.6f s", self.name, message, elapsed)
+        self.total_time += elapsed
         self.cur_time = cur_time
+        return elapsed
 
 class OrderedStats(object):
     def __init__(self):
@@ -198,6 +218,21 @@ class keydefaultdict(collections.defaultdict): #pylint: disable=invalid-name
             raise KeyError(key)
         ret = self[key] = self.default_factory(key) #pylint: disable=not-callable
         return ret
+
+def tick(register_attr):
+    def _timer(func):
+        @functools.wraps(func)
+        def method(self, *args, **kwargv):
+            torch.cuda.synchronize()
+            start = time.time()
+            out = func(self, *args, **kwargv)
+            torch.cuda.synchronize()
+            elapse = time.time() - start
+            elapse *= 1000
+            object.__setattr__(self, register_attr, elapse)
+            return out
+        return method
+    return _timer
 
 
 ## --- math utils ---
@@ -250,7 +285,7 @@ def namedtuple_with_defaults(name, fields, defaults):
     if sys.version_info.major == 3 and (
             sys.version_info.minor > 7 or
             (sys.version_info.minor == 7 and sys.version_info.micro >= 6)):
-        return namedtuple(name, fields, defaults)
+        return namedtuple(name, fields, defaults=defaults)
     type_ = namedtuple(name, fields)
     if defaults:
         type_.__new__.__defaults__ = tuple(defaults)
@@ -425,3 +460,45 @@ class LazyThreadLocal(six.moves._thread._local):
             return value
         raise AttributeError(("LazyThreadlocal object do not have attribute named {}, "
                               "also not specified in the lazy creator map.").format(name))
+
+
+def make_divisible(v, divisor, min_val=None):
+    """
+    ref: https://github.com/tensorflow/models/blob/master/research/slim/nets/mobilenet/mobilenet.py
+    """
+    if min_val is None:
+        min_val = divisor
+    new_v = max(min_val, int(v + divisor / 2) // divisor * divisor)
+    # Make sure that round down does not go down by more than 10%.
+    if new_v < 0.9 * v:
+        new_v += divisor
+    return new_v
+
+
+#---- OFA related utils ----
+def get_sub_kernel(kernel, sub_kernel_size):
+    original_size = kernel.shape[-1]
+    center = original_size // 2
+    width = sub_kernel_size // 2
+    left = center - width
+    right = center + width + 1
+    return kernel[:, :, left:right, left:right].contiguous()
+
+def _get_channel_mask(filters, num_channels):
+    norm_tensor = np.abs(filters.cpu().detach().numpy()).sum(axis=3).sum(axis=2).sum(axis=0)
+    norm_tensor = sorted(zip(range(len(norm_tensor)), norm_tensor),
+                         key=lambda x: x[1], reverse=True)
+    channel_order = [x[0] for x in norm_tensor]
+    mask = np.zeros(filters.shape[1], dtype=np.bool)
+    reserved_channels = channel_order[:num_channels]
+    mask[reserved_channels] = 1
+    return mask
+
+
+#---- Detection Task Utils ----
+def feature_level_to_stage_index(strides, offset=1):
+    """
+    calculate the level of each stage feature map by stride
+    """
+    levels = itertools.accumulate([offset] + list(strides), lambda x, y: x + y - 1)
+    return {l: i for i, l in enumerate(levels, -1)}

@@ -1,8 +1,12 @@
-# aw_nas
+# aw_nas: A Modularized and Extensible NAS framework
 
 ## Introduction
 
-### NAS
+Neural Architecture Search (NAS) has received extensive attention due to its capability to discover neural network architectures in an automated manner. `aw_nas` is a NAS framework with various NAS algorithms implemented in a modularized manner. Currently, `aw_nas` can be used to reproduce the results of many mainstream NAS algorithms, e.g., ENAS, DARTS, SNAS, FBNet, OFA, predictor-based NAS, etc. And we have applied NAS algorithms for various applications & scenarios with `aw_nas`, including NAS for classification, detection, text modeling, hardware fault tolerance, adversarial robustness, hardware inference efficiency and so on.
+
+Also, the hardware related profiling and parsing interface is designed to be general and easily-usable. Along with the flow and interface, `aw_nas` provides the latency table and some correction model of multiple harddwares. See [Hardware related](doc/hardware.md) for more details.
+
+**Contributions are all welcome**, including new NAS component implementation, new NAS applications, bug fixes, documentation and so on.
 
 ### Components of a NAS system
 
@@ -14,16 +18,18 @@ There are multiple actors that are working together in a NAS system, and they ca
 * evaluator
 * objective
 
+The interface between these components are somehow well-defined. We use a class `awnas.rollout.base.BaseRollout` to represent the interface object between all these components. Usually, a search space defines one or more rollout types (a subclass of `BaseRollout`). For example, the basic cell-based search space `cnn` (class `awnas.common.CNNSearchSpace`) corresponds to two rollout types: `discrete` discrete rollouts that are used in RL-based, EVO-based controllers, etc. (class `awnas.rollout.base.Rollout`); `differentiable` differentiable rollouts that are used in gradient-based NAS (class `awnas.rollout.base.DifferentiableRollout`).
 
-The interface between these components are somehow well-defined. We use a class `awnas.rollout.base.BaseRollout` to represent the interface object between all these components. Usually, a search space defines one or more rollout types (a subclass of `BaseRollout`). For example, the basic cell-based search space `cnn` (class `awnas.common.CNNSearchSpace`) corresponds to two rollout types: `discrete`discrete rollouts that are used in RL-based, EVO-based controllers, etc. (class `awnas.rollout.base.Rollout`); `differentiable` differentiable rollouts that are used in gradient-based NAS (class `awnas.rollout.base.DifferentiableRollout`).
-
-*TODO*: need a supported components list?
+![NAS framework](doc/pics/framework.pdf)
 
 ## Install
 
 Using virtual python environment is encouraged. For example, with Anaconda, you could run `conda create -n awnas python==3.7.3 pip` first.
 
-To install `awnas`, run `pip install -r requirements.txt`.
+* Supported python versions: 2.7, 3.6, 3.7
+* Supported Pytorch versions: >=1.0.0, <1.5.0 (Currently, some patches in DataParallel replication is not compatible after 1.5.0)
+
+To install `awnas`, run `pip install -r requirements.txt`. If you do not want to install the detection extras (required for running search on detection datasets VOC/COCO), omit the ",det" extras during the installation. (See the last line in [](requirements.txt))
 
 Architecture plotting relies on the `graphviz` package, make sure `graphiz` is installed, e.g. on Ubuntu, you can run `sudo apt-get install graphviz`.
 
@@ -31,47 +37,48 @@ Architecture plotting relies on the `graphviz` package, make sure `graphiz` is i
 
 After installation, you can run `awnas --help` to see what sub-commands are available.
 
-Output of an example run (version 0.3.dev0):
+Output of an example run (version 0.3.dev3):
 
 ```
-02/18 12:28:53 PM btc              WARNING: Error importing module nasbench: No module named 'nasbench'
-Should install the NASBench 101 package following https://github.com/google-research/nasbench
-02/18 12:28:53 PM btc              WARNING: Error importing module nasbench_201: No module named 'nas_201_api'
-Should install the NASBench 201 package following https://github.com/D-X-Y/NAS-Bench-201
-02/18 12:28:53 PM plugin              INFO: Check plugins under /home/foxfi/awnas/plugins
-02/18 12:28:53 PM plugin              INFO: Loaded plugins:
+07/04 11:41:44 PM plugin              INFO: Check plugins under /home/foxfi/awnas/plugins
+07/04 11:41:44 PM plugin              INFO: Loaded plugins:
 Usage: awnas [OPTIONS] COMMAND [ARGS]...
 
   The awnas NAS framework command line interface. Use `AWNAS_LOG_LEVEL`
   environment variable to modify the log level.
 
 Options:
-  --version  Show the version and exit.
-  --help     Show this message and exit.
+  --version             Show the version and exit.
+  --local_rank INTEGER  the rank of this process  [default: -1]
+  --help                Show this message and exit.
 
 Commands:
   search                   Searching for architecture.
+  mpsearch                 Multiprocess searching for architecture.
   random-sample            Random sample architectures.
   sample                   Sample architectures, pickle loading controller...
   eval-arch                Eval architecture from file.
   derive                   Derive architectures.
+  mptrain                  Multiprocess final training of architecture.
   train                    Train an architecture.
   test                     Test a final-trained model.
   gen-sample-config        Dump the sample configuration.
   gen-final-sample-config  Dump the sample configuration for final training.
+  registry                 Print registry information.
 ```
 
 ### Prepare data
 
 When running `awnas` program, it will assume the data of a dataset with `name=<NAME>` under `AWNAS_DATA/<NAME>`, in which `AWNAS_DATA` base directory is read from the environment variable `AWNAS_DATA`. If the environment variable is not specified, the default is `AWNAS_HOME/data`, in which `AWNAS_HOME` is an environment variable default to be `~/awnas`.
 
-* Cifar10: No specific preparation needed.
+* Cifar-10/Cifar-100: No specific preparation needed.
 * PTB: `bash scripts/get_data.sh ptb`, the ptb data will be downloaded under `${DATA_BASE}/ptb` directory. By default `${DATA_BASE}` will be `~/awnas/data`.
 * Tiny-ImageNet: `bash scripts/get_data.sh tiny-imagenet`, the tiny-imagenet data will be downloaded under `${DATA_BASE}/tiny-imagenet` directory.
+* Detection datasets VOC/COCO: `bash scripts/get_data.sh voc` and `bash scripts/get_data.sh coco`
 
 ### Run NAS search
 
-Try running a ENAS search (the results (including configuration backup, search log) in `<TRAIN_DIR>`):
+Try running a ENAS [Pham et. al., ICML 2018] search (the results (including configuration backup, search log) in `<TRAIN_DIR>`):
 
 ```
 awnas search examples/enas.yaml --gpu 0 --save-every 10 --train-dir <TRAIN_DIR>
@@ -93,22 +100,62 @@ To generate a sample configuration file for searching, try ``awnas gen-sample-co
 awnas gen-sample-config -r nasbench-101 -d image ./sample_nb101.yaml
 ```
 
-Then, check the `sample_nb101.yaml` file, for all the component types, all choices that declare to support the `nasbench-101` rollout type would be listed in the file. Delete what you do not need, uncomment what you need, change the default settings, and then that config can be used to run NAS on NAS-Bench-101.
+Then, check the `sample_nb101.yaml` file, for each component type, all classes that declare to support the `nasbench-101` rollout type would be listed in the file. Delete those you do not need, uncomment those you need, change the default settings, and then that config can be used to run NAS on NAS-Bench-101.
 
-### Derive
+### Derive & Eval-arch
 
+The `awnas derive` utility sample architecture using the trained NAS components. If the `--test` flag is off (default), only the controller is loaded to sample rollouts; Otherwise, the weights manager and trainer are also loaded to test these rollouts, and the sampled genotypes will be sorted according to the performances in the output file.
+
+An example run is to sample 10 genotypes, and save them into `sampled_genotypes.yaml`.
 ```
-awnas derive
+awnas derive search_cfg.yaml --load <checkpoint dir dumped during awnas search> -o sampled_genotypes.yaml -n 10 --test --gpu 0 --seed 123
+```
+
+The `awnas eval-arch` utility evaluate genotypes using the trained NAS components. Given a yaml file containing a list of genotypes, one can evaluate these genotypes using the saved NAS checkpoint:
+```
+awnas eval-arch search_cfg.yaml sampled_genotypes.yaml --load <checkpoint dir dumped during awnas search> --gpu 0 --seed 123
 ```
 
 ### Final Training of Cell-based Architecture
 
-`awnas.final` sub-package provides the final training functionality of cell-based architectures. `examples/cnn_templates/final_template.yaml` is a commonly-used configuration template for final training a cell-based architecture. To use that template, fill the ``final_model_cfg.genotypes` field with the genotype string derived from the search process. A genotype string example is
+The `awnas.final` sub-package provides the final training functionality of cell-based architectures. `examples/basic/final_templates/final_template.yaml` is a commonly-used configuration template for final training an architecture in a ENAS-like search space. To use that template, fill the ``final_model_cfg.genotypes` field with the genotype string derived from the search process. A genotype string example is
 ```
 CNNGenotype(normal_0=[('dil_conv_3x3', 1, 2), ('skip_connect', 1, 2), ('sep_conv_3x3', 0, 3), ('sep_conv_3x3', 2, 3), ('skip_connect', 3, 4), ('sep_conv_3x3', 0, 4), ('sep_conv_5x5', 1, 5), ('sep_conv_5x5', 0, 5)], reduce_1=[('max_pool_3x3', 0, 2), ('dil_conv_5x5', 0, 2), ('avg_pool_3x3', 1, 3), ('avg_pool_3x3', 2, 3), ('sep_conv_5x5', 1, 4), ('avg_pool_3x3', 1, 4), ('sep_conv_3x3', 1, 5), ('dil_conv_5x5', 3, 5)], normal_0_concat=[2, 3, 4, 5], reduce_1_concat=[2, 3, 4, 5])
 ```
 
+### Plugin mechanism
+`aw_nas` provides a simple plugin mechanism to support adding additional components or extending existing components outside the package. During initialization, all python scripts (files whose name ends with `.py`, except those starts with `test_`) under `~/awnas/plugins/` will be imported. Thus the components defined in these files will be registered automatically.
+
+For example, to reproduce FBNet [Wu et. al., CVPR 2019], we add the implmentation of FBNet primitive blocks in `examples/plugins/fbnet/fbnet_plugin.py`, and register these primitives using `aw_nas.ops.register_primitive`. To reuse most of the codes of `DiffSuperNet` implmentation (used by DARTS [Liu et. al., ICLR 2018], SNAS [Xie et. al., ICLR 2018], etc.), we create a class `WeightInitDiffSuperNet` that inherits from `DiffSuperNet`, and the only difference is an additional weights initialization tailored for FBNet. Besides, an objective `LatencyObjective` that calculates the loss as a weighted sum of the latency loss and the cross entropy loss is implemented.
+
+Under `examples/plugins/robustness` is the plugin modules for implementing Neural Architecture Search for Adversarial Robustness. For example, various objectives for adversarial robustness evaluation is defined. A new search space with varying node input degrees is defined, since dense connection an important property for adversarial robustness, whereas ENAS/DARTS search spaces constrain the node input degrees to be less or equal than 2. Several supernets (`weights_manager`) are implemented with adversarial examples cache to avoid re-generate adversarial example for the same sub-network multiple times.
+
+Besides definitions of new components, you can also use this mechanism to do monkey-patch tricks. For an example, there are various fixed-point plugins under `examples/research/ftt-nas/fixed_point_plugins/`. In these plugins, the primitives such as `nn.Conv2d` and `nn.Linear` is patched to be modules with quantization and fault injection functionalities.
+
+## Hardware related: Hardware profiling and parsing
+
+See [Hardware related](doc/hardware.md) for the flow and example of hardware profiling and parsing.
+
 
 ## Develop New Components
 
-TOOD (The detailed interface of different components, to write new components, these interface method must be overrided.)
+See [Develop New Components](doc/development.md) for the development guide of new components.
+
+
+## Researches
+We use this code base to finish the following researches
+* Wenshuo Li*, Xuefei Ning*, Guangjun Ge, Xiaoming Chen, Yu Wang, Huazhong Yang, FTT-NAS: Discovering Fault-Tolerant Neural Architecture, in ASP-DAC 2020.
+* Shulin Zeng*, Hanbo Sun*, Yu Xing, Xuefei Ning, Yi Shan, Xiaoming Chen, Yu Wang, Huazhong Yang, Black Box Search Space Profiling for Accelerator-Aware Neural Architecture Search, in ASP-DAC 2020.
+* Xuefei Ning, Guangjun Ge, Wenshuo Li, Zhenhua Zhu, Yin Zheng, Xiaoming Chen, Zhen Gao, Yu Wang, and Huazhong Yang, FTT-NAS: Discovering Fault-Tolerant Neural Architecture, in https://arxiv.org/abs/2003.10375, 2020.
+* Xuefei Ning, Yin Zheng, Tianchen Zhao, Yu Wang, Huazhong Yang, A Generic Graph-based Neural Architecture Encoding Scheme for Predictor-based NAS, in ECCV 2020, https://arxiv.org/abs/2004.01899
+
+
+See the sub-directories under `examples/research/` for more details.
+
+## References
+
+* **FBNet** Wu, Bichen, Xiaoliang Dai, Peizhao Zhang, Yanghan Wang, Fei Sun, Yiming Wu, Yuandong Tian, Peter Vajda, Yangqing Jia, and Kurt Keutzer. "Fbnet: Hardware-aware efficient convnet design via differentiable neural architecture search." In Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition, pp. 10734-10742. 2019.
+* **ENAS** Pham, Hieu, Melody Guan, Barret Zoph, Quoc Le, and Jeff Dean. "Efficient Neural Architecture Search via Parameters Sharing." In International Conference on Machine Learning, pp. 4095-4104. 2018.
+* **DARTS** Liu, Hanxiao, Karen Simonyan, and Yiming Yang. "DARTS: Differentiable Architecture Search." In International Conference on Learning Representations. 2018.
+* **SNAS** Xie, Sirui, Hehui Zheng, Chunxiao Liu, and Liang Lin. "SNAS: stochastic neural architecture search." In International Conference on Learning Representations. 2018.
+* **OFA** Cai, Han, Chuang Gan, Tianzhe Wang, Zhekai Zhang, and Song Han. "Once-for-All: Train One Network and Specialize it for Efficient Deployment." In International Conference on Learning Representations. 2019.

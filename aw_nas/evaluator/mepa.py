@@ -45,7 +45,7 @@ class LearnableLrOutPlaceSGD(Component, nn.Module):
                  max_grad_norm=None):
         nn.Module.__init__(self)
         Component.__init__(self, schedule_cfg=None)
-        assert init_learning_rate > 0., 'learning_rate should be positive.'
+        assert init_learning_rate > 0., "learning_rate should be positive."
         if adam_beta is not None:
             expect(isinstance(adam_beta, (list, tuple)) and len(adam_beta) == 2,
                    "Bad `betas` specification for Adam optimizer")
@@ -251,6 +251,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
             rollout_batch_size=1,
             # only for rnn data
             bptt_steps=35,
+            multiprocess=False,
             schedule_cfg=None):
         super(MepaEvaluator, self).__init__(dataset, weights_manager,
                                             objective, rollout_type, schedule_cfg)
@@ -282,6 +283,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
 
         self._data_type = self.dataset.data_type()
         self._device = self.weights_manager.device
+        self.multiprocess = multiprocess
 
         # configs
         self.batch_size = batch_size
@@ -451,7 +453,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
 
     @classmethod
     def supported_rollout_types(cls):
-        return ["discrete", "differentiable", "compare"]
+        return ["discrete", "differentiable", "compare", "ofa"]
 
     def suggested_controller_steps_per_epoch(self):
         return len(self.controller_queue)
@@ -483,6 +485,9 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
             eval_rollouts = sum([[r.rollout_1, r.rollout_2] for r in rollouts], [])
         else:
             eval_rollouts = rollouts
+
+        if not self.controller_queue or len(self.controller_queue) == 0:
+            return rollouts
 
         if is_training: # the returned reward will be used for training controller
             # get one data batch from controller queue
@@ -591,7 +596,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
 
         if self.use_same_surrogate_data:
             surrogate_data_list = [next(self.surrogate_queue) for _ in range(num_surrogate_step)]
-        holdout_data = next(self.controller_queue) if self.report_cont_data_diagnostics else None
+        holdout_data = next(self.controller_queue) if self.report_cont_data_diagnostics and self.controller_queue else None
 
         # sample rollout
         rollouts = controller.sample(n=self.mepa_samples, batch_size=self.rollout_batch_size)
@@ -1049,17 +1054,19 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
             # init criterions according to weights manager's rollout type
             rollout_type = self.weights_manager.rollout_type
 
-        if rollout_type == "discrete" or rollout_type == "nasbench-201":
-            self._reward_func = self.objective.get_reward
-            self._reward_kwargs = {}
-            self._scalar_reward_func = self._reward_func
-        elif rollout_type == "differentiable":
+        if rollout_type == "differentiable":
+            # NOTE: only handle differentiable rollout differently
             self._reward_func = partial(self.objective.get_loss,
                                         add_controller_regularization=True,
                                         add_evaluator_regularization=False)
             self._reward_kwargs = {"detach_arch": False}
             self._scalar_reward_func = lambda *args, **kwargs: \
                 utils.get_numpy(self._reward_func(*args, **kwargs))
+        else: # rollout_type in {"discrete", "ofa"} and outer-registered supported rollout types
+            self._reward_func = self.objective.get_reward
+            self._reward_kwargs = {}
+            self._scalar_reward_func = self._reward_func
+
         self._perf_names = self.objective.perf_names()
         # criterion funcs for meta parameter training
         self._mepa_loss_func = partial(self.objective.get_loss,
@@ -1110,7 +1117,8 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
                                         data_type=self._data_type,
                                         drop_last=self.rollout_batch_size > 1,
                                         shuffle=self.shuffle_data_before_split,
-                                        num_workers=self.workers_per_queue)
+                                        num_workers=self.workers_per_queue,
+                                        multiprocess=self.multiprocess)
         if mepa_as_surrogate:
             # use mepa data queue as surrogate data queue
             self.surrogate_queue = self.mepa_queue

@@ -140,14 +140,13 @@ class SimpleTrainer(BaseTrainer):
                                     suggested, self.evaluator_steps)
 
         # init controller optimizer and scheduler
-        if controller_optimizer:
+        self.controller_scheduler = None
+        self.controller_optimizer = None
+        if isinstance(self.controller, torch.nn.Module):
             self.controller_optimizer = utils.init_optimizer(self.controller.parameters(),
-                                                             controller_optimizer)
+                                                            controller_optimizer)
             self.controller_scheduler = utils.init_scheduler(self.controller_optimizer,
-                                                             controller_scheduler)
-        else:
-            self.controller_optimizer = None
-            self.controller_scheduler = None
+                                                            controller_scheduler)
 
         # states and other help attributes
         self.last_epoch = 0
@@ -158,12 +157,12 @@ class SimpleTrainer(BaseTrainer):
         eva_stat_meters = utils.OrderedStats()
 
         for i_eva in range(1, steps+1): # mepa stands for meta param
-            print("\reva step {}/{} ; controller step {}/{}"\
-                  .format(finished_e_steps+i_eva, self.evaluator_steps,
-                          finished_c_steps, self.controller_steps),
-                  end="")
             e_stats = self.evaluator.update_evaluator(self.controller)
             eva_stat_meters.update(e_stats)
+            print("\reva step {}/{} ; controller step {}/{}; {}" \
+                  .format(finished_e_steps+i_eva, self.evaluator_steps,
+                          finished_c_steps, self.controller_steps, ";".join([" %.3f" % v for k, v in eva_stat_meters.avgs().items()])),
+                  end="")
         return eva_stat_meters.avgs()
 
     def _controller_update(self, steps, finished_e_steps, finished_c_steps):
@@ -232,7 +231,7 @@ class SimpleTrainer(BaseTrainer):
     # ---- APIs ----
     @classmethod
     def supported_rollout_types(cls):
-        return ["discrete", "differentiable", "compare", "nasbench-101", "nasbench-201"]
+        return ["discrete", "differentiable", "compare", "nasbench-101", "nasbench-201", "ofa"]
 
     def train(self): #pylint: disable=too-many-branches
         assert self.is_setup, "Must call `trainer.setup` method before calling `trainer.train`."
@@ -349,11 +348,11 @@ class SimpleTrainer(BaseTrainer):
         """
         rollouts = self.derive(n=self.derive_samples)
 
-        rewards = [r.get_perf("reward") for r in rollouts]
+        rewards = [r.get_perf("reward") or 0. for r in rollouts]
         mean_rew = np.mean(rewards)
         idx = np.argmax(rewards)
         # other_perfs = {n: [r.perf[n] for r in rollouts] for n in rollouts[0].perf}
-        other_perfs = {n: [r.perf.get(n, None) for r in rollouts] for n in rollouts[0].perf}
+        other_perfs = {n: [r.perf.get(n, 0.) for r in rollouts] for n in rollouts[0].perf}
 
         save_path = self._save_path("rollout/cell")
         if save_path is not None:

@@ -1,0 +1,135 @@
+rollout_type: general
+
+
+## ---- Component search_space ----
+# ---- Type ofa ----
+search_space_type: general
+search_space_cfg:
+  primitives: [
+    [h_swish, true],
+    [none],
+    [avg_pool_3x3,]
+  ]
+
+
+# ---- End Type mnsanet_ofa ----
+## ---- End Component search_space ----
+
+## ---- Component dataset ----
+# ---- Type cifar10 ----
+dataset_type: cifar10
+dataset_cfg:
+  # Schedulable attributes: 
+  cutout: null
+# ---- End Type cifar10 ----
+## ---- End Component dataset ----
+
+## ---- Component controller ----
+# ---- Type rl ----
+controller_type: ofa
+controller_cfg:
+  # Schedulable attributes:
+  rollout_type: ofa
+  force_uniform: true
+# ---- End Type rl ----
+## ---- End Component controller ----
+
+## ---- Component evaluator ----
+# ---- Type mepa ----
+evaluator_type: mepa
+evaluator_cfg:
+  # Schedulable attributes: controller_surrogate_steps, mepa_surrogate_steps, mepa_samples
+  load_optimizer: false
+  load_scheduler: false
+  rollout_type: ofa
+  batch_size: 64
+  controller_surrogate_steps: 0
+  # derive_surrogate_steps: 0
+  mepa_surrogate_steps: 0
+  mepa_optimizer:
+    lr: 0.05
+    momentum: 0.9
+    type: SGD
+    weight_decay: 0.0001
+  mepa_scheduler:
+    eta_min: 0.0
+    T_max: 500
+    type: CosineAnnealingLR
+  surrogate_optimizer: null
+  surrogate_scheduler: null
+  mepa_samples: 1
+  data_portion:
+  - 0.0
+  - 0.8 # train evaluator weights
+  - 0.2 # for train controller
+  mepa_as_surrogate: false
+  bptt_steps: 35
+  schedule_cfg: null
+# ---- End Type mepa ----
+## ---- End Component evaluator ----
+
+## ---- Component weights_manager ----
+# ---- Type supernet ----
+weights_manager_type: ofa_supernet
+weights_manager_cfg:
+  # Schedulable attributes: 
+  rollout_type: ofa
+  backbone_type: mbv3_backbone
+  backbone_cfg:
+    blocks: [1, 4, 4, 4, 4, 4]
+    strides: [1, 2, 2, 2, 1, 2]
+    expansions: [1, 6, 6, 6, 6, 6]
+    channels: [16, 16, 24, 32, 64, 96, 160, 320, 1280]
+    mult_ratio: 1.
+    kernel_sizes: [3, 5, 7]
+    num_classes: 10
+    block_type: mbv3_block
+
+objective_type: ofa_classification
+objective_cfg:
+  # Schedulable attributes:
+  schedule_cfg:
+    soft_loss_coeff:
+      type: value
+      boundary: [1, 60]
+      value: [0.0, 1.0]
+  soft_loss_coeff: 0.0
+  latency_coeff: 1.0
+#   latency_file: latency_block.txt
+
+## ---- Component trainer ----
+# ---- Type simple ----
+trainer_type: simple
+trainer_cfg:
+  # Schedulable attributes: controller_samples, derive_samples
+  rollout_type: general
+  epochs: 500
+  test_every: 10
+  controller_scheduler: null
+  controller_samples: 1
+  derive_samples: 8
+  evaluator_steps: null
+  controller_steps: 0
+  controller_train_every: 1
+  controller_train_begin: 1001
+  interleave_controller_every: null
+  schedule_cfg: null
+# ---- End Type simple ----
+## ---- End Component trainer ----
+
+final_model_type: general_final_model
+final_model_cfg:
+  genotypes: '[{"prim_type": "mobilenet_v3_block", "C": 16,"C_out": 24, "spatial_size": 112, "expansion": 4, "use_se": True, "stride": 2, "kernel_size": 3, "activation": "relu"}]'
+
+final_trainer_type: cnn_trainer
+final_trainer_cfg:
+  batch_size: 64
+  epochs: 30
+  optimizer_scheduler:
+    eta_min: 0.0001
+    T_max: 30
+    type: CosineAnnealingLR
+  schedule_cfg: null
+  weight_decay: 0.0003
+  learning_rate: 0.001
+  save_as_state_dict: true

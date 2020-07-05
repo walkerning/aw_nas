@@ -57,7 +57,7 @@ def _reload_plugins():
 
     # load plugins under directory (code from airflow)
     for root, _, files in os.walk(plugin_dir, followlinks=True):
-        for f in files:
+        for f in sorted(files):
             try:
                 filepath = os.path.join(root, f)
                 if not os.path.isfile(filepath):
@@ -66,7 +66,6 @@ def _reload_plugins():
                     os.path.split(filepath)[-1])
                 if file_ext != ".py" or mod_name.startswith("test_"):
                     continue
-
                 LOGGER.debug("Importing plugin module %s", filepath)
                 # normalize root path as namespace
                 namespace = "_".join([re.sub(norm_pattern, "__", root), mod_name])
@@ -75,6 +74,7 @@ def _reload_plugins():
                 for obj in list(m.__dict__.values()):
                     if is_valid_plugin(obj, plugins):
                         plugins.append(obj)
+                        export_plugin(obj)
 
             except Exception as e: #pylint: disable=broad-except
                 LOGGER.exception(e)
@@ -83,17 +83,17 @@ def _reload_plugins():
 
     LOGGER.info("Loaded plugins: %s", ", ".join([p.NAME for p in plugins]))
 
+def export_plugin(plugin):
     # for easy access: pop the components of each plugins under corresponding `
     # `aw_nas.<component name>.<plugin name>` module.
     # you can also diretly using RegistryMeta to access all components
     for compo_name in ["dataset", "controller",
                        "evaluator", "weights_manager", "objective", "trainer"]:
         base_mod = sys.modules["aw_nas." + compo_name]
-        for p in plugins:
-            exported_compos = getattr(p, compo_name + "_list")
-            if exported_compos:
-                mod = make_module("aw_nas.{}.{}".format(compo_name, p.NAME), exported_compos)
-                plugin_modules[compo_name].append(mod)
-                sys.modules[mod.__name__] = mod
-                setattr(base_mod, mod._PLUGIN_NAME, mod) #pylint: disable=protected-access
+        exported_compos = getattr(plugin, compo_name + "_list")
+        if exported_compos:
+            mod = make_module("aw_nas.{}.{}".format(compo_name, plugin.NAME), exported_compos)
+            plugin_modules[compo_name].append(mod)
+            sys.modules[mod.__name__] = mod
+            setattr(base_mod, mod._PLUGIN_NAME, mod) #pylint: disable=protected-access
     return plugin_modules

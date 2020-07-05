@@ -14,8 +14,12 @@ LOGGER = _logger.getChild("registry")
 class RegistryError(Exception):
     pass
 
+def _default_dct_of_list():
+    return collections.defaultdict(list)
+
 class RegistryMeta(abc.ABCMeta):
     registry_dct = collections.defaultdict(dict)
+    supported_rollout_dct = collections.defaultdict(_default_dct_of_list)
 
     def __init__(cls, name, bases, namespace):
         super(RegistryMeta, cls).__init__(name, bases, namespace)
@@ -40,6 +44,12 @@ class RegistryMeta(abc.ABCMeta):
                 RegistryMeta.registry_dct[table][entry] = cls
                 LOGGER.debug("Register class `%s` as entry `%s` in table `%s`.",
                              name, entry, table)
+
+                if cls.REGISTRY == "rollout":
+                    # allow new defined rollout class to declare which component can be reused
+                    if hasattr(cls, "supported_components"):
+                        for registry, type_ in cls.supported_components:
+                            RegistryMeta.supported_rollout_dct[registry][type_].append(entry)
             else:
                 if "NAME" in namespace:
                     entry = namespace["NAME"]
@@ -71,3 +81,6 @@ class RegistryMeta(abc.ABCMeta):
 
     def get_class_(cls, name):
         return RegistryMeta.get_class(cls.REGISTRY, name)
+
+    def registered_supported_rollouts_(cls):
+        return RegistryMeta.supported_rollout_dct[cls.REGISTRY][cls.NAME]

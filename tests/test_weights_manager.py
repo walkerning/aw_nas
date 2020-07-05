@@ -637,18 +637,12 @@ def test_dense_morphism_wider(population, tmp_path):
     logits_ori = origin_net.forward(data[0])
     assert (logits - logits_ori).abs().mean() < 1e-6
 
-@pytest.mark.parametrize("mnasnet_ofa_super_net", [
+@pytest.mark.parametrize("ofa_super_net", [
     {"search_space_cfg": {"width_choice": [4, 5, 6], "depth_choice": [4, 5, 6]}}
-], indirect=["mnasnet_ofa_super_net"])
-def test_mnasnet_ofa_forward_all(mnasnet_ofa_super_net):
+], indirect=["ofa_super_net"])
+def test_ofa_forward_rollout(ofa_super_net):
     # test forward
-    data = _cnn_data()
-    logits = mnasnet_ofa_super_net.forward_all(data[0])
-    assert logits.shape[-1] == 10
-
-def test_mnasnet_ofa_forward_rollout(mnasnet_ofa_super_net):
-    # test forward
-    cand_net = _supernet_sample_cand(mnasnet_ofa_super_net)
+    cand_net = _supernet_sample_cand(ofa_super_net)
     data = _cnn_data()
     logits = cand_net.forward(data[0])
     assert logits.shape[-1] == 10

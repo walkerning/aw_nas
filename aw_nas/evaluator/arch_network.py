@@ -112,7 +112,7 @@ class LSTMArchEmbedder(ArchEmbedder):
 # except ImportError as e:
 #     from aw_nas.utils import logger as _logger
 #     _logger.getChild("arch_network").warn(
-#         ("Error importing module pygcn: {}\n"
+#         ("Cannot import module pygcn: {}\n"
 #          "Should install the pygcn package for graph convolution").format(e))
 
 def sparse_mx_to_torch_sparse_tensor(sparse_mx):

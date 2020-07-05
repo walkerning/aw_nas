@@ -28,6 +28,7 @@ from aw_nas import weights_manager
 from aw_nas import objective
 from aw_nas import trainer
 from aw_nas import final
+from aw_nas import hardware
 
 from aw_nas import btcs
 

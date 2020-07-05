@@ -120,3 +120,19 @@ def test_warmup_cosine_lrscheduler():
     for i in range(20):
         scheduler.step(i)
         print(scheduler.get_lr())
+
+def test_registered_supported_rollouts():
+    from aw_nas import RegistryMeta, BaseRollout
+
+    simple_trainer_cls = RegistryMeta.get_class("trainer", "simple")
+    assert "a_fake_rollout" not in simple_trainer_cls.all_supported_rollout_types()
+    class AFakeRollout(BaseRollout):
+        NAME = "a_fake_rollout"
+        supported_components = [("trainer", "simple")]
+
+        def set_candidate_net(self, c_net):
+            self.c_net = c_net
+
+        def plot_arch(self, *args, **kwargs):
+            pass
+    assert "a_fake_rollout" in simple_trainer_cls.all_supported_rollout_types()

@@ -21,8 +21,13 @@ search_space_cfg:
   - sep_conv_5x5
   - dil_conv_3x3
   - dil_conv_5x5
+  - relu_conv_bn_3x3
+  - relu_conv_bn_5x5
+  - conv_1x1
+  # - relu_conv_bn_3x3
   cell_shared_primitives: null
 # ---- End Type cnn ----
+
 ## ---- End Component search_space ----
 
 ## ---- Component dataset ----
@@ -38,33 +43,27 @@ dataset_cfg:
 # ---- Type rl ----
 controller_type: rl
 controller_cfg:
-  # Schedulable attributes: 
-  rollout_type: discrete
+  # Schedulable attributes:
+  independent_cell_group: true
   mode: eval
-  independent_cell_group: false
-  # ---- Type embed_lstm ----
   controller_network_type: embed_lstm
   controller_network_cfg:
-    # Schedulable attributes: softmax_temperature, force_uniform
-    num_lstm_layers: 1
-    controller_hid: 100
+    # Schedulable attributes: softmax_temperature
     attention_hid: 100
-    softmax_temperature: null
-    tanh_constant: 1.1
-    op_tanh_reduce: 2.5
-    force_uniform: false
+    controller_hid: 100
+    num_lstm_layers: 1
+    op_tanh_reduce: null
     schedule_cfg: null
-  # ---- End Type embed_lstm ----
-  # ---- Type pg ----
+    softmax_temperature: 5.0
+    tanh_constant: null
   rl_agent_type: pg
   rl_agent_cfg:
-    # Schedulable attributes: 
+    # Schedulable attributes:
     alpha: 0.99
-    gamma: 1.0
+    batch_update: false
     entropy_coeff: 0.01
+    gamma: 1.0
     max_grad_norm: null
-    batch_update: true
-  # ---- End Type pg ----
 # ---- End Type rl ----
 ## ---- End Component controller ----
 
@@ -73,32 +72,29 @@ controller_cfg:
 evaluator_type: mepa
 evaluator_cfg:
   # Schedulable attributes: controller_surrogate_steps, mepa_surrogate_steps, mepa_samples
+  load_optimizer: false
+  load_scheduler: false
   rollout_type: discrete
-  batch_size: 128
+  batch_size: 64
   controller_surrogate_steps: 0
+  # derive_surrogate_steps: 0
   mepa_surrogate_steps: 0
   mepa_optimizer:
-    lr: 0.01
+    lr: 0.05
     momentum: 0.9
     type: SGD
-    weight_decay: 0.0003
+    weight_decay: 0.0001
   mepa_scheduler:
     eta_min: 0.0
-    T_max: 200
+    T_max: 100
     type: CosineAnnealingLR
-  surrogate_optimizer:
-    lr: 0.01
-    type: SGD
-  surrogate_scheduler:
-    eta_min: 0.0
-    T_max: 200
-    type: CosineAnnealingLR
+  surrogate_optimizer: null
+  surrogate_scheduler: null
   mepa_samples: 1
-  disable_step_current: true
   data_portion:
   - 0.0
-  - 0.8
-  - 0.2
+  - 0.8 # train evaluator weights
+  - 0.2 # for train controller
   mepa_as_surrogate: false
   bptt_steps: 35
   schedule_cfg: null
@@ -107,7 +103,7 @@ evaluator_cfg:
 
 ## ---- Component weights_manager ----
 # ---- Type supernet ----
-weights_manager_type: adv_supernet
+weights_manager_type: supernet_patch
 weights_manager_cfg:
   # Schedulable attributes: 
   rollout_type: discrete
@@ -119,24 +115,22 @@ weights_manager_cfg:
   candidate_member_mask: true
   candidate_cache_named_members: true
   candidate_virtual_parameter_only: true
-  candidate_eval_no_grad: false
+  preprocess_op_type: relu_conv_bn_3x3
 # ---- End Type supernet ----
 ## ---- End Component weights_manager ----
 
 ## ---- Component objective ----
-# ---- Type classification ----
-objective_type: adversarial_robustness_objective
+# ---- Type fault_injection ----
+objective_type: saf_injection
 objective_cfg:
-  # Schedulable attributes: 
-  epsilon: 0.03
-  n_step: 5
-  step_size: 0.0078
-  rand_init: false
-  adv_loss_coeff: 0.5
-  as_controller_regularization: false
   as_evaluator_regularization: true
-  adv_reward_coeff: 0.5
-# ---- End Type classification ----
+  as_controller_regularization: true
+  inject_prob: 0.08
+  fault_loss_coeff: 0
+  fault_reward_coeff: 0.2
+  latency_reward_coeff: 0
+  activation_fixed_bitwidth: 8
+# ---- End Type fault_injection ----
 ## ---- End Component objective ----
 
 ## ---- Component trainer ----
@@ -145,14 +139,14 @@ trainer_type: simple
 trainer_cfg:
   # Schedulable attributes: controller_samples, derive_samples
   rollout_type: discrete
-  epochs: 200
+  epochs: 100
   test_every: 10
   controller_optimizer:
     lr: 0.001
     type: Adam
   controller_scheduler: null
   controller_samples: 1
-  derive_samples: 10
+  derive_samples: 8
   evaluator_steps: null
   controller_steps: null
   controller_train_every: 1
@@ -161,3 +155,4 @@ trainer_cfg:
   schedule_cfg: null
 # ---- End Type simple ----
 ## ---- End Component trainer ----
+

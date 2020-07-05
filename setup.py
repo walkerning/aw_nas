@@ -23,21 +23,22 @@ PACKAGES = find_packages(exclude=["tests.*", "tests"])
 
 # dependencies
 INSTALL_REQUIRES = [
-    "torch>=1.0.0", # torch
-    "torchvision",  # torch
-    "numpy",        # math lib
-    "scipy",        # math lib
-    "six",          # 2-3 compatability
-    "PyYaml",       # config file parsing
-    "click",        # command line interface
-    "graphviz",     # visualize architecture dag
+    "torch>=1.0.0,<1.5.0", # torch
+    "torchvision",         # torchvision
+    "numpy",               # math lib
+    "scipy",               # math lib
+    "six",                 # 2-3 compatability
+    "PyYaml",              # config file parsing
+    "click",               # command line interface
+    "graphviz",            # visualize architecture dag
     # other utils
     "imageio",
     "setproctitle"
 ]
 
 EXTRAS_REQUIRE = {
-    "vis": ["tensorboardX<=1.6"]
+    "vis": ["tensorboardX<=1.6"],
+    "det": ["opencv-python", "pycocotools", "torchvision>=0.4.0"]
 }
 
 TESTS_REQUIRE = [
@@ -79,7 +80,8 @@ setup(
 
     entry_points={
         "console_scripts": [
-            "awnas=aw_nas.main:main"
+            "awnas=aw_nas.main:main",
+            "awnas-hw=aw_nas.main_hardware:main"
         ]
     },
 

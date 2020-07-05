@@ -1,7 +1,8 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
-from aw_nas.ops import register_primitive, ConvBNReLU, Identity
+from aw_nas.ops import register_primitive, ConvBNReLU, Identity, SEModule, get_op
+from aw_nas.utils import make_divisible, drop_connect
 
 class VggBlock(nn.Module):
     def __init__(self, C, C_out, stride, affine):
@@ -35,7 +36,7 @@ class VggBlock(nn.Module):
 class MobileNetBlock(nn.Module):
     def __init__(self, expansion, C, C_out, stride, affine, kernel_size=3, relu6=False):
         super(MobileNetBlock, self).__init__()
-        C_inner = self.C_inner = int(expansion * C)
+        C_inner = self.C_inner = make_divisible(expansion * C, 8)
         self.stride = stride
         self.relu6 = relu6
         self.activation = F.relu6 if self.relu6 else F.relu
@@ -285,6 +286,131 @@ class Transition(nn.Module):
         out = F.avg_pool2d(out, 2)
         return out
 
+class MobileNetV2Block(nn.Module):
+    def __init__(self, expansion, C, C_out, 
+                stride, 
+                kernel_size,
+                affine,
+                activation="relu",
+                inv_bottleneck=None,
+                depth_wise=None,
+                point_linear=None,
+                ):
+        super(MobileNetV2Block, self).__init__()
+        self.expansion = expansion
+        self.C = C
+        self.C_out = C_out 
+        self.C_inner = make_divisible(C * expansion, 8)
+        self.stride = stride
+        self.kernel_size = kernel_size
+        self.act_fn = get_op(activation)(inplace=True)
+        
+        self.inv_bottleneck = None
+        if expansion != 1:
+            self.inv_bottleneck = inv_bottleneck or nn.Sequential(
+                nn.Conv2d(C, self.C_inner, 1, 1, 0, bias=False),
+                nn.BatchNorm2d(self.C_inner),
+                self.act_fn
+            )
+        
+        self.depth_wise = depth_wise or nn.Sequential(
+            nn.Conv2d(self.C_inner, self.C_inner, self.kernel_size, stride, padding=self.kernel_size // 2, bias=False),
+            nn.BatchNorm2d(self.C_inner),
+            self.act_fn
+        )
+
+        self.point_linear = point_linear or nn.Sequential(
+            nn.Conv2d(self.C_inner, C_out, 1, 1, 0, bias=False),
+            nn.BatchNorm2d(C_out)
+        )
+
+        self.shortcut = nn.Sequential()
+        self.has_conv_shortcut = False
+        if stride == 1 and C != C_out:
+            self.has_conv_shortcut = True
+            self.shortcut = nn.Sequential(
+                    nn.Conv2d(C, C_out, kernel_size=1,
+                            stride=1, padding=0, bias=False),
+                    nn.BatchNorm2d(C_out),
+                )
+
+    def forward(self, inputs, drop_connect_rate=0.0):
+        out = inputs
+        if self.inv_bottleneck:
+            out = self.inv_bottleneck(out)
+        out = self.depth_wise(out)
+        out = self.point_linear(out)
+        if self.stride == 1:
+            if drop_connect_rate > 0:
+                out = drop_connect(out, p=drop_connect_rate, training=self.training)
+            out = out + self.shortcut(inputs)
+        return out
+
+
+class MobileNetV3Block(nn.Module):
+    def __init__(self, expansion, C, C_out, 
+                 stride, 
+                 kernel_size,
+                 affine,
+                 activation="relu",
+                 use_se=False,
+                 inv_bottleneck=None,
+                 depth_wise=None,
+                 point_linear=None,
+                 se=None,
+                 ):
+        super(MobileNetV3Block, self).__init__()
+        self.expansion = expansion
+        self.C = C
+        self.C_out = C_out 
+        self.C_inner = make_divisible(C * expansion, 8)
+        self.stride = stride
+        self.kernel_size = kernel_size
+        self.act_fn = get_op(activation)(inplace=True)
+        self.use_se = use_se
+        
+        self.inv_bottleneck = None
+        if expansion != 1:
+            self.inv_bottleneck = inv_bottleneck or nn.Sequential(
+                nn.Conv2d(C, self.C_inner, 1, 1, 0, bias=False),
+                nn.BatchNorm2d(self.C_inner),
+                self.act_fn
+            )
+        
+        self.depth_wise = depth_wise or nn.Sequential(
+            nn.Conv2d(self.C_inner, self.C_inner, self.kernel_size, stride, self.kernel_size // 2, groups=self.C_inner, bias=False),
+            nn.BatchNorm2d(self.C_inner),
+            self.act_fn
+        )
+
+        self.point_linear = point_linear or nn.Sequential(
+            nn.Conv2d(self.C_inner, C_out, 1, 1, 0, bias=False),
+            nn.BatchNorm2d(C_out)
+        )
+
+        self.se = None
+        if self.use_se:
+            self.se = se or SEModule(self.C_inner)
+        
+        self.shortcut = None
+        if stride == 1 and C == C_out:
+            self.shortcut = nn.Sequential()
+
+    def forward(self, inputs, drop_connect_rate=0.0):
+        out = inputs
+        if self.inv_bottleneck:
+            out = self.inv_bottleneck(out)
+        out = self.depth_wise(out)
+        if self.se:
+            out = self.se(out)
+        out = self.point_linear(out)
+        if self.shortcut is not None:
+            if drop_connect_rate > 0:
+                out = drop_connect(out, p=drop_connect_rate, training=self.training)
+            out = out + self.shortcut(inputs)
+        return out
+
+
 register_primitive("mobilenet_block_6_relu6",
                    lambda C, C_out, stride, affine: MobileNetBlock(6, C, C_out,
                                                                    stride, affine, True))
@@ -333,3 +459,9 @@ register_primitive("dense_block",
                    lambda C, C_out, stride, affine: DenseBlock(C, C_out, stride, affine=affine))
 register_primitive("dense_reduce_block",
                    lambda C, C_out, stride, affine: Transition(C, C_out, stride, affine=affine))
+
+
+register_primitive("mobilenet_v2_block",
+                   lambda expansion, C, C_out, stride, kernel_size, activation="relu", affine=True: MobileNetV2Block(expansion, C, C_out, stride, kernel_size, affine=affine, activation=activation))
+register_primitive("mobilenet_v3_block",
+                   lambda expansion, C, C_out, stride, kernel_size, activation, use_se, affine=True: MobileNetV3Block(expansion, C, C_out, stride, kernel_size, affine=affine, activation=activation, use_se=use_se))

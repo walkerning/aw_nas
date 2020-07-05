@@ -249,14 +249,14 @@ def population(request):
     return population
         
 @pytest.fixture
-def mnasnet_ofa_super_net(request):
+def ofa_super_net(request):
     cfg = getattr(request, "param", {})
     scfg = cfg.pop("search_space_cfg", {})
     from aw_nas.common import get_search_space
-    from aw_nas.weights_manager import MNasNetSupernet
-    search_space = get_search_space(cls="mnasnet_ofa", **scfg)
+    from aw_nas.weights_manager import OFASupernet
+    search_space = get_search_space(cls="ofa", **scfg)
     device = "cuda"
-    net = MNasNetSupernet(search_space, device, **cfg)
+    net = OFASupernet(search_space, device, rollout_type="ofa", **cfg)
     return net
 
 @pytest.fixture(scope="session")

@@ -32,6 +32,46 @@ function download_tiny-imagenet {
     popd
 }
 
+function download_coco {
+    echo "- Downloading Microsoft COCO Dataset..."
+    DATA_DIR=${DATA_BASE}/coco
+    mkdir -p ${DATA_DIR}
+    pushd ${DATA_DIR}
+    wget --continue http://images.cocodataset.org/zips/train2017.zip
+    wget --continue http://images.cocodataset.org/zips/val2017.zip
+    wget --continue http://images.cocodataset.org/annotations/annotations_trainval2017.zip
+    echo "- Unzip data..."
+    unzip train2017.zip
+    unzip val2017.zip
+    unzip annotations_trainval2017.zip
+    echo "- Done."
+    popd
+}
+
+function download_voc {
+    echo "- Downloading Pascal VOC Dataset..."
+    DATA_DIR=${DATA_BASE}/voc
+    mkdir -p ${DATA_DIR}
+    pushd ${DATA_DIR}
+    wget --continue http://pjreddie.com/media/files/VOCtrainval_06-Nov-2007.tar
+    wget --continue http://pjreddie.com/media/files/VOCtest_06-Nov-2007.tar
+    wget --continue http://pjreddie.com/media/files/VOCtrainval_11-May-2012.tar
+    wget --continue http://pjreddie.com/media/files/VOC2012test.tar
+    echo "- Unzip data..."
+    mkdir -p train
+    mkdir -p test
+    tar -xf VOCtrainval_06-Nov-2007.tar
+    mv VOCdevkit/VOC2007 train/
+    tar -xf VOCtest_06-Nov-2007.tar
+    mv VOCdevkit/VOC2007 test/
+    tar -xf VOCtrainval_11-May-2012.tar
+    mv VOCdevkit/VOC2012 train/
+    tar -xf VOC2012test.tar
+    mv VOCdevkit/VOC2012 test
+    echo "- Done."
+    popd
+}
+
 for d_name in $@; do
     echo "Handling $d_name";
     download_${d_name};

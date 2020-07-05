@@ -6,11 +6,12 @@ The main entrypoint of aw_nas.
 from __future__ import print_function
 
 import os
+import re
 import sys
 import random
 import shutil
+import pprint
 import functools
-import multiprocessing as mp
 
 import click
 import yaml
@@ -19,10 +20,12 @@ import setproctitle
 import torch
 from torch.backends import cudnn
 
+
 import aw_nas
 from aw_nas.dataset import AVAIL_DATA_TYPES
 from aw_nas import utils, BaseRollout
 from aw_nas.common import rollout_from_genotype_str
+from aw_nas.utils.common_utils import _OrderedCommandGroup
 from aw_nas.utils.vis_utils import WrapWriter
 from aw_nas.utils import RegistryMeta
 from aw_nas.utils import logger as _logger
@@ -30,24 +33,6 @@ from aw_nas.utils.exception import expect
 
 # patch click.option to show the default values
 click.option = functools.partial(click.option, show_default=True)
-
-# subclass `click.Group` to list commands in order
-class _OrderedCommandGroup(click.Group):
-    def __init__(self, *args, **kwargs):
-        self.cmd_names = []
-        super(_OrderedCommandGroup, self).__init__(*args, **kwargs)
-
-    def list_commands(self, ctx):
-        """reorder the list of commands when listing the help"""
-        commands = super(_OrderedCommandGroup, self).list_commands(ctx)
-        return sorted(commands, key=self.cmd_names.index)
-
-    def command(self, *args, **kwargs):
-        def decorator(func):
-            cmd = super(_OrderedCommandGroup, self).command(*args, **kwargs)(func)
-            self.cmd_names.append(cmd.name)
-            return cmd
-        return decorator
 
 LOGGER = _logger.getChild("main")
 
@@ -187,7 +172,7 @@ def search(cfg_file, gpu, seed, load, save_every, interleave_report_every,
         try:
             import tensorboardX
         except ImportError:
-            LOGGER.error("Error importing module tensorboardX. Will IGNORE the `--vis-dir` option! "
+            LOGGER.error("Cannot import module tensorboardX. Will IGNORE the `--vis-dir` option! "
                          "Try installing the dependency manually, or `pip install aw_nas[vis]`")
             _writer = None
         else:
@@ -245,6 +230,145 @@ def search(cfg_file, gpu, seed, load, save_every, interleave_report_every,
                   interleave_report_every=interleave_report_every)
     trainer.train()
 
+
+@main.command(help="Multiprocess searching for architecture.")
+@click.argument("cfg_file", required=True, type=str)
+@click.option("--seed", default=None, type=int,
+              help="the random seed to run training")
+@click.option("--load", default=None, type=str,
+              help="the directory to load checkpoint")
+@click.option("--save-every", default=None, type=int,
+              help="the number of epochs to save checkpoint every")
+@click.option("--interleave-report-every", default=50, type=int,
+              help="the number of interleave steps to report every, "
+              "only work in interleave training mode")
+@click.option("--train-dir", default=None, type=str,
+              help="the directory to save checkpoints")
+@click.option("--vis-dir", default=None, type=str,
+              help="the directory to save tensorboard events. "
+              "need `tensorboard` extra, `pip install aw_nas[tensorboard]`")
+@click.option("--develop", default=False, type=bool, is_flag=True,
+              help="in develop mode, will copy the `aw_nas` source files into train_dir for backup")
+def mpsearch(cfg_file, seed, load, save_every, interleave_report_every,
+           train_dir, vis_dir, develop):
+    # check dependency and initialize visualization writer
+    local_rank = int(os.environ["LOCAL_RANK"])
+    # set gpu
+    _set_gpu(local_rank)
+    device = torch.cuda.current_device()
+    torch.distributed.init_process_group(backend="nccl", rank=int(os.environ["RANK"]), world_size=int(os.environ["WORLD_SIZE"]))
+
+    if vis_dir and local_rank == 0:
+        vis_dir = utils.makedir(vis_dir, remove=True)
+        try:
+            import tensorboardX
+        except ImportError:
+            LOGGER.error("Cannot import module tensorboardX. Will IGNORE the `--vis-dir` option! "
+                         "Try installing the dependency manually, or `pip install aw_nas[vis]`")
+            _writer = None
+        else:
+            _writer = tensorboardX.SummaryWriter(log_dir=vis_dir)
+    else:
+        _writer = None
+    writer = WrapWriter(_writer)
+
+    if train_dir:
+        if local_rank == 0:
+            # backup config file, and if in `develop` mode, also backup the aw_nas source code
+            train_dir = utils.makedir(train_dir, remove=True)
+            shutil.copyfile(cfg_file, os.path.join(train_dir, "config.yaml"))
+
+            if develop:
+                import pkg_resources
+                src_path = pkg_resources.resource_filename("aw_nas", "")
+                backup_code_path = os.path.join(train_dir, "aw_nas")
+                if os.path.exists(backup_code_path):
+                    shutil.rmtree(backup_code_path)
+                LOGGER.info("Copy `aw_nas` source code to %s", backup_code_path)
+                shutil.copytree(src_path, backup_code_path, ignore=_onlycopy_py)
+
+    torch.distributed.barrier()
+
+    if train_dir:
+        # add log file handler
+        log_file = os.path.join(train_dir, "search{}.log".format(
+            "" if local_rank == 0 else "_{}".format(local_rank)))
+        _logger.addFile(log_file)
+
+    LOGGER.info("CWD: %s", os.getcwd())
+    LOGGER.info("CMD: %s", " ".join(sys.argv))
+
+    setproctitle.setproctitle("awnas-search config: {}; train_dir: {}; vis_dir: {}; cwd: {}"\
+                              .format(cfg_file, train_dir, vis_dir, os.getcwd()))
+
+    LOGGER.info(("Start distributed parallel searching: (world size {}; MASTER {}:{})"
+                 " rank {} local_rank {} PID {}").format(
+                     int(os.environ["WORLD_SIZE"]), os.environ["MASTER_ADDR"],
+                     os.environ["MASTER_PORT"],
+                     os.environ["RANK"], local_rank, os.getpid()))
+
+    # set seed
+    if seed is not None:
+        LOGGER.info("Setting random seed: %d.", seed)
+        np.random.seed(seed)
+        random.seed(seed)
+        torch.manual_seed(seed)
+
+    # load components config
+    LOGGER.info("Loading configuration files.")
+    with open(cfg_file, "r") as f:
+        cfg = yaml.safe_load(f)
+
+    cfg["weights_manager_cfg"]["multiprocess"] = True
+    cfg["evaluator_cfg"]["multiprocess"] = True
+
+    # initialize components
+    LOGGER.info("Initializing components.")
+    whole_dataset = _init_component(cfg, "dataset")
+    rollout_type = cfg["rollout_type"]
+
+    search_space = _init_component(cfg, "search_space")
+    controller = _init_component(cfg, "controller",
+                                        search_space=search_space, device=device,
+                                        rollout_type=rollout_type)
+
+    _data_type = whole_dataset.data_type()
+    
+    if _data_type == "sequence":
+        # get the num_tokens
+        num_tokens = whole_dataset.vocab_size
+        LOGGER.info("Dataset %s: vocabulary size: %d", whole_dataset.NAME, num_tokens)
+        weights_manager = _init_component(cfg, "weights_manager",
+                                search_space=search_space,
+                                device=device,
+                                gpus=[device],
+                                rollout_type=rollout_type,
+                                num_tokens=num_tokens)
+    else:
+        weights_manager = _init_component(cfg, "weights_manager",
+                                search_space=search_space,
+                                device=device, gpus=[device],
+                                rollout_type=rollout_type)
+    # check model support for data type
+    expect(_data_type in weights_manager.supported_data_types())
+
+    objective = _init_component(cfg, "objective", search_space=search_space)
+    # evaluator
+    evaluator = _init_component(cfg, "evaluator", dataset=whole_dataset,
+                                weights_manager=weights_manager, objective=objective,
+                                rollout_type=rollout_type)
+    expect(_data_type in evaluator.supported_data_types())
+
+    trainer = _init_component(cfg, "trainer",
+                              evaluator=evaluator, controller=controller,
+                              rollout_type=rollout_type)
+
+    # setup trainer and train
+    if local_rank != 0:
+        save_every = None
+    trainer.setup(load, save_every, train_dir, writer=writer,
+                  interleave_report_every=interleave_report_every)
+    trainer.train()
 
 def _dump(rollout, dump_mode, of):
     if dump_mode == "list":
@@ -502,7 +626,7 @@ def eval_arch(cfg_file, arch_file, load, gpu, seed, save_plot, save_state_dict, 
               help="If specified, save the plot of the rollouts to this path")
 @click.option("--test", default=False, type=bool, is_flag=True,
               help="If false, only the controller is loaded and use to sample rollouts; "
-              "Otherwise, weights_manager/trainer is also loaded and test these rollouts.")
+              "Otherwise, weights_manager/trainer are also loaded to test these rollouts.")
 @click.option("--steps", default=None, type=int,
               help="number of batches to eval for each arch, default to be the whole derive queue.")
 @click.option("--gpu", default=0, type=int,
@@ -558,8 +682,8 @@ def derive(cfg_file, load, out_file, n, save_plot, test, steps, gpu, seed, dump_
                 _dump(r, dump_mode, of)
                 of.write("\n")
     else:
-        trainer = _init_components_from_cfg(cfg, device, from_controller=True,
-                                            search_space=search_space, controller=controller)[-1]
+        trainer = _init_components_from_cfg(cfg, device)[-1]#, from_controller=True,
+                                            #search_space=search_space, controller=controller)[-1]
 
         LOGGER.info("Loading from disk...")
         trainer.setup(load=load)
@@ -580,11 +704,12 @@ def derive(cfg_file, load, out_file, n, save_plot, test, steps, gpu, seed, dump_
                     )
                 of.write("# ---- Arch {} (Reward {}) ----\n".format(i, rollout.get_perf()))
                 _dump(rollout, dump_mode, of)
+                yaml.safe_dump([{"reward": rollout.get_perf()}], of)
                 of.write("\n")
 
 
 # ---- Multiprocess Train, Test using final_trainer ----
-@main.command(help="Train an architecture.")
+@main.command(help="Multiprocess final training of architecture.")
 @click.argument("cfg_file", required=True, type=str)
 @click.option("--seed", default=None, type=int,
               help="the random seed to run training")
@@ -598,12 +723,20 @@ def derive(cfg_file, load, out_file, n, save_plot, test, steps, gpu, seed, dump_
               help="the directory to save checkpoints")
 def mptrain(seed, cfg_file, load, load_state_dict, save_every, train_dir):
     local_rank = int(os.environ["LOCAL_RANK"])
+    # set gpu
+    _set_gpu(local_rank)
+    device = torch.cuda.current_device()
+    torch.distributed.init_process_group(backend="nccl")
+
     if train_dir:
         # backup config file, and if in `develop` mode, also backup the aw_nas source code
         if local_rank == 0:
             train_dir = utils.makedir(train_dir, remove=False)
             shutil.copyfile(cfg_file, os.path.join(train_dir, "train_config.yaml"))
+    
+    torch.distributed.barrier()
 
+    if train_dir:
         # add log file handler
         log_file = os.path.join(train_dir, "train{}.log".format(
             "" if local_rank == 0 else "_{}".format(local_rank)))
@@ -614,11 +747,6 @@ def mptrain(seed, cfg_file, load, load_state_dict, save_every, train_dir):
 
     setproctitle.setproctitle("awnas-train config: {}; train_dir: {}; cwd: {}"\
                               .format(cfg_file, train_dir, os.getcwd()))
-
-    # set gpu
-    _set_gpu(local_rank)
-    device = torch.cuda.current_device()
-    torch.distributed.init_process_group(backend="nccl")
 
     LOGGER.info(("Start distributed parallel training: (world size {}; MASTER {}:{})"
                  " rank {} local_rank {} PID {}").format(
@@ -637,6 +765,8 @@ def mptrain(seed, cfg_file, load, load_state_dict, save_every, train_dir):
     LOGGER.info("Loading configuration files.")
     with open(cfg_file, "r") as f:
         cfg = yaml.safe_load(f)
+
+    cfg["final_trainer_cfg"]["multiprocess"] = True
 
     # initialize components
     LOGGER.info("Initializing components.")
@@ -670,6 +800,8 @@ def mptrain(seed, cfg_file, load, load_state_dict, save_every, train_dir):
 
     # start training
     LOGGER.info("Start training.")
+    if local_rank != 0:
+        save_every = None
     trainer.setup(load, load_state_dict, save_every, train_dir)
     trainer.train()
 
@@ -850,7 +982,7 @@ def gen_sample_config(out_file, data_type, rollout_type):
             if rollout_type is not None:
                 if comp_name in {"search_space", "controller", "weights_manager",
                                  "evaluator", "trainer"}:
-                    filter_funcs.append(lambda cls: rollout_type in cls.supported_rollout_types())
+                    filter_funcs.append(lambda cls: rollout_type in cls.all_supported_rollout_types())
 
             out_f.write(utils.component_sample_config_str(comp_name, prefix="# ",
                                                           filter_funcs=filter_funcs))
@@ -874,6 +1006,44 @@ def gen_final_sample_config(out_file, data_type):
             out_f.write(utils.component_sample_config_str(comp_name, prefix="# ",
                                                           filter_funcs=filter_funcs))
             out_f.write("\n")
+
+@main.command(help="Print registry information.")
+@click.option("-t", "--table", default=[], multiple=True,
+              type=click.Choice(RegistryMeta.avail_tables()),
+              help="If specified, only print classes of the corresponding registries/tables.")
+@click.option("-n", "--name", default=[], multiple=True,
+              help="If specified, only print the information of the corresponding classes in the registry.")
+@click.option("-r", "--regex", default=False, type=bool, is_flag=True,
+              help="If specified, match registry and class name using regex")
+@click.option("-v", "--verbose", default=False, type=bool, is_flag=True,
+              help="Print the documentation of the classes")
+def registry(table, name, regex, verbose):
+    if table:
+        if regex:
+            registry_names = [table_name for table_name in RegistryMeta.avail_tables()
+                              if any(re.match(s_table, table_name) is not None
+                                     for s_table in table)]
+        else:
+            registry_names = table
+    else:
+        registry_names = RegistryMeta.avail_tables()
+
+    print("Registries\n================")
+    for registry_name in registry_names:
+        avails = RegistryMeta.registry_dct[registry_name]
+        print("**{}**".format(registry_name))
+        for class_name, class_ in avails.items():
+            if name:
+                if (regex and not any(
+                        re.match(s_name, class_name) is not None for s_name in name)) or \
+                        (not regex and not class_name in name):
+                    # not match
+                    continue
+
+            print("{}: {}".format(class_name, str(class_)))
+            if verbose:
+                print(class_.__doc__)
+        print("----------------")
 
 
 if __name__ == "__main__":

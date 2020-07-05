@@ -5,7 +5,6 @@ import torch
 
 from aw_nas.weights_manager.base import BaseWeightsManager
 from aw_nas.final.base import FinalModel
-from aw_nas.utils.exception import expect, ConfigException
 from aw_nas.rollout import DenseMutation
 
 __all__ = ["DenseMorphismWeightsManager"]
@@ -18,9 +17,6 @@ class DenseMorphismWeightsManager(BaseWeightsManager):
 
         self.search_space = search_space
         self.device = device
-        expect(rollout_type in self.supported_rollout_types(),
-               "Unsupported `rollout_type`: {}".format(rollout_type),
-               ConfigException) # supported rollout types
         self.rollout_type = rollout_type
         self.noise_type = noise_type
 

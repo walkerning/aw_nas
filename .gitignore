@@ -109,3 +109,4 @@ results/
 
 ._*
 *.DS_Store
+*.json
