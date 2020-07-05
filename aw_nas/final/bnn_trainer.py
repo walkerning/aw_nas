@@ -51,10 +51,9 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                  save_as_state_dict=False,
                  workers_per_queue=2,
                  eval_no_grad=True,
-                 calib_bn_setup=False, # for OFA final model
+                 calib_bn_setup=True,
                  schedule_cfg=None):
         super(CNNFinalTrainer, self).__init__(schedule_cfg)
-        import ipdb; ipdb.set_trace()
 
         self.model = model
         self.parallel_model = None
