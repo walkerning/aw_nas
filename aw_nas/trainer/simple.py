@@ -229,8 +229,7 @@ class SimpleTrainer(BaseTrainer):
     # ---- APIs ----
     @classmethod
     def supported_rollout_types(cls):
-        return ["discrete", "differentiable", "compare", "nasbench-101", "nasbench-201", "ofa"] + \
-            cls.registered_supported_rollouts_()
+        return ["discrete", "differentiable", "compare", "nasbench-101", "nasbench-201", "ofa"]
 
     def train(self): #pylint: disable=too-many-branches
         assert self.is_setup, "Must call `trainer.setup` method before calling `trainer.train`."

@@ -19,6 +19,30 @@ One can use the help utility `awnas registry` to print out the current registry 
 
 Each component type have a few abstract interfaces/methods declared, one should implement all these abstract methods to get the new component class successfully registered. If some classes are not successfully registered, one will get warnings during awnas initialization.
 
+## Define a New Rollout
+Rollouts are the interface objects that are defined by the search space, sampled from controller, evaluated by the weights manager and evaluator. To define a new rollout, you should first define the corresponding search space. A **search space** contains some searchable decisions, and a **rollout** instance contains a specific set of these decisions. In `aw_nas`, a **genotype** is a more human-readable representation of the , which can be a namedtuple (ENAS, DenseNet, OFA) or a string (NAS-Bench-201), or of other types (ModelSpec for NAS-Bench-101).
+
+You can check existing search space and rollout definitions for more examples. Run `awnas registry -t search_space` to see which search space definitions exist. And a search space class corresponds to one or more rollout classes. For example, the basic cell-based search space `cnn` (class `awnas.common.CNNSearchSpace`) corresponds to two rollout types: `discrete` discrete rollouts that are used in RL-based, EVO-based controllers, etc. (class `awnas.rollout.base.Rollout`); `differentiable` differentiable rollouts that are used in gradient-based NAS (class `awnas.rollout.base.DifferentiableRollout`).
+
+**Define component's supported rollout types**: Certain components support handling specific types of rollouts, and the component class and declare which rollout types it supports, and checks will be carried out according to this information during component initialization. For example, the parameter-sharing evaluator `aw_nas.evaluator.mepa.MepaEvalautor` declares it supported rollouts as
+```
+@classmethod
+def supported_rollout_types(cls):
+    return ["discrete", "differentiable", "compare", "ofa"]
+```
+
+Apart from this method, during, a rollout class can also declare which components it can use with a class attribute named `supported_components`. For example, when we want to reuse the parameter-sharing `mepa` evaluator and the reinforcment-learning `rl` controller for `nasbench-201` rollouts, instead of modifying these components' `supported_rollout_types` classmethod def., we add following codes in the `NasBench201Rollout` class def..
+```
+class NasBench201Rollout(BaseRollout):
+    NAME = "nasbench-201"
+    supported_components = [("controller", "rl"), ("evaluator", "mepa")]
+
+    def __init__(self, matrix, search_space):
+       ...
+```
+
+This mechanism enables a newly defined rollout type to reuse components without intrusively modify the `supported_rollout_types` definition in the components' codes. However, one might need understand the component's mechanism and check its code to ensure this component can be indeed reused for the newly-defined rollout type.
+
 ## Pass in Configurations
 
 The mechanism that `aw_nas` pass the configurations defined in the configuration files to the components is simple: Pass all configurations in the file as keyword arguments to initialize the corresponding component instance `ComponentClass(**config_dict)`.

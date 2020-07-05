@@ -125,7 +125,7 @@ def test_registered_supported_rollouts():
     from aw_nas import RegistryMeta, BaseRollout
 
     simple_trainer_cls = RegistryMeta.get_class("trainer", "simple")
-    assert "a_fake_rollout" not in simple_trainer_cls.supported_rollout_types()
+    assert "a_fake_rollout" not in simple_trainer_cls.all_supported_rollout_types()
     class AFakeRollout(BaseRollout):
         NAME = "a_fake_rollout"
         supported_components = [("trainer", "simple")]
@@ -135,4 +135,4 @@ def test_registered_supported_rollouts():
 
         def plot_arch(self, *args, **kwargs):
             pass
-    assert "a_fake_rollout" in simple_trainer_cls.supported_rollout_types()
+    assert "a_fake_rollout" in simple_trainer_cls.all_supported_rollout_types()

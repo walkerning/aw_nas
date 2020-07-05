@@ -18,7 +18,7 @@ There are multiple actors that are working together in a NAS system, and they ca
 * evaluator
 * objective
 
-The interface between these components are somehow well-defined. We use a class `awnas.rollout.base.BaseRollout` to represent the interface object between all these components. Usually, a search space defines one or more rollout types (a subclass of `BaseRollout`). For example, the basic cell-based search space `cnn` (class `awnas.common.CNNSearchSpace`) corresponds to two rollout types: `discrete`discrete rollouts that are used in RL-based, EVO-based controllers, etc. (class `awnas.rollout.base.Rollout`); `differentiable` differentiable rollouts that are used in gradient-based NAS (class `awnas.rollout.base.DifferentiableRollout`).
+The interface between these components are somehow well-defined. We use a class `awnas.rollout.base.BaseRollout` to represent the interface object between all these components. Usually, a search space defines one or more rollout types (a subclass of `BaseRollout`). For example, the basic cell-based search space `cnn` (class `awnas.common.CNNSearchSpace`) corresponds to two rollout types: `discrete` discrete rollouts that are used in RL-based, EVO-based controllers, etc. (class `awnas.rollout.base.Rollout`); `differentiable` differentiable rollouts that are used in gradient-based NAS (class `awnas.rollout.base.DifferentiableRollout`).
 
 ![NAS framework](doc/pics/framework.pdf)
 
@@ -59,7 +59,7 @@ Commands:
   sample                   Sample architectures, pickle loading controller...
   eval-arch                Eval architecture from file.
   derive                   Derive architectures.
-  mptrain                  Train an architecture.
+  mptrain                  Multiprocess final training of architecture.
   train                    Train an architecture.
   test                     Test a final-trained model.
   gen-sample-config        Dump the sample configuration.

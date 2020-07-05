@@ -704,7 +704,7 @@ def derive(cfg_file, load, out_file, n, save_plot, test, steps, gpu, seed, dump_
 
 
 # ---- Multiprocess Train, Test using final_trainer ----
-@main.command(help="Train an architecture.")
+@main.command(help="Multiprocess final training of architecture.")
 @click.argument("cfg_file", required=True, type=str)
 @click.option("--seed", default=None, type=int,
               help="the random seed to run training")
@@ -977,7 +977,7 @@ def gen_sample_config(out_file, data_type, rollout_type):
             if rollout_type is not None:
                 if comp_name in {"search_space", "controller", "weights_manager",
                                  "evaluator", "trainer"}:
-                    filter_funcs.append(lambda cls: rollout_type in cls.supported_rollout_types())
+                    filter_funcs.append(lambda cls: rollout_type in cls.all_supported_rollout_types())
 
             out_f.write(utils.component_sample_config_str(comp_name, prefix="# ",
                                                           filter_funcs=filter_funcs))

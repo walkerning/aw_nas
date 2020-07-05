@@ -14,10 +14,14 @@ class BaseEvaluator(Component):
         self.dataset = dataset
         self.weights_manager = weights_manager
         self.objective = objective
-        expect(rollout_type in self.supported_rollout_types(),
+        expect(rollout_type in self.all_supported_rollout_types(),
                "Unsupported `rollout_type`: {}".format(rollout_type),
                ConfigException) # supported rollout types
         self.rollout_type = rollout_type
+
+    @classmethod
+    def all_supported_rollout_types(cls):
+        return cls.registered_supported_rollouts_() + cls.supported_rollout_types()
 
     def set_device(self, device):
         if self.weights_manager is not None:

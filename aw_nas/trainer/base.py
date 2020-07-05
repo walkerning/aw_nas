@@ -21,7 +21,7 @@ class BaseTrainer(Component):
 
         self.controller = controller
         self.evaluator = evaluator
-        expect(rollout_type in self.supported_rollout_types(),
+        expect(rollout_type in self.all_supported_rollout_types(),
                "Unsupported `rollout_type`: {}".format(rollout_type),
                ConfigException) # supported rollout types
         self.rollout_type = rollout_type
@@ -31,6 +31,10 @@ class BaseTrainer(Component):
         self.save_every = None
         self.train_dir = None
         self.interleave_report_every = None
+
+    @classmethod
+    def all_supported_rollout_types(cls):
+        return cls.registered_supported_rollouts_() + cls.supported_rollout_types()
 
     # ---- virtual APIs to be implemented in subclasses ----
     @utils.abstractclassmethod
