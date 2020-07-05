@@ -233,9 +233,10 @@ class BinaryResNetBlock(nn.Module):
                                kernel_size,  stride, padding, affine=affine, bias=None, activation=self.activation)
         self.op_2 = BinaryConvBNReLU(C_out, C_out,
                                kernel_size, 1, padding, affine=affine, bias=None, activation=self.activation)
-        self.skip_op = Identity() if stride == 1 else BinaryConvBNReLU(C, C_out,
+        # the conv on skip-op is not binarized!
+        self.skip_op = Identity() if stride == 1 else ConvBNReLU(C, C_out,
                                                                  1, stride, 0,
-                                                                 affine=affine, bias=None, activation=self.activation)
+                                                                 affine=affine)
 
     def forward(self, inputs):
         inner = self.activation(self.op_1(inputs))

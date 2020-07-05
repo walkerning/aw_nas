@@ -65,19 +65,20 @@ final_trainer_cfg:
   auxiliary_head: false
   auxiliary_weight: 0.0
   add_regularization: true
-  batch_size: 64
+  batch_size: 128
   epochs: 100
   grad_clip: 5.0
-  learning_rate: 0.05
-  momentum: 0.9
+  learning_rate: 0.0005
+  # momentum: 0.9
   no_bias_decay: false
+  optimizer_type: Adam
   optimizer_scheduler:
     eta_min: 0.0001
     T_max: 100
     type: CosineAnnealingLR
   schedule_cfg: null
   warmup_epochs: 0
-  weight_decay: 0.0003
+  weight_decay: 0.0
   save_as_state_dict: true
 # ---- End Type cnn_trainer ----
 ## ---- End Component final_trainer ----
