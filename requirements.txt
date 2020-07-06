@@ -16,6 +16,6 @@ setproctitle==1.1.10
 six==1.12.0
 tensorboardX==1.6
 torch==1.2.0
-torchvision==0.2.2.post3
+torchvision==0.4.0
 
 -e .[vis,det]

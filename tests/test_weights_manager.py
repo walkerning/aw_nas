@@ -731,8 +731,8 @@ def test_nasbench_201_candidate_forward_with_params(nasbench_201):
                   cand_net.active_named_members("parameters", check_visited=True)}
     print("num active params: ", len(old_params))
     # random init
-    new_params = {n: torch.autograd.Variable(p.new(p.size()).normal_(), requires_grad=True) for n, p in
-                  cand_net.active_named_members("parameters", check_visited=True)}
+    new_params = {n: torch.autograd.Variable(p.new(p.size()).normal_(), requires_grad=True)
+                  for n, p in cand_net.active_named_members("parameters", check_visited=True)}
     res = torch.sum(cand_net.forward_with_params(data[0], new_params, mode="train"))
 
     # assert set back to original params
@@ -742,11 +742,13 @@ def test_nasbench_201_candidate_forward_with_params(nasbench_201):
 
     try:
         torch.autograd.grad(
-            res, list(dict(cand_net.active_named_members("parameters", check_visited=True)).values()), retain_graph=True)
+            res,
+            list(dict(cand_net.active_named_members("parameters", check_visited=True)).values()),
+            retain_graph=True)
     except Exception:
         print("should raise!")
     else:
         assert False, "Should raise, as new params are used"
-    torch.autograd.grad(res, list(new_params.values()))
+    torch.autograd.grad(res, list(new_params.values()), allow_unused=True)
 
 

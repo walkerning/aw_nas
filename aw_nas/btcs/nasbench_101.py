@@ -32,12 +32,15 @@ MAX_EDGES = 9
 _nasbench_cfg = config.build_config()
 
 def _literal_np_array(arr):
+    if arr is None:
+        return None
     return "np.array({})".format(np.array2string(arr, separator=",").replace("\n", " "))
 
 class _ModelSpec(api.ModelSpec):
     def __repr__(self):
         return "_ModelSpec({}, {}; pruned_matrix={}, pruned_ops={})".format(
-            _literal_np_array(self.original_matrix), self.original_ops, _literal_np_array(self.matrix), self.ops)
+            _literal_np_array(self.original_matrix), self.original_ops,
+            _literal_np_array(self.matrix), self.ops)
 
     def hash_spec(self, *args, **kwargs):
         return super(_ModelSpec, self).hash_spec(_nasbench_cfg["available_ops"])

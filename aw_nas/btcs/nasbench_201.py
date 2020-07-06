@@ -4,13 +4,14 @@ NASBench-201 search space, rollout, embedder
 
 import os
 import re
-import six
 import copy
 import random
 import pickle
+import itertools
 import collections
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 
+import six
 import numpy as np
 import torch
 from torch import nn
@@ -206,7 +207,9 @@ class NasBench201Rollout(BaseRollout):
 class NasBench201RSController(BaseController):
     NAME = "nasbench-201-rs"
 
-    def __init__(self, search_space, device, rollout_type="nasbench-201", mode="eval", check_valid=True, avoid_repeat=False, fair=False, deiso=False, op_type=0, pickle_file="", text_file="",
+    def __init__(self, search_space, device, rollout_type="nasbench-201", mode="eval",
+                 check_valid=True, avoid_repeat=False, fair=False, deiso=False, op_type=0,
+                 pickle_file="", text_file="",
                  schedule_cfg=None):
         super(NasBench201RSController, self).__init__(
             search_space, rollout_type, mode, schedule_cfg)
@@ -256,7 +259,7 @@ class NasBench201RSController(BaseController):
                 if self.search_space.ops_choices[int(arch[output_][input_])].find("conv") != -1:
                     valid_arch = True
         return valid_arch
-                
+
     def sample(self, n=1, batch_size=None):
         rollouts = []
         if self.avoid_repeat:
@@ -264,14 +267,17 @@ class NasBench201RSController(BaseController):
                 assert n == self.arch_num
                 for i in range(n):
                     line = self.lines[i].strip()
-                    rollouts.append(NasBench201Rollout(self.search_space.str2matrix(line), self.search_space))
+                    rollouts.append(NasBench201Rollout(self.search_space.str2matrix(line),
+                                                       self.search_space))
             elif self.pickle_file:
                 for line in self.lines:
                     rollouts.append(NasBench201Rollout(line[0], self.search_space))
             else:
                 indexes = np.random.choice(np.arange(15625), size=n, replace=False)
                 for i in indexes:
-                    rollouts.append(NasBench201Rollout(self.search_space.api.str2matrix(self.search_space.api.query_by_index(i).arch_str), self.search_space))
+                    rollouts.append(NasBench201Rollout(
+                        self.search_space.api.str2matrix(
+                            self.search_space.api.query_by_index(i).arch_str), self.search_space))
             return rollouts
         if self.fair:
             assert n == self.num_op_choices
@@ -293,7 +299,8 @@ class NasBench201RSController(BaseController):
                 if self.deiso:
                     new_rollout = self.random_sample_nonisom()
                 elif self.pickle_file:
-                    new_rollout = NasBench201Rollout(self.lines[np.random.randint(0, len(self.lines))][0], self.search_space)
+                    new_rollout = NasBench201Rollout(
+                        self.lines[np.random.randint(0, len(self.lines))][0], self.search_space)
                 else:
                     new_rollout = self.search_space.random_sample()
                 if self.check_valid_arch(new_rollout.arch) or not self.check_valid:
@@ -454,7 +461,7 @@ class NasBench201SAController(BaseController):
         self.cur_perf = best_rollout.get_perf(perf_name)
         self.logger.info("Set the initialization rollout: {}; perf: {}".format(
             best_rollout, self.cur_perf))
-        
+
     def sample(self, n, batch_size=None):
         assert batch_size is None
 
@@ -469,7 +476,8 @@ class NasBench201SAController(BaseController):
                      self.search_space.idx[1][rand_ind]]:
                 neighbor_choice = np.random.randint(0, self.search_space.num_op_choices)
             new_choice = copy.deepcopy(self.cur_solution)
-            new_choice[self.search_space.idx[0][rand_ind], self.search_space.idx[1][rand_ind]] = neighbor_choice
+            new_choice[self.search_space.idx[0][rand_ind], self.search_space.idx[1][rand_ind]] \
+                = neighbor_choice
             rollouts.append(NasBench201Rollout(new_choice, self.search_space))
         return rollouts
 
@@ -845,7 +853,8 @@ class NB201SharedOp(nn.Module):
 
 class NB201CandidateNet(CandidateNet):
 
-    def __init__(self, super_net, rollout, member_mask, gpus=tuple(), cache_named_members=False, eval_no_grad=True):
+    def __init__(self, super_net, rollout, member_mask, gpus=tuple(), cache_named_members=False,
+                 eval_no_grad=True):
         super(NB201CandidateNet, self).__init__(eval_no_grad=eval_no_grad)
         self.super_net = super_net
         self._device = self.super_net.device
@@ -861,7 +870,7 @@ class NB201CandidateNet(CandidateNet):
 
         self.genotype_arch = rollout.arch
         self.genotype = rollout.genotype
- 
+
     def reset_flops(self):
         self._flops_calculated = False
         self.total_flops = 0
@@ -884,7 +893,8 @@ class NB201CandidateNet(CandidateNet):
             return self.forward(inputs, **kwargs)
 
     def plot_arch(self):
-        return self.super_net.search_space.plot_arch(self.genotype, "./nb201_search", "nb201_search")
+        return self.super_net.search_space.plot_arch(
+            self.genotype, "./nb201_search", "nb201_search")
 
     def named_parameters(self, prefix="", recurse=True): #pylint: disable=arguments-differ
         if self.member_mask:
@@ -1048,8 +1058,6 @@ class NB201SharedNet(BaseWeightsManager, nn.Module):
 
     def set_hook(self):
         for name, module in self.named_modules():
-            if "auxiliary" in name:
-                continue
             module.register_forward_hook(self._hook_intermediate_feature)
 
     def _hook_intermediate_feature(self, module, inputs, outputs):
@@ -1137,12 +1145,6 @@ class NB201SharedNet(BaseWeightsManager, nn.Module):
         # apply the gradients
         optimizer.step()
 
-    def step_current_gradients(self, optimizer):
-        if self.max_grad_norm is not None:
-            torch.nn.utils.clip_grad_norm_(self.parameters(), self.max_grad_norm)
-        optimizer.step()
-
-
     def save(self, path):
         torch.save({"epoch": self.epoch,
                     "state_dict": self.state_dict()}, path)
@@ -1165,7 +1167,6 @@ class NB201GenotypeModel(FinalModel):
     def __init__(self, search_space, device, genotypes,
                  num_classes=10, init_channels=36, stem_multiplier=1,
                  dropout_rate=0.1, dropout_path_rate=0.2,
-                 auxiliary_head=False, auxiliary_cfg=None,
                  use_stem="conv_bn_3x3", stem_stride=1, stem_affine=True,
                  schedule_cfg=None):
         super(NB201GenotypeModel, self).__init__(schedule_cfg)
@@ -1183,7 +1184,6 @@ class NB201GenotypeModel(FinalModel):
         # training
         self.dropout_rate = dropout_rate
         self.dropout_path_rate = dropout_path_rate
-        self.auxiliary_head = auxiliary_head
 
         # search space configs
         self._num_vertices = self.search_space.num_vertices
@@ -1222,17 +1222,11 @@ class NB201GenotypeModel(FinalModel):
                                    num_out_channels=_num_out_channels,
                                    stride=stride)
             else:
-                cell = ops.get_op("NB201ResidualBlock")(_num_channels, _num_out_channels, stride=2, affine=True)
+                cell = ops.get_op("NB201ResidualBlock")(
+                    _num_channels, _num_out_channels, stride=2, affine=True)
             # TODO: support specify concat explicitly
             self.cells.append(cell)
 
-            if i_layer == (2 * self._num_layers) // 3 and self.auxiliary_head:
-                if auxiliary_head == "imagenet":
-                    self.auxiliary_net = AuxiliaryHeadImageNet(
-                        prev_num_channels[-1], num_classes, **(auxiliary_cfg or {}))
-                else:
-                    self.auxiliary_net = AuxiliaryHead(
-                        prev_num_channels[-1], num_classes, **(auxiliary_cfg or {}))
         self.lastact = nn.Sequential(nn.BatchNorm2d(num_channels), nn.ReLU(inplace=True))
         self.global_pooling = nn.AdaptiveAvgPool2d(1)
         if self.dropout_rate and self.dropout_rate > 0:
@@ -1250,8 +1244,6 @@ class NB201GenotypeModel(FinalModel):
 
     def set_hook(self):
         for name, module in self.named_modules():
-            if "auxiliary" in name:
-                continue
             module.register_forward_hook(self._hook_intermediate_feature)
 
     def _hook_intermediate_feature(self, module, inputs, outputs):
@@ -1279,9 +1271,7 @@ class NB201GenotypeModel(FinalModel):
 
         for layer_idx, cell in enumerate(self.cells):
             states = cell(states, self.dropout_path_rate)
-            if layer_idx == 2 * self._num_layers // 3:
-                if self.auxiliary_head and self.training:
-                    logits_aux = self.auxiliary_net(states)
+
         out = self.lastact(states)
         out = self.global_pooling(out)
         out = self.dropout(out)
@@ -1291,8 +1281,6 @@ class NB201GenotypeModel(FinalModel):
             self.logger.info("FLOPS: flops num = %d M", self.total_flops/1.e6)
             self._flops_calculated = True
 
-        if self.auxiliary_head and self.training:
-            return logits, logits_aux
         return logits
 
     @classmethod
@@ -1352,5 +1340,5 @@ class NB201GenotypeCell(nn.Module):
         # and update the reference manually.
         self.edges = defaultdict(dict)
         for edge_name, edge_mod in six.iteritems(self.edge_mod._modules):
-            from_, to_  = self._edge_name_pattern.match(edge_name).groups()
+            from_, to_ = self._edge_name_pattern.match(edge_name).groups()
             self.edges[int(from_)][int(to_)] = edge_mod

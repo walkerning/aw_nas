@@ -54,8 +54,9 @@ class RNNGenotypeModel(RNNSharedNet):
 
     @classmethod
     def supported_rollout_types(cls):
-        # this will not be called
-        assert 0, "should not be called"
+        # this should not be called
+        # assert 0, "should not be called"
+        return []
 
     def assemble_candidate(self, *args, **kwargs): #pylint: disable=arguments-differ
         # this will not be called

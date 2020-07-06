@@ -1042,7 +1042,10 @@ def registry(table, name, regex, verbose):
 
             print("{}: {}".format(class_name, str(class_)))
             if verbose:
-                print(class_.__doc__)
+                if hasattr(class_, "all_supported_rollout_types"):
+                    print("    *Supported rollout types*: ", class_.all_supported_rollout_types())
+                if class_.__doc__ is not None:
+                    print(class_.__doc__)
         print("----------------")
 
 

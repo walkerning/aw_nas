@@ -27,7 +27,7 @@ class StubWeightsManager(BaseWeightsManager, nn.Module):
 
     @classmethod
     def supported_rollout_types(cls):
-        return BaseRollout.all_classes_()
+        return list(BaseRollout.all_classes_().keys())
 
     @classmethod
     def supported_data_types(cls):

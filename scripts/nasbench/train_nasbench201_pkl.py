@@ -392,7 +392,7 @@ def main(argv):
         collate_fn=lambda items: list(zip(*items)))
 
     # init test
-    if not arch_network_type == "pairwise_comparator" or args.test_only:
+    if not arch_network_type in {"pairwise_comparator", "random_forest"} or args.test_only:
         if args.test_funcs is not None:
             test_func_names = args.test_funcs.split(",")
         corr, func_res = valid(val_loader, model, args,

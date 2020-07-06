@@ -476,4 +476,4 @@ class PredictorBasedController(BaseController):
 
     @classmethod
     def supported_rollout_types(cls):
-        return BaseRollout.all_classes_()
+        return list(BaseRollout.all_classes_().keys())

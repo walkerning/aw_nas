@@ -24,7 +24,7 @@ PACKAGES = find_packages(exclude=["tests.*", "tests"])
 # dependencies
 INSTALL_REQUIRES = [
     "torch>=1.0.0,<1.5.0", # torch
-    "torchvision",         # torchvision
+    "torchvision>=0.4.0",  # torchvision, for torchvision.ops.nms
     "numpy",               # math lib
     "scipy",               # math lib
     "six",                 # 2-3 compatability

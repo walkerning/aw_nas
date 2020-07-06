@@ -964,3 +964,62 @@ class PairwiseComparator(ArchNetwork, nn.Module):
     def _clip_grads(self):
         if self.max_grad_norm is not None:
             torch.nn.utils.clip_grad_norm_(self.parameters(), self.max_grad_norm)
+
+try:
+    from sklearn.ensemble import RandomForestRegressor
+except ImportError as e:
+    imp_exception = e
+    class RandomForest(ArchNetwork, nn.Module):
+        NAME = "random_forest"
+        def __new__(cls, *args, **kwargs):
+            from aw_nas.utils import logger as _logger
+            _logger.getChild("arch_network").error(
+                ("RandomForest arch network cannot be used: Cannot import module sklearn: {}".format(imp_exception)))
+            raise Exception()
+
+        def load(self, path):
+            pass
+
+        def save(self, path):
+            pass
+else:
+    class RandomForest(ArchNetwork, nn.Module):
+        NAME = "random_forest"
+
+        def __init__(self, search_space,
+                    arch_embedder_type="seq", arch_embedder_cfg=None,
+                    scheduler=None, schedule_cfg=None):
+            super(RandomForest, self).__init__(schedule_cfg)
+            nn.Module.__init__(self)
+
+            self.search_space = search_space
+            ae_cls = ArchEmbedder.get_class_(arch_embedder_type)
+            self.arch_embedder = ae_cls(self.search_space, **(arch_embedder_cfg or {}))
+
+            self.embedding_dim = self.arch_embedder.out_dim
+
+        def update_predict(self, archs, scores):
+            # All architectures should be fed in as one batch
+            variance = np.var(scores)
+            threshold = 1e-4 * variance
+            self.regr = RandomForestRegressor(
+                n_estimators=100, criterion="mse",
+                max_features=0.5, min_impurity_decrease=threshold)
+            self.regr.fit(self.arch_embedder(archs).cpu().numpy(), scores)
+            return 0.
+
+        def predict(self, archs):
+            scores = self.regr.predict(self.arch_embedder(archs).cpu().numpy())
+            return torch.from_numpy(scores).cuda()
+
+        def save(self, path):
+            torch.save(self.state_dict(), path)
+
+        def load(self, path):
+            self.load_state_dict(torch.load(path, map_loacation=torch.device("cpu")))
+
+        def on_epoch_start(self, epoch):
+            pass
+
+        def on_epoch_end(self, epoch):
+            pass
