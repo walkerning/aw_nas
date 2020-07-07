@@ -40,6 +40,6 @@ def analyze_elapses(model, inputs, use_cuda=True, forward_time=100):
     async_elapse /= forward_time
     sync_elapse /= forward_time
 
-    genotypes = [{"elapse": elapse, **geno} for elapse, geno in zip(mean_elapse, model.genotypes)]
+    genotypes = [{"elapse": float(elapse), **geno} for elapse, geno in zip(mean_elapse, model.genotypes)]
 
-    return {"primitives": genotypes, "async_elapse": async_elapse, "sync_elapse": sync_elapse}
+    return {"primitives": genotypes, "async_elapse": float(async_elapse), "sync_elapse": float(sync_elapse)}

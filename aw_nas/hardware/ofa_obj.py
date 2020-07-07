@@ -131,11 +131,14 @@ class OFAHardwareObjectiveModel(BaseHardwareObjectiveModel):
         return perfs.sum(axis=0)
 
     def save(self, path):
-        pickle.dump({"table": self._table}, path)
+        pickled_table = {k: v._asdict() for k, v in self._table.items()}
+        with open(path, "wb") as fw:
+            pickle.dump({"table": pickled_table}, fw)
 
     def load(self, path):
-        m = pickle.load(path)
-        self._table = m["table"]
+        with open(path, "rb") as fr:
+            m = pickle.load(fr)
+        self._table = {k: self.Perf(**v) for k, v in m["table"]}
 
 
 class OFAMixinProfilingSearchSpace(MNasNetOFASearchSpace, MixinProfilingSearchSpace):

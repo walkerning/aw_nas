@@ -136,7 +136,7 @@ def net2primitive(hw_cfg_file, prof_result_dir, prof_prim_file, prim_to_ops_file
 
     with open(prim_to_ops_file, "rb") as fr:
         prim_to_ops = pickle.load(fr)
-    # meta info: prim_to_ops is saved at generated profiling final-yaml folder for each net
+    # meta info: prim_to_ops is saved when generate profiling final-yaml folder for each net
     prim_latencies = []
     for _dir in os.listdir(prof_result_dir):
         if os.path.isdir(_dir):
@@ -158,16 +158,16 @@ def genmodel(cfg_file, hwobj_cfg_file, prof_prim_file, result_file):
         ss_cfg = yaml.load(ss_cfg_f)
     with open(hwobj_cfg_file, "r") as lat_cfg_f:
         lat_cfg = yaml.load(lat_cfg_f)
-    ss = get_search_space(ss_cfg["search_space_type"], **ss_cfg["search_space_cfg"], **lat_cfg["mixin_search_space_cfg"])
+    ss = get_search_space(lat_cfg["mixin_search_space_type"], **ss_cfg["search_space_cfg"], **lat_cfg["mixin_search_space_cfg"])
     expect(isinstance(ss, MixinProfilingSearchSpace),
            "search space must be a subclass of MixinProfilingsearchspace")
 
     with open(prof_prim_file) as prof_prim_f:
         prof_prim_latencies = yaml.load(prof_prim_f)
-
+        
     hwobj_model = ss.parse_profiling_primitives(
         prof_prim_latencies,
-        lat_cfg["profiling_primitive_cfg"], lat_cfg["hwobjmodel_type"], lat_cfg["hwobjmodel_cfg"])
+        lat_cfg["profiling_primitive_cfg"], lat_cfg["hwobjmodel_cfg"])
     hwobj_model.save(result_file)
     LOGGER.info("Saved the hardware obj model to %s", result_file)
 
