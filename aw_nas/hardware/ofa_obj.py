@@ -20,8 +20,8 @@ logger = _logger.getChild("ofa_obj")
 
 def ofa_rollout_to_primitive(
     rollout,
-    spatial_size,
     primitive_type,
+    spatial_size,
     strides,
     channels,
     activation=None,
@@ -48,7 +48,7 @@ def ofa_rollout_to_primitive(
         )
     ):
         for j, width, kernel in zip(range(depth), rollout.width[i], rollout.kernel[i]):
-            if i > 0:
+            if j > 0:
                 c_in = c_out
                 s = 1
             primitives.append(
@@ -71,7 +71,7 @@ class OFAHardwareObjectiveModel(BaseHardwareObjectiveModel):
     NAME = "ofa"
 
     def __init__(
-        self, prof_prims, prof_prims_cfg, schedule_cfg=None,
+        self, prof_prims=None, prof_prims_cfg={}, schedule_cfg=None,
     ):
         super(OFAHardwareObjectiveModel, self).__init__(schedule_cfg)
         self.default_prim_type = prof_prims_cfg.get(
@@ -82,27 +82,29 @@ class OFAHardwareObjectiveModel(BaseHardwareObjectiveModel):
         self.prof_prims = prof_prims
         self.prof_prims_cfg = prof_prims_cfg
 
-        self.mult_ratio = prof_prims_cfg["mult_ratio"]
-        self.base_channels = prof_prims_cfg["base_channels"]
+        self.mult_ratio = prof_prims_cfg.get("mult_ratio", 1.0)
+        self.base_channels = prof_prims_cfg.get("base_channels", [16, 16, 24, 32, 64, 96, 160, 320, 1280])
         self.channels = [
             make_divisible(c * self.mult_ratio, 8) for c in self.base_channels
         ]
-        self.strides = prof_prims_cfg["strides"]
-        self.activation = prof_prims_cfg.get("activation")
-        self.use_se = prof_prims_cfg.get("use_se")
-        self.spatial_size = prof_prims_cfg.get("spatial_size", 112)
+        self.strides = prof_prims_cfg.get("strides", [1, 2, 2, 2, 1, 2])
+        self.activation = prof_prims_cfg.get("acts")
+        self.use_se = prof_prims_cfg.get("use_ses")
+        self.spatial_size = prof_prims_cfg.get("spatial_size", 224)
 
         self.Perf = namedtuple("Performances", self.performances)
 
-        self._orgnize_table()
+        self._table = {}
+
+        if self.prof_prims is not None:
+            self._orgnize_table()
 
     def _orgnize_table(self):
         # key: a namedtuple. Prim
         # value: a namedtuple. self.Perf
-        self._table = {}
         for prim in self.prof_prims:
             perf = self.Perf(
-                *[prim.pop(f) if f in prim else 0.0 for f in self.performances]
+                *[prim.pop(f) if f in prim else None for f in self.performances]
             )
             prim = Prim(**prim)
             self._table[prim] = perf
@@ -119,7 +121,7 @@ class OFAHardwareObjectiveModel(BaseHardwareObjectiveModel):
         )
         perfs = []
         for prim in primtives:
-            perf = self._table[prim.prim_type].get(prim)
+            perf = self._table.get(prim)
             if perf is None:
                 logger.warn(
                     f"primitive {prim} is not found in the table, return default value 0."
@@ -131,15 +133,14 @@ class OFAHardwareObjectiveModel(BaseHardwareObjectiveModel):
         return perfs.sum(axis=0)
 
     def save(self, path):
-        pickled_table = {k: v._asdict() for k, v in self._table.items()}
+        pickled_table = [(k._asdict(), v._asdict()) for k, v in self._table.items()]
         with open(path, "wb") as fw:
             pickle.dump({"table": pickled_table}, fw)
 
     def load(self, path):
         with open(path, "rb") as fr:
             m = pickle.load(fr)
-        self._table = {k: self.Perf(**v) for k, v in m["table"]}
-
+        self._table = {Prim(**k): self.Perf(**v) for k, v in m["table"]}
 
 class OFAMixinProfilingSearchSpace(MNasNetOFASearchSpace, MixinProfilingSearchSpace):
     NAME = "ofa_mixin"
