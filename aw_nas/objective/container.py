@@ -1,12 +1,12 @@
-import numpy as np
-
 from aw_nas.objective.base import BaseObjective
 
 
 class ContainerObjective(BaseObjective):
     NAME = "container"
 
-    def __init__(self, search_space, sub_objectives, losses_coef=None, rewards_coef=None, schedule_cfg=None):
+    def __init__(self, search_space, sub_objectives,
+                 losses_coef=None, rewards_coef=None,
+                 schedule_cfg=None):
         super().__init__(search_space, schedule_cfg=schedule_cfg)
         self.objectives = [
             BaseObjective.get_class_(obj["objective_type"])(
@@ -19,8 +19,9 @@ class ContainerObjective(BaseObjective):
         if self.rewards_coef is None:
             self.rewards_coef = [1.] * len(self.objectives)
         assert len(self.rewards_coef) == len(self.losses_coef) == len(self.objectives), \
-        f"expect rewards_coef and losses_coef have the exactly \
-        same length with objectives, got {len(rewards_coef)}, {len(self.losses_coef)} and {len(self.objectives)} instead."
+            ("expect rewards_coef and losses_coef have the exactly"
+             "same length with objectives, got {}, {} and {} instead.").format(
+                 len(rewards_coef), len(self.losses_coef), len(self.objectives))
 
     @classmethod
     def supported_data_types(cls):
@@ -34,8 +35,9 @@ class ContainerObjective(BaseObjective):
         for obj in self.objectives:
             perfs.extend(obj.get_perfs(inputs, outputs, targets, cand_net))
         assert len(perfs) == len(self.perf_names()), \
-        f"expect performances have the exactly \
-        same length with perf_names, got {len(perfs)} and {len(self.perf_names())} instead."
+            ("expect performances have the exactly "
+             "same length with perf_names, got {} and {} instead.").format(
+                 len(perfs), len(self.perf_names()))
         return perfs
 
     def get_loss(self, inputs, outputs, targets, cand_net,
@@ -55,5 +57,5 @@ class ContainerObjective(BaseObjective):
                 inputs, outputs, targets, cand_net
             ) for obj in self.objectives
         ]
-        weighted_rewards = [l * c for l, c in zip(rewards, self.losses_coef)]
+        weighted_rewards = [l * c for l, c in zip(rewards, self.rewards_coef)]
         return sum(weighted_rewards)

@@ -2,11 +2,11 @@
 
 ## Introduction
 
-Neural Architecture Search (NAS) has received extensive attention due to its capability to discover neural network architectures in an automated manner. `aw_nas` is a NAS framework with various NAS algorithms implemented in a modularized manner. Currently, `aw_nas` can be used to reproduce the results of many mainstream NAS algorithms, e.g., ENAS, DARTS, SNAS, FBNet, OFA, predictor-based NAS, etc. And we have applied NAS algorithms for various applications & scenarios with `aw_nas`, including NAS for classification, detection, text modeling, hardware fault tolerance, adversarial robustness, hardware inference efficiency and so on.
+Neural Architecture Search (NAS) has received extensive attention due to its capability to discover neural network architectures in an automated manner. `aw_nas` is a NAS framework with various NAS algorithms implemented in a modularized manner. Currently, `aw_nas` can be used to reproduce the results of many mainstream NAS algorithms, e.g., ENAS, DARTS, SNAS, FBNet, OFA, predictor-based NAS, etc. And we have applied NAS algorithms for various applications & scenarios with `aw_nas`, including NAS for classification, detection, text modeling, hardware fault tolerance, adversarial robustness, hardware inference efficiency, and so on.
 
-Also, the hardware related profiling and parsing interface is designed to be general and easily-usable. Along with the flow and interface, `aw_nas` provides the latency table and some correction model of multiple harddwares. See [Hardware related](doc/hardware.md) for more details.
+Also, the hardware-related profiling and parsing interface is designed to be general and easily-usable. Along with the flow and interface, `aw_nas` provides the latency table and some correction model of multiple hardware. See [Hardware related](doc/hardware.md) for more details.
 
-**Contributions are all welcome**, including new NAS component implementation, new NAS applications, bug fixes, documentation and so on.
+**Contributions are all welcome**, including new NAS component implementation, new NAS applications, bug fixes, documentation, and so on.
 
 ### Components of a NAS system
 
@@ -18,13 +18,14 @@ There are multiple actors that are working together in a NAS system, and they ca
 * evaluator
 * objective
 
-The interface between these components are somehow well-defined. We use a class `awnas.rollout.base.BaseRollout` to represent the interface object between all these components. Usually, a search space defines one or more rollout types (a subclass of `BaseRollout`). For example, the basic cell-based search space `cnn` (class `awnas.common.CNNSearchSpace`) corresponds to two rollout types: `discrete` discrete rollouts that are used in RL-based, EVO-based controllers, etc. (class `awnas.rollout.base.Rollout`); `differentiable` differentiable rollouts that are used in gradient-based NAS (class `awnas.rollout.base.DifferentiableRollout`).
+
+The interface between these components is somehow well-defined. We use a class `awnas.rollout.base.BaseRollout` to represent the interface object between all these components. Usually, a search space defines one or more rollout types (a subclass of `BaseRollout`). For example, the basic cell-based search space `cnn` (class `awnas.common.CNNSearchSpace`) corresponds to two rollout types: `discrete`discrete rollouts that are used in RL-based, EVO-based controllers, etc. (class `awnas.rollout.base.Rollout`); `differentiable` differentiable rollouts that are used in gradient-based NAS (class `awnas.rollout.base.DifferentiableRollout`).
 
 ![NAS framework](doc/pics/framework.pdf)
 
 ## Install
 
-Using virtual python environment is encouraged. For example, with Anaconda, you could run `conda create -n awnas python==3.7.3 pip` first.
+Using a virtual python environment is encouraged. For example, with Anaconda, you could run `conda create -n awnas python==3.7.3 pip` first.
 
 * Supported python versions: 2.7, 3.6, 3.7
 * Supported Pytorch versions: >=1.0.0, <1.5.0 (Currently, some patches in DataParallel replication is not compatible after 1.5.0)
@@ -44,7 +45,7 @@ Output of an example run (version 0.3.dev3):
 07/04 11:41:44 PM plugin              INFO: Loaded plugins:
 Usage: awnas [OPTIONS] COMMAND [ARGS]...
 
-  The awnas NAS framework command line interface. Use `AWNAS_LOG_LEVEL`
+  The awnas NAS framework command-line interface. Use `AWNAS_LOG_LEVEL`
   environment variable to modify the log level.
 
 Options:
@@ -78,7 +79,7 @@ When running `awnas` program, it will assume the data of a dataset with `name=<N
 
 ### Run NAS search
 
-Try running a ENAS [Pham et. al., ICML 2018] search (the results (including configuration backup, search log) in `<TRAIN_DIR>`):
+Try running an ENAS [Pham et. al., ICML 2018] search (the results (including configuration backup, search log) in `<TRAIN_DIR>`):
 
 ```
 awnas search examples/enas.yaml --gpu 0 --save-every 10 --train-dir <TRAIN_DIR>
@@ -118,7 +119,7 @@ awnas eval-arch search_cfg.yaml sampled_genotypes.yaml --load <checkpoint dir du
 
 ### Final Training of Cell-based Architecture
 
-The `awnas.final` sub-package provides the final training functionality of cell-based architectures. `examples/basic/final_templates/final_template.yaml` is a commonly-used configuration template for final training an architecture in a ENAS-like search space. To use that template, fill the ``final_model_cfg.genotypes` field with the genotype string derived from the search process. A genotype string example is
+The `awnas.final` sub-package provides the final training functionality of cell-based architectures. `examples/basic/final_templates/final_template.yaml` is a commonly-used configuration template for final training architectures in an ENAS-like search space. To use that template, fill the ``final_model_cfg.genotypes` field with the genotype string derived from the search process. A genotype string example is
 ```
 CNNGenotype(normal_0=[('dil_conv_3x3', 1, 2), ('skip_connect', 1, 2), ('sep_conv_3x3', 0, 3), ('sep_conv_3x3', 2, 3), ('skip_connect', 3, 4), ('sep_conv_3x3', 0, 4), ('sep_conv_5x5', 1, 5), ('sep_conv_5x5', 0, 5)], reduce_1=[('max_pool_3x3', 0, 2), ('dil_conv_5x5', 0, 2), ('avg_pool_3x3', 1, 3), ('avg_pool_3x3', 2, 3), ('sep_conv_5x5', 1, 4), ('avg_pool_3x3', 1, 4), ('sep_conv_3x3', 1, 5), ('dil_conv_5x5', 3, 5)], normal_0_concat=[2, 3, 4, 5], reduce_1_concat=[2, 3, 4, 5])
 ```
@@ -126,13 +127,13 @@ CNNGenotype(normal_0=[('dil_conv_3x3', 1, 2), ('skip_connect', 1, 2), ('sep_conv
 ### Plugin mechanism
 `aw_nas` provides a simple plugin mechanism to support adding additional components or extending existing components outside the package. During initialization, all python scripts (files whose name ends with `.py`, except those starts with `test_`) under `~/awnas/plugins/` will be imported. Thus the components defined in these files will be registered automatically.
 
-For example, to reproduce FBNet [Wu et. al., CVPR 2019], we add the implmentation of FBNet primitive blocks in `examples/plugins/fbnet/fbnet_plugin.py`, and register these primitives using `aw_nas.ops.register_primitive`. To reuse most of the codes of `DiffSuperNet` implmentation (used by DARTS [Liu et. al., ICLR 2018], SNAS [Xie et. al., ICLR 2018], etc.), we create a class `WeightInitDiffSuperNet` that inherits from `DiffSuperNet`, and the only difference is an additional weights initialization tailored for FBNet. Besides, an objective `LatencyObjective` that calculates the loss as a weighted sum of the latency loss and the cross entropy loss is implemented.
+For example, to reproduce FBNet [Wu et. al., CVPR 2019], we add the implementation of FBNet primitive blocks in `examples/plugins/fbnet/fbnet_plugin.py`, and register these primitives using `aw_nas.ops.register_primitive`. To reuse most of the codes of `DiffSuperNet` implementation (used by DARTS [Liu et. al., ICLR 2018], SNAS [Xie et. al., ICLR 2018], etc.), we create a class `WeightInitDiffSuperNet` that inherits from `DiffSuperNet`, and the only difference is an additional weights initialization tailored for FBNet. Besides, an objective `LatencyObjective` is implemented, which calculates the loss as a weighted sum of the latency loss and the cross-entropy loss.
 
-Under `examples/plugins/robustness` is the plugin modules for implementing Neural Architecture Search for Adversarial Robustness. For example, various objectives for adversarial robustness evaluation is defined. A new search space with varying node input degrees is defined, since dense connection an important property for adversarial robustness, whereas ENAS/DARTS search spaces constrain the node input degrees to be less or equal than 2. Several supernets (`weights_manager`) are implemented with adversarial examples cache to avoid re-generate adversarial example for the same sub-network multiple times.
+Under `examples/plugins/robustness` is the plugin modules for implementing Neural Architecture Search for Adversarial Robustness. For example, various objectives for adversarial robustness evaluation is defined. A new search space with varying node input degrees is defined, since dense connection an important property for adversarial robustness, whereas ENAS/DARTS search spaces constrain the node input degrees to be less or equal than 2. Several supernets (`weights_manager`) are implemented with adversarial examples cache to avoid re-generate adversarial samples for the same sub-network multiple times.
 
 Besides definitions of new components, you can also use this mechanism to do monkey-patch tricks. For an example, there are various fixed-point plugins under `examples/research/ftt-nas/fixed_point_plugins/`. In these plugins, the primitives such as `nn.Conv2d` and `nn.Linear` is patched to be modules with quantization and fault injection functionalities.
 
-## Hardware related: Hardware profiling and parsing
+## Hardware-related: Hardware profiling and parsing
 
 See [Hardware related](doc/hardware.md) for the flow and example of hardware profiling and parsing.
 
@@ -143,7 +144,7 @@ See [Develop New Components](doc/development.md) for the development guide of ne
 
 
 ## Researches
-We use this code base to finish the following researches
+We use this codebase to finish the following researches
 * Wenshuo Li*, Xuefei Ning*, Guangjun Ge, Xiaoming Chen, Yu Wang, Huazhong Yang, FTT-NAS: Discovering Fault-Tolerant Neural Architecture, in ASP-DAC 2020.
 * Shulin Zeng*, Hanbo Sun*, Yu Xing, Xuefei Ning, Yi Shan, Xiaoming Chen, Yu Wang, Huazhong Yang, Black Box Search Space Profiling for Accelerator-Aware Neural Architecture Search, in ASP-DAC 2020.
 * Xuefei Ning, Guangjun Ge, Wenshuo Li, Zhenhua Zhu, Yin Zheng, Xiaoming Chen, Zhen Gao, Yu Wang, and Huazhong Yang, FTT-NAS: Discovering Fault-Tolerant Neural Architecture, in https://arxiv.org/abs/2003.10375, 2020.

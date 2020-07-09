@@ -17,7 +17,7 @@ One can use the help utility `awnas registry` to print out the current registry 
 * `awnas registry` print all the classes in all the registries.
 * `awnas registry -t search_space -t rollout -n 'nasbench.*' -r -v` means to print the classes in the `search_space and `rollout` registries whose name starts with "nasbench". `-r` option means using regexp matching instead of exact matching. `-v` option means also printing the class documentation.
 
-Each component type have a few abstract interfaces/methods declared, one should implement all these abstract methods to get the new component class successfully registered. If some classes are not successfully registered, one will get warnings during awnas initialization.
+Each component type has a few abstract interfaces/methods declared, and one should implement all these abstract methods to get the new component class successfully registered. If some classes are not successfully registered, one will get warnings during awnas initialization.
 
 ## Define a New Rollout
 Rollouts are the interface objects that are defined by the search space, sampled from controller, evaluated by the weights manager and evaluator. To define a new rollout, you should first define the corresponding search space. A **search space** contains some searchable decisions, and a **rollout** instance contains a specific set of these decisions. In `aw_nas`, a **genotype** is a more human-readable representation of the , which can be a namedtuple (ENAS, DenseNet, OFA) or a string (NAS-Bench-201), or of other types (ModelSpec for NAS-Bench-101).
@@ -62,11 +62,11 @@ There can be sub component types in some component class, for which one can reus
                        for cnet in self.controllers]
 ```
 
-Another example is that, a parametrized architecture network is usually constructed by an architecture embedder followed by a MLP to output a score. Different architecture embedders can be used, thus we define a component type `arch_embedder`, and the base class is `aw_nas.evaluator.arch_network.ArchEmbedder`. To implement a new architecture embedder, one can see `aw_nas/btcs/nasbench_101.py`, `aw_nas/btcs/nasbench_201.py`, `aw_nas/evaluator/arch_network.py` and for examples in different search spaces (ENAS, NAS-Bench-101, NAS-Bench-201).
+Another example is that a parametrized architecture network is usually constructed by an architecture embedder followed by an MLP to output a score. Different architecture embedders can be used, thus we define a component type `arch_embedder`, and the base class is `aw_nas.evaluator.arch_network.ArchEmbedder`. To implement a new architecture embedder, one can see `aw_nas/btcs/nasbench_101.py`, `aw_nas/btcs/nasbench_201.py`, `aw_nas/evaluator/arch_network.py` and for examples in different search spaces (ENAS, NAS-Bench-101, NAS-Bench-201).
 
 ## Utilities
 
-Since all components inherit from the base class `aw_nas.base.Component`, some base and common utilities are implemented in this base class.
+Since all components inherit from the base class `aw_nas.base.Component`, some basic and common utilities are implemented in this base class.
 
 * Logging: `self.logger` will be created on demand, and is a `logging.Logger` instance. Just call `self.logger.warn`, `self.logger.info`, etc. at where you need.
 * Scheduling: You can define some instance attributes as `SCHEDULABLE_ATTRS`, the corresponding attributes will be scheduled according to the `schedulable_cfg` attribute at each epoch. A simple example is as follows, in which the weighted coefficient of two rewards are schedulable. And according to the `schedule_cfg` of `coeff` in the configuration file, the instance attribute `coeff` will decay by 0.9 every 5 epoch, starting from epoch 50, and stop decaying when it reaches 0.01.
