@@ -245,7 +245,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
             use_same_surrogate_data=False,
             # data queue configs: (surrogate, mepa, controller)
             data_portion=(0.1, 0.4, 0.5), mepa_as_surrogate=False,
-            shuffle_data_before_split=True,
+            shuffle_data_before_split=False, # by default not shuffle data before train-val splito
             workers_per_queue=2,
             # only work for differentiable controller now
             rollout_batch_size=1,
@@ -1086,6 +1086,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
         if data_type == "image":
             queue_cfgs = [{"split": p[0] if isinstance(p, (list, tuple)) else "train",
                            "portion": p[1] if isinstance(p, (list, tuple)) else p,
+                           "kwargs": p[2] if isinstance(p, (list, tuple)) and len(p) > 2 else {},
                            "batch_size": self.batch_size} for p in data_portion]
             self.s_hid_kwargs = {}
             self.c_hid_kwargs = {}
@@ -1103,6 +1104,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
                 queue_cfgs.append({
                     "split": portion[0] if isinstance(portion, (list, tuple)) else "train",
                     "portion": portion[1] if isinstance(portion, (list, tuple)) else portion,
+                    "kwargs": p[2] if isinstance(p, (list, tuple)) and len(p) > 2 else {},
                     "batch_size": self.batch_size,
                     "bptt_steps": self.bptt_steps,
                     "callback": callback})

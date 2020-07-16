@@ -495,7 +495,7 @@ def get_inf_iterator(iterable, callback):
     return InfIterator(iterable, [callback])
 
 def prepare_data_queues(splits, queue_cfg_lst, data_type="image", drop_last=False,
-                        shuffle=True, num_workers=2, multiprocess=False):
+                        shuffle=False, num_workers=2, multiprocess=False):
     """
     Further partition the dataset splits, prepare different data queues.
 
@@ -516,6 +516,7 @@ def prepare_data_queues(splits, queue_cfg_lst, data_type="image", drop_last=Fals
         split = cfg["split"]
         portion = cfg["portion"]
         callback = cfg.get("callback", None)
+        other_kwargs = cfg.get("kwargs", {})
 
         if portion == 0:
             queues.append([])
@@ -524,7 +525,7 @@ def prepare_data_queues(splits, queue_cfg_lst, data_type="image", drop_last=Fals
         used_portion = used_portions[split]
         indices = dset_indices[split]
         size = dset_sizes[split]
-        d_kwargs = getattr(dset_splits[split], 'kwargs', {})
+        d_kwargs = getattr(dset_splits[split], "kwargs", {})
         subset_indices = indices[int(size*used_portion):int(size*(used_portion+portion))]
         if data_type == "image":
             kwargs = {
@@ -536,7 +537,8 @@ def prepare_data_queues(splits, queue_cfg_lst, data_type="image", drop_last=Fals
                 "drop_last": drop_last,
                 "timeout": 0,
             }
-            kwargs.update(d_kwargs)
+            kwargs.update(d_kwargs) # first update dataset-specific kwargs
+            kwargs.update(other_kwargs) # then update queue-specific kwargs
             queue = get_inf_iterator(torch.utils.data.DataLoader(
                 dset_splits[split], **kwargs), callback)
         else: # data_type == "sequence"
@@ -553,7 +555,9 @@ def prepare_data_queues(splits, queue_cfg_lst, data_type="image", drop_last=Fals
                 "num_workers": 0,
                 "shuffle": False
             }
+            # update the dataset/queue-specific kwargs
             kwargs.update(d_kwargs)
+            kwargs.update(other_kwargs)
             queue = get_inf_iterator(torch.utils.data.DataLoader(
                 dataset, **kwargs), callback)
 
