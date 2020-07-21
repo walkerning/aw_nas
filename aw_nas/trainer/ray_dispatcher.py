@@ -91,6 +91,14 @@ class RayDispatcher(BaseDispatcher):
         self.evaluate_func = self.get_evaluate_func()
         self._register_signal_handler()
 
+    def stop(self):
+        print("Stop ray dispatcher...")
+        self.killer.send_kill.remote()
+
+    def shutdown(self):
+        print("Shutdown ray dispatcher...")
+        self.killer.send_kill.remote()
+
     def start_eval_rollout(self, rollout):
         res_id = self.evaluate_func.remote(rollout, self.killer)
         self.executing_ids.add(res_id)
@@ -111,8 +119,9 @@ class RayDispatcher(BaseDispatcher):
         return ray.worker._global_node.get_resource_spec().num_gpus
 
     def _register_signal_handler(self):
-        ori_sigint_handler = signal.getsignal(signal.SIGINT)
-        def signal_handler(sig, frame):
-            print("Receive sigint, sending kill signal...")
-            self.killer.send_kill.remote()
-        signal.signal(signal.SIGINT, signal_handler)
+        pass
+        # ori_sigint_handler = signal.getsignal(signal.SIGINT)
+        # def signal_handler(sig, frame):
+        #     print("Receive sigint, sending kill signal...")
+        #     self.killer.send_kill.remote()
+        # signal.signal(signal.SIGINT, signal_handler)

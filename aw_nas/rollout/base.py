@@ -50,6 +50,11 @@ class BaseRollout(object):
         for n, v in perfs.items():
             self.set_perf(v, name=n)
 
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["_genotype"] = None # might be unpickable
+        return state
+
 class Rollout(BaseRollout):
     """Discrete rollout"""
     NAME = "discrete"

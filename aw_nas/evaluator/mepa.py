@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+import sys
 import math
 from functools import partial
 from collections import defaultdict, OrderedDict
@@ -243,6 +244,9 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
             mepa_samples=1,
             disable_step_current=False,
             use_same_surrogate_data=False,
+            # If true, `evaluate_rollout` evaluates using the whole controller queue
+            # rather a batch during training
+            evaluate_with_whole_queue=False,
             # data queue configs: (surrogate, mepa, controller)
             data_portion=(0.1, 0.4, 0.5), mepa_as_surrogate=False,
             shuffle_data_before_split=False, # by default not shuffle data before train-val splito
@@ -332,6 +336,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
                          "derive surrogate steps: %s", self.mepa_surrogate_steps,
                          self.controller_surrogate_steps, self.derive_surrogate_steps)
 
+        self.evaluate_with_whole_queue = evaluate_with_whole_queue
         self.disable_step_current = disable_step_current
         self.data_portion = data_portion
         self.workers_per_queue = workers_per_queue
@@ -443,6 +448,10 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
         # for plateau lr scheduler
         self.plateau_scheduler_loss = []
 
+    @property
+    def device(self):
+        return self.weights_manager.device
+
     # ---- APIs ----
     @classmethod
     def supported_data_types(cls):
@@ -489,10 +498,10 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
         if not self.controller_queue or len(self.controller_queue) == 0:
             return rollouts
 
-        if is_training: # the returned reward will be used for training controller
+        if is_training and not self.evaluate_with_whole_queue: # the returned reward will be used for training controller
             # get one data batch from controller queue
             cont_data = next(self.controller_queue)
-            cont_data = utils.to_device(cont_data, self._device)
+            cont_data = utils.to_device(cont_data, self.device)
 
             # prepare forward keyword arguments for candidate network
             _reward_kwargs = {k: v for k, v in self._reward_kwargs.items()}
@@ -580,7 +589,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
         Training meta parameter of the `weights_manager` (shared super network).
         """
         mepa_data = next(self.mepa_queue)
-        mepa_data = utils.to_device(mepa_data, self._device)
+        mepa_data = utils.to_device(mepa_data, self.device)
 
         all_gradients = defaultdict(float)
         if self.learn_per_weight_step_lr:
@@ -596,7 +605,8 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
 
         if self.use_same_surrogate_data:
             surrogate_data_list = [next(self.surrogate_queue) for _ in range(num_surrogate_step)]
-        holdout_data = next(self.controller_queue) if self.report_cont_data_diagnostics and self.controller_queue else None
+        holdout_data = next(self.controller_queue) \
+                       if self.report_cont_data_diagnostics and self.controller_queue else None
 
         # sample rollout
         rollouts = controller.sample(n=self.mepa_samples, batch_size=self.rollout_batch_size)
@@ -1104,7 +1114,7 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
                 queue_cfgs.append({
                     "split": portion[0] if isinstance(portion, (list, tuple)) else "train",
                     "portion": portion[1] if isinstance(portion, (list, tuple)) else portion,
-                    "kwargs": p[2] if isinstance(p, (list, tuple)) and len(p) > 2 else {},
+                    "kwargs": portion[2] if isinstance(p, (list, tuple)) and len(p) > 2 else {},
                     "batch_size": self.batch_size,
                     "bptt_steps": self.bptt_steps,
                     "callback": callback})
@@ -1171,13 +1181,26 @@ class MepaEvaluator(BaseEvaluator): #pylint: disable=too-many-instance-attribute
     def __setstate__(self, state):
         super(MepaEvaluator, self).__setstate__(state)
         self._init_criterions(self.rollout_type)
-        self.logger.warning("After load the evaluator from a pickle file, the dataset does not "
-                            "get loaded automatically, initialize a dataset and call "
-                            "`set_dataset(dataset)` ")
+        if not hasattr(self, "dataset"):
+            self.logger.warning("After load the evaluator from a pickle file, the dataset does not "
+                                "get loaded automatically, initialize a dataset and call "
+                                "`set_dataset(dataset)` ")
+        else:
+            self.set_dataset(self.dataset)
 
     def __getstate__(self):
         state = super(MepaEvaluator, self).__getstate__()
-        del state["dataset"]
+        if not ((sys.version_info.major >= 3 and hasattr(self.dataset, "__reduce__")) or
+                (sys.version_info.major == 2 and hasattr(self.dataset, "__getinitargs__"))):
+            # if dataset has `__getinitargs__` special method defined,
+            # we expect a correct and efficient unpickling of this dataset is handled
+            # and do not del dataset attribute
+            del state["dataset"]
+            # dataset can be too large, by default we do not serialize it
+
+            # TODO: load large dataset from disk for multiple times is time- and memory-consuming,
+            # can we use multiprocessing shared memory for datasets?
+
         for attr_name in self._dataset_related_attrs + self._criterions_related_attrs:
             if attr_name in state:
                 del state[attr_name]

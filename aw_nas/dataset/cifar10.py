@@ -42,3 +42,17 @@ class Cifar10(BaseDataset):
     @classmethod
     def data_type(cls):
         return "image"
+
+    def __reduce__(self):
+        """
+        Python 3
+        reduce for pickling (mainly for use with async search see trainer/async_trainer.py)
+        """
+        return Cifar10, (self.cutout,)
+
+    def __getinitargs__(self):
+        """
+        Python 2
+        getinitargs for pickling (mainly for use with async search see trainer/async_trainer.py)
+        """
+        return (self.cutout,)

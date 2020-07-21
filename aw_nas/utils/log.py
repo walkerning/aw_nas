@@ -23,4 +23,5 @@ def addFile(self, filename):
     handler.setFormatter(logging.Formatter(LOG_FORMAT))
     self.addHandler(handler)
 
-logger.__class__.addFile = addFile
+# logger.__class__.addFile = addFile
+logging.Logger.addFile = addFile
