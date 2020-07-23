@@ -181,5 +181,5 @@ class DetectionFinalTrainer(CNNFinalTrainer): #pylint: disable=too-many-instance
                                      "; ".join(["{}: {:.3f}".format(perf_n, v) \
                                                 for perf_n, v in objective_perfs.avgs().items()]))
         stats = self.dataset.evaluate_detections(self.objective.all_boxes, self.eval_dir)
-        self.logger.info(f"mAP: {stats[0]}")
+        self.logger.info("mAP: {}".format(stats[0]))
         return top1.avg, cls_objs.avg + loc_objs.avg, objective_perfs.avgs()

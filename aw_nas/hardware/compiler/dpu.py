@@ -246,7 +246,7 @@ class DPUCompiler(BaseHardwareCompiler):
             prims_to_caffe_name[prim] = [
                 torch_to_caffe[t] for t in torch_layers if t in torch_to_caffe
             ]
-        with open(f"{ptc_out_dir}/{compile_name}_prim2names.pkl", "wb") as fw:
+        with open("{}/{}_prim2names.pkl".format(ptc_out_dir, compile_name), "wb") as fw:
             pickle.dump(prims_to_caffe_name, fw, pickle.HIGHEST_PROTOCOL)
 
         try:
@@ -337,7 +337,7 @@ class DPUCompiler(BaseHardwareCompiler):
             # Using function instead of dict to handle exceptions
             names = prim_to_ops(Prim(**prim))
             if len(set.intersection(names, name_to_perf_dict)) == 0:
-                self.logger.debug(f"prims {prim} is not measured.")
+                self.logger.debug("prims {} is not measured.".format(prim))
                 continue
             for perf in perf_types:
                 prim[perf] = sum(

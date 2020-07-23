@@ -638,7 +638,8 @@ class FlexibleDepthWiseConv(nn.Conv2d, FlexibleLayer):
         if self.do_kernel_transform:
             for smaller, larger in reversed(list(zip(self.kernel_sizes[:-1], self.kernel_sizes[1:]))):
                 if self.max_kernel_size >= larger:
-                    self.__setattr__(f"linear_{larger}to{smaller}", nn.Linear(smaller * smaller, smaller * smaller, bias=False))
+                    self.__setattr__("linear_{}to{}".format(larger, smaller),
+                                     nn.Linear(smaller * smaller, smaller * smaller, bias=False))
 
         FlexibleLayer.__init__(self)
         self._bias = bias
@@ -661,7 +662,7 @@ class FlexibleDepthWiseConv(nn.Conv2d, FlexibleLayer):
                 break
             sub_filter = get_sub_kernel(origin_filter, smaller).view(cur_filter.shape[0], cur_filter.shape[1], -1)
             sub_filter = sub_filter.view(-1, sub_filter.shape[-1])
-            sub_filter = getattr(self, f"linear_{larger}to{smaller}")(sub_filter)
+            sub_filter = getattr(self, "linear_{}to{}".format(larger, smaller))(sub_filter)
             sub_filter = sub_filter.view(origin_filter.shape[0], origin_filter.shape[1], smaller ** 2)
             sub_filter = sub_filter.view(origin_filter.shape[0], origin_filter.shape[1], smaller, smaller)
             cur_filter = sub_filter

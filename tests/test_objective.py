@@ -91,6 +91,7 @@ def test_inject(super_net):
                 }
             ],
             "prof_prims_cfg": {
+                "spatial_size": 112,
                 "default_prim_type": "mobilenet_v3_block",
                 "performances": ["latency"],
                 "mult_ratio": 1.0,

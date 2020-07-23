@@ -84,7 +84,8 @@ class OFAGenotypeModel(FinalModel):
         return self
 
     def finalize(self, genotypes, filter_regex=None):
-        assert isinstance(genotypes, str), f"Type str excepted, got {type(genotypes)} instead."
+        assert isinstance(genotypes, str), \
+            "Type str excepted, got {} instead.".format(type(genotypes))
         genotypes = list(genotype_from_str(genotypes, self.search_space)._asdict().values())
         depth, width, kernel = self.parse(genotypes)
 
@@ -133,7 +134,7 @@ class OFAGenotypeModel(FinalModel):
 
     def layer_idx_to_named_modules(self, idx):
         stage_idx, block_idx = idx
-        prefix = f"backbone.cells.{stage_idx}.{block_idx}"
+        prefix = "backbone.cells.{}.{}".format(stage_idx, block_idx)
         m = self
         for name in prefix.split('.'):
             m = getattr(m, name)

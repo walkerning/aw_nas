@@ -48,7 +48,7 @@ class GeneralGenotypeModel(FinalModel):
         return ["image", "sequence"]
 
     def layer_idx_to_named_modules(self, idx):
-        prefix = f"model.{idx}"
+        prefix = "model.{}".format(idx)
         m = self
         for name in prefix.split('.'):
             m = getattr(m, name)

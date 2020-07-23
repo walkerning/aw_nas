@@ -48,9 +48,9 @@ def main():
     if args.device == -1:
         device = "cpu"
     elif args.device >= 0:
-        device = f"cuda:{args.device}"
+        device = "cuda:{}".format(args.device)
     else:
-        raise ValueError(f"Expect device id >= -1, got {args.device} instead.")
+        raise ValueError("Expect device id >= -1, got {} instead.".format(args.device))
 
     os.makedirs(args.perf_dir, exist_ok=True)
     perfs = []

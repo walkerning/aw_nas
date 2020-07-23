@@ -9,7 +9,6 @@ import numpy as np
 from aw_nas.hardware.base import BaseHardwareObjectiveModel, MixinProfilingSearchSpace
 from aw_nas.hardware.utils import Prim
 
-from aw_nas.utils.exception import expect
 from aw_nas.utils import logger as _logger
 from aw_nas.utils import make_divisible
 from aw_nas.rollout.ofa import MNasNetOFASearchSpace
@@ -83,7 +82,8 @@ class OFAHardwareObjectiveModel(BaseHardwareObjectiveModel):
         self.prof_prims_cfg = prof_prims_cfg
 
         self.mult_ratio = prof_prims_cfg.get("mult_ratio", 1.0)
-        self.base_channels = prof_prims_cfg.get("base_channels", [16, 16, 24, 32, 64, 96, 160, 320, 1280])
+        self.base_channels = prof_prims_cfg.get(
+            "base_channels", [16, 16, 24, 32, 64, 96, 160, 320, 1280])
         self.channels = [
             make_divisible(c * self.mult_ratio, 8) for c in self.base_channels
         ]
@@ -108,6 +108,7 @@ class OFAHardwareObjectiveModel(BaseHardwareObjectiveModel):
             )
             prim = Prim(**prim)
             self._table[prim] = perf
+        # print("table: ", self._table)
 
     def predict(self, rollout):
         primtives = ofa_rollout_to_primitive(
@@ -124,7 +125,7 @@ class OFAHardwareObjectiveModel(BaseHardwareObjectiveModel):
             perf = self._table.get(prim)
             if perf is None:
                 logger.warn(
-                    f"primitive {prim} is not found in the table, return default value 0."
+                    "primitive %s is not found in the table, return default value 0.", prim
                 )
                 perf = self.Perf(*[0.0 for f in self.performances])
             perfs.append(perf)
