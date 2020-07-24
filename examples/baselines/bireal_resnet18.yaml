@@ -64,18 +64,21 @@ final_trainer_cfg:
   # auxiliary_weight: 0.4
   auxiliary_head: false
   auxiliary_weight: 0.0
-  add_regularization: true
-  batch_size: 128
-  epochs: 100
+  add_regularization: false
+  batch_size: 200
+  epochs: 300
   grad_clip: 5.0
   learning_rate: 0.0005
   # momentum: 0.9
   no_bias_decay: false
   optimizer_type: Adam
   optimizer_scheduler:
-    eta_min: 0.0001
-    T_max: 100
+    eta_min: 0.00
+    T_max: 300
     type: CosineAnnealingLR
+    # type: MultiStepLR
+    # milestones: [40,80,120]
+    # gamma: 0.1
   schedule_cfg: null
   warmup_epochs: 0
   weight_decay: 0.0
