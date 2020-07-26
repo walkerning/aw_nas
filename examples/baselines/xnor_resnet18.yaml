@@ -35,7 +35,7 @@ dataset_cfg:
 final_model_type: cnn_final_model
 final_model_cfg:
   # Schedulable attributes: dropout_path_rate
-  genotypes: "normal_0=[('bireal_resnet_block', 0, 1)], reduce_1=[('bireal_resnet_block', 0, 1)]"
+  genotypes: "normal_0=[('xnor_resnet_block', 0, 1)], reduce_1=[('xnor_resnet_block', 0, 1)]"
   auxiliary_cfg: null
   auxiliary_head: false
   layer_channels: [64, 64, 64, 128, 128, 256, 256, 512, 512]
@@ -60,28 +60,28 @@ objective_cfg: {}
 final_trainer_type: cnn_trainer
 final_trainer_cfg:
   # Schedulable attributes: 
-  auxiliary_head: true
-  auxiliary_weight: 0.4
+  # auxiliary_head: true
+  # auxiliary_weight: 0.4
   auxiliary_head: false
   auxiliary_weight: 0.0
   add_regularization: false
-  batch_size: 200
-  epochs: 256
-  # grad_clip: 5.0
-  learning_rate: 0.00005
-  momentum: 0.9
+  batch_size: 256
+  epochs: 300
+  grad_clip: 5.0
+  learning_rate: 0.001
+  momentum: 0.99
   no_bias_decay: false
   optimizer_type: Adam
   optimizer_scheduler:
     eta_min: 0.00
-    T_max: 256
+    T_max: 300
     type: CosineAnnealingLR
     # type: MultiStepLR
     # milestones: [40,80,120]
     # gamma: 0.1
   schedule_cfg: null
   warmup_epochs: 0
-  weight_decay: 5.e-4
+  weight_decay: 0.
   save_as_state_dict: true
 # ---- End Type cnn_trainer ----
 ## ---- End Component final_trainer ----

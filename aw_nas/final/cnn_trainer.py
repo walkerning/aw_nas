@@ -46,6 +46,7 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                  },
                  weight_decay=3e-4, no_bias_decay=False,
                  grad_clip=5.0,
+                 rewrite_grad=False,
                  auxiliary_head=False, auxiliary_weight=0.4,
                  add_regularization=False,
                  save_as_state_dict=False,
@@ -55,7 +56,6 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                  schedule_cfg=None):
         super(CNNFinalTrainer, self).__init__(schedule_cfg)
 
-        import ipdb; ipdb.set_trace()
 
         self.model = model
         self.parallel_model = None
@@ -74,6 +74,7 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
         self.optimizer_kwargs = optimizer_kwargs
         self.learning_rate = learning_rate
         self.grad_clip = grad_clip
+        self.rewrite_grad = rewrite_grad
         self.auxiliary_head = auxiliary_head
         self.auxiliary_weight = auxiliary_weight
         self.add_regularization = add_regularization
@@ -125,6 +126,8 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
 
         if self.calib_bn_setup:
             self.model = calib_bn(self.model, self.train_queue)
+
+        import ipdb; ipdb.set_trace()
 
     def setup(self, load=None, load_state_dict=None,
               save_every=None, train_dir=None, report_every=50):
@@ -351,6 +354,12 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                                       add_evaluator_regularization=self.add_regularization)
             #torch.distributed.all_reduce(loss, op=torch.distributed.ReduceOp.SUM)
             loss.backward()
+            if self.rewrite_grad:
+                for layer in model.modules():
+                    if isinstance(layer, XNORConv2d):
+                        layer.copy_grad()
+                        import ipdb; ipdb.set_trace()
+
             nn.utils.clip_grad_norm_(model.parameters(), self.grad_clip)
             optimizer.step()
 

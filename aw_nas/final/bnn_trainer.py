@@ -14,6 +14,7 @@ from aw_nas.utils.exception import expect
 from aw_nas.utils import DataParallel
 from aw_nas.utils import DistributedDataParallel
 from aw_nas.utils.torch_utils import calib_bn
+from aw_nas.ops.bnn_ops import *
 
 try:
     from aw_nas.utils.SynchronizedBatchNormPyTorch.sync_batchnorm import (
@@ -30,8 +31,8 @@ def _warmup_update_lr(optimizer, epoch, init_lr, warmup_epochs):
     for param_group in optimizer.param_groups:
         param_group["lr"] = lr
 
-class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attributes
-    NAME = "cnn_trainer"
+class BNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attributes
+    NAME = "bnn_trainer"
 
     def __init__(self, model, dataset, device, gpus, objective,#pylint: disable=dangerous-default-value
                  multiprocess=False,
@@ -46,14 +47,16 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                  },
                  weight_decay=3e-4, no_bias_decay=False,
                  grad_clip=5.0,
+                 rewrite_grad=False,
                  auxiliary_head=False, auxiliary_weight=0.4,
                  add_regularization=False,
                  save_as_state_dict=False,
                  workers_per_queue=2,
                  eval_no_grad=True,
-                 calib_bn_setup=True,
+                 calib_bn_setup=False, # for OFA final model
                  schedule_cfg=None):
-        super(CNNFinalTrainer, self).__init__(schedule_cfg)
+        super(BNNFinalTrainer, self).__init__(schedule_cfg)
+
 
         self.model = model
         self.parallel_model = None
@@ -72,6 +75,7 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
         self.optimizer_kwargs = optimizer_kwargs
         self.learning_rate = learning_rate
         self.grad_clip = grad_clip
+        self.rewrite_grad = rewrite_grad
         self.auxiliary_head = auxiliary_head
         self.auxiliary_weight = auxiliary_weight
         self.add_regularization = add_regularization
@@ -123,6 +127,8 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
 
         if self.calib_bn_setup:
             self.model = calib_bn(self.model, self.train_queue)
+
+        import ipdb; ipdb.set_trace()
 
     def setup(self, load=None, load_state_dict=None,
               save_every=None, train_dir=None, report_every=50):
@@ -296,11 +302,17 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                 group_weight.append(param)
         assert len(list(self.model.parameters())) == len(group_weight) + len(group_bias)
         optim_cls = getattr(torch.optim, self.optimizer_type)
-        optim_kwargs = {
-            "lr": self.learning_rate,
-            "momentum": self.momentum,
-            "weight_decay": self.weight_decay
-        }
+        if self.optimizer_type == "Adam":
+            optim_kwargs = {
+                "lr": self.learning_rate,
+                "weight_decay": self.weight_decay
+            }
+        else:
+            optim_kwargs = {
+                "lr": self.learning_rate,
+                "momentum": self.momentum,
+                "weight_decay": self.weight_decay
+            }
         optim_kwargs.update(self.optimizer_kwargs or {})
         optimizer = optim_cls(
             [{"params": group_weight},
@@ -343,6 +355,12 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                                       add_evaluator_regularization=self.add_regularization)
             #torch.distributed.all_reduce(loss, op=torch.distributed.ReduceOp.SUM)
             loss.backward()
+            if self.rewrite_grad:
+                for layer in model.modules():
+                    if isinstance(layer, XNORConv2d):
+                        layer.copy_grad()
+                        # import ipdb; ipdb.set_trace()
+
             nn.utils.clip_grad_norm_(model.parameters(), self.grad_clip)
             optimizer.step()
 
@@ -392,12 +410,12 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
 
 
     def on_epoch_start(self, epoch):
-        super(CNNFinalTrainer, self).on_epoch_start(epoch)
+        super(BNNFinalTrainer, self).on_epoch_start(epoch)
         self.model.on_epoch_start(epoch)
         self.objective.on_epoch_start(epoch)
 
     def on_epoch_end(self, epoch):
-        super(CNNFinalTrainer, self).on_epoch_end(epoch)
+        super(BNNFinalTrainer, self).on_epoch_end(epoch)
         self.model.on_epoch_end(epoch)
         self.objective.on_epoch_end(epoch)
 

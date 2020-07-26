@@ -45,7 +45,7 @@ class XNORConv2d(nn.Module):
     self.full_precision = nn.Parameter(torch.zeros(self.conv.weight.size()))
     self.full_precision.data.copy_(self.conv.weight.data)
     
-  def forward(self, x, params, flops):
+  def forward(self, x):
     self.full_precision.data = self.full_precision.data - self.full_precision.data.mean(1, keepdim = True)
     self.full_precision.data.clamp_(-1, 1)
 
@@ -57,10 +57,7 @@ class XNORConv2d(nn.Module):
     self.conv.weight.data.copy_(self.full_precision.data.sign() * self.mean_val.view(-1, 1, 1, 1))
     x = self.conv(x)
 
-    params = params + self.conv.weight.nelement() / 32
-    flops = flops + self.in_channels * self.out_channels / 64
-
-    return x, params, flops
+    return x
 
   def copy_grad(self):
     proxy = self.full_precision.abs().sign()
@@ -74,78 +71,76 @@ class XNORConv2d(nn.Module):
     self.full_precision.grad = binary_grad + mean_grad
     self.full_precision.grad = self.full_precision.grad * self.full_precision.data[0].nelement() * (1-1/self.full_precision.data.size(1))
 
-class XNORBNConvReLU(nn.Module):
-  def __init__(self, in_channels, out_channels, kernel_size, stride, padding, groups=1, dropout_ratio=0):
-    super(XNORBNConvReLU, self).__init__()
-    self.bn = nn.BatchNorm2d(in_channels, eps=1e-4, momentum=0.1, affine=True)
-    self.bn.weight.zero_().add_(1.0)
-    self.bn.bias.zero_()
+class XNORConvBNReLU(nn.Module):
+  def __init__(self, in_channels, out_channels, kernel_size, stride, padding,affine=True,groups=1, dropout_ratio=0):
+    super(XNORConvBNReLU, self).__init__()
+    self.bn = nn.BatchNorm2d(out_channels, eps=1e-4, momentum=0.1, affine=True)
+    # self.bn.weight.fill_(1.0)
+    # self.bn.bias.zero_()
     self.conv = XNORConv2d(in_channels, out_channels, kernel_size, stride, padding, groups, dropout_ratio)
 
-  def forward(self, x, params, flops):
-    out = self.bn(x)
-    params = params + self.conv.in_channels
-    flops = flops + self.conv.in_channels
-    out, params, flops = self.conv(out, params, flops)
+  def forward(self, x): # this is dirty, later would delete param & flops args
+    out = self.conv(x)
+    out = self.bn(out)
     out = F.relu(out)
-    return out, params, flops
+    return out
 
-class XNORLinear(nn.Module):
-  def __init__(self, in_features, out_features, dropout_ratio=0):
-    super(XNORLinear, self).__init__()
-    self.in_features, self.out_features, self.dropout_ratio = in_features, out_features, dropout_ratio
-    if dropout_ratio !=0:
-      self.dropout = nn.Dropout(dropout_ratio)
-    self.linear = nn.Linear(in_features = in_features, out_features = out_features)
-    self.linear.weight.normal_(0, 2.0/self.linear.weight[0].nelement())
-    self.full_precision = nn.Parameter(torch.zeros(self.linear.weight.size()))
-    self.full_precision.data.copy_(self.linear.weight.data)
-
-  def forward(self, x, params, flops):
-    self.full_precision.data = self.full_precision.data - self.full_precision.data.mean(1, keepdim = True)
-    self.full_precision.data.clamp_(-1, 1)
-
-    x = BinaryActivation.apply(x)
-    if self.dropout_ratio != 0:
-      x = self.dropout(x)
-    self.mean_val = self.full_precision.abs().view(self.out_features, -1).mean(1, keepdim=True)
-
-    self.linear.weight.data.copy_(self.full_precision.data.sign() * self.mean_val.view(-1, 1))
-    x = self.linear(x)
-
-    params = params + self.linear.weight.nelement() / 32
-    flops = flops + self.linear.weight.nelement() / 64
-
-    return x, params, flops
-
-  def copy_grad(self):
-    proxy = self.full_precision.abs().sign()
-    proxy[self.full_precision.data.abs()>1] = 0
-    binary_grad = self.linear.weight.grad * self.mean_val.view(-1, 1) * proxy
-
-    mean_grad = self.linear.weight.data.sign() * self.linear.weight.grad
-    mean_grad = mean_grad.view(self.out_features, -1).mean(1).view(-1, 1)
-    mean_grad = mean_grad * self.linear.weight.data.sign()
-
-    self.full_precision.grad = binary_grad + mean_grad
-    self.full_precision.grad = self.full_precision.grad * self.full_precision.data[0].nelement() * (1-1/self.full_precision.data.size(1))
-
-class BNLinearReLU(nn.Module):
-  def __init__(self, in_features, out_features, dropout_ratio=0):
-    super(BNLinearReLU, self).__init__()
-    self.bn = nn.BatchNorm1d(in_features, eps=1e-4, momentum=0.1, affine=True)
-    self.bn.weight.zero_().add_(1.0)
-    self.bn.bias.zero_()
-    self.linear = XNORLinear(in_features, out_features, dropout_ratio)
-    
-  def forward(self, x, params, flops):
-    out = self.bn(x)
-    params = params + self.linear.in_features
-    flops = flops + self.linear.in_features
-    out, params, flops = self.linear(out, params, flops)
-    out = F.relu(out)
-    return out, params, flops
-
+# class XNORLinear(nn.Module):
+#   def __init__(self, in_features, out_features, dropout_ratio=0):
+#     super(XNORLinear, self).__init__()
+#     self.in_features, self.out_features, self.dropout_ratio = in_features, out_features, dropout_ratio
+#     if dropout_ratio !=0:
+#       self.dropout = nn.Dropout(dropout_ratio)
+#     self.linear = nn.Linear(in_features = in_features, out_features = out_features)
+#     self.linear.weight.normal_(0, 2.0/self.linear.weight[0].nelement())
+#     self.full_precision = nn.Parameter(torch.zeros(self.linear.weight.size()))
+#     self.full_precision.data.copy_(self.linear.weight.data)
+# 
+#   def forward(self, x, params, flops):
+#     self.full_precision.data = self.full_precision.data - self.full_precision.data.mean(1, keepdim = True)
+#     self.full_precision.data.clamp_(-1, 1)
+# 
+#     x = BinaryActivation.apply(x)
+#     if self.dropout_ratio != 0:
+#       x = self.dropout(x)
+#     self.mean_val = self.full_precision.abs().view(self.out_features, -1).mean(1, keepdim=True)
+# 
+#     self.linear.weight.data.copy_(self.full_precision.data.sign() * self.mean_val.view(-1, 1))
+#     x = self.linear(x)
+# 
+#     params = params + self.linear.weight.nelement() / 32
+#     flops = flops + self.linear.weight.nelement() / 64
+# 
+#     return x, params, flops
+# 
+#   def copy_grad(self):
+#     proxy = self.full_precision.abs().sign()
+#     proxy[self.full_precision.data.abs()>1] = 0
+#     binary_grad = self.linear.weight.grad * self.mean_val.view(-1, 1) * proxy
+# 
+#     mean_grad = self.linear.weight.data.sign() * self.linear.weight.grad
+#     mean_grad = mean_grad.view(self.out_features, -1).mean(1).view(-1, 1)
+#     mean_grad = mean_grad * self.linear.weight.data.sign()
+# 
+#     self.full_precision.grad = binary_grad + mean_grad
+#     self.full_precision.grad = self.full_precision.grad * self.full_precision.data[0].nelement() * (1-1/self.full_precision.data.size(1))
+# 
+# class BNLinearReLU(nn.Module):
+#   def __init__(self, in_features, out_features, dropout_ratio=0):
+#     super(BNLinearReLU, self).__init__()
+#     self.bn = nn.BatchNorm1d(in_features, eps=1e-4, momentum=0.1, affine=True)
+#     self.bn.weight.zero_().add_(1.0)
+#     self.bn.bias.zero_()
+#     self.linear = XNORLinear(in_features, out_features, dropout_ratio)
+#     
+#   def forward(self, x, params, flops):
+#     out = self.bn(x)
+#     params = params + self.linear.in_features
+#     flops = flops + self.linear.in_features
+#     out, params, flops = self.linear(out, params, flops)
+#     out = F.relu(out)
+#     return out, params, flops
+# 
 
 # ================ The bi-real net ================
 # FIXME: Maybe Merge later
@@ -183,7 +178,7 @@ class BirealActivation(nn.Module):
 
 
 class HardBinaryConv(nn.Module):
-    def __init__(self, C_in, c_out, kernel_size=3, stride=1, padding=1, bias=None, activation="bireal"):
+    def __init__(self, C_in, c_out, kernel_size=3, stride=1, padding=1, bias=None): 
         super(HardBinaryConv, self).__init__()
         self.stride = stride
         self.padding = padding
@@ -211,7 +206,7 @@ class BinaryConvBNReLU(nn.Module):
 
     def __init__(self, C_in, C_out, kernel_size, stride, padding, affine,  bias=None, activation=BinaryActivation):
         super(BinaryConvBNReLU, self).__init__()
-        self.bi_conv = HardBinaryConv(C_in, C_out, kernel_size=kernel_size,stride=stride, padding=padding, bias=bias, activation=activation)
+        self.bi_conv = HardBinaryConv(C_in, C_out, kernel_size=kernel_size,stride=stride, padding=padding, bias=bias)
         self.bi_act = activation
         self.op = nn.Sequential(
             self.bi_act,
@@ -225,18 +220,34 @@ class BinaryConvBNReLU(nn.Module):
     def forward_one_step(self, context=None, inputs=None):
         return self.op.forward_one_step(context, inputs)
 
+class ResNetDownSample(nn.Module):
+    def __init__(self, stride):
+        super(ResNetDownSample, self).__init__()
+        assert stride == 2
+        self.avg = nn.AvgPool2d(kernel_size=1, stride=stride)
+
+    def forward(self, x):
+        x = self.avg(x)
+        return torch.cat((x, x.mul(0)), 1)
 
 class BinaryResNetBlock(nn.Module):
-    def __init__(self, C, C_out, stride, affine, kernel_size=3, act=BinaryActivation):
+    def __init__(self, C, C_out, stride, affine, kernel_size=3, block="bireal",act=BinaryActivation,downsample="conv"):
         super(BinaryResNetBlock, self).__init__()
         self.stride = stride
         padding = int((kernel_size - 1) / 2)
         self.activation = act
 
-        self.op_1 = BinaryConvBNReLU(C, C_out,
-                               kernel_size, stride, padding, affine=affine, bias=None, activation=self.activation)
-        self.op_2 = BinaryConvBNReLU(C_out, C_out,
-                               kernel_size, 1, padding, affine=affine, bias=None, activation=self.activation)
+        if block == "bireal":
+            self.op_1 = BinaryConvBNReLU(C, C_out,
+                                   kernel_size, stride, padding, affine=affine, bias=None, activation=self.activation)
+            self.op_2 = BinaryConvBNReLU(C_out, C_out,
+                                   kernel_size, 1, padding, affine=affine, bias=None, activation=self.activation)
+        elif block == "xnor":
+            self.op_1 = XNORConvBNReLU(C, C_out,
+                                   kernel_size, stride, padding, affine=affine,groups=1, dropout_ratio=0)
+            self.op_2 = XNORConvBNReLU(C_out, C_out,
+                                   kernel_size, 1, padding, affine=affine,groups=1, dropout_ratio=0)
+
         # DBEUG: test correctness
         # self.activation = Identity()
         # self.op_1 = ConvBNReLU(C, C_out,
@@ -244,9 +255,12 @@ class BinaryResNetBlock(nn.Module):
         # self.op_2 = ConvBNReLU(C_out, C_out, 
         #                        kernel_size, 1, padding, affine=affine)
         # the conv on skip-op is not binarized!
-        self.skip_op = Identity() if stride == 1 else ConvBNReLU(C, C_out,
-                                                                 1, stride, 0,
-                                                                 affine=affine)
+        if downsample == "conv":
+            self.skip_op = Identity() if stride == 1 else ConvBNReLU(C, C_out,
+                                                                     1, stride, 0,
+                                                                     affine=affine)
+        elif downsample == "avgpool":
+            self.skip_op = Identity() if stride == 1 else ResNetDownSample(stride)
 
     def forward(self, inputs):
         # for birealnet add an extra skip connection after op1
@@ -255,24 +269,53 @@ class BinaryResNetBlock(nn.Module):
         return out
 
 register_primitive("bireal_resnet_block", 
-                   lambda C, C_out, stride, affine: BinaryResNetBlock(C, C_out, stride=stride, affine=affine,act=BirealActivation()))
+                   lambda C, C_out, stride, affine: BinaryResNetBlock(C, C_out, stride=stride, affine=affine,block="bireal",act=BirealActivation()))
+register_primitive("xnor_resnet_block", 
+                   lambda C, C_out, stride, affine: BinaryResNetBlock(C, C_out, stride=stride, affine=affine,block="xnor"))
+register_primitive("xnor_resnet_block_pool_downsample", 
+                   lambda C, C_out, stride, affine: BinaryResNetBlock(C, C_out, stride=stride, affine=affine,block="xnor",downsample="avgpool"))
+
+
+
+
+
+class VggBlock(nn.Module):
+    def __init__(self, C, C_out, stride, affine, block="xnor"):
+        super(VggBlock, self).__init__()
+        if block=="xnor":
+            self.op = XNORConvBNReLU(C, C_out,
+                                   3, 1, 1, affine=affine, groups=1, dropout_ratio=0)
+        if stride == 2:
+            self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+        else:
+            self.pool = nn.Identity()
+
+    def forward(self, inputs):
+        return self.pool(self.op(inputs))
+
+register_primitive("bireal_vgg_block",
+                   lambda C, C_out, stride, affine: VggBlock(C, C_out, stride, affine=affine,block="bireal"))
+register_primitive("xnor_vgg_block",
+                   lambda C, C_out, stride, affine: VggBlock(C, C_out, stride, affine=affine,block="xnor"))
+
+
 
 class NIN(nn.Module):
-    def __init__(self):
+    def __init__(self, C, C_out, stride, affine):
         super(NIN, self).__init__()
         
         self.conv1 = nn.Conv2d(3, 192, kernel_size = 5, stride = 1, padding = 2)
         self.bn1 = nn.BatchNorm2d(192, eps=1e-4, momentum = 0.1, affine = False)
 
-        self.conv2_1 = BNConvReLU(192, 160, kernel_size=1, stride=1, padding=0)
-        self.conv2_2 = BNConvReLU(160, 96, kernel_size=1, stride=1, padding=0)
+        self.conv2_1 = XNORConvBNReLU(192, 160, kernel_size=1, stride=1, padding=0)
+        self.conv2_2 = XNORConvBNReLU(160, 96, kernel_size=1, stride=1, padding=0)
 
-        self.conv3_1 = BNConvReLU(96, 192, kernel_size=5, stride=1, padding=2, dropout_ratio=0.5)
-        self.conv3_2 = BNConvReLU(192, 192, kernel_size=1, stride=1, padding=0)
-        self.conv3_3 = BNConvReLU(192, 192, kernel_size=1, stride=1, padding=0)
+        self.conv3_1 = XNORConvBNReLU(96, 192, kernel_size=5, stride=1, padding=2, dropout_ratio=0.5)
+        self.conv3_2 = XNORConvBNReLU(192, 192, kernel_size=1, stride=1, padding=0)
+        self.conv3_3 = XNORConvBNReLU(192, 192, kernel_size=1, stride=1, padding=0)
 
-        self.conv4_1 = BNConvReLU(192, 192, kernel_size=3, stride=1, padding=1, dropout_ratio=0.5)
-        self.conv4_2 = BNConvReLU(192, 192, kernel_size=1, stride=1, padding=0)
+        self.conv4_1 = XNORConvBNReLU(192, 192, kernel_size=3, stride=1, padding=1, dropout_ratio=0.5)
+        self.conv4_2 = XNORConvBNReLU(192, 192, kernel_size=1, stride=1, padding=0)
 
         self.bn5 = nn.BatchNorm2d(192, eps = 1e-4, momentum = 0.1, affine = False)
         self.conv5 = nn.Conv2d(192, 10, kernel_size = 1, stride = 1, padding = 0)
@@ -282,35 +325,33 @@ class NIN(nn.Module):
                 if hasattr(m.weight, 'data'):
                     m.weight.data.zero_().add_(1.0)
                     
-    def forward(self, x, params, flops):
+    def forward(self, x):
         for m in self.modules():
             if isinstance(m, nn.BatchNorm2d) or isinstance(m, nn.BatchNorm1d):
                 if hasattr(m.weight, 'data'):
                     m.weight.data.clamp_(min = 0.01)
                     
         x = F.relu(self.bn1(self.conv1(x)))
-        params = params + self.conv1.weight.nelement()
-        flops = flops + self.conv1.weight.nelement() * 5 * 5 * x.size(-1) * x.size(-2)
 
-        x, params, flops = self.conv2_1(x, params, flops)
-        x, params, flops = self.conv2_2(x, params, flops)
+        x = self.conv2_1(x)
+        x = self.conv2_2(x)
         x = F.max_pool2d(x, kernel_size = 3, stride = 2, padding = 1)
 
-        x, params, flops = self.conv3_1(x, params, flops)
-        x, params, flops = self.conv3_2(x, params, flops)
-        x, params, flops = self.conv3_3(x, params, flops)
+        x = self.conv3_1(x)
+        x = self.conv3_2(x)
+        x = self.conv3_3(x)
         x = F.avg_pool2d(x, kernel_size=3, stride=2, padding=1)
 
-        x, params, flops = self.conv4_1(x, params, flops)
-        x, params, flops = self.conv4_2(x, params, flops)
+        x = self.conv4_1(x)
+        x = self.conv4_2(x)
 
         x = F.relu(self.conv5(self.bn5(x)))
-        params = params + self.conv5.weight.nelement()
-        flops = flops + self.conv5.weight.nelement() * 1 * 1 * x.size(-1) * x.size(-2)
-        x = F.avg_pool2d(x, kernel_size = 8)
-        x = x.squeeze()
-        return x, params, flops
+        # x = F.avg_pool2d(x, kernel_size = 8)
+        # x = x.squeeze()
+        return x
 
+register_primitive("nin",
+                   lambda C, C_out, stride, affine: NIN(C, C_out, stride, affine))
 
 
 

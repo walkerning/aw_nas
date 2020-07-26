@@ -83,6 +83,7 @@ class CNNGenotypeModel(FinalModel):
                  dropout_rate=0.1, dropout_path_rate=0.2,
                  auxiliary_head=False, auxiliary_cfg=None,
                  use_stem="conv_bn_3x3", stem_stride=1, stem_affine=True,
+                 no_fc=False,
                  cell_use_preprocess=True,
                  cell_pool_batchnorm=False, cell_group_kwargs=None,
                  cell_independent_conn=False,
@@ -109,6 +110,7 @@ class CNNGenotypeModel(FinalModel):
         self.cell_use_preprocess = cell_use_preprocess
         self.cell_group_kwargs = cell_group_kwargs
         self.cell_independent_conn = cell_independent_conn
+        self.no_fc = no_fc
 
         # training
         self.dropout_rate = dropout_rate
@@ -210,7 +212,10 @@ class CNNGenotypeModel(FinalModel):
             self.dropout = nn.Dropout(p=self.dropout_rate)
         else:
             self.dropout = ops.Identity()
-        self.classifier = nn.Linear(prev_num_channels[-1],
+        if self.no_fc:
+            self.classifier = ops.Identity()
+        else:
+            self.classifier = nn.Linear(prev_num_channels[-1],
                                     self.num_classes)
         self.to(self.device)
 
