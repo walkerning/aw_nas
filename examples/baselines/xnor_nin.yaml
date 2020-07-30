@@ -62,11 +62,11 @@ final_trainer_type: bnn_trainer
 final_trainer_cfg:
   # Schedulable attributes: 
   auxiliary_head: false
-  auxiliary_weight: 0.4
+  auxiliary_weight: 0.0
   add_regularization: true
   batch_size: 256
-  epochs: 300
-  grad_clip: 5.0
+  epochs: 200
+  # grad_clip: 5.0
   rewrite_grad: True
   learning_rate: 0.0005
   momentum: 0.9
@@ -76,6 +76,9 @@ final_trainer_cfg:
     eta_min: 0.00
     T_max: 300
     type: CosineAnnealingLR
+    # type: MultiStepLR
+    # milestones: [120, 200, 240, 280] 
+    #  gamma: 0.1
   schedule_cfg: null
   warmup_epochs: 0
   weight_decay: 0.0

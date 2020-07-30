@@ -31,6 +31,20 @@ def _warmup_update_lr(optimizer, epoch, init_lr, warmup_epochs):
     for param_group in optimizer.param_groups:
         param_group["lr"] = lr
 
+class CrossEntropyLabelSmooth(nn.Module):
+    def __init__(self, num_classes, epsilon):
+        super(CrossEntropyLabelSmooth, self).__init__()
+        self.num_classes = num_classes
+        self.epsilon = epsilon
+        self.logsoftmax = nn.LogSoftmax(dim=1)
+
+    def forward(self, inputs, targets):
+        log_probs = self.logsoftmax(inputs)
+        targets = torch.zeros_like(log_probs).scatter_(1, targets.unsqueeze(1), 1)
+        targets = (1 - self.epsilon) * targets + self.epsilon / self.num_classes
+        loss = (-targets * log_probs).mean(0).sum()
+        return loss
+
 class BNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attributes
     NAME = "bnn_trainer"
 
@@ -48,6 +62,7 @@ class BNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                  weight_decay=3e-4, no_bias_decay=False,
                  grad_clip=5.0,
                  rewrite_grad=False,
+                 label_smooth=False,
                  auxiliary_head=False, auxiliary_weight=0.4,
                  add_regularization=False,
                  save_as_state_dict=False,
@@ -76,6 +91,7 @@ class BNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
         self.learning_rate = learning_rate
         self.grad_clip = grad_clip
         self.rewrite_grad = rewrite_grad
+        self.label_smooth = label_smooth
         self.auxiliary_head = auxiliary_head
         self.auxiliary_weight = auxiliary_weight
         self.add_regularization = add_regularization
@@ -90,7 +106,7 @@ class BNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
         self.momentum = momentum
         self.optimizer_scheduler_cfg = optimizer_scheduler
 
-        self._criterion = nn.CrossEntropyLoss().to(self.device)
+        self._criterion = nn.CrossEntropyLoss().to(self.device) if self.label_smooth is False else CrossEntropyLabelSmooth(num_classes=10, epsilon=self.label_smooth).to(self.device) 
 
         _splits = self.dataset.splits()
         train_kwargs = getattr(_splits["train"], "kwargs", {})
@@ -355,13 +371,14 @@ class BNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                                       add_evaluator_regularization=self.add_regularization)
             #torch.distributed.all_reduce(loss, op=torch.distributed.ReduceOp.SUM)
             loss.backward()
+            nn.utils.clip_grad_norm_(model.parameters(), self.grad_clip)
             if self.rewrite_grad:
                 for layer in model.modules():
                     if isinstance(layer, XNORConv2d):
                         layer.copy_grad()
                         # import ipdb; ipdb.set_trace()
 
-            nn.utils.clip_grad_norm_(model.parameters(), self.grad_clip)
+
             optimizer.step()
 
             prec1, prec5 = utils.accuracy(logits, target, topk=(1, 5))

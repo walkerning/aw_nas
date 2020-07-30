@@ -8,6 +8,7 @@ search_space_type: cnn
 search_space_cfg:
   # Schedulable attributes: 
   cell_layout: [0, 0, 0, 1, 0, 0, 1, 0, 0]
+  # cell_layout: [0, 0, 0, 1, 0, 0]
   num_cell_groups: 2
   num_init_nodes: 1
   num_layers: 9
@@ -35,10 +36,12 @@ dataset_cfg:
 final_model_type: cnn_final_model
 final_model_cfg:
   # Schedulable attributes: dropout_path_rate
-  genotypes: "normal_0=[('xnor_resnet_block_pool_downsample', 0, 1)], reduce_1=[('xnor_resnet_block_pool_downsample', 0, 1)]"
+  # genotypes: "normal_0=[('xnor_resnet_block_pool_downsample', 0, 1)], reduce_1=[('xnor_resnet_block_pool_downsample', 0, 1)]"
+  genotypes: "normal_0=[('xnor_resnet_block', 0, 1)], reduce_1=[('xnor_resnet_block', 0, 1)]"
   auxiliary_cfg: null
-  auxiliary_head: false
+  auxiliary_head: False
   layer_channels: [16, 16, 16, 16, 32, 32, 32, 64, 64, 64]
+  # layer_channels: [16, 16, 16, 16, 32, 32, 32]
   dropout_path_rate: 0.0
   dropout_rate: 0.0
   init_channels: 16
@@ -57,18 +60,19 @@ objective_cfg: {}
 
 ## ---- Component final_trainer ----
 # ---- Type cnn_trainer ----
-final_trainer_type: cnn_trainer
+final_trainer_type: bnn_trainer
 final_trainer_cfg:
   # Schedulable attributes: 
   # auxiliary_head: true
   # auxiliary_weight: 0.4
-  auxiliary_head: false
-  auxiliary_weight: 0.0
+  auxiliary_head: False
+  auxiliary_weight: 0.4
   add_regularization: false
   batch_size: 256
   epochs: 300
-  grad_clip: 5.0
-  learning_rate: 0.001
+  # grad_clip: 5.0
+  rewrite_grad: True
+  learning_rate: 0.0005
   momentum: 0.9
   no_bias_decay: false
   optimizer_type: Adam
