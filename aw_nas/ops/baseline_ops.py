@@ -303,7 +303,7 @@ class MobileNetV2Block(nn.Module):
         self.C_inner = make_divisible(C * expansion, 8)
         self.stride = stride
         self.kernel_size = kernel_size
-        self.act_fn = get_op(activation)(inplace=True)
+        self.act_fn = get_op(activation)()
         
         self.inv_bottleneck = None
         if expansion != 1:
@@ -366,7 +366,7 @@ class MobileNetV3Block(nn.Module):
         self.C_inner = make_divisible(C * expansion, 8)
         self.stride = stride
         self.kernel_size = kernel_size
-        self.act_fn = get_op(activation)(inplace=True)
+        self.act_fn = get_op(activation)()
         self.use_se = use_se
         
         self.inv_bottleneck = None
@@ -462,6 +462,6 @@ register_primitive("dense_reduce_block",
 
 
 register_primitive("mobilenet_v2_block",
-                   lambda expansion, C, C_out, stride, kernel_size, activation="relu", affine=True: MobileNetV2Block(expansion, C, C_out, stride, kernel_size, affine=affine, activation=activation))
+                   lambda expansion, C, C_out, stride, kernel_size, affine=True: MobileNetV2Block(expansion, C, C_out, stride, kernel_size, affine=affine))
 register_primitive("mobilenet_v3_block",
                    lambda expansion, C, C_out, stride, kernel_size, activation, use_se, affine=True: MobileNetV3Block(expansion, C, C_out, stride, kernel_size, affine=affine, activation=activation, use_se=use_se))

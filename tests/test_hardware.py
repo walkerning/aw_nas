@@ -110,8 +110,8 @@ def test_general_rollout(case):
                 "base_channels": [16, 16, 24, 32, 64, 96, 160, 320, 1280],
                 "mult_ratio": 1.0,
                 "strides": [1, 2, 2, 2, 1, 2],
-                "activation": ["relu", "relu", "relu", "h_swish", "h_swish", "h_swish"],
-                "use_se": [False, False, True, False, True, True],
+                "acts": ["relu", "relu", "relu", "h_swish", "h_swish", "h_swish"],
+                "use_ses": [False, False, True, False, True, True],
                 "primitive_type": "mobilenet_v3_block",
             },
         }
@@ -132,7 +132,7 @@ def test_genprof(case):
         == len(cfg["width_choice"])
         * len(cfg["kernel_choice"])
         * len(cfg["num_cell_groups"][1:])
-        * 2
+        * 2 + 2
     )
     fields = {f for f in Prim._fields if not f == "kwargs"}
     for prim in primitives:
@@ -180,8 +180,8 @@ def test_genprof(case):
                 "base_channels": [16, 16, 24, 32, 64, 96, 160, 320, 1280],
                 "mult_ratio": 1.0,
                 "strides": [1, 2, 2, 2, 1, 2],
-                "activation": ["relu", "relu", "relu", "h_swish", "h_swish", "h_swish"],
-                "use_se": [False, False, True, False, True, True],
+                "acts": ["relu", "relu", "relu", "h_swish", "h_swish", "h_swish"],
+                "use_ses": [False, False, True, False, True, True],
                 "primitive_type": "mobilenet_v3_block",
                 "performances": ["latency",],
             },
@@ -196,6 +196,7 @@ def test_genprof(case):
                     "expansion": 4,
                     "use_se": True,
                     "stride": 2,
+                    "affine": True,
                     "kernel_size": 3,
                     "activation": "relu",
                     "latency": 12.5,

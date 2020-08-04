@@ -1,31 +1,57 @@
 # -*- coding: utf-8 -*-
 
 import copy
-import json
+import inspect
+from inspect import signature
+from collections import namedtuple
+
 import yaml
 import numpy as np
 
-from collections import namedtuple
+from aw_nas.ops import get_op
 
 Prim_ = namedtuple(
     "Prim",
-    ["prim_type", "spatial_size", "C", "C_out", "stride", "kernel_size", "kwargs"],
+    ["prim_type", "spatial_size", "C", "C_out", "stride", "affine", "kwargs"],
 )
 
 
 class Prim(Prim_):
-    def __new__(
-        _cls, prim_type, spatial_size, C, C_out, stride=1, kernel_size=3, **kwargs
-    ):
-        kwargs = tuple(sorted([(k, v) for k, v in kwargs.items() if v is not None]))
-        return super(Prim, _cls).__new__(
-            _cls,
+    def __new__(cls, prim_type, spatial_size, C, C_out, stride, affine, **kwargs):
+        position_params = ["C", "C_out", "stride", "affine"]
+        prim_constructor = get_op(prim_type)
+        prim_sig = signature(prim_constructor)
+        params = prim_sig.parameters
+        for name, param in params.items():
+            if param.default != inspect._empty:
+                if name in position_params:
+                    continue
+                if kwargs.get(name) is None:
+                    kwargs[name] = param.default
+            else:
+                assert name in position_params or name in kwargs, \
+                    "{} is a non-default parameter which should be provided explicitly.".format(
+                    name)
+
+        assert set(params.keys()) == set(
+            position_params + list(kwargs.keys())),\
+            ("The passed parameters are different from the formal parameter list of primitive "
+             "type `{}`, expected {}, got {}").format(
+                 prim_type,
+                 str(params.keys()),
+                 str(position_params + list(kwargs.keys()))
+             )
+
+        kwargs = tuple(
+            sorted([(k, v) for k, v in kwargs.items() if v is not None]))
+        return super(Prim, cls).__new__(
+            cls,
             prim_type,
             int(spatial_size),
             int(C),
             int(C_out),
             int(stride),
-            int(kernel_size),
+            affine,
             kwargs,
         )
 
@@ -36,19 +62,24 @@ class Prim(Prim_):
         return origin_dict
 
 
-def assemble_profiling_nets_from_file(
-    fname, base_cfg_fname, image_size=224, sample=None, max_layers=20
-):
+def assemble_profiling_nets_from_file(fname,
+                                      base_cfg_fname,
+                                      image_size=224,
+                                      sample=None,
+                                      max_layers=20):
     with open(fname, "r") as f:
         prof_prims = yaml.load(f)
     with open(base_cfg_fname, "r") as f:
         base_cfg = yaml.load(f)
-    return assemble_profiling_nets(prof_prims, base_cfg, image_size, sample, max_layers)
+    return assemble_profiling_nets(prof_prims, base_cfg, image_size, sample,
+                                   max_layers)
 
 
-def assemble_profiling_nets(
-    profiling_primitives, base_cfg_template, image_size=224, sample=None, max_layers=20
-):
+def assemble_profiling_nets(profiling_primitives,
+                            base_cfg_template,
+                            image_size=224,
+                            sample=None,
+                            max_layers=20):
     """
     Args:
         profiling_primitives: (list of dict)
@@ -74,9 +105,8 @@ def assemble_profiling_nets(
         sample = np.inf
 
     # genotypes: "[prim_type, *params], [] ..."
-    profiling_primitives = sorted(
-        profiling_primitives, key=lambda x: (x["C"], x["stride"])
-    )
+    profiling_primitives = sorted(profiling_primitives,
+                                  key=lambda x: (x["C"], x["stride"]))
     ith_arch = 0
     glue_layer = lambda spatial_size, C, C_out, stride=1: {
         "prim_type": "conv_1x1",
@@ -140,11 +170,15 @@ def assemble_profiling_nets(
                 out_channel = int(sampled_prim["C"])
                 spatial_size = int(sampled_prim["spatial_size"])
                 stride = int(round(cur_size / spatial_size))
-                assert isinstance(stride, int) and stride > 0, f"stride: {stride}"
-                geno.append(glue_layer(cur_size, cur_channel, out_channel, stride))
+                assert isinstance(
+                    stride, int) and stride > 0, "stride: {stride}".format(
+                        stride=stride)
+                geno.append(
+                    glue_layer(cur_size, cur_channel, out_channel, stride))
 
             cur_channel = int(sampled_prim["C_out"])
-            cur_size = int(round(sampled_prim["spatial_size"] / sampled_prim["stride"]))
+            cur_size = int(
+                round(sampled_prim["spatial_size"] / sampled_prim["stride"]))
 
             available_idx.remove(i)
             channel_to_idx[sampled_prim["C"]].remove(i)

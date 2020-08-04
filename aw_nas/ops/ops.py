@@ -109,19 +109,19 @@ PRIMITVE_FACTORY = {
 
     "NB201ResidualBlock": lambda C, C_out, stride, affine: NB201ResidualBlock(C, C_out, stride,
                                                                    affine=affine),
-    "se_module": lambda channel, reduction=4: SEModule(channel, reduction),
+    "se_module": lambda C, C_out, stride, affine, reduction=4: SEModule(C, reduction),
 
     # activations
-    "tanh": lambda *args, **kwargs: nn.Tanh(*args, **kwargs),
-    "relu": lambda *args, **kwargs: nn.ReLU(*args, **kwargs),
-    "sigmoid": lambda *args, **kwargs: nn.Sigmoid(*args, **kwargs),
-    "identity": lambda *args, **kwargs: Identity(*args, **kwargs),
-    "h_swish": lambda *args, **kwargs: Hswish(*args, **kwargs),
-    "h_sigmoid": lambda *args, **kwargs: Hsigmoid(*args, **kwargs)
+    "tanh": lambda C=None, C_out=None, stride=None, affine=None: nn.Tanh(),
+    "relu": lambda C=None, C_out=None, stride=None, affine=None: nn.ReLU(inplace=True),
+    "sigmoid": lambda C=None, C_out=None, stride=None, affine=None: nn.Sigmoid(),
+    "identity": lambda C=None, C_out=None, stride=None, affine=None: Identity(),
+    "h_swish": lambda C=None, C_out=None, stride=None, affine=None: Hswish(inplace=True),
+    "h_sigmoid": lambda C=None, C_out=None, stride=None, affine=None: Hsigmoid(inplace=True)
 }
 
 def register_primitive(name, func, override=False):
-    assert callable(func), "A primtive must be callable"
+    assert callable(func), "A primitive must be callable"
     assert not (name in PRIMITVE_FACTORY and not override),\
         "some func already registered as {};"\
         " to override, use `override=True` keyword arguments.".format(name)
@@ -779,7 +779,7 @@ class SEModule(nn.Module):
             ("reduction", reduction_layer or nn.Conv2d(self.channel, mid_channel, 1, 1, 0)),
             ("relu", nn.ReLU(inplace=True)),
             ("expand", expand_layer or nn.Conv2d(mid_channel, self.channel, 1, 1, 0)),
-            ("activation", get_op("h_sigmoid")(inplace=True))
+            ("activation", get_op("h_sigmoid")())
         ]))
 
     def forward(self, inputs):

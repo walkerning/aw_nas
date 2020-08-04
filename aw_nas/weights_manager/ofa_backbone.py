@@ -56,7 +56,7 @@ class FlexibleMobileNetV2Block(MobileNetV2Block, FlexibleBlock):
             inv_bottleneck = nn.Sequential(
                 FlexiblePointLinear(C, C_inner, 1, 1, 0),
                 FlexibleBatchNorm2d(C_inner, affine=affine),
-                get_op(activation)(inplace=True),
+                get_op(activation)(),
             )
 
         depth_wise = nn.Sequential(
@@ -67,7 +67,7 @@ class FlexibleMobileNetV2Block(MobileNetV2Block, FlexibleBlock):
                 do_kernel_transform=do_kernel_transform,
             ),
             FlexibleBatchNorm2d(C_inner, affine=affine),
-            get_op(activation)(inplace=True),
+            get_op(activation)(),
         )
 
         point_linear = nn.Sequential(
@@ -146,7 +146,7 @@ class FlexibleMobileNetV2Block(MobileNetV2Block, FlexibleBlock):
 
 class FlexibleMobileNetV3Block(MobileNetV3Block, FlexibleBlock):
     NAME = "mbv3_block"
-    def __init__(self, 
+    def __init__(self,
         expansion,
         C,
         C_out,
@@ -176,7 +176,7 @@ class FlexibleMobileNetV3Block(MobileNetV3Block, FlexibleBlock):
             inv_bottleneck = nn.Sequential(
                 FlexiblePointLinear(C, self.C_inner, 1, 1, 0),
                 FlexibleBatchNorm2d(self.C_inner, affine=affine),
-                get_op(activation)(inplace=True),
+                get_op(activation)(),
             )
 
         depth_wise = nn.Sequential(
@@ -187,7 +187,7 @@ class FlexibleMobileNetV3Block(MobileNetV3Block, FlexibleBlock):
                 do_kernel_transform=do_kernel_transform,
             ),
             FlexibleBatchNorm2d(self.C_inner, affine=affine),
-            get_op(activation)(inplace=True),
+            get_op(activation)(),
         )
 
         point_linear = nn.Sequential(
@@ -378,7 +378,7 @@ class MobileNetV2Arch(BaseBackboneArch):
                 3, self.channels[0], kernel_size=3, stride=self.stem_stride, padding=1, bias=False
             ),
             nn.BatchNorm2d(self.channels[0]),
-            get_op("relu")(inplace=True),
+            get_op("relu")(),
         )
         expect(
             blocks[0] == expansions[0] == 1,
@@ -582,7 +582,7 @@ class MobileNetV3Arch(BaseBackboneArch):
                 3, self.channels[0], kernel_size=3, stride=self.stem_stride, padding=1, bias=False
             ),
             nn.BatchNorm2d(self.channels[0]),
-            get_op("h_swish")(inplace=True),
+            get_op("h_swish")(),
         )
         expect(
             blocks[0] == expansions[0] == 1,
@@ -623,11 +623,11 @@ class MobileNetV3Arch(BaseBackboneArch):
         self.conv_head = nn.Sequential(
             nn.Conv2d(self.channels[-3], self.channels[-2], 1, 1, 0, bias=False),
             nn.BatchNorm2d(self.channels[-2]),
-            get_op("h_swish")(inplace=True),
+            get_op("h_swish")(),
         )
         self.conv_final = nn.Sequential(
             nn.Conv2d(self.channels[-2], self.channels[-1], 1, 1, 0, bias=False),
-            get_op("h_swish")(inplace=True),
+            get_op("h_swish")(),
         )
         self.classifier = nn.Linear(self.channels[-1], num_classes)
 
