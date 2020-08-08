@@ -19,14 +19,10 @@ from aw_nas.utils import make_divisible, drop_connect
 
 class BinaryActivation(torch.autograd.Function):
   @staticmethod
-  def forward(self, input, fp32=False):
+  def forward(self, input):
     self.save_for_backward(input)
     size = input.size()
-    if fp32:
-        import ipdb; ipdb.set_trace()
-        pass
-    else:
-        input = input.sign()
+    input = input.sign()
     return input
   @staticmethod
   def backward(self, grad_output):
@@ -35,6 +31,22 @@ class BinaryActivation(torch.autograd.Function):
     grad_input[input.ge(1)] = 0
     grad_input[input.le(-1)] = 0
     return grad_input
+
+class Fp32Activation(torch.autograd.Function):
+  @staticmethod
+  def forward(self, input):
+    self.save_for_backward(input)
+    size = input.size()
+    return input
+  @staticmethod
+  def backward(self, grad_output):
+    input, = self.saved_tensors
+    grad_input = grad_output.clone()
+    grad_input[input.ge(1)] = 0
+    grad_input[input.le(-1)] = 0
+    return grad_input
+
+
 
 class XNORConv2d(nn.Module):
   def __init__(self, in_channels, out_channels, kernel_size, stride, padding, groups, dropout_ratio=0, fp32_act=True):
@@ -45,6 +57,7 @@ class XNORConv2d(nn.Module):
     self.conv = nn.Conv2d(in_channels = in_channels, out_channels = out_channels, kernel_size = kernel_size, stride = stride, padding = padding, groups = groups)
     self.conv.weight.data.normal_(0, 0.05)
     self.conv.bias.data.zero_()
+    self.act = BinaryActivation(self.fp32_act)
 
     self.full_precision = nn.Parameter(torch.zeros(self.conv.weight.size()))
     self.full_precision.data.copy_(self.conv.weight.data)
@@ -53,7 +66,11 @@ class XNORConv2d(nn.Module):
     self.full_precision.data = self.full_precision.data - self.full_precision.data.mean(1, keepdim = True)
     self.full_precision.data.clamp_(-1, 1)
 
-    x = BinaryActivation.apply(x, self.fp32_act)
+    # import ipdb; ipdb.set_trace()
+    if self.fp32_act:
+        x = Fp32Activation.apply(x)
+    else:
+        x = BinaryActivation.apply(x)
     if self.dropout_ratio!=0:
       x = self.dropout(x)
     # import ipdb; ipdb.set_trace()
@@ -65,7 +82,7 @@ class XNORConv2d(nn.Module):
     return x
 
   def copy_grad(self):
-    # import ipdb; ipdb.set_trace()
+   #  import ipdb; ipdb.set_trace()
     proxy = self.full_precision.abs().sign()
     proxy[self.full_precision.data.abs()>1] = 0
     binary_grad = self.conv.weight.grad * self.mean_val.view(-1, 1, 1, 1) * proxy
@@ -285,6 +302,9 @@ register_primitive("bireal_resnet_block",
                    lambda C, C_out, stride, affine: BinaryResNetBlock(C, C_out, stride=stride, affine=affine,block="bireal",act=BirealActivation()))
 register_primitive("xnor_resnet_block", 
                    lambda C, C_out, stride, affine: BinaryResNetBlock(C, C_out, stride=stride, affine=affine,block="xnor"))
+register_primitive("xnor_resnet_block_biact", 
+                   lambda C, C_out, stride, affine: BinaryResNetBlock(C, C_out, stride=stride, affine=affine,block="xnor",fp32_act=False))
+
 register_primitive("dorefa_resnet_block", 
                    lambda C, C_out, stride, affine: BinaryResNetBlock(C, C_out, stride=stride, affine=affine,block="dorefa"))
 register_primitive("xnor_resnet_block_pool_downsample", 
