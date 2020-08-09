@@ -8,6 +8,7 @@ from aw_nas.dataset import ptb
 from aw_nas.dataset import imagenet
 from aw_nas.dataset import tiny_imagenet
 from aw_nas.dataset import cifar100
+from aw_nas.dataset import svhn
 
 try:
     from aw_nas.dataset import voc
