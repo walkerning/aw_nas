@@ -3,7 +3,7 @@ rollout_type: ofa
 
 ## ---- Component search_space ----
 # ---- Type ofa ----
-search_space_type: ofa
+search_space_type: ofa_mixin
 search_space_cfg:
   num_cell_groups: [1, 4, 4, 4, 4, 4]
   expansions: [1, 6, 6, 6, 6, 6]
@@ -97,7 +97,7 @@ objective_cfg:
             value: [0.0, 1.0]
     - objective_type: hardware
       objective_cfg:
-        hardware_obj_type: ofa
+        hardware_obj_type: table
         hardware_obj_cfg:
           prof_prims_cfg:
             strides: [1, 2, 2, 2, 1, 2]
@@ -106,8 +106,9 @@ objective_cfg:
             use_ses: [False, False, True, False, True, True]
             acts: ["relu", "relu", "relu", "h_swish", "h_swish", "h_swish"]
             default_prim_type: 'mobilenet_v3_block'
-        hardware_model_path: /home/tangchangcheng/projects/xuefei/aw_nas/test_model
+        hardware_model_path: null
         perf_names: ["latency"]
+        preprocessors: ["block_sum", "remove_anomaly", "flatten", "extract_sum_features"]
 
 ## ---- Component trainer ----
 # ---- Type simple ----

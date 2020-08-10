@@ -9,14 +9,16 @@ profiling_primitive_cfg:
   base_channels: [16, 16, 24, 32, 64, 96, 160, 320, 1280]
   mult_ratio: 1.
   strides: [1, 2, 2, 2, 1, 2]
-  activation: ["relu", "relu", "relu", "h_swish", "h_swish", "h_swish"]
-  use_se: [false, false, true, false, true, true]
+  acts: ["relu", "relu", "relu", "h_swish", "h_swish", "h_swish"]
+  use_ses: [false, false, true, false, true, true]
   primitive_type: 'mobilenet_v3_block'
   
 
-hwobjmodel_type: ofa
-hwobjmodel_cfg: {}
-  
+hwobjmodel_type: regression
+hwobjmodel_cfg: 
+  performance: "latency"
+  preprocessors: ["block_sum", "remove_anomaly", "flatten", "extract_sum_features"]
+
 
 profiling_net_cfg:
   base_cfg_template:
