@@ -1,4 +1,6 @@
 from aw_nas.hardware.compiler import *
 
-from .base import MixinProfilingSearchSpace
-from .ofa_obj import OFAMixinProfilingSearchSpace, OFAHardwareObjectiveModel
+from .base import *
+from .ofa_obj import OFAMixinProfilingSearchSpace
+
+from .utils import *

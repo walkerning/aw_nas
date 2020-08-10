@@ -219,14 +219,16 @@ class keydefaultdict(collections.defaultdict): #pylint: disable=invalid-name
         ret = self[key] = self.default_factory(key) #pylint: disable=not-callable
         return ret
 
-def tick(register_attr):
+def tick(register_attr, device=None):
     def _timer(func):
         @functools.wraps(func)
         def method(self, *args, **kwargv):
-            torch.cuda.synchronize()
+            if device != "cpu":
+                torch.cuda.synchronize(device=device)
             start = time.time()
             out = func(self, *args, **kwargv)
-            torch.cuda.synchronize()
+            if device != "cpu":
+                torch.cuda.synchronize(device=device)
             elapse = time.time() - start
             elapse *= 1000
             object.__setattr__(self, register_attr, elapse)

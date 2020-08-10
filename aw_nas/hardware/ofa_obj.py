@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import copy
 import pickle
 from collections import namedtuple
 from itertools import product
@@ -14,121 +15,6 @@ from aw_nas.utils import make_divisible
 from aw_nas.rollout.ofa import MNasNetOFASearchSpace
 
 logger = _logger.getChild("ofa_obj")
-
-
-def ofa_rollout_to_primitive(
-    rollout,
-    primitive_type,
-    spatial_size,
-    strides,
-    base_channels,
-    mult_ratio=1.,
-    **kwargs
-):
-    primitives = []
-    acts = kwargs.get("acts", [None] * len(rollout.depth))
-    use_ses = kwargs.get("use_ses", [None] * len(rollout.depth))
-    stem_stride = kwargs.get("stem_stride", 2)
-    sizes = [
-        round(spatial_size / stem_stride / reduce(lambda p, q: p * q, strides[:i]))
-        for i in range(1,
-                       len(strides) + 1)
-    ]
-    channels = [make_divisible(mult_ratio * c, 8) for c in base_channels]
-    for i, (depth, size, s, c_in, c_out, act, se) in enumerate(
-            zip(
-                rollout.depth,
-                sizes,
-                strides,
-                channels[:-1],
-                channels[1:],
-                acts,
-                use_ses,
-            )):
-        for j, width, kernel in zip(range(depth), rollout.width[i],
-                                    rollout.kernel[i]):
-            if j > 0:
-                c_in = c_out
-                s = 1
-            primitives.append(
-                Prim(
-                    primitive_type,
-                    size,
-                    c_in,
-                    c_out,
-                    s,
-                    True,
-                    kernel_size=kernel,
-                    activation=act,
-                    use_se=se,
-                    expansion=width,
-                ))
-    return primitives
-
-
-class OFAHardwareObjectiveModel(BaseHardwareObjectiveModel):
-    NAME = "ofa"
-
-    def __init__(
-        self,
-        prof_prims=None,
-        prof_prims_cfg={},
-        schedule_cfg=None,
-    ):
-        super(OFAHardwareObjectiveModel, self).__init__(schedule_cfg)
-        self.default_prim_type = prof_prims_cfg.get("primitive_type",
-                                                    "mobilenet_v2_block")
-        self.performances = prof_prims_cfg.get("performances", ["latency"])
-
-        self.prof_prims = prof_prims
-        self.prof_prims_cfg = prof_prims_cfg
-
-        self.Perf = namedtuple("Performances", self.performances)
-
-        self._table = {}
-
-        if self.prof_prims is not None:
-            self._orgnize_table()
-
-    def _orgnize_table(self):
-        # key: a namedtuple. Prim
-        # value: a namedtuple. self.Perf
-        for prim in self.prof_prims:
-            perf = self.Perf(*[
-                prim.pop(f) if f in prim else None for f in self.performances
-            ])
-            prim = Prim(**prim)
-            self._table[prim] = perf
-        # print("table: ", self._table)
-
-    def predict(self, rollout):
-        primitives = ofa_rollout_to_primitive(
-            rollout,
-            **self.prof_prims_cfg
-        )
-        perfs = []
-        for prim in primitives:
-            perf = self._table.get(prim)
-            if perf is None:
-                logger.warn(
-                    "primitive %s is not found in the table, return default value 0.",
-                    prim)
-                perf = self.Perf(*[0.0 for f in self.performances])
-            perfs.append(perf)
-        # assert that each of performances is float
-        perfs = np.array(perfs)
-        return perfs.sum(axis=0)
-
-    def save(self, path):
-        pickled_table = [(k._asdict(), v._asdict())
-                         for k, v in self._table.items()]
-        with open(path, "wb") as fw:
-            pickle.dump({"table": pickled_table}, fw)
-
-    def load(self, path):
-        with open(path, "rb") as fr:
-            m = pickle.load(fr)
-        self._table = {Prim(**k): self.Perf(**v) for k, v in m["table"]}
 
 
 class OFAMixinProfilingSearchSpace(MNasNetOFASearchSpace,
@@ -203,7 +89,8 @@ class OFAMixinProfilingSearchSpace(MNasNetOFASearchSpace,
                            len(strides) + 1)
         ]
 
-        stem_prim = Prim(stem_type, spatial_size, 3, channels[0], stem_stride, True)
+        stem_prim = Prim(stem_type, spatial_size, 3, channels[0], stem_stride,
+                         True)
         first_fixed_prim = Prim(primitive_type,
                                 spatial_size / stem_stride,
                                 channels[0],
@@ -236,7 +123,61 @@ class OFAMixinProfilingSearchSpace(MNasNetOFASearchSpace,
             primitives = [dict(p._asdict()) for p in primitives]
         return primitives
 
-    def parse_profiling_primitives(self, prof_prims, prof_prims_cfg,
+    def parse_profiling_primitives(self, prof_prims_cfg, hwobjmodel_type,
                                    hwobjmodel_cfg):
-        return OFAHardwareObjectiveModel(prof_prims, prof_prims_cfg,
+        return BaseHardwareObjectiveModel.get_class_(hwobjmodel_type)(self, prof_prims_cfg,
                                          **hwobjmodel_cfg)
+
+    @classmethod
+    def rollout_to_primitives(cls,
+                              rollout,
+                              primitive_type,
+                              spatial_size,
+                              strides,
+                              base_channels,
+                              mult_ratio=1.,
+                              stem_type="conv_3x3",
+                              stem_stride=2,
+                              **kwargs):
+        acts = kwargs.get("acts", [None] * len(rollout.depth))
+        use_ses = kwargs.get("use_ses", [None] * len(rollout.depth))
+        stem_stride = kwargs.get("stem_stride", 2)
+        sizes = [
+            round(spatial_size / stem_stride /
+                  reduce(lambda p, q: p * q, strides[:i]))
+            for i in range(1,
+                           len(strides) + 1)
+        ]
+        channels = [make_divisible(mult_ratio * c, 8) for c in base_channels]
+        primitives = [
+            Prim(stem_type, spatial_size, 3, channels[0], stem_stride, True)
+        ]
+        for i, (depth, size, s, c_in, c_out, act, se) in enumerate(
+                zip(
+                    rollout.depth,
+                    sizes,
+                    strides,
+                    channels[:-1],
+                    channels[1:],
+                    acts,
+                    use_ses,
+                )):
+            for j, width, kernel in zip(range(depth), rollout.width[i],
+                                        rollout.kernel[i]):
+                if j > 0:
+                    c_in = c_out
+                    s = 1
+                primitives.append(
+                    Prim(
+                        primitive_type,
+                        size,
+                        c_in,
+                        c_out,
+                        s,
+                        True,
+                        kernel_size=kernel,
+                        activation=act,
+                        use_se=se,
+                        expansion=width,
+                    ))
+        return primitives

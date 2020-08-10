@@ -2,8 +2,9 @@
 
 import abc
 from collections import OrderedDict
-from six import StringIO
+
 import yaml
+from six import StringIO
 
 from aw_nas import utils
 from aw_nas.base import Component
@@ -28,8 +29,25 @@ class BaseHardwareCompiler(Component):
 class BaseHardwareObjectiveModel(Component):
     REGISTRY = "hardware_obj_model"
 
-    def __init__(self, schedule_cfg):
+    def __init__(self, mixin_search_space, preprocessors, perf_name, schedule_cfg):
         super(BaseHardwareObjectiveModel, self).__init__(schedule_cfg)
+        self.mixin_search_space = mixin_search_space
+        self.preprocessor = Preprocessor(preprocessors)
+        self.perf_name = perf_name
+
+    def train(self, prof_nets):
+        """
+        Args:
+            prof_nets: a list of dict, [{"primitives": [], "overall_performances": {}}, ...]
+            performance: a list of value of each net's performance
+        """
+        processed_args = self.preprocessor(
+            prof_nets, is_training=True, performance=self.perf_name)
+        return self._train(processed_args)
+
+    @abc.abstractmethod
+    def _train(self, args):
+        pass
 
     @abc.abstractmethod
     def predict(self, rollout):
@@ -66,3 +84,17 @@ class MixinProfilingSearchSpace(SearchSpace):
         cfg = OrderedDict(default_cfg)
         yaml.safe_dump(cfg, stream=stream, default_flow_style=False)
         return stream.getvalue()
+
+
+class Preprocessor(Component):
+    REGISTRY = "preprocessor_for_profiling"
+
+    def __init__(self, preprocessors, schedule_cfg=None):
+        super(Preprocessor, self).__init__(schedule_cfg)
+        self.preprocessors = preprocessors
+
+    def __call__(self, unpreprocessed, **kwargs):
+        preps = [Preprocessor.get_class_(prep)() for prep in self.preprocessors]
+        for prep in preps:
+            unpreprocessed = prep(unpreprocessed, **kwargs)
+        return unpreprocessed
