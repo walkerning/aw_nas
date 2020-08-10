@@ -1,17 +1,14 @@
 # -*- coding: utf-8 -*-
 import copy
 import inspect
-import json
+from inspect import signature
 import os
 import pickle
 from collections import namedtuple
-from inspect import signature
 
 import numpy as np
 import yaml
-from scipy import stats
 from sklearn import linear_model
-from sklearn.metrics import mean_squared_error, r2_score
 
 from aw_nas.hardware.base import (BaseHardwareObjectiveModel,
                                   MixinProfilingSearchSpace, Preprocessor)
@@ -82,7 +79,7 @@ def assemble_profiling_nets_from_file(fname,
                                    max_layers)
 
 
-def sample_networks(mixin_search_space, 
+def sample_networks(mixin_search_space,
                     base_cfg_template,
                     num_sample,
                     **kwargs):
@@ -306,18 +303,20 @@ class TableBasedModel(BaseHardwareObjectiveModel):
         perf_name="latency",
         schedule_cfg=None,
     ):
-        super(TableBasedModel, self).__init__(mixin_search_space, preprocessors, perf_name, schedule_cfg)
+        super(TableBasedModel, self).__init__(
+            mixin_search_space, preprocessors, perf_name, schedule_cfg)
         self.prof_prims_cfg = prof_prims_cfg
 
         self._table = {}
 
-    def _train(self, prof_nets):
+    def _train(self, args):
+        prof_nets = args
         for net in prof_nets:
             for prim in net.get("primitives", []):
                 perf = prim.pop("performances")[self.perf_name]
                 prim = Prim(**prim)
-                self._table[prim] = self._table.get(prim, []) + [perf]
-        
+                self._table.setdefault(prim, []).append(perf)
+
         self._table = {k: np.mean(v) for k, v in self._table.items()}
 
     def predict(self, rollout, assemble_fn=sum):
@@ -336,11 +335,11 @@ class TableBasedModel(BaseHardwareObjectiveModel):
 
     def save(self, path):
         pickled_table = [(k._asdict(), v) for k, v in self._table.items()]
-        with open(path, "wb") as fw:
+        with open(path, "wb") as wf:
             pickle.dump(
                 {
                     "table": pickled_table,
-                }, fw)
+                }, wf)
 
     def load(self, path):
         with open(path, "rb") as fr:

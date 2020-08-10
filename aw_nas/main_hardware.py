@@ -7,11 +7,11 @@ from __future__ import print_function
 
 import os
 import shutil
+import pickle
 import functools
 
-import click
-import pickle
 import yaml
+import click
 
 import aw_nas
 from aw_nas import utils
@@ -20,7 +20,7 @@ from aw_nas.utils import logger as _logger
 from aw_nas.utils.exception import expect
 from aw_nas.utils.common_utils import _OrderedCommandGroup
 from aw_nas.hardware.utils import assemble_profiling_nets, iterate, sample_networks
-from aw_nas.hardware.base import BaseHardwareCompiler, MixinProfilingSearchSpace, Preprocessor
+from aw_nas.hardware.base import BaseHardwareCompiler, MixinProfilingSearchSpace
 
 # patch click.option to show the default values
 click.option = functools.partial(click.option, show_default=True)
@@ -61,7 +61,8 @@ def main():
     type=int,
     help=
     ("Random sample networks from search space if this value is specified, "
-     "otherwise traverse the whole search space to find all non-duplicated primitives and then assemble them."
+     "otherwise traverse the whole search space to find all non-duplicated "
+     "primitives and then assemble them."
      ))
 def genprof(cfg_file, hwobj_cfg_file, result_dir, compile_hardware,
             num_sample):
@@ -91,10 +92,11 @@ def genprof(cfg_file, hwobj_cfg_file, result_dir, compile_hardware,
     LOGGER.info("Save the list of profiling primitives to %s", prof_prim_fname)
 
     if num_sample:
-        prof_net_cfgs = sample_networks(ss, 
-                                        base_cfg_template=lat_cfg["profiling_net_cfg"]["base_cfg_template"],
-                                        num_sample=num_sample,
-                                        **lat_cfg["profiling_primitive_cfg"])
+        prof_net_cfgs = sample_networks(
+            ss,
+            base_cfg_template=lat_cfg["profiling_net_cfg"]["base_cfg_template"],
+            num_sample=num_sample,
+            **lat_cfg["profiling_primitive_cfg"])
     else:
         # assemble profiling nets
         # the primitives can actually be mapped to layers in model during the assembling process
@@ -175,8 +177,8 @@ def net2primitive(hwobj_cfg_file, prof_result_dir, prof_prim_file,
     LOGGER.info("Constructed hardware compiler {}{}".format(
         hw_name, ":{}".format(hw_kwargs) if hw_kwargs else ""))
 
-    with open(prim_to_ops_file, "rb") as fr:
-        prim_to_ops = pickle.load(fr)
+    with open(prim_to_ops_file, "rb") as r_f:
+        prim_to_ops = pickle.load(r_f)
     # meta info: prim_to_ops is saved when generate profiling final-yaml folder for each net
     prim_latencies = []
     for _dir in os.listdir(prof_result_dir):

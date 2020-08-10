@@ -1,5 +1,3 @@
-import numpy as np
-
 from aw_nas.objective.base import BaseObjective
 from aw_nas.hardware.base import BaseHardwareObjectiveModel
 
@@ -17,8 +15,11 @@ class HardwareObjective(BaseObjective):
                  schedule_cfg=None):
         super().__init__(search_space, schedule_cfg=schedule_cfg)
 
-        self.hwobj_models = [BaseHardwareObjectiveModel.get_class_(
-            hardware_obj_type)(search_space, prof_prims_cfg, performance=perf, **hardware_obj_cfg) for perf in perf_names]
+        self.hwobj_models = [
+            BaseHardwareObjectiveModel.get_class_(
+                hardware_obj_type)(
+                    search_space, prof_prims_cfg, performance=perf, **hardware_obj_cfg)
+            for perf in perf_names]
         self._perf_names = perf_names
         if hardware_model_paths:
             for hardware_model_path, hwobj_model in zip(hardware_model_paths, self.hwobj_models):

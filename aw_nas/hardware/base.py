@@ -1,8 +1,6 @@
 # -*- coding: utf-8 -*-
 
 import abc
-import os
-import pickle
 from collections import OrderedDict
 
 import yaml
@@ -45,7 +43,6 @@ class BaseHardwareObjectiveModel(Component):
         """
         processed_args = self.preprocessor(
             prof_nets, is_training=True, performance=self.perf_name)
-        
         return self._train(processed_args)
 
     @abc.abstractmethod
