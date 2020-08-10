@@ -58,7 +58,7 @@ objective_cfg: {}
 
 ## ---- Component final_trainer ----
 # ---- Type cnn_trainer ----
-final_trainer_type: bnn_trainer
+final_trainer_type: cnn_trainer
 final_trainer_cfg:
   # Schedulable attributes: 
   auxiliary_head: false
@@ -67,7 +67,6 @@ final_trainer_cfg:
   batch_size: 256
   epochs: 200
   # grad_clip: 5.0
-  rewrite_grad: True
   learning_rate: 0.0005
   momentum: 0.9
   no_bias_decay: false

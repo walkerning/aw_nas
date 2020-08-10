@@ -136,7 +136,7 @@ evaluator_type: mepa
 evaluator_cfg:
   # Schedulable attributes: controller_surrogate_steps, mepa_surrogate_steps, mepa_samples
   rollout_type: differentiable
-  batch_size: 32
+  batch_size: 64
   controller_surrogate_steps: 0
   mepa_surrogate_steps: 0
   derive_surrogate_steps: null
