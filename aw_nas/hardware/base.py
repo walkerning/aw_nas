@@ -31,8 +31,26 @@ class BaseHardwareCompiler(Component):
 class BaseHardwareObjectiveModel(Component):
     REGISTRY = "hardware_obj_model"
 
-    def __init__(self, schedule_cfg):
+    def __init__(self, mixin_search_space, preprocessors, perf_name, schedule_cfg):
         super(BaseHardwareObjectiveModel, self).__init__(schedule_cfg)
+        self.mixin_search_space = mixin_search_space
+        self.preprocessor = Preprocessor(preprocessors)
+        self.perf_name = perf_name
+
+    def train(self, prof_nets):
+        """
+        Args:
+            prof_nets: a list of dict, [{"primitives": [], "overall_performances": {}}, ...]
+            performance: a list of value of each net's performance
+        """
+        processed_args = self.preprocessor(
+            prof_nets, is_training=True, performance=self.perf_name)
+        
+        return self._train(processed_args)
+
+    @abc.abstractmethod
+    def _train(self, args):
+        pass
 
     @abc.abstractmethod
     def predict(self, rollout):
@@ -70,30 +88,6 @@ class MixinProfilingSearchSpace(SearchSpace):
         yaml.safe_dump(cfg, stream=stream, default_flow_style=False)
         return stream.getvalue()
 
-
-class BasePerformanceModel(Component):
-    REGISTRY = "performance_model"
-
-    def __init__(self, schedule_cfg):
-        super(BasePerformanceModel, self).__init__(schedule_cfg)
-        self.schedule_cfg = schedule_cfg
-        self.model = None
-
-    @abc.abstractmethod
-    def train(self, x, y):
-        pass
-
-    @abc.abstractmethod
-    def predict(self, x):
-        pass 
-
-    def save(self, path):
-        with open(path, "wb") as fw:
-            pickle.dump(self.model, fw)
-
-    def load(self, path):
-        with open(path, "rb") as fr:
-            self.model = pickle.load(fr)
 
 class Preprocessor(Component):
     REGISTRY = "preprocessor_for_profiling"

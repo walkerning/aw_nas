@@ -19,7 +19,7 @@ from aw_nas.common import get_search_space
 from aw_nas.utils import logger as _logger
 from aw_nas.utils.exception import expect
 from aw_nas.utils.common_utils import _OrderedCommandGroup
-from aw_nas.hardware.utils import assemble_profiling_nets, iterate
+from aw_nas.hardware.utils import assemble_profiling_nets, iterate, sample_networks
 from aw_nas.hardware.base import BaseHardwareCompiler, MixinProfilingSearchSpace, Preprocessor
 
 # patch click.option to show the default values
@@ -91,10 +91,10 @@ def genprof(cfg_file, hwobj_cfg_file, result_dir, compile_hardware,
     LOGGER.info("Save the list of profiling primitives to %s", prof_prim_fname)
 
     if num_sample:
-        prof_net_cfgs = ss.sample_networks(
-            num_sample=num_sample,
-            **lat_cfg["profiling_primitive_cfg"],
-            **lat_cfg["profiling_net_cfg"])
+        prof_net_cfgs = sample_networks(ss, 
+                                        base_cfg_template=lat_cfg["profiling_net_cfg"]["base_cfg_template"],
+                                        num_sample=num_sample,
+                                        **lat_cfg["profiling_primitive_cfg"])
     else:
         # assemble profiling nets
         # the primitives can actually be mapped to layers in model during the assembling process

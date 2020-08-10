@@ -21,6 +21,8 @@ hwobjmodel_cfg:
 
 
 profiling_net_cfg:
+  image_size: 224
+  max_layers: 20
   base_cfg_template:
     rollout_type: general
     ## ---- Component search_space ----

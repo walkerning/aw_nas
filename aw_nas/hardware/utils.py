@@ -14,7 +14,6 @@ from sklearn import linear_model
 from sklearn.metrics import mean_squared_error, r2_score
 
 from aw_nas.hardware.base import (BaseHardwareObjectiveModel,
-                                  BasePerformanceModel,
                                   MixinProfilingSearchSpace, Preprocessor)
 from aw_nas.ops import get_op
 
@@ -83,10 +82,23 @@ def assemble_profiling_nets_from_file(fname,
                                    max_layers)
 
 
+def sample_networks(mixin_search_space, 
+                    base_cfg_template,
+                    num_sample,
+                    **kwargs):
+    for _ in range(num_sample):
+        rollout = mixin_search_space.random_sample()
+        primitives = mixin_search_space.rollout_to_primitives(rollout,
+                                                **kwargs)
+        base_cfg_template["final_model_cfg"]["genotypes"] = [
+            p._asdict() for p in primitives
+        ]
+        yield copy.deepcopy(base_cfg_template)
+
 def assemble_profiling_nets(profiling_primitives,
                             base_cfg_template,
+                            num_sample=None,
                             image_size=224,
-                            sample=None,
                             max_layers=20):
     """
     Args:
@@ -109,8 +121,8 @@ def assemble_profiling_nets(profiling_primitives,
     3. Iterate profiling primitives until there is not available primitive or the number of genotype's layers exceeds the max layer.
     """
 
-    if sample is None:
-        sample = np.inf
+    if num_sample is None:
+        num_sample = np.inf
 
     # genotypes: "[prim_type, *params], [] ..."
     profiling_primitives = sorted(profiling_primitives,
@@ -132,7 +144,7 @@ def assemble_profiling_nets(profiling_primitives,
         channel_to_idx[prim["C"]] = channel_to_idx.get(prim["C"], []) + [i]
     channel_to_idx = {k: set(v) for k, v in channel_to_idx.items()}
 
-    while len(available_idx) > 0 and ith_arch < sample:
+    while len(available_idx) > 0 and ith_arch < num_sample:
         ith_arch += 1
         geno = []
 
@@ -290,33 +302,23 @@ class TableBasedModel(BaseHardwareObjectiveModel):
         self,
         mixin_search_space,
         prof_prims_cfg={},
-        preprocessors=("remove_anomaly", "flatten"),
-        performance="latency",
+        preprocessors=("flatten", ),
+        perf_name="latency",
         schedule_cfg=None,
     ):
-        super(TableBasedModel, self).__init__(schedule_cfg)
+        super(TableBasedModel, self).__init__(mixin_search_space, preprocessors, perf_name, schedule_cfg)
         self.prof_prims_cfg = prof_prims_cfg
-        self.performance = performance
-        self.mixin_search_space = mixin_search_space
-
-        self.preprocessor = Preprocessor(preprocessors)
 
         self._table = {}
 
-    def train(self, prof_nets):
-        """
-        Args:
-            prof_nets: a list of dict, [{"primitives": [], "overall_performances": {}}, ...]
-            performance: a list of value of each net's performance
-        """
+    def _train(self, prof_nets):
         for net in prof_nets:
             for prim in net.get("primitives", []):
-                perf = prim.pop("performances")[self.performance]
+                perf = prim.pop("performances")[self.perf_name]
                 prim = Prim(**prim)
                 self._table[prim] = self._table.get(prim, []) + [perf]
         
         self._table = {k: np.mean(v) for k, v in self._table.items()}
-        return self
 
     def predict(self, rollout, assemble_fn=sum):
         primitives = self.mixin_search_space.rollout_to_primitives(
@@ -363,12 +365,10 @@ class RegressionHardwareObjectiveModel(TableBasedModel):
 
         assert isinstance(mixin_search_space, MixinProfilingSearchSpace)
 
-    def train(self, prof_nets):
-        prof_nets, train_x, train_y = self.preprocessor(
-            prof_nets, is_training=True, performance=self.performance)
-        super().train(prof_nets)
-        self.regression_model.fit(train_x, train_y)
-        return self
+    def _train(self, args):
+        prof_nets, train_x, train_y = args
+        super()._train(prof_nets)
+        return self.regression_model.fit(train_x, train_y)
 
     def predict(self, rollout):
         primitives = self.mixin_search_space.rollout_to_primitives(
@@ -376,10 +376,10 @@ class RegressionHardwareObjectiveModel(TableBasedModel):
         perfs = super().predict(rollout, assemble_fn=lambda x: x)
         primitives = [p._asdict() for p in primitives]
         for prim, perf in zip(primitives, perfs):
-            prim["performances"] = {self.performance: perf}
+            prim["performances"] = {self.perf_name: perf}
         prof_nets = [[{"primitives": primitives}]]
         prof_nets, test_x = self.preprocessor(
-            prof_nets, is_training=False, performance=self.performance)
+            prof_nets, is_training=False, performance=self.perf_name)
         return float(self.regression_model.predict(test_x)[0])
 
     def save(self, path):

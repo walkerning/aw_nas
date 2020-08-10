@@ -7,7 +7,7 @@ from functools import reduce
 
 import numpy as np
 
-from aw_nas.hardware.base import BaseHardwareObjectiveModel, MixinProfilingSearchSpace, BasePerformanceModel
+from aw_nas.hardware.base import BaseHardwareObjectiveModel, MixinProfilingSearchSpace
 from aw_nas.hardware.utils import Prim
 
 from aw_nas.utils import logger as _logger
@@ -42,35 +42,6 @@ class OFAMixinProfilingSearchSpace(MNasNetOFASearchSpace,
         MixinProfilingSearchSpace.__init__(self, schedule_cfg=schedule_cfg)
 
         self.fixed_primitives = fixed_primitives
-
-    def sample_networks(self,
-                        base_cfg_template,
-                        base_channels,
-                        mult_ratio,
-                        strides,
-                        acts=None,
-                        use_ses=None,
-                        primitive_type="mobilenet_v2_block",
-                        spatial_size=224,
-                        stem_stride=2,
-                        stem_type="conv_3x3",
-                        num_sample=None,
-                        **kwargs):
-        for _ in range(num_sample):
-            rollout = self.random_sample()
-            primitives = self.rollout_to_primitives(rollout,
-                                                  primitive_type,
-                                                  spatial_size,
-                                                  strides,
-                                                  base_channels,
-                                                  mult_ratio,
-                                                  acts=acts,
-                                                  use_ses=use_ses,
-                                                  stem_stride=stem_stride)
-            base_cfg_template["final_model_cfg"]["genotypes"] = [
-                p._asdict() for p in primitives
-            ]
-            yield copy.deepcopy(base_cfg_template)
 
     def _traverse_search_space(self, sample=None):
         depths = self.num_cell_groups
