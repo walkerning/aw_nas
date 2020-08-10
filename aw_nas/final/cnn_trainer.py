@@ -14,7 +14,6 @@ from aw_nas.utils.exception import expect
 from aw_nas.utils import DataParallel
 from aw_nas.utils import DistributedDataParallel
 from aw_nas.utils.torch_utils import calib_bn
-# from aw_nas.ops.bnn_ops import *
 
 try:
     from aw_nas.utils.SynchronizedBatchNormPyTorch.sync_batchnorm import (
@@ -55,7 +54,6 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                  calib_bn_setup=False, # for OFA final model
                  schedule_cfg=None):
         super(CNNFinalTrainer, self).__init__(schedule_cfg)
-
 
         self.model = model
         self.parallel_model = None
@@ -352,7 +350,6 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
             #torch.distributed.all_reduce(loss, op=torch.distributed.ReduceOp.SUM)
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), self.grad_clip)
-
             optimizer.step()
 
             prec1, prec5 = utils.accuracy(logits, target, topk=(1, 5))

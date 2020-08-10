@@ -48,10 +48,10 @@ if args.type == "rnn": # rnn
 elif args.type == "cnn": # cnn
     train_pattern = re.compile("train_acc ([0-9.]+) ; train_obj ([0-9.]+)")
     train_obj_names = ["acc", "loss"]
-    train_ylims = [(20, 100), None]
+    train_ylims = [(80, 100), None]
     valid_pattern = re.compile("valid_acc ([0-9.]+) ; valid_obj ([0-9.]+)")
     valid_obj_names = ["acc", "loss"]
-    valid_ylims = [(20, 100), None]
+    valid_ylims = [(20, 80), None]
 elif args.type == "cnn_oneshot_search":
     train_pattern = re.compile(r"\[evaluator update\][^\n]+loss: ([0-9.]+); acc: ([0-9.]+)")
     train_obj_names = ["loss", "acc"]
@@ -128,10 +128,6 @@ labels = []
 file_train_objs_list = []
 file_valid_objs_list = []
 for fname in fnames:
-    if os.path.isdir(fname):
-        fname=fname+"train.log"
-    else:
-        pass
     cur_p = fname
     while 1:
         label = os.path.basename(cur_p)

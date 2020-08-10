@@ -699,7 +699,6 @@ def derive(cfg_file, load, out_file, n, save_plot, test, steps, gpu, seed, dump_
                     )
                 of.write("# ---- Arch {} (Reward {}) ----\n".format(i, rollout.get_perf()))
                 _dump(rollout, dump_mode, of)
-                # yaml.safe_dump([{"reward": rollout.get_perf()}], of)
                 of.write("\n")
 
 
