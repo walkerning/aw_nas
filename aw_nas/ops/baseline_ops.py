@@ -172,8 +172,19 @@ class ResNetBlockSplit(nn.Module):
             context.flag_inject(False)
         return out, context
 
+class ResNetDownSample(nn.Module):
+    def __init__(self, stride):
+        super(ResNetDownSample, self).__init__()
+        assert stride == 2
+        self.avg = nn.AvgPool2d(kernel_size=1, stride=stride)
+
+    def forward(self, x):
+        x = self.avg(x)
+        return torch.cat((x, x.mul(0)), 1)
+
+
 class ResNetBlock(nn.Module):
-    def __init__(self, C, C_out, stride, affine, kernel_size=3, act="relu"):
+    def __init__(self, C, C_out, stride, affine, kernel_size=3, act="relu", downsample="conv"):
         super(ResNetBlock, self).__init__()
         self.stride = stride
         padding = int((kernel_size - 1) / 2)
@@ -188,9 +199,12 @@ class ResNetBlock(nn.Module):
                                kernel_size, stride, padding, affine=affine, relu=False)
         self.op_2 = ConvBNReLU(C_out, C_out,
                                kernel_size, 1, padding, affine=affine, relu=False)
-        self.skip_op = Identity() if stride == 1 else ConvBNReLU(C, C_out,
-                                                                 1, stride, 0,
-                                                                 affine=affine, relu=False)
+        if downsample == "conv":
+            self.skip_op = Identity() if stride == 1 else ConvBNReLU(C, C_out,
+                                                                     1, stride, 0,
+                                                                     affine=affine, relu=False)
+        elif downsample == "avgpool":
+            self.skip_op = Identity() if stride == 1 else ResNetDownSample(stride)
 
     def forward(self, inputs):
         inner = self.activation(self.op_1(inputs))
@@ -433,6 +447,9 @@ register_primitive("resnet_block_1x1",
                                                                 kernel_size=1))
 register_primitive("resnet_block",
                    lambda C, C_out, stride, affine: ResNetBlock(C, C_out, stride, affine=affine))
+register_primitive("resnet_block_pool_downsample",
+                   lambda C, C_out, stride, affine: ResNetBlock(C, C_out, stride, affine=affine, downsample="avgpool"))
+
 register_primitive("resnet_block_5x5",
                    lambda C, C_out, stride, affine: ResNetBlock(C, C_out, stride, affine=affine,
                                                                 kernel_size=5))

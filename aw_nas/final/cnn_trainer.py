@@ -296,11 +296,17 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                 group_weight.append(param)
         assert len(list(self.model.parameters())) == len(group_weight) + len(group_bias)
         optim_cls = getattr(torch.optim, self.optimizer_type)
-        optim_kwargs = {
-            "lr": self.learning_rate,
-            "momentum": self.momentum,
-            "weight_decay": self.weight_decay
-        }
+        if self.optimizer_type == "Adam":
+            optim_kwargs = {
+                "lr": self.learning_rate,
+                "weight_decay": self.weight_decay
+            }
+        else:
+            optim_kwargs = {
+                "lr": self.learning_rate,
+                "momentum": self.momentum,
+                "weight_decay": self.weight_decay
+            }
         optim_kwargs.update(self.optimizer_kwargs or {})
         optimizer = optim_cls(
             [{"params": group_weight},
