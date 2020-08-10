@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
 
 import abc
+import os
+import pickle
 from collections import OrderedDict
-from six import StringIO
+
 import yaml
+from six import StringIO
 
 from aw_nas import utils
 from aw_nas.base import Component
@@ -66,3 +69,41 @@ class MixinProfilingSearchSpace(SearchSpace):
         cfg = OrderedDict(default_cfg)
         yaml.safe_dump(cfg, stream=stream, default_flow_style=False)
         return stream.getvalue()
+
+
+class BasePerformanceModel(Component):
+    REGISTRY = "performance_model"
+
+    def __init__(self, schedule_cfg):
+        super(BasePerformanceModel, self).__init__(schedule_cfg)
+        self.schedule_cfg = schedule_cfg
+        self.model = None
+
+    @abc.abstractmethod
+    def train(self, x, y):
+        pass
+
+    @abc.abstractmethod
+    def predict(self, x):
+        pass 
+
+    def save(self, path):
+        with open(path, "wb") as fw:
+            pickle.dump(self.model, fw)
+
+    def load(self, path):
+        with open(path, "rb") as fr:
+            self.model = pickle.load(fr)
+
+class Preprocessor(Component):
+    REGISTRY = "preprocessor_for_profiling"
+
+    def __init__(self, preprocessors, schedule_cfg=None):
+        super(Preprocessor, self).__init__(schedule_cfg)
+        self.preprocessors = preprocessors
+
+    def __call__(self, unpreprocessed, **kwargs):
+        preps = [Preprocessor.get_class_(prep)() for prep in self.preprocessors]
+        for prep in preps:
+            unpreprocessed = prep(unpreprocessed, **kwargs)
+        return unpreprocessed

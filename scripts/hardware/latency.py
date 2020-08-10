@@ -20,17 +20,9 @@ def profiling(config, device, forward_time=100):
     model = GeneralGenotypeModel(ss, device, genotypes)
 
     shape = model.genotypes[0]["spatial_size"]
-    inputs = torch.rand([1, model.genotypes[0]["C"], shape, shape]).to(device)
+    inputs = torch.rand([1, model.genotypes[0]["C"], shape, shape])
     
-    use_cuda = device != "cpu"
-    performance = analyze_elapses(model, inputs, use_cuda=use_cuda, forward_time=forward_time)
-    for prim in performance["primitives"]:
-        prim["latency"] = prim["elapse"]
-        del prim["elapse"]
-    print("async_elapse: ", performance["async_elapse"],
-          "sync_elapse: ", performance["sync_elapse"])
-
-    return performance
+    return analyze_elapses(model, inputs, device=device, forward_time=forward_time)
 
 def main():
     parser = argparse.ArgumentParser()
@@ -53,17 +45,16 @@ def main():
         raise ValueError("Expect device id >= -1, got {} instead.".format(args.device))
 
     os.makedirs(args.perf_dir, exist_ok=True)
-    perfs = []
     for cfg_path in args.config:
         with open(cfg_path, 'r') as fr:
             cfg = yaml.load(fr)
-        perf = profiling(cfg, device=device, forward_time=args.forward_time)
-        perfs += perf["primitives"]
-        with open(os.path.join(args.perf_dir, cfg_path.split("/")[-1]), "w") as fw:
-            yaml.safe_dump(perf, fw)
+        perfs = profiling(cfg, device=device, forward_time=args.forward_time)
+        _dir = os.path.join(args.perf_dir, cfg_path.split("/")[-1].split(".")[0])
+        os.makedirs(_dir, exist_ok=True)
+        for i, perf in enumerate(perfs):
+            with open(os.path.join(_dir, "{}.yaml".format(i)), "w") as fw:
+                yaml.safe_dump(perf, fw)
 
-    with open(os.path.join(args.perf_dir, "prof_primitvie.yaml"), "w") as fw:
-            yaml.safe_dump(perfs, fw)
 
 if __name__ == "__main__":
     main()
