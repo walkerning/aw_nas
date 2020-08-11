@@ -149,6 +149,7 @@ We use this codebase to finish the following researches
 * Shulin Zeng*, Hanbo Sun*, Yu Xing, Xuefei Ning, Yi Shan, Xiaoming Chen, Yu Wang, Huazhong Yang, Black Box Search Space Profiling for Accelerator-Aware Neural Architecture Search, in ASP-DAC 2020.
 * Xuefei Ning, Guangjun Ge, Wenshuo Li, Zhenhua Zhu, Yin Zheng, Xiaoming Chen, Zhen Gao, Yu Wang, and Huazhong Yang, FTT-NAS: Discovering Fault-Tolerant Neural Architecture, in https://arxiv.org/abs/2003.10375, 2020.
 * Xuefei Ning, Yin Zheng, Tianchen Zhao, Yu Wang, Huazhong Yang, A Generic Graph-based Neural Architecture Encoding Scheme for Predictor-based NAS, in ECCV 2020, https://arxiv.org/abs/2004.01899
+* Xuefei Ning*, Wenshuo Li*, Zixuan Zhou*, Tianchen Zhao, Yin Zheng, Shuang Liang, Huazhong Yang, Yu Wang, A Surgery of the Neural Architecture Evaluators, in https://arxiv.org/abs/2008.03064
 
 
 See the sub-directories under `examples/research/` for more details.

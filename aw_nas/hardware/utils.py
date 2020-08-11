@@ -8,7 +8,16 @@ from collections import namedtuple
 
 import numpy as np
 import yaml
-from sklearn import linear_model
+
+try:
+    from sklearn import linear_model
+except ImportError as e:
+    from aw_nas.utils import logger as _logger
+    _logger.getChild("hardware").warn(
+        ("Cannot import module hardware.utils: {}\n"
+         "Should install scikit-learn to make some hardware-related"
+         " functionalities work").format(e))
+
 
 from aw_nas.hardware.base import (BaseHardwareObjectiveModel,
                                   MixinProfilingSearchSpace, Preprocessor)
