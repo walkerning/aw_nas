@@ -3,6 +3,7 @@
 import logging
 import os
 import pickle
+import re
 import sys
 import shutil
 import subprocess
@@ -278,49 +279,50 @@ class DPUCompiler(BaseHardwareCompiler):
 
         return proto, caffemodel, prims_to_caffe_name
 
-    def hwobj_net_to_primitive(
+    def parse_file(
         self,
-        prof_result_dir,
+        prof_result_file,
         prof_prim_file,
         prim_to_ops,
         perf_fn=None,
-        perf_types=("latency",),
+        perf_names=("latency",),
     ):
         # prof_result consists of all basic operators ,like conv_bn_relu, pooling and concat
         """
-        prof_result_dir: consist of some measurement result files that repeat measuring many times for a single model
+        prof_result_dir: the measurement result file
         prof_prim_file: all primitives that need to be profiled.
         prim_to_op: primitive(tuple) to the names of caffe layers
         """
 
         # parse result file
+        profiled_yaml = {"overall_{}".format(k): 0. for k in perf_names}
         if perf_fn is None:
             perf_fn = lambda split_line: (
                 split_line[0],
                 {"latency": float(split_line[3])},
             )
         name_to_perf_dict = {}
-        Perf = namedtuple("Perf", perf_types)
-        for root, dirs, files in os.walk(prof_result_dir):
-            for file in files:
-                if file.startswith("."):
+        Perf = namedtuple("Perf", perf_names)
+        with open(prof_result_file, "r") as fl:
+            fl_lines = fl.readlines()
+            for line in fl_lines[3:-3]:
+                if "Total Time" in line:
+                    profiled_yaml["overall_latency"] = int(re.findall(r"(\d+)", a[-5])[0])
                     continue
-                with open(os.path.join(root, file), "r") as fl:
-                    fl_lines = fl.readlines()
-                    for line in fl_lines[3:-3]:
-                        split_line = [a for a in line.split(" ") if a != ""]
-                        if len(split_line) > 4:
-                            name, performance = perf_fn(split_line)
-                            if not name.startswith("NodeName"):
-                                if name not in name_to_perf_dict:
-                                    name_to_perf_dict[name] = Perf([], [])
-                                for perf in perf_types:
-                                    getattr(name_to_perf_dict[name], perf).append(
-                                        performance[perf]
+                split_line = re.split(r"\s+", line)
+                if len(split_line) > 4:
+                    name, performance = perf_fn(split_line)
+                    if not name.startswith("NodeName"):
+                        if name not in name_to_perf_dict:
+                            name_to_perf_dict[name] = Perf([], [])
+                        for perf in perf_names:
+                            getattr(name_to_perf_dict[name], perf).append(
+                                performance[perf]
                                     )
+                
         name_to_perf_dict = {
             k: Perf(
-                *[sum(getattr(v, perf)) / len(getattr(v, perf)) for perf in perf_types]
+                *[sum(getattr(v, perf)) / len(getattr(v, perf)) for perf in perf_names]
             )
             for k, v in name_to_perf_dict.items()
         }
@@ -339,7 +341,7 @@ class DPUCompiler(BaseHardwareCompiler):
             if len(set.intersection(names, name_to_perf_dict)) == 0:
                 self.logger.debug("prims {} is not measured.".format(prim))
                 continue
-            for perf in perf_types:
+            for perf in perf_names:
                 prim[perf] = sum(
                     [
                         getattr(name_to_perf_dict[name], perf)
@@ -348,4 +350,5 @@ class DPUCompiler(BaseHardwareCompiler):
                     ]
                 )
             nets_prim_to_perf.append(prim)
-        return nets_prim_to_perf
+        profiled_yaml["primitives"] = nets_prim_to_perf
+        return profiled_yaml

@@ -59,11 +59,10 @@ def main():
     "-n",
     "--num_sample",
     type=int,
-    help=
-    ("Random sample networks from search space if this value is specified, "
-     "otherwise traverse the whole search space to find all non-duplicated "
-     "primitives and then assemble them."
-     ))
+    help=(
+        "Random sample networks from search space if this value is specified, "
+        "otherwise traverse the whole search space to find all non-duplicated "
+        "primitives and then assemble them."))
 def genprof(cfg_file, hwobj_cfg_file, result_dir, compile_hardware,
             num_sample):
     with open(cfg_file, "r") as ss_cfg_f:
@@ -94,7 +93,8 @@ def genprof(cfg_file, hwobj_cfg_file, result_dir, compile_hardware,
     if num_sample:
         prof_net_cfgs = sample_networks(
             ss,
-            base_cfg_template=lat_cfg["profiling_net_cfg"]["base_cfg_template"],
+            base_cfg_template=lat_cfg["profiling_net_cfg"]
+            ["base_cfg_template"],
             num_sample=num_sample,
             **lat_cfg["profiling_primitive_cfg"])
     else:
@@ -148,24 +148,40 @@ def genprof(cfg_file, hwobj_cfg_file, result_dir, compile_hardware,
 @click.argument("prof_result_dir", required=True, type=str)
 @click.argument("prof_prim_file", required=True, type=str)
 @click.argument("prim_to_ops_file", required=True, type=str)
-@click.argument("--hwobj-type", default="latency")
-@click.option("--result-file",
+@click.option("--hwobj-type", default="latency")
+@click.option("--result-dir",
               required=True,
-              help="Save the raw hwobj of profiling primitives to RESULT_FILE."
-              )
-def net2primitive(hwobj_cfg_file, prof_result_dir, prof_prim_file,
-                  prim_to_ops_file, hwobj_type, result_file):
+              help="Save the raw hwobj of profiling primitives to RESULT_DIR.")
+def parse(hwobj_cfg_file, prof_result_dir, prof_prim_file, prim_to_ops_file,
+          hwobj_type, result_dir):
     """
     Hardware specific conversion, parse the latencies of the profiling networks
-    into the latencies of the primitives.
+    into the uniform format.
 
     -- prof_result_dir:
         -- net1
-            -- latency_file1
-            -- latency_file2
+            -- latency_file_1.txt
+            -- latency_file_2.txt
             -- ...
         -- net2
         -- ...
+
+    -- result-dir:
+        -- net1
+            -- latency_file_1.yaml
+            -- latency_file_2.yaml
+            -- ...
+
+    The format of latency_file.yaml: 
+        overall_latency: FLOAT
+        block_sum_latency: FLOAT
+        primitives: 
+            - performances: 
+                latency: FLOAT 
+              C: INT
+              C_out: INT
+              *OTHER_PRIM_ARGS: ...
+            - ...
     """
 
     with open(hwobj_cfg_file, "r") as lat_cfg_f:
@@ -180,14 +196,18 @@ def net2primitive(hwobj_cfg_file, prof_result_dir, prof_prim_file,
     with open(prim_to_ops_file, "rb") as r_f:
         prim_to_ops = pickle.load(r_f)
     # meta info: prim_to_ops is saved when generate profiling final-yaml folder for each net
-    prim_latencies = []
     for _dir in os.listdir(prof_result_dir):
-        if os.path.isdir(_dir):
-            prim_latencies.append(
-                hw_compiler.hwobj_net_to_primitive(_dir, prof_prim_file,
-                                                   prim_to_ops))
-    with open(result_file, "w") as w_f:
-        yaml.dump(prim_latencies, w_f)
+        cur_dir = os.path.join(prof_result_dir, _dir)
+        if os.path.isdir(cur_dir):
+            parsed_dir = os.path.join(result_dir, _dir)
+            os.makedirs(parsed_dir, exist_ok=True)
+            for i, _file in enumerate(os.listdir(cur_dir)):
+                perf_yaml = hw_compiler.parse_file(
+                    os.path.join(cur_dir, _file), prof_prim_file, prim_to_ops)
+                if perf_yaml:
+                    with open(os.path.join(parsed_dir, i + ".yaml"),
+                              "w") as fw:
+                        yaml.safe_dump(perf_yaml, fw)
 
 
 @main.command(help="Parse primitive statistics to generate the hwobj model"
@@ -198,8 +218,7 @@ def net2primitive(hwobj_cfg_file, prof_result_dir, prof_prim_file,
 @click.option("--result-file",
               required=True,
               help="Save the hwobj model to RESULT_DIR")
-def genmodel(cfg_file, hwobj_cfg_file, prof_prim_dir,
-             result_file):
+def genmodel(cfg_file, hwobj_cfg_file, prof_prim_dir, result_file):
     with open(cfg_file, "r") as ss_cfg_f:
         ss_cfg = yaml.load(ss_cfg_f)
     with open(hwobj_cfg_file, "r") as lat_cfg_f:
@@ -211,8 +230,7 @@ def genmodel(cfg_file, hwobj_cfg_file, prof_prim_dir,
            "search space must be a subclass of MixinProfilingsearchspace")
 
     hwobj_model = ss.parse_profiling_primitives(
-        lat_cfg["profiling_primitive_cfg"],
-        lat_cfg["hwobjmodel_type"],
+        lat_cfg["profiling_primitive_cfg"], lat_cfg["hwobjmodel_type"],
         lat_cfg["hwobjmodel_cfg"])
     prof_nets = iterate(prof_prim_dir)
     hwobj_model.train(prof_nets)
