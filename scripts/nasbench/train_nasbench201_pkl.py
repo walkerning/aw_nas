@@ -41,7 +41,7 @@ class NasBench201Dataset(Dataset):
             data = (data[0], data[1] / self.div, data[2] / self.div)
         return data
 
-def train_listwise(train_data, model, epoch, args):
+def train_listwise(train_data, model, epoch, args, arch_network_type):
     objs = utils.AverageMeter()
     model.train()
     num_data = len(train_data)
@@ -79,13 +79,14 @@ def train_listwise(train_data, model, epoch, args):
             if step % update_batch_n == 0:
                 model.optimizer.step()
                 model.optimizer.zero_grad()
-        objs.update(loss, args.batch_size)
+        if arch_network_type != "random_forest":
+            objs.update(loss, args.batch_size)
         if step % args.report_freq == 0:
            logging.info("train {:03d} [{:03d}/{:03d}] {:.4f}".format(
                 epoch, step, num_batches, objs.avg))
     return objs.avg
 
-def train(train_loader, model, epoch, args):
+def train(train_loader, model, epoch, args, arch_network_type):
     objs = utils.AverageMeter()
     n_diff_pairs_meter = utils.AverageMeter()
     model.train()
@@ -171,7 +172,8 @@ def train(train_loader, model, epoch, args):
             objs.update(loss, n_diff_pairs)
         else:
             loss = model.update_predict(archs, accs)
-            objs.update(loss, n)
+            if arch_network_type != "random_forest":
+                objs.update(loss, n)
         if step % args.report_freq == 0:
             n_pair_per_batch = (args.batch_size * (args.batch_size - 1)) // 2
             logging.info("train {:03d} [{:03d}/{:03d}] {:.4f}; {}".format(
@@ -293,6 +295,8 @@ def main(argv):
                         help=("for pairwise compartor, the evaluation is slow,"
                               " only evaluate in the final epochs"))
     parser.add_argument("--save-predict", default=None, help="Save the predict scores")
+    parser.add_argument("--train-pkl", default="nasbench201_05.pkl", help="Training Datasets pickle")
+    parser.add_argument("--valid-pkl", default="nasbench201_05_valid.pkl", help="Evaluate Datasets pickle")
     args = parser.parse_args(argv)
 
     setproctitle.setproctitle("python train_nasbench201_pkl.py config: {}; train_dir: {}; cwd: {}"\
@@ -337,9 +341,9 @@ def main(argv):
 
     search_space = get_search_space("nasbench-201", load_nasbench=False)
     logging.info("Load pkl cache from nasbench201.pkl and nasbench201_valid.pkl")
-    with open("nasbench201_05.pkl", "rb") as rf:
+    with open(args.train_pkl, "rb") as rf:
         train_data = pickle.load(rf)
-    with open("nasbench201_05_valid.pkl", "rb") as rf:
+    with open(args.valid_pkl, "rb") as rf:
         valid_data = pickle.load(rf)
 
     with open(backup_cfg_file, "r") as cfg_f:
@@ -412,9 +416,9 @@ def main(argv):
     for i_epoch in range(1, args.epochs + 1):
         model.on_epoch_start(i_epoch)
         if getattr(args, "use_listwise", False):
-            avg_loss = train_listwise(train_data, model, i_epoch, args)
+            avg_loss = train_listwise(train_data, model, i_epoch, args, arch_network_type)
         else:
-            avg_loss = train(train_loader, model, i_epoch, args)
+            avg_loss = train(train_loader, model, i_epoch, args, arch_network_type)
         logging.info("Train: Epoch {:3d}: train loss {:.4f}".format(i_epoch, avg_loss))
         if args.eval_only_last is None or (args.epochs - i_epoch < args.eval_only_last):
             corr, _ = valid(val_loader, model, args)

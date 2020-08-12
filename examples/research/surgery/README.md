@@ -32,3 +32,12 @@ controller_cfg:
 
 ### Run predictor training on NAS-Bench-201
 
+`cd scripts/nasbench`
+
+`python train_nasbench201_pkl.py [cfg_file] --train-pkl [train data] --valid-pkl [valid data] --seed [random seed] --train-dir [results path] --save-every 50`
+
+You can find all the datasets and configurations in the directory `pred_final` from [this url](https://cloud.tsinghua.edu.cn/d/97a8f29e58cc4e87a3d3/). To use regression losses instead of ranking losses, change `compare: true` to be `compare: false` in `.yaml` configuration files.
+
+Here give an example to train a GATES predictor with 78 architectures, and evaluate the ranking correlation in the whole NasBench-201 search space (15625 archs):
+
+`python train_nasbench201_pkl.py pred_final/gates/config.yaml --train-pkl pred_final/nasbench201_78_1.pkl --valid-pkl pred_final/nasbench201_all.pkl --seed 2020 --train-dir results/gates/`
