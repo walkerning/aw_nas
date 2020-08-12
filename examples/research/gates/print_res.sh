@@ -1,0 +1,1 @@
+for file in `find $1 -name train.log`; do echo -n "$file: "; for i in 196 197 198 199 200; do grep -E "Epoch[ ]+$i: kendall tau" $file; done | awk '{sum += $NF} END {print NR" "sum/NR}'; done | sort -n -k3
