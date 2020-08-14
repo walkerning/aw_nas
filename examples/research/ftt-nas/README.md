@@ -1,9 +1,14 @@
-> @article{ning2020ftt,
->   title={FTT-NAS: Discovering Fault-Tolerant Neural Architecture},
->   author={Ning, Xuefei and Ge, Guangjun and Li, Wenshuo and Zhu, Zhenhua and Zheng, Yin and Chen, Xiaoming and Gao, Zhen and Wang, Yu and Yang, Huazhong},
->   journal={arXiv preprint arXiv:2003.10375},
->   year={2020}
-> }
+## FTT-NAS: Discovering Fault-Tolerant Neural Architecture
+
+If you find this work/repo helpful, please cite:
+```
+@article{ning2020ftt,
+   title={FTT-NAS: Discovering Fault-Tolerant Neural Architecture},
+   author={Ning, Xuefei and Ge, Guangjun and Li, Wenshuo and Zhu, Zhenhua and Zheng, Yin and Chen, Xiaoming and Gao, Zhen and Wang, Yu and Yang, Huazhong},
+   journal={arXiv preprint arXiv:2003.10375},
+   year={2020}
+}
+```
 
 #### feature fault model (MiBB)
 

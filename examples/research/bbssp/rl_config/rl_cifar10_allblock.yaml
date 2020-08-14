@@ -1,0 +1,196 @@
+rollout_type: discrete
+## ---- Component search_space ----
+# ---- Type cnn ----
+search_space_type: cnn
+search_space_cfg:
+   # Schedulable attributes: 
+   num_cell_groups: 5
+   num_layers: 5
+   cell_layout: [0, 1, 2, 3, 4]
+   reduce_cell_groups: [0, 1, 2, 3, 4]
+   num_steps: 1
+   num_init_nodes: 1
+   num_node_inputs: 1
+   shared_primitives:
+   - Resblock_0
+   - Resblock_1
+   - Resblock_2
+   - Resblock_3
+   - Resblock_4
+   - Resblock_5
+   - Resblock_6
+   - Resblock_7
+   - Resblock_8
+   - Mobileblock_0
+   - Mobileblock_1
+   - Mobileblock_2
+   - Mobileblock_3
+   - Mobileblock_4
+   - Mobileblock_5
+   - Mobileblock_6
+   - Mobileblock_7
+   - Mobileblock_8
+   - VGGblock_0
+   - VGGblock_1
+   - VGGblock_2
+   - VGGblock_3
+   - VGGblock_4
+   - VGGblock_5
+   - VGGblock_6
+   - VGGblock_7
+   - VGGblock_8
+   - VGGblock_9
+   - VGGblock_10
+   - VGGblock_11
+   - VGGblock_12
+   cell_shared_primitives: null
+## ---- Component dataset ----
+# ---- Type cifar10 ----
+dataset_type: cifar10
+dataset_cfg:
+  # Schedulable attributes: 
+  cutout: null
+# ---- End Type cifar10 ----
+## ---- End Component dataset ----
+
+## ---- Component controller ----
+# ---- Type rl ----
+controller_type: rl
+controller_cfg:
+  # Schedulable attributes: 
+  rollout_type: discrete
+  mode: eval
+  independent_cell_group: false
+  # ---- Type embed_lstm ----
+  controller_network_type: embed_lstm
+  controller_network_cfg:
+    # Schedulable attributes: softmax_temperature, force_uniform
+    num_lstm_layers: 1
+    controller_hid: 64
+    attention_hid: 64
+    softmax_temperature: null
+    tanh_constant: 1.1
+    op_tanh_reduce: 2.5
+    force_uniform: false
+    schedule_cfg: null
+  # ---- End Type embed_lstm ----
+  ## ---- End Component controller_network ----
+
+  # ---- Type pg ----
+  rl_agent_type: pg
+  rl_agent_cfg:
+    # Schedulable attributes: 
+    alpha: 0.999
+    gamma: 1.0
+    # entropy_coeff: 0.01
+    entropy_coeff: 0.
+    max_grad_norm: 5.
+    batch_update: true
+  # ---- End Type pg ----
+  ## ---- End Component rl_agent ----
+# ---- End Type rl ----
+## ---- End Component controller ----
+
+## ---- Component evaluator ----
+# ---- Type mepa ----
+evaluator_type: mepa
+evaluator_cfg:
+  # Schedulable attributes: controller_surrogate_steps, mepa_surrogate_steps, mepa_samples
+  rollout_type: discrete
+  batch_size: 256
+  controller_surrogate_steps: 0
+  mepa_surrogate_steps: 0
+  mepa_optimizer:
+    lr: 0.01
+    momentum: 0.9
+    type: SGD
+    weight_decay: 0.0001
+  mepa_scheduler:
+    type: CosineDecayLR
+    T_max: 50
+    alpha: 1.e-4
+    warmup_step: 1.
+    t_mul: 1.5
+    lr_mul: 0.98
+  surrogate_optimizer: null
+  surrogate_scheduler: null
+  schedule_every_batch: false
+  mepa_samples: 1
+  rollout_batch_size: 1
+  data_portion:
+  - 0.0
+  - 0.8
+  - 0.2
+  mepa_as_surrogate: false
+  bptt_steps: 35
+  schedule_cfg: null
+# ---- End Type mepa ----
+## ---- End Component evaluator ----
+
+## ---- End Component evaluator ----
+
+## ---- Component weights_manager ----
+# ---- Type supernet ----
+weights_manager_type: supernet
+weights_manager_cfg:
+  # Schedulable attributes: 
+  rollout_type: discrete
+  num_classes: 10
+  init_channels: 64
+  stem_multiplier: 1
+  max_grad_norm: null
+  dropout_rate: 0.0
+  use_stem: false
+  cell_use_preprocess: false
+  cell_group_kwargs:
+  - C_in: 3
+    C_out: 16
+  - C_in: 16
+    C_out: 32
+  - C_in: 32
+    C_out: 64
+  - C_in: 64
+    C_out: 128
+  - C_in: 128
+    C_out: 256
+  candidate_virtual_parameter_only: true
+  candidate_member_mask: true
+  candidate_cache_named_members: true
+## ---- Component objective ----
+
+# ---- Type latency ----
+objective_type: latency
+objective_cfg:
+  # Schedulable attributes: 
+  alpha: 0.2
+  beta: 0.6
+  lamb: 0.1
+  latency_file: ./rl_config/speed_cifar_allblock.txt
+# ---- End Type latency ----
+## ---- End Component objective ----
+
+## ---- Component trainer ----
+# ---- Type simple ----
+trainer_type: simple
+trainer_cfg:
+  # Schedulable attributes: controller_samples, derive_samples
+  rollout_type: discrete
+  epochs: 200
+  test_every: 10
+  controller_optimizer:
+    lr: 0.001
+    type: Adam
+    betas: [0.9, 0.999]
+  rollout_batch_size: 1
+  controller_scheduler: null
+  controller_samples: 1
+  derive_samples: 10
+  evaluator_steps: null
+  controller_steps: null
+  controller_train_every: 1
+  controller_train_begin: 10
+  interleave_controller_every: null
+  schedule_cfg: null
+# ---- End Type simple ----
+## ---- End Component trainer ----
+
