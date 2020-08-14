@@ -35,8 +35,8 @@ class SSDObjective(BaseObjective):
                  clip=True,
                  center_variance=0.1,
                  size_variance=0.2,
-                 nms_threshold=0.5):
-        super(SSDObjective, self).__init__(search_space)
+                 nms_threshold=0.5, schedule_cfg=None):
+        super(SSDObjective, self).__init__(search_space, schedule_cfg=schedule_cfg)
         self.num_classes = num_classes
 
         self.priors = PriorBox(min_dim, aspect_ratios, feature_maps, scales,
@@ -181,9 +181,12 @@ class TargetTransform(object):
         if len(boxes) == 0:
             conf_t[0, :] = 0
             return conf_t.squeeze(0), loc_t.squeeze(0)
+        if not isinstance(boxes, torch.Tensor):
+            boxes = torch.tensor(boxes)
+            labels = torch.tensor(labels)
         box_utils.match(self.threshold,
-                        torch.tensor(boxes).float(), priors, self.variance,
-                        torch.tensor(labels), loc_t, conf_t, 0)
+                        boxes.float(), priors, self.variance,
+                        labels, loc_t, conf_t, 0)
         loc_t = loc_t.squeeze(0)
         conf_t = conf_t.squeeze(0)
         return conf_t, loc_t
@@ -263,7 +266,7 @@ class MultiBoxLoss(nn.Module):
         pos_idx = pos.unsqueeze(pos.dim()).expand_as(loc_data)
         loc_p = loc_data[pos_idx].view(-1, 4)
         loc_t = loc_t[pos_idx].view(-1, 4)
-        loss_l = F.smooth_l1_loss(loc_p, loc_t, size_average=False)
+        loss_l = F.smooth_l1_loss(loc_p, loc_t, reduction="sum")
 
         # Compute max conf across batch for hard negative mining
         batch_conf = conf_data.view(-1, self.num_classes)
@@ -287,7 +290,7 @@ class MultiBoxLoss(nn.Module):
         conf_p = conf_data[(pos_idx + neg_idx).gt(0)].view(
             -1, self.num_classes)
         targets_weighted = conf_t[(pos + neg).gt(0)]
-        loss_c = F.cross_entropy(conf_p, targets_weighted, size_average=False)
+        loss_c = F.cross_entropy(conf_p, targets_weighted, reduction="sum")
 
         # Sum of losses: L(x,c,l,g) = (Lconf(x, c) + αLloc(x,l,g)) / N
 

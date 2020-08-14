@@ -121,6 +121,9 @@ class MultiprocessDispatcher(BaseDispatcher):
         # to force shutdown the workers
 
         # redirect logging output to log file
+        import os
+        os.environ["AWNAS_LOG_LEVEL"] = "error" # set worker log level to ERROR
+
         worker_pid = os.getpid()
         log_file = os.path.join(ckpt_dir, "worker_pid{}_gpu{}.log".format(worker_pid, gpu_id))
         [logging.root.removeHandler(h) for h in logging.root.handlers[:]]
@@ -147,7 +150,7 @@ class MultiprocessDispatcher(BaseDispatcher):
 
     def init(self, evaluator, ckpt_dir):
         self.ckpt_dir = os.path.abspath(ckpt_dir)
-        self.logger.info("checkpoint dir: ", self.ckpt_dir)
+        self.logger.info("checkpoint dir: %s", self.ckpt_dir)
         self.evaluator = evaluator
         self.stop_event = multiprocessing.Event()
         self.req_queue = multiprocessing.Queue()

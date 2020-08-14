@@ -14,6 +14,14 @@ from aw_nas.dataset.transform import *
 from aw_nas.utils import logger
 from aw_nas.utils.box_utils import *
 
+def collate_fn(batch):
+    inputs = [b[0] for b in batch]
+    targets = [b[1] for b in batch]
+    inputs = torch.stack(inputs, 0)
+    return inputs, targets
+
+
+
 CLASSES = ('__background__', 'aeroplane', 'bicycle', 'bird', 'boat', 'bottle',
            'bus', 'car', 'cat', 'chair', 'cow', 'diningtable', 'dog', 'horse',
            'motorbike', 'person', 'pottedplant', 'sheep', 'sofa', 'train',
@@ -334,12 +342,6 @@ class VOCDataset(object):
             class_name: i
             for i, class_name in enumerate(self.class_names)
         }
-
-        def collate_fn(batch):
-            inputs = [b[0] for b in batch]
-            targets = [b[1] for b in batch]
-            inputs = torch.stack(inputs, 0)
-            return inputs, targets
 
         self.kwargs = {"collate_fn": collate_fn}
 

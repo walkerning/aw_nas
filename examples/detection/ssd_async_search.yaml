@@ -1,0 +1,128 @@
+rollout_type: ofa
+
+## ---- Component search_space ----
+# ---- Type ofa ----
+search_space_type: ofa
+search_space_cfg:
+  num_cell_groups: [1, 4, 4, 4, 4, 4]
+  expansions: [1, 6, 6, 6, 6, 6]
+  schedule_cfg:
+    kernel_choice:
+        type: value
+        boundary: [1, 81]
+        value: [[7, 5], [7, 5, 3]]
+    width_choice:
+      type: value
+      boundary: [1, 161, 241]
+      value: [[6], [6, 4], [6, 4, 3]]
+    depth_choice:
+      type: value
+      boundary: [1, 321, 401]
+      value: [[4], [4, 3], [4, 3, 2]]
+# ---- End Type ofa ----
+## ---- End Component search_space ----
+
+## ---- Component dataset ----
+dataset_type: voc
+dataset_cfg:
+  load_train_only: false
+  random_choose: false
+  random_seed: 123
+  train_crop_size: 300
+  test_crop_size: 300
+  image_mean: [124, 116, 103]
+  image_std: [1, 1, 1]
+## ---- End Component dataset ----
+
+## ---- Component controller ----
+# ---- Type rl ----
+controller_type: ofa-evo
+controller_cfg:
+  # Schedulable attributes:
+  rollout_type: ofa
+  mode: train
+# ---- End Type rl ----
+## ---- End Component controller ----
+
+## ---- Component evaluator ----
+# ---- Type mepa ----
+evaluator_type: mepa
+evaluator_cfg:
+  # Schedulable attributes: controller_surrogate_steps, mepa_surrogate_steps, mepa_samples
+  load_optimizer: false
+  load_scheduler: false
+  rollout_type: ofa
+  batch_size: 10
+  controller_surrogate_steps: 0
+  evaluate_with_whole_queue: True
+  # derive_surrogate_steps: 0
+  mepa_surrogate_steps: 0
+  mepa_optimizer:
+    lr: 0.01
+    momentum: 0.9
+    type: SGD
+    weight_decay: 0.0001
+  mepa_scheduler:
+    eta_min: 0.000001
+    T_0: 80
+    type: CosineAnnealingWarmRestarts
+  surrogate_optimizer: null
+  surrogate_scheduler: null
+  mepa_samples: 1
+  data_portion:
+  - 0.0
+  - 0.01 # train evaluator weights
+  - [test, 1.] # for train controller
+  mepa_as_surrogate: false
+  bptt_steps: 35
+  schedule_cfg: null
+  workers_per_queue: 1
+# ---- End Type mepa ----
+## ---- End Component evaluator ----
+
+## ---- Component weights_manager ----
+weights_manager_type: det_supernet
+weights_manager_cfg:
+  # Schedulable attributes: 
+  rollout_type: ofa
+  search_backbone_type: ofa_supernet
+  search_backbone_cfg:
+    backbone_type: mbv3_backbone
+    backbone_cfg:
+      blocks: [1, 4, 4, 4, 4, 4]
+      strides: [1, 2, 2, 2, 1, 2]
+      expansions: [1, 6, 6, 6, 6, 6]
+      acts: ["relu", "relu", "relu", "h_swish", "h_swish", "h_swish"]
+      layer_channels: [16, 16, 24, 40, 80, 112, 160, 960, 1280]
+      mult_ratio: 1.
+      kernel_sizes: [3, 5, 7]
+      block_type: mbv3_block
+  head_type: ssd_head_final_model
+  head_cfg:
+    expansions: [0.5, 0.5, 0.5, 0.5]
+    channels: [512, 256, 256, 128]
+    aspect_ratios: [[2, 3], [2, 3], [2, 3], [2, 3], [2], [2]]
+  num_classes: 21
+  feature_levels: [4, 5]
+## ---- End Component weights_manager ----
+
+objective_type: ssd_detection
+objective_cfg:
+  # Schedulable attributes:
+  num_classes: 21
+  nms_threshold: 0.5
+  clip: true
+  aspect_ratios: [[2, 3], [2, 3], [2, 3], [2, 3], [2], [2]]
+#   latency_file: latency_block.txt
+
+## ---- Component trainer ----
+trainer_type: async
+trainer_cfg:
+  # Schedulable attributes: controller_samples, derive_samples
+  rollout_type: ofa
+  steps: 16
+  num_epochs: 1000
+  parallelism: 4
+  dispatcher_cfg:
+    gpu_ids: [0, 1, 2, 3]
+## ---- End Component trainer ----
