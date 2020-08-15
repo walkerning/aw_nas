@@ -23,15 +23,13 @@ search_space_cfg:
 ## ---- End Component search_space ----
 
 ## ---- Component dataset ----
-dataset_type: voc
+dataset_type: coco
 dataset_cfg:
   load_train_only: false
   random_choose: false
   random_seed: 123
   train_crop_size: 300
   test_crop_size: 300
-  image_mean: [124, 116, 103]
-  image_std: [1, 1, 1]
 ## ---- End Component dataset ----
 
 ## ---- Component controller ----
@@ -102,18 +100,38 @@ weights_manager_cfg:
     expansions: [0.5, 0.5, 0.5, 0.5]
     channels: [512, 256, 256, 128]
     aspect_ratios: [[2, 3], [2, 3], [2, 3], [2, 3], [2], [2]]
-  num_classes: 21
+  num_classes: 90
   feature_levels: [4, 5]
 ## ---- End Component weights_manager ----
 
-objective_type: ssd_detection
+objective_type: detection
 objective_cfg:
   # Schedulable attributes:
-  num_classes: 21
-  nms_threshold: 0.5
-  clip: true
-  aspect_ratios: [[2, 3], [2, 3], [2, 3], [2, 3], [2], [2]]
-#   latency_file: latency_block.txt
+  num_classes: 90
+  anchors_generator_type: ssd_anchors_generator
+  anchors_generator_cfg:
+    min_dim: 300
+    aspect_ratios: [[2, 3], [2, 3], [2, 3], [2, 3], [2], [2]]
+    feature_maps: [19, 10, 5, 3, 2, 1]
+    scales: [45, 90, 135, 180, 225, 270, 315]
+    steps: [16, 32, 64, 100, 150, 300]
+    clip: true
+  matcher_type: iou_matcher
+  matcher_cfg:
+    matched_threshold: 0.5
+    unmatched_threshold: 0.5
+    variance: [0.1, 0.2]
+  loss_type: multibox_loss
+  loss_cfg:
+    neg_mining: true
+    neg_pos: 3
+  post_processing_type: ssd_post_processing
+  post_processing_cfg:
+    top_k: 200
+    confidence_threshold: 0.01
+    nms_threshold: 0.5
+    variance: [0.1, 0.2]
+    apply_prob_type: "softmax"
 
 ## ---- Component trainer ----
 trainer_type: async

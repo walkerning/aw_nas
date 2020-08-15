@@ -80,7 +80,6 @@ def _crop(image, boxes, labels):
 
 
 def _distort(image):
-    image *= 255
     def _convert(image, alpha=1, beta=0):
         tmp = image.astype(float) * alpha + beta
         tmp[tmp < 0] = 0
@@ -105,7 +104,7 @@ def _distort(image):
     if random.randrange(2):
         _convert(image[:, :, 1], alpha=random.uniform(0.5, 1.5))
 
-    image = cv2.cvtColor(image, cv2.COLOR_HSV2RGB) / 255
+    image = cv2.cvtColor(image, cv2.COLOR_HSV2RGB)
 
     return image
 
@@ -182,12 +181,10 @@ def _elastic(image, p, alpha=None, sigma=None, random_state=None):
     return cv2.remap(image, x, y, interpolation=cv2.INTER_LINEAR, borderValue= 0, borderMode=cv2.BORDER_REFLECT)
 
 
-def preproc_for_test(image, insize, mean, std):
+def preproc_for_test(image, insize):
     interp_methods = [cv2.INTER_LINEAR, cv2.INTER_CUBIC, cv2.INTER_AREA, cv2.INTER_NEAREST, cv2.INTER_LANCZOS4]
     interp_method = interp_methods[random.randrange(5)]
     image = cv2.resize(image, (insize, insize), interpolation=interp_method)
-    image -= mean
-    image /= std
     return image.transpose(2, 0, 1)
 
 def draw_bbox(image, bbxs, color=(0, 255, 0)):
@@ -199,9 +196,7 @@ def draw_bbox(image, bbxs, color=(0, 255, 0)):
 
 
 class Preproc(object):
-    def __init__(self, resize, rgb_means, std, p, writer=None):
-        self.means = rgb_means
-        self.std = std
+    def __init__(self, resize, p, writer=None):
         self.resize = resize
         self.p = p
         self.writer = writer # writer used for tensorboard visualization
@@ -213,19 +208,19 @@ class Preproc(object):
             targets = np.zeros((1,5))
             targets[0] = image.shape[0]
             targets[0] = image.shape[1]
-            image = preproc_for_test(image, self.resize, self.means, self.std)
+            image = preproc_for_test(image, self.resize)
             return image, targets[:, :-1], targets[:, -1]
 
         if len(boxes) == 0:
             targets = np.zeros((1,5))
-            image = preproc_for_test(image, self.resize, self.means, self.std) # some ground truth in coco do not have bounding box! weird!
+            image = preproc_for_test(image, self.resize) # some ground truth in coco do not have bounding box! weird!
             return image, targets[:, :-1], targets[:, -1]
         if self.p == -1: # eval
             height, width, _ = image.shape
             boxes[:, 0::2] /= width
             boxes[:, 1::2] /= height
             boxes *= self.resize
-            image = preproc_for_test(image, self.resize, self.means, self.std)
+            image = preproc_for_test(image, self.resize)
             return image, boxes, labels
 
         targets = np.concatenate([boxes, labels.reshape(-1, 1)], 1)
@@ -253,7 +248,7 @@ class Preproc(object):
             image_show = draw_bbox(image_t, boxes)
             self.writer.add_image('preprocess/distort_image', image_show, self.epoch)
 
-        image_t, boxes = _expand(image_t, boxes, self.means, self.p)
+        image_t, boxes = _expand(image_t, boxes, 0, self.p)
         if self.writer is not None:
             image_show = draw_bbox(image_t, boxes)
             self.writer.add_image('preprocess/expand_image', image_show, self.epoch)
@@ -267,7 +262,7 @@ class Preproc(object):
             self.release_writer()
 
         height, width, _ = image_t.shape
-        image_t = preproc_for_test(image_t, self.resize, self.means, self.std)
+        image_t = preproc_for_test(image_t, self.resize)
         boxes = boxes.copy()
         boxes[:, 0::2] /= width
         boxes[:, 1::2] /= height
@@ -279,7 +274,7 @@ class Preproc(object):
         boxes_t *= self.resize
 
         if len(boxes_t)==0:
-            image = preproc_for_test(image_o, self.resize, self.means, self.std)
+            image = preproc_for_test(image_o, self.resize)
             return image, boxes_o, labels_o
 
         return image_t, boxes_t, labels_t

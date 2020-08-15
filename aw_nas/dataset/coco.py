@@ -245,7 +245,6 @@ class COCODetection(data.Dataset):
 
         img = cv2.imread(img_path, cv2.IMREAD_COLOR)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).astype(np.float32)
-        img /= 255.
         height, width, _ = img.shape
 
         if self.transform is not None:
@@ -378,15 +377,15 @@ class COCODetection(data.Dataset):
 
     def _write_coco_results_file(self, all_boxes, res_file):
         results = []
-        for cls_ind, cls in enumerate(self._classes):
-            if cls == "__background__":
+        for cls_ind, _cls in enumerate(self._classes):
+            if _cls == "__background__":
                 continue
             print("Collecting {} results ({:d}/{:d})".format(
-                cls, cls_ind, self.num_classes))
-            coco_cat_id = self._class_to_coco_cat_id[cls]
+                _cls, cls_ind, self.num_classes))
+            coco_cat_id = self._class_to_coco_cat_id[_cls]
             # coco_cat_id: 1~90
             results.extend(
-                self._coco_results_one_category(all_boxes[coco_cat_id],
+                self._coco_results_one_category(all_boxes[coco_cat_id - 1],
                                                 coco_cat_id))
         print("Writing results json to {}".format(res_file))
         with open(res_file, "w") as fid:
@@ -418,6 +417,8 @@ class COCODataset(BaseDataset):
                  test_crop_size=300,
                  image_mean=[0.485, 0.456, 0.406],
                  image_std=[0.229, 0.224, 0.225],
+                 image_norm_factor=255.,
+                 image_bias=0.,
                  iou_threshold=0.5,
                  keep_difficult=False,
                  max_images=None,
@@ -431,9 +432,11 @@ class COCODataset(BaseDataset):
 
         train_transform = TrainAugmentation(train_crop_size,
                                             np.array(image_mean),
-                                            np.array(image_std))
+                                            np.array(image_std),
+                                            image_norm_factor, image_bias)
         test_transform = TestTransform(test_crop_size, np.array(image_mean),
-                                       np.array(image_std))
+                                       np.array(image_std), image_norm_factor,
+                                       image_bias)
 
         self.datasets = {}
         self.datasets["train"] = COCODetection(self.train_data_dir,

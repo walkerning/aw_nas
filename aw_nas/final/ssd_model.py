@@ -77,12 +77,12 @@ class SSDHeadFinalModel(FinalModel):
         extras = Extras(expansions, head_channels[1:])
         multi_ratio = [len(r) * 2 + 2 for r in aspect_ratios]
         regression_headers = Classifier(4, head_channels, multi_ratio)
-        classification_headers = Classifier(num_classes, head_channels, multi_ratio)
+        classification_headers = Classifier(num_classes + 1, head_channels, multi_ratio)
 
         expect(None not in [extras, regression_headers, classification_headers],
                "Extras, regression_headers and classification_headers must be provided, "
                "got None instead.", ConfigException)
-        head = HeadModel(device, num_classes=num_classes,
+        head = HeadModel(device, num_classes=num_classes + 1,
                          extras=extras, regression_headers=regression_headers,
                          classification_headers=classification_headers, norm=norm)
         if pretrained_path:

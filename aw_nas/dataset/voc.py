@@ -14,12 +14,12 @@ from aw_nas.dataset.transform import *
 from aw_nas.utils import logger
 from aw_nas.utils.box_utils import *
 
+
 def collate_fn(batch):
     inputs = [b[0] for b in batch]
     targets = [b[1] for b in batch]
     inputs = torch.stack(inputs, 0)
     return inputs, targets
-
 
 
 CLASSES = ('__background__', 'aeroplane', 'bicycle', 'bird', 'boat', 'bottle',
@@ -51,7 +51,14 @@ def parse_rec(filename):
 
 
 def write_voc_results_file(write_dir, all_boxes, dataset):
-    for cls_ind, cls_name in enumerate(dataset.class_names[1:], 1):
+    """
+    Args:
+        write_dir: where evaluate result to be written down
+        all_boxes: two-dimensional list, e.g. all_boxes[cls_idx][image_id], and cls_idx starts 
+                   from 0 to num_classes - 1 that not including the background.
+        dataset: dataset.
+    """
+    for cls_ind, cls_name in enumerate(dataset.class_names[1:]):
         logger.info('Writing {:s} VOC results file'.format(cls_name))
         # filename = write_dir + '/' + str(cls_name)
         filename = write_dir + '/' + 'comp4_det_test' + '_{:s}.txt'.format(
@@ -419,7 +426,6 @@ class VOCDataset(object):
         image_file = self._imgpath % image_id
         image = cv2.imread(str(image_file))
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB).astype(np.float)
-        image /= 255.
         return image
 
 
@@ -437,6 +443,8 @@ class VOC(BaseDataset):
                  test_crop_size=300,
                  image_mean=[0.485, 0.456, 0.406],
                  image_std=[0.229, 0.224, 0.225],
+                 image_norm_factor=255.,
+                 image_bias=0.,
                  iou_threshold=0.5,
                  keep_difficult=False,
                  relative_dir=None):
@@ -447,9 +455,11 @@ class VOC(BaseDataset):
 
         train_transform = TrainAugmentation(train_crop_size,
                                             np.array(image_mean),
-                                            np.array(image_std))
+                                            np.array(image_std),
+                                            image_norm_factor, image_bias)
         test_transform = TestTransform(test_crop_size, np.array(image_mean),
-                                       np.array(image_std))
+                                       np.array(image_std), image_norm_factor,
+                                       image_bias)
 
         self.datasets = {}
         self.datasets['train'] = VOCDataset(self.train_data_dir, train_sets,
