@@ -2,7 +2,7 @@
 import torch
 import torch.nn.functional as F
 
-from aw_nas.objective.base import Losses
+from aw_nas.objective.detection_utils.base import Losses
 from aw_nas.utils import box_utils
 
 __all__ = ["MultiBoxLoss"]

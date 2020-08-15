@@ -1,9 +1,10 @@
 import torch
 
-from aw_nas.objective.base import Matcher
+from aw_nas.objective.detection_utils.base import Matcher
 from aw_nas.utils import box_utils
 
 __all__ = ["IOUMatcher"]
+
 
 class IOUMatcher(Matcher):
     NAME = "iou_matcher"
@@ -11,7 +12,9 @@ class IOUMatcher(Matcher):
     def __init__(self,
                  matched_threshold,
                  unmatched_threshold,
-                 variance=(1., 1.)):
+                 variance=(1., 1.),
+                 schedule_cfg=None):
+        super(IOUMatcher, self).__init__(schedule_cfg)
         self.matched_threshold = matched_threshold
         self.unmatched_threshold = unmatched_threshold
         self.variance = variance

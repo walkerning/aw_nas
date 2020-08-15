@@ -3,7 +3,7 @@ from itertools import product
 
 import torch
 
-from aw_nas.objective.base import AnchorsGenerator
+from aw_nas.objective.detection_utils.base import AnchorsGenerator
 
 __all__ = ["SSDAnchorsGenerator"]
 

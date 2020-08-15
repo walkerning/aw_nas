@@ -1,25 +1,9 @@
 # -*- coding: utf-8 -*-
-
-from math import sqrt
-from itertools import product
-
 import torch
-import torch.nn.functional as F
-from torch import nn
-from torch.autograd import Variable
-import torchvision
-try:
-    from torchvision.ops import nms
-except ModuleNotFoundError:
-    from aw_nas.utils import log as _log
-    _log.logger.getChild("ssd").warn(
-        "Detection task functionalities cannot be used, update torchvision version to >=0.4.0. "
-        "current: %s", str(torchvision.__version__))
 
 from aw_nas.objective.base import (BaseObjective, Losses, AnchorsGenerator,
                                    Matcher, PostProcessing)
 from aw_nas.utils.torch_utils import accuracy
-from aw_nas.utils import box_utils
 
 
 class DetectionObjective(BaseObjective):
@@ -95,12 +79,10 @@ class DetectionObjective(BaseObjective):
         return ["mAP"]
 
     def get_acc(self, inputs, outputs, targets, cand_net):
-        conf_t, loc_t, shapes = self.batch_transform(inputs, outputs, targets)
-        """
-        target: [batch_size, anchor_num, 5], boxes + labels
-        """
+        conf_t, _, _ = self.batch_transform(inputs, outputs, targets)
+        # target: [batch_size, anchor_num, 5], boxes + labels
         keep = conf_t > 0
-        confidences, regressions = outputs
+        confidences, _ = outputs
         return accuracy(confidences[keep], conf_t[keep], topk=(1, 5))
 
     def get_mAP(self, inputs, outputs, annotations, cand_net):
@@ -133,6 +115,7 @@ class DetectionObjective(BaseObjective):
         return [acc[0].item()]
 
     def get_reward(self, inputs, outputs, targets, cand_net, final=False):
+        # TODO: to be implemented calculating mAP.
         return 0.
 
     def get_loss(self,
@@ -152,6 +135,6 @@ class DetectionObjective(BaseObjective):
         return sum(self._criterion(inputs, outputs, targets, cand_net))
 
     def _criterion(self, inputs, outputs, annotations, model):
-        conf_t, loc_t, shapes = self.batch_transform(inputs, outputs,
+        conf_t, loc_t, _ = self.batch_transform(inputs, outputs,
                                                      annotations)
         return self.box_loss(outputs, (conf_t, loc_t))

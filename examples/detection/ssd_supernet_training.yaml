@@ -62,13 +62,13 @@ evaluator_cfg:
   mepa_scheduler:
     eta_min: 0.0
     T_max: 80
-    type: CosineAnnealingLR
+    type: CosineAnnealingWarmRestarts
   surrogate_optimizer: null
   surrogate_scheduler: null
   mepa_samples: 1
   data_portion:
   - 0.0
-  - 1. # train evaluator weights
+  - 0.9 # train evaluator weights
   - 0. # for train controller
   mepa_as_surrogate: false
   bptt_steps: 35

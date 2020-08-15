@@ -9,7 +9,7 @@ except ModuleNotFoundError:
         "Detection task functionalities cannot be used, update torchvision version to >=0.4.0. "
         "current: %s", str(torchvision.__version__))
 
-from aw_nas.objective.base import PostProcessing
+from aw_nas.objective.detection_utils.base import PostProcessing
 from aw_nas.utils import box_utils
 
 __all__ = ["SSDPostProcessing"]
