@@ -23,6 +23,8 @@ The interface between these components is somehow well-defined. We use a class `
 
 ![NAS framework](doc/pics/framework.pdf)
 
+![NAS flow and calls](./doc/pics/flow.pdf)
+
 ## Install
 
 Using a virtual python environment is encouraged. For example, with Anaconda, you could run `conda create -n awnas python==3.7.3 pip` first.
@@ -79,13 +81,13 @@ When running `awnas` program, it will assume the data of a dataset with `name=<N
 
 ### Run NAS search
 
-Try running an ENAS [Pham et. al., ICML 2018] search (the results (including configuration backup, search log) in `<TRAIN_DIR>`):
+**ENAS** Try running an ENAS [Pham et. al., ICML 2018] search (the results (including configuration backup, search log) in `<TRAIN_DIR>`):
 
 ```
-awnas search examples/enas.yaml --gpu 0 --save-every 10 --train-dir <TRAIN_DIR>
+awnas search examples/basic/enas.yaml --gpu 0 --save-every <SAVE_EVERY> --train-dir <TRAIN_DIR>
 ```
 
-There are several sections in the configuration file that describe the configurations of different components in the NAS framework. For example, in `examples/enas.yaml`, different configuration sections are organized as follows:
+There are several sections in the configuration file that describe the configurations of different components in the NAS framework. For example, in `example/basic/enas.yaml`, different configuration sections are organized as follows:
 
 1. a cell-based CNN **search space**: The search space is an extended version from the 5-primitive micro search space in the original ENAS paper.
 2. cifar-10 **dataset**
@@ -95,6 +97,16 @@ There are several sections in the configuration file that describe the configura
 6. classification **objective**
 7. **trainer**: the orchestration of the overall NAS search flow
 
+For a detailed breakup of the ENAS search configuration, please refer to the [config notes](./doc/enas_cfg_notes.md).
+
+**DARTS** Also, you can run a DARTS [Liu et. al., ICLR 2018] search by running:
+
+```
+awnas search examples/basic/darts.yaml --gpu 0 --save-every <SAVE_EVERY> --train-dir <TRAIN_DIR>
+```
+We provide a walk-through of DARTS components and flow [here](./doc/darts_flow.md).
+
+#### Generate sample search config
 To generate a sample configuration file for searching, try ``awnas gen-sample-config`` utility. For example, if you want a sample search configuration for searching on NAS-Bench-101, run
 
 ```
@@ -111,6 +123,8 @@ An example run is to sample 10 genotypes, and save them into `sampled_genotypes.
 ```
 awnas derive search_cfg.yaml --load <checkpoint dir dumped during awnas search> -o sampled_genotypes.yaml -n 10 --test --gpu 0 --seed 123
 ```
+
+> Note that, the files "controller/evaluator/trainer" in the `<TRAIN_DIR>/<EPOCH>/` folders contain the state dict of the components, and can be loaded (dumped every `<SAVE_EVERY>` epochs), while the final checkpoints "controller.pt/evaluator.pt" in the "<TRAIN_DIR>/final/" folder contains a whole pickle of the component object, and can not be directly loaded. If you forget to specificy `--save-every` cmdline arguments and do not get state-dict checkpoints, you could load the final checkpoint and then dump the needed state dict ckpt by `cd <TRAIN_DIR>/final/; python -c "controller = torch.load('./controller.pt'); controller.save('controller')"`.
 
 The `awnas eval-arch` utility evaluate genotypes using the trained NAS components. Given a yaml file containing a list of genotypes, one can evaluate these genotypes using the saved NAS checkpoint:
 ```

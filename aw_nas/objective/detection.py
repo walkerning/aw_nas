@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 import torch
 
-from aw_nas.objective.base import (BaseObjective, Losses, AnchorsGenerator,
-                                   Matcher, PostProcessing)
+from aw_nas.objective.base import BaseObjective
+from aw_nas.objective.detection_utils import (
+    Losses, AnchorsGenerator, Matcher, PostProcessing)
 from aw_nas.utils.torch_utils import accuracy
 
 
