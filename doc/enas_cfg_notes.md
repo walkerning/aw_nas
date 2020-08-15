@@ -1,21 +1,22 @@
 ## A breakup of the ENAS configuration
 
-## Component `search space`
+## Component `search_space`
 
-> aw_nas adopts the ENAS-like search space scheme, described as the config search_space section
+`aw_nas` implement several search spaces, and one can use `awnas registry -t search_space` to see the implemented search spaces.
+Here, we mainly explain a **cell-based CNN search space** (type `cnn`, class `aw_nas.common.CNNSearchSpace`), which is compatible to the ENAS, DARTS, FBNet search spaces, as well as many baseline networks (e.g., ResNet, MobileNet, DenseNet) scheme.
 
 ``` yaml
 search_space_type: cnn
 search_space_cfg:
   # Schedulable attributes: 
-  cell_layout: [0, 0, 1, 0, 1, 0, 1, 0]
   num_cell_groups: 2
-  num_init_nodes: 1
+  num_init_nodes: 2
   num_layers: 8
-  num_node_inputs: 1
-  num_steps: 1
+  cell_layout: null
   reduce_cell_groups:
-  - 1 
+  - 1
+  num_steps: 4
+  num_node_inputs: 2
   shared_primitives:
   - none
   - max_pool_3x3
@@ -25,25 +26,31 @@ search_space_cfg:
   - sep_conv_5x5
   - dil_conv_3x3
   - dil_conv_5x5
+  cell_shared_primitives: null
 ```
 
-* num_cell_groups(2): there are ```$num_cell_groups``` kinds of cells(blocks/layers)
-* num_layers(8): the arch is composed ```num_layers``` cells stacked together
-* reduce_cell_groups(1): the 2nd type of cell is reduction cell
-* cell_layout([0,0,1,0,1,0,1,0]): the 3rd, 5th, 7th of 8 cells are the reduction cell, others are normal
-* num_node_inputs(1): there are ```num_node_inputs``` input node for the cell
-* num_steps(1): there are ```num_steps``` internal node(the node except for the input/output_node) for the cell 
+* `num_cell_groups` (2): There are `num_cell_groups` types of cells. All cells in the same cell group share the same architecture/topology, but can have different weights after training.
+* `num_layers` (8): `num_layers` of cells are stacked together to construct an architecture.
+* `reduce_cell_groups` ([1]): The 2nd cell group (2nd cell type) is reduction cell (stride=2).
+* `cell_layout` ([0,0,1,0,0,1,0,0]): The 3rd, 6th of the 8 cells are of cell group 1 (reduction cell), others are of cell group 0 (normal cell). This configuration must be specified, except for the case when `num_cell_groups=2, reduce_cell_groups=[1]`, in which case, the reduce cells is by default placed at the position of 1/3 and 2/3, following the ENAS paper.
+* `num_init_nodes` (2): there are `num_init_nodes` input nodes in a cell, the rule is: The last `num_init_nodes` cell's output is used as each cell's initial input nodes.
+* `num_steps` (4): there are `num_steps` internal node (the node except for the input/output nodes) in the cell.
+* `num_node_inputs` (2): Each node in a cell have `num_node_inputs` input nodes.
+* `shared_primitives`: The list of operation primitives of all cell groups.
+* `cell_shared_primitives` (null): If specified, each cell group have different operation primitives.
 
-* *For cell computation, multiple cell inputs are added together and the outputs are concatenated together*
-
+Below is an example figure of a cell architecture in the ENAS search space.
 ![](./pics/enas_cell.jpg)
 
+You can also run `awnas registry -t search_space -n cnn -v` to check the documentaion of the `CNNSearchSpace` class.
 
-Actually, Also, many examples in ```$AW_NAS_HOME/examples/baselines```
+And this search space is compatible with the baseline architectures, as long as specific operation primitives are implemented. Thus, we **re-use this search space to implement baseline models** (e.g., ResNets, VGG, MobileNet, DenseNet).
+Check the example configurations under `examples/baselines/`, which can all be run with `awnas train`.
 
-## Component Final Model
+## Final Training Configs
+To train an architecture, we need to specify several components: `search_space`, `dataset`, `final_model`, `final_trainer`, `objective`. We have already walked through the `search_space` configuration, and the configurations for `dataset`, `objective` and `final_trainer` is easy to understand, you can check any final configs (e.g., `examples/basic/final_templates/final_template.yaml`, `examples/baselines/*.yaml`, etc.). Here we explain the configuration of component `final_model`.
 
-> define the architecture for final training
+### Component `final_model`
 
 ``` yaml
 ## ---- Component final_model ----
@@ -58,6 +65,7 @@ final_model_cfg:
       1, 2), ('max_pool_3x3', 0, 3), ('dil_conv_3x3', 1, 3), ('max_pool_3x3', 0, 4), ('max_pool_3x3',
       2, 4), ('skip_connect', 3, 5), ('max_pool_3x3', 0, 5)], normal_0_concat=[2, 3, 4,
       5], reduce_1_concat=[2, 3, 4, 5])
+  use_stem: conv_bn_3x3
   auxiliary_cfg: null
   auxiliary_head: True
   dropout_path_rate: 0.2
@@ -75,65 +83,28 @@ final_model_cfg:
 ## ---- End Component final_model ----
 ```
 
-* genotypes: num of genotypes aligns with ```$num_cell_groups```, the name of genotype is the op defined and registered in the ```$aw_nas/ops/```
-* auxiliary_cfg(0.4): only works when auxiliary is true, the ```$auxiliary_cfg``` value is the weight of the auxiliary head
-* layer_channels([64, 64, 64, 128, 128, 256, 256, 512, 512]): num of the ```$layer_channels``` should be the same as the ```$num_layers```, denoting the width of certain cell(block/layer)
-* use_stem("conv_bn_relu_3x3"): the type of the stem block
-* stem_multiplier(1): stack multiple stem blocks
-* init_channels(64): the num of channels feed into the arch, (if no stem is used, the ```$init_channels``` should be 3, as the RGB of the input image, otherwise, its value should align with the stem block width)
+* `genotypes`: The architecture genotype string.
+* `auxiliary_head` (True): Whether or not to forward the auxiliary head.
+* `use_stem` ("conv_bn_3x3"): The operation of the stem block. If set to false, no stem will be used.
+* `init_channels` (36): The initial channel number of the first stage. Upon each stage, the channel number gets doubled while the spatial dimension halves (if no stem is used, `init_channels` should be 3 (RGB)).
+* `stem_multiplier` (3): The stem block has `init_channels x stem_multipler` channels.
 
-## Component Trainer
+-----
 
-``` yaml
-## ---- Component final_trainer ----
-# ---- Type cnn_trainer ----
-final_trainer_type: cnn_trainer
-final_trainer_cfg:
-  # Schedulable attributes: 
-  auxiliary_head: true
-  auxiliary_weight: 0.4
-  batch_size: 128
-  epochs: 600
-  grad_clip: 5.0
-  learning_rate: 0.05
-  momentum: 0.9
-  no_bias_decay: false
-  optimizer_scheduler:
-    eta_min: 0.001
-    T_max: 600
-    type: CosineAnnealingLR
-  schedule_cfg: null
-  warmup_epochs: 0
-  weight_decay: 0.0003
-  save_as_state_dict: true
-# ---- End Type cnn_trainer ----
-## ---- End Component final_trainer ----
-```
+## Searching Configs
+To run NAS, we need to specify several components: `search_space`, `dataset`, `controller`, `evaluator`, `weights_manager`, `objective`, `trainer`, among which the configuration of `search_space` is already introduced above.
+Now, let us break up a typical search configuration `examples/basic/enas.yaml` to see how to configure `controller`, `evaluator`, `weights_manager` and `trainer`.
 
-* Training hyper-params 
+First of all, in a searching configuration file, each component has a `rollout_type` config item in its configuration section, set them to the same rollout type! Some rollout type corresponding examples are (use command ```awnas registry -t rollout``` to see the supported rollout types):
+* ENAS - `discrete`
+* DARTS - `differentiable`
+* NAS-Bench-101 - `nasbench-101`
 
----
+### Component `controller`
 
-# Config for Searching
+Controller is responsible for searching in the search space in an efficient way, utilizing the information of previously explored architectures. The method call `controller.sample` samples out architecture rollouts to be evaluated.
 
-> the example config is $AW_NAS_HOME/examples/basic/enas.yaml
-
-In searching each component has a ```rollout_type```:
-  * Example
-    * eNAS - discrete
-    * darts - differentiable
-    * nasbench101
-    * you could use command ```awnas registry -t rollout``` to refer to supported rollout types
-  * **All ```rollout_type``` should be the same for each component**
-
-
-## Component Search Space
-
-(same as above mentioned search space)
-
-## Component Controller
-
-> aw_nas supports many types of controllers, controller samples arch(rollout) from search space 
+`aw_nas` supports several types of controllers, including RL-learned RNNs, differentiable learned ones, population-mutation ones (e.g., evolutionary),  predictor-based ones. In ENAS, RNN sampler that is learned using RL techniques is adopted, and a sample configuration of this `rl` controller is as follows:
 
 ``` yaml
 ## ---- Component controller ----
@@ -171,10 +142,11 @@ controller_cfg:
 ## ---- End Component controller ----
 ```
 
+* TODO: explain `rl` controller!
 
-## Component Weight-manager
+### Component `weights_manager`
 
-> the weight manager fills weights into arch(rollout) sampled by the controller
+Given an architecture rollout, the weights manager fills the architecture with weights to construct a **candidate network**. Then, the candidate network is evalauted by the evaluator component.
 
 ``` yaml
 ## ---- Component weights_manager ----
@@ -196,12 +168,19 @@ weights_manager_cfg:
 ## ---- End Component weights_manager ----
 ```
 
-* init_channels: the initial number of channels 
-* gpus([0]): the weight-manager supports data-parallel when the ```$gpus``` is [1,...,N], then use ```--gpu 0``` arg when calling awnas search. (the awnas train adopts a different scheme, directly using ```--gpus [0,1,2,3]``` when calling ```awnas train```) 
+* `init_channels`: The initial channel number of the first stage. Upon each stage, the channel number gets doubled while the spatial dimension halves.
+* `stem_multiplier`: The stem block has `init_channels x stem_multipler` channels.
+* `gpus` ([0]): The weights manager supports data parallel forwards. Set `gpus` to [1,...,N] and  use `--gpu 0` cmdline argument with `awnas search`.
 
-## Component Evaluator
+> Note that, for data parallel final training, `awnas train` adopts a different scheme and directly accepts `--gpus 0,1,2,3` cmdline arguments.
 
-> the evaluator takes the arch(by controller), filled with params(by weight-manager), outputs the arch performance(reward) for updating the controller
+### Component `evaluator`
+
+The evaluator outputs the architecture's performances, which is further used to instruct the updates/search of the controller. Here, we use a shared-weights evaluator.
+
+**NOTE that,** here, the shared-weights evaluator is named `mepa`. This is because that we experiment with an extension of the shared-weights evaluator: During the one-shot evaluation of each architecture (sub-network), run several "surrogate" training step on a seperate data split (surrogate data queue). However, after careful ablation study and inspection, we find that this technique only brings improvements over the vanilla sw evaluator when there are very little training data (few-shot transferring scenario), or when the supernet training is very insufficient (e.g., only run for 1~10 epochs).
+
+Thus, just set the `controller_surrogate_steps` and `mepa_surrogate_steps` to 0, `surrogate_optimizer` and `surrogate_scheduler` to "null" as in the following sample, then this evaluator is the vanilla shared-weights evaluator.
 
 ``` yaml
 ## ---- Component evaluator ----
@@ -210,9 +189,16 @@ evaluator_type: mepa
 evaluator_cfg:
   # Schedulable attributes: controller_surrogate_steps, mepa_surrogate_steps, mepa_samples
   rollout_type: discrete
-  batch_size: 128
   controller_surrogate_steps: 0
   mepa_surrogate_steps: 0
+  surrogate_optimizer: null
+  surrogate_scheduler: null
+  batch_size: 128
+    data_portion:
+  - 0.0
+  - 0.8
+  - 0.2
+  shuffle_data_before_split: false
   mepa_optimizer:
     lr: 0.05
     momentum: 0.9
@@ -222,66 +208,67 @@ evaluator_cfg:
     eta_min: 0.0
     T_max: 200
     type: CosineAnnealingLR
-  surrogate_optimizer: null
-  surrogate_scheduler: null
   mepa_samples: 1
-  data_portion:
-  - 0.0
-  - 0.8
-  - 0.2
-  mepa_as_surrogate: false
-  bptt_steps: 35
+  mepa_as_surrogate: false # only relevant for MEPA, ignore it!
+  bptt_steps: 35 # for RNN only
   schedule_cfg: null
 # ---- End Type mepa ----
 ## ---- End Component evaluator ----
 ```
 
-* (description of data-portion)
-  * data-potion: donot use the 1st 
-  * train valid
-* (pseudo code here)
-
-* **Noted that aw_nas intrinsically supports the mepa evaluator**(for more details of mepa, please refer to [this paper]())
-* mepa optimizer & scheduler are used for updating the shared-weights
-* mepa_samples: numbers of architecture Monte-Carlo samples in every supernet training step
-* when the ```$controller_surrogate_steps $mepa_surrogate_steps``` are all zero, it will be the naive evaluator
+* `data_portion` ([0.0, 0.8, 0.2]): A list with 3 positive floats that add up to 1. The portion of the surrogate, mepa, and controller queues. As stated above, "surrogate queue" is only used in MEPA evaluator, and should be set to have 0.0 portion data if one wants to use a vanilla shared-weights evaluator. In the sample configuration above, 0.8 of the training data is used to update the shared weights (mepa data queue) in `update_evaluator` calls, while the remaining 0.2 is used in `evaluate_rollout` calls to return the rewards for updating controller.
+* `shuffle_data_before_split` (false): Whether or not to shuffle the training set before split according to `data_portion`. Be careful when set it to `true`, since it might introduce some subtle errors as different search runs might use different data splits.
+* `mepa_optimizer`: The optimizer of the shared weights in the supernet. The `type` should be an optimizer class name in `torch.optim` (e.g., "SGD" here, can be "Adam", etc.). And other items in the dict will be fed as keyword arguments to initialize the optimizer (e.g., `{"lr": 0.05, "momentum": 0.9, "weight_decay": 0.0003}` here).
+* `mepa_scheduler`: The learning rate scheduler of the shared weights in the supernet. The `type` should be an lr scheduler class name in `torch.optim.lr_scheduler` (e.g., "CosineAnnealingLR" here), or one of `["WarmupCosineAnnealingLR", "CosineWithRestarts", "ExpDecay"]`, which are implemented in `aw_nas` (See `aw_nas/utils/lr_scheduler.py`). And, other items in the dict will be fed as keyword arguments to initialize the scheduler.
+* `mepa_samples`: Numbers of architecture Monte-Carlo samples in every supernet training step.
 
 
-## Component Trainer
+### Component `trainer`
 
-> trainer describes the training of controller in the searching
+Trainer is responsible for orchestrating the search process, i.e., passing the rollouts between the components and calling corresponding methods.
 
-``` yaml
+```yaml
 ## ---- Component trainer ----
 # ---- Type simple ----
 trainer_type: simple
 trainer_cfg:
   # Schedulable attributes: controller_samples, derive_samples
-  rollout_type: differentiable
-  epochs: 50
-  test_every: 100
-  controller_optimizer:
-    lr: 3.e-4
-    betas: [0.5,0.999]
-    weight_decay: 1.e-3
-    type: Adam
-  controller_scheduler: null
-  controller_samples: 1
-  derive_samples: 8
-  rollout_batch_size: 1
+  rollout_type: discrete
+  epochs: 200
+  test_every: 10
+  derive_samples: 10
   evaluator_steps: null
   controller_steps: null
+  controller_samples: 1
+  controller_optimizer:
+    lr: 0.001
+    type: Adam
+  controller_scheduler: null
   controller_train_every: 1
   controller_train_begin: 1
-  interleave_controller_every: 1
+  interleave_controller_every: null
   schedule_cfg: null
 # ---- End Type simple ----
 ## ---- End Component trainer ----
 ```
 
-* controller_optimizer: describe the optimizer for optimizing the controller
-* （?）interleave_controller_every: the frequency of updating the controller 
+* `test_every` (10), `derive_samples` (10): Run derive once every `test_every`. In this method call, `derive_samples` architectures will be sampled from the controller, and evaluated on the whole "controller queue" instead of one batch from the queue (during training).
+* `evaluator_steps` (null), `controller_steps` (int): If None, (not explicitly given), assume every epoch consume one pass of the mepa/controller queue, respectively. If no data queues are used in the evaluator, then these two configs must be explicitly given.
+* `controller_optimizer`: The optimizer for optimizing the controller. If the controller does not need an optimizer (e.g., evolutionary controller), one can set it to "null". This configuration works in the same way as the `mepa_optimizer` configuration of `mepa` evalautor above.
+* `controller_scheduler`: The learning rate scheduler for optimizing the controller. This configuration works in the same way as the `mepa_scheduler` configuration of `mepa` evalautor above.
+* `controller_samples` (1): If >1, call `controller.sample` and `controller.update` with multiple rollouts at a time.
+* `controller_train_every` (1): Only update controller every `controller_train_every` epoch.
+* `controller_train_begin` (1): Only update controller from Epoch `controller_train_begin`.
+* `interleave_controller_every`: Interleave controller update steps every `interleave_controller_every` steps. If None, do not interleave, which means in each epoch, controller is updated after the shared-weights updates on the whole "mepa queue". In ENAS, in every search epoch, the shared weights are updated on the "mepa queue" for one epoch, and then the RNN controller is updated on the "controller queue" for one epoch. While in DARTS, following each shared-weights update, a controller update takes place. Thus, the trainer configuration of DARTS differs with the above configuration as follows (Comapre with `examples/basic/darts.yaml`):
 
-
-
-
+``` yaml
+  rollout_type: differentiable
+  epochs: 50
+  controller_optimizer:
+    lr: 3.e-4
+    betas: [0.5, 0.999]
+    weight_decay: 1.e-3
+    type: Adam
+  controller_scheduler: null
+  interleave_controller_every: 1
+```

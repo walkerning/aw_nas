@@ -10,11 +10,11 @@ from torch.autograd import Variable
 import torch.nn.functional as F
 import torch.utils.data
 from torch.optim.lr_scheduler import _LRScheduler
+from torch.utils.data.distributed import DistributedSampler
 
 from aw_nas.utils.common_utils import AverageMeter
 from aw_nas.utils.exception import expect
 from aw_nas.utils.lr_scheduler import get_scheduler_cls
-from torch.utils.data.distributed import DistributedSampler
 
 
 ## --- model/training utils ---

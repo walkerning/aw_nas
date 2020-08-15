@@ -6,10 +6,11 @@ Trainer definition, this is the orchestration of all the components.
 from __future__ import print_function
 from __future__ import division
 
+import os
 from functools import partial
 from collections import OrderedDict
+
 import imageio
-import os
 import yaml
 
 import numpy as np

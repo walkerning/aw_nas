@@ -22,7 +22,14 @@ class BaseHardwareCompiler(Component):
         pass
 
     @abc.abstractmethod
-    def hwobj_net_to_primitive(self, hwobj_type, prof_result_file, prof_prim_file):
+    def parse_file(
+        self,
+        prof_result_file,
+        prof_prim_file,
+        prim_to_ops,
+        perf_fn=None,
+        perf_names=("latency",),
+    ):
         pass
 
 

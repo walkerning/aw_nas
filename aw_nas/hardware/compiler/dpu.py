@@ -7,12 +7,10 @@ import re
 import sys
 import shutil
 import subprocess
-import yaml
-
-import torch
-
 from collections import namedtuple
 
+import yaml
+import torch
 from torch.autograd import Variable
 
 from aw_nas import utils
