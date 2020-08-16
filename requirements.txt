@@ -6,7 +6,7 @@ imageio==2.5.0
 numpy==1.16.3
 Pillow==6.0.0
 protobuf==3.7.1
-psutil==5.6.2
+psutil==5.6.6
 pytest==4.5.0
 # pytest==3.9.1 # strange... Python 3.7.0 sometimes donot work with pytest==4.5.0; can use 3.9.1
 pytest-cov==2.7.1
