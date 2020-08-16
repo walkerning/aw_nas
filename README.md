@@ -23,7 +23,8 @@ The interface between these components is somehow well-defined. We use a class `
 
 ![NAS framework](doc/pics/framework.pdf)
 
-![NAS flow and calls](./doc/pics/flow.pdf)
+Here is a graphical illustration of the [NAS flow and corresponding method calls](doc/pics/flow.pdf).
+
 
 ## Install
 
@@ -32,9 +33,9 @@ Using a virtual python environment is encouraged. For example, with Anaconda, yo
 * Supported python versions: 2.7, 3.6, 3.7
 * Supported Pytorch versions: >=1.0.0, <1.5.0 (Currently, some patches in DataParallel replication is not compatible after 1.5.0)
 
-To install `awnas`, run `pip install -r requirements.txt`. If you do not want to install the detection extras (required for running search on detection datasets VOC/COCO), omit the ",det" extras during the installation. (See the last line in [](requirements.txt))
+To install `awnas`, run `pip install -r requirements.txt`. If you do not want to install the detection extras (required for running search on detection datasets VOC/COCO), omit the ",det" extras during the installation (See the last line in the [requirements file](requirements.txt)).
 
-Architecture plotting relies on the `graphviz` package, make sure `graphiz` is installed, e.g. on Ubuntu, you can run `sudo apt-get install graphviz`.
+Architecture plotting depends on the `graphviz` package, make sure `graphiz` is installed, e.g. on Ubuntu, you can run `sudo apt-get install graphviz`.
 
 ## Usage
 

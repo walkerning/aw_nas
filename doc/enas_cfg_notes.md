@@ -1,6 +1,6 @@
 ## A breakup of the ENAS configuration
 
-## Component `search_space`
+### Component `search_space`
 
 `aw_nas` implement several search spaces, and one can use `awnas registry -t search_space` to see the implemented search spaces.
 Here, we mainly explain a **cell-based CNN search space** (type `cnn`, class `aw_nas.common.CNNSearchSpace`), which is compatible to the ENAS, DARTS, FBNet search spaces, as well as many baseline networks (e.g., ResNet, MobileNet, DenseNet) scheme.
@@ -47,10 +47,10 @@ You can also run `awnas registry -t search_space -n cnn -v` to check the documen
 And this search space is compatible with the baseline architectures, as long as specific operation primitives are implemented. Thus, we **re-use this search space to implement baseline models** (e.g., ResNets, VGG, MobileNet, DenseNet).
 Check the example configurations under `examples/baselines/`, which can all be run with `awnas train`.
 
-## Final Training Configs
+### Final Training Configs
 To train an architecture, we need to specify several components: `search_space`, `dataset`, `final_model`, `final_trainer`, `objective`. We have already walked through the `search_space` configuration, and the configurations for `dataset`, `objective` and `final_trainer` is easy to understand, you can check any final configs (e.g., `examples/basic/final_templates/final_template.yaml`, `examples/baselines/*.yaml`, etc.). Here we explain the configuration of component `final_model`.
 
-### Component `final_model`
+#### Component `final_model`
 
 ``` yaml
 ## ---- Component final_model ----
@@ -91,7 +91,7 @@ final_model_cfg:
 
 -----
 
-## Searching Configs
+### Searching Configs
 To run NAS, we need to specify several components: `search_space`, `dataset`, `controller`, `evaluator`, `weights_manager`, `objective`, `trainer`, among which the configuration of `search_space` is already introduced above.
 Now, let us break up a typical search configuration `examples/basic/enas.yaml` to see how to configure `controller`, `evaluator`, `weights_manager` and `trainer`.
 
@@ -100,7 +100,7 @@ First of all, in a searching configuration file, each component has a `rollout_t
 * DARTS - `differentiable`
 * NAS-Bench-101 - `nasbench-101`
 
-### Component `controller`
+#### Component `controller`
 
 Controller is responsible for searching in the search space in an efficient way, utilizing the information of previously explored architectures. The method call `controller.sample` samples out architecture rollouts to be evaluated.
 
@@ -144,7 +144,7 @@ controller_cfg:
 
 * TODO: explain `rl` controller!
 
-### Component `weights_manager`
+#### Component `weights_manager`
 
 Given an architecture rollout, the weights manager fills the architecture with weights to construct a **candidate network**. Then, the candidate network is evalauted by the evaluator component.
 
@@ -174,7 +174,7 @@ weights_manager_cfg:
 
 > Note that, for data parallel final training, `awnas train` adopts a different scheme and directly accepts `--gpus 0,1,2,3` cmdline arguments.
 
-### Component `evaluator`
+#### Component `evaluator`
 
 The evaluator outputs the architecture's performances, which is further used to instruct the updates/search of the controller. Here, we use a shared-weights evaluator.
 
@@ -223,7 +223,7 @@ evaluator_cfg:
 * `mepa_samples`: Numbers of architecture Monte-Carlo samples in every supernet training step.
 
 
-### Component `trainer`
+#### Component `trainer`
 
 Trainer is responsible for orchestrating the search process, i.e., passing the rollouts between the components and calling corresponding methods.
 
