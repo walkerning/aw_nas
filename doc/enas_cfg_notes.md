@@ -37,12 +37,12 @@ search_space_cfg:
 * `num_steps` (4): there are `num_steps` internal node (the node except for the input/output nodes) in the cell.
 * `num_node_inputs` (2): Each node in a cell have `num_node_inputs` input nodes.
 * `shared_primitives`: The list of operation primitives of all cell groups.
-* `cell_shared_primitives` (null): If specified, each cell group have different operation primitives.
+* `cell_shared_primitives` (null): If specified, each cell group has different operation primitives.
 
 Below is an example figure of a cell architecture in the ENAS search space.
 ![](./pics/enas_cell.jpg)
 
-You can also run `awnas registry -t search_space -n cnn -v` to check the documentaion of the `CNNSearchSpace` class.
+You can also run `awnas registry -t search_space -n cnn -v` to check the documentation of the `CNNSearchSpace` class.
 
 And this search space is compatible with the baseline architectures, as long as specific operation primitives are implemented. Thus, we **re-use this search space to implement baseline models** (e.g., ResNets, VGG, MobileNet, DenseNet).
 Check the example configurations under `examples/baselines/`, which can all be run with `awnas train`.
@@ -102,7 +102,7 @@ First of all, in a searching configuration file, each component has a `rollout_t
 
 #### Component `controller`
 
-Controller is responsible for searching in the search space in an efficient way, utilizing the information of previously explored architectures. The method call `controller.sample` samples out architecture rollouts to be evaluated.
+The controller is responsible for searching in the search space in an efficient way, utilizing the information of previously explored architectures. The method call `controller.sample` samples out architecture rollouts to be evaluated.
 
 `aw_nas` supports several types of controllers, including RL-learned RNNs, differentiable learned ones, population-mutation ones (e.g., evolutionary),  predictor-based ones. In ENAS, RNN sampler that is learned using RL techniques is adopted, and a sample configuration of this `rl` controller is as follows:
 
@@ -172,13 +172,13 @@ weights_manager_cfg:
 * `stem_multiplier`: The stem block has `init_channels x stem_multipler` channels.
 * `gpus` ([0]): The weights manager supports data parallel forwards. Set `gpus` to [1,...,N] and  use `--gpu 0` cmdline argument with `awnas search`.
 
-> Note that, for data parallel final training, `awnas train` adopts a different scheme and directly accepts `--gpus 0,1,2,3` cmdline arguments.
+> Note that, for data-parallel final training, `awnas train` adopts a different scheme and directly accepts `--gpus 0,1,2,3` cmdline arguments.
 
 #### Component `evaluator`
 
 The evaluator outputs the architecture's performances, which is further used to instruct the updates/search of the controller. Here, we use a shared-weights evaluator.
 
-**NOTE that,** here, the shared-weights evaluator is named `mepa`. This is because that we experiment with an extension of the shared-weights evaluator: During the one-shot evaluation of each architecture (sub-network), run several "surrogate" training step on a seperate data split (surrogate data queue). However, after careful ablation study and inspection, we find that this technique only brings improvements over the vanilla sw evaluator when there are very little training data (few-shot transferring scenario), or when the supernet training is very insufficient (e.g., only run for 1~10 epochs).
+**NOTE that,** here, the shared-weights evaluator is named `mepa`. This is because that we experiment with an extension of the shared-weights evaluator: During the one-shot evaluation of each architecture (sub-network), run several "surrogate" training step on a separate data split (surrogate data queue). However, after careful ablation study and inspection, we find that this technique only brings improvements over the vanilla sw evaluator when there are very little training data (few-shot transferring scenario), or when the supernet training is very insufficient (e.g., only run for 1~10 epochs).
 
 Thus, just set the `controller_surrogate_steps` and `mepa_surrogate_steps` to 0, `surrogate_optimizer` and `surrogate_scheduler` to "null" as in the following sample, then this evaluator is the vanilla shared-weights evaluator.
 
@@ -225,7 +225,7 @@ evaluator_cfg:
 
 #### Component `trainer`
 
-Trainer is responsible for orchestrating the search process, i.e., passing the rollouts between the components and calling corresponding methods.
+A trainer is responsible for orchestrating the search process, i.e., passing the rollouts between the components and calling corresponding methods.
 
 ```yaml
 ## ---- Component trainer ----
@@ -259,7 +259,7 @@ trainer_cfg:
 * `controller_samples` (1): If >1, call `controller.sample` and `controller.update` with multiple rollouts at a time.
 * `controller_train_every` (1): Only update controller every `controller_train_every` epoch.
 * `controller_train_begin` (1): Only update controller from Epoch `controller_train_begin`.
-* `interleave_controller_every`: Interleave controller update steps every `interleave_controller_every` steps. If None, do not interleave, which means in each epoch, controller is updated after the shared-weights updates on the whole "mepa queue". In ENAS, in every search epoch, the shared weights are updated on the "mepa queue" for one epoch, and then the RNN controller is updated on the "controller queue" for one epoch. While in DARTS, following each shared-weights update, a controller update takes place. Thus, the trainer configuration of DARTS differs with the above configuration as follows (Comapre with `examples/basic/darts.yaml`):
+* `interleave_controller_every`: Interleave controller update steps every `interleave_controller_every` steps. If None, do not interleave, which means in each epoch, the controller is updated after the shared-weights updates on the whole "mepa queue". In ENAS, in every search epoch, the shared weights are updated on the "mepa queue" for one epoch, and then the RNN controller is updated on the "controller queue" for one epoch. While in DARTS, following each shared-weights update, a controller update takes place. Thus, the trainer configuration of DARTS differs with the above configuration as follows (Compare with `examples/basic/darts.yaml`):
 
 ``` yaml
   rollout_type: differentiable

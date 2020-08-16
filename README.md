@@ -1,4 +1,4 @@
-# aw_nas: A Modularized and Extensible NAS framework
+# aw_nas: A Modularized and Extensible NAS Framework
 
 ## Introduction
 
@@ -168,6 +168,18 @@ We use this codebase to finish the following researches
 
 
 See the sub-directories under `examples/research/` for more details.
+
+If you find this codebase helpful, you can cite the following research for now.
+```
+@misc{ning2020surgery,
+    title={A Surgery of the Neural Architecture Evaluators},
+    author={Xuefei Ning and Wenshuo Li and Zixuan Zhou and Tianchen Zhao and Yin Zheng and Shuang Liang and Huazhong Yang and Yu Wang},
+    year={2020},
+    eprint={2008.03064},
+    archivePrefix={arXiv},
+    primaryClass={cs.CV}
+}
+```
 
 ## References
 

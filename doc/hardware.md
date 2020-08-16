@@ -19,7 +19,7 @@ We define a tuple `Prim` to describe primitives, which consists of:
 After traversing search space, all primitives are sent to ProfilingNetAssember to be assembled as complete networks to be profiled. Each assembled network is represented as an `awnas` yaml file that can be passed into `general model` defined in `aw_nas/final/general_model.py`.
 
 #### Offline Measuring and Parsing
-For DPU or other embedded devices, measurement has to be taken offline. We provide an example of `DPUCompiler` defined in `aw_nas/hardware/dpu.py` which includes pytorch2caffe and fixed-point process, and you can adopt your own tools by yourself. 
+For DPU or other embedded devices, measurement has to be taken offline. We provide an example of `DPUCompiler` defined in `aw_nas/hardware/dpu.py`, which includes pytorch2caffe and fixed-point process, and you can adopt your own tools by yourself.
 
 After measurement finished, the result which consists of performances of all basic layers supported in embedded devices should be parsed by `DPUCompiler.parse_file`.
 
