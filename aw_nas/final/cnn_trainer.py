@@ -381,10 +381,10 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
 
                 logits = model(inputs)
                 loss = criterion(logits, target)
-                perfs = self._perf_func(inputs, logits, target, model)
-                objective_perfs.update(dict(zip(self._perf_names, perfs)))
-                prec1, prec5 = utils.accuracy(logits, target, topk=(1, 5))
                 n = inputs.size(0)
+                perfs = self._perf_func(inputs, logits, target, model)
+                objective_perfs.update(dict(zip(self._perf_names, perfs)), n)
+                prec1, prec5 = utils.accuracy(logits, target, topk=(1, 5))
                 objs.update(loss.item(), n)
                 top1.update(prec1.item(), n)
                 top5.update(prec5.item(), n)
