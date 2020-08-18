@@ -127,10 +127,11 @@ class OFAClassificationObjective(BaseObjective):
         loss = self._criterion(outputs, targets)
         if self.soft_loss_coeff > 0 and not self.is_finetune:
             # do not calculate soft loss during finetuning
-            outputs_all = cand_net.super_net.forward(inputs).detach()
-            soft = self.loss_soft(outputs, outputs_all, self.soft_loss_coeff)
-            loss2 = loss + soft * self.soft_loss_coeff
-            return loss2
+            with torch.no_grad():
+                outputs_all = cand_net.super_net.forward(inputs).detach()
+                soft = self.loss_soft(outputs, outputs_all, self.soft_loss_coeff)
+                loss2 = loss + soft * self.soft_loss_coeff
+                return loss2
         return loss
 
     def on_epoch_start(self, epoch):

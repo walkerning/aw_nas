@@ -45,7 +45,7 @@ class Hsigmoid(nn.Module):
     def forward(self, x):
         return F.relu6(x + 3., inplace=self.inplace) * (1 / 6.)
 
-PRIMITVE_FACTORY = {
+PRIMITIVE_FACTORY = {
     "none" : lambda C, C_out, stride, affine: Zero(stride),
     "avg_pool_3x3" : avg_pool_3x3,
     "max_pool_3x3" : max_pool_3x3,
@@ -122,15 +122,15 @@ PRIMITVE_FACTORY = {
 
 def register_primitive(name, func, override=False):
     assert callable(func), "A primitive must be callable"
-    assert not (name in PRIMITVE_FACTORY and not override),\
+    assert not (name in PRIMITIVE_FACTORY and not override),\
         "some func already registered as {};"\
         " to override, use `override=True` keyword arguments.".format(name)
-    PRIMITVE_FACTORY[name] = func
+    PRIMITIVE_FACTORY[name] = func
 
 def get_op(name):
-    assert name in PRIMITVE_FACTORY, \
+    assert name in PRIMITIVE_FACTORY, \
         "{} not registered, use `register_primitive` to register primitive op".format(name)
-    return PRIMITVE_FACTORY[name]
+    return PRIMITIVE_FACTORY[name]
 
 class BNReLU(nn.Module):
     def __init__(self, C_in, C_out, affine=True):
@@ -635,11 +635,13 @@ class FlexibleDepthWiseConv(nn.Conv2d, FlexibleLayer):
         self.max_kernel_size = kernel_sizes[-1]
         self.do_kernel_transform = do_kernel_transform
         super(FlexibleDepthWiseConv, self).__init__(in_channels, in_channels, self.max_kernel_size, stride, dilation=dilation, groups=in_channels, bias=bias)
+
         if self.do_kernel_transform:
             for smaller, larger in reversed(list(zip(self.kernel_sizes[:-1], self.kernel_sizes[1:]))):
                 if self.max_kernel_size >= larger:
-                    self.__setattr__("linear_{}to{}".format(larger, smaller),
-                                     nn.Linear(smaller * smaller, smaller * smaller, bias=False))
+                    kernel_transform_matrix = nn.Linear(smaller * smaller, smaller * smaller, bias=False)
+                    torch.nn.init.eye_(kernel_transform_matrix.weight.data)
+                    setattr(self, "linear_{}to{}".format(larger, smaller), kernel_transform_matrix)
 
         FlexibleLayer.__init__(self)
         self._bias = bias

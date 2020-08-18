@@ -486,11 +486,10 @@ def get_sub_kernel(kernel, sub_kernel_size):
     right = center + width + 1
     return kernel[:, :, left:right, left:right].contiguous()
 
-def _get_channel_mask(filters, num_channels):
-    norm_tensor = np.abs(filters.cpu().detach().numpy()).sum(axis=3).sum(axis=2).sum(axis=0)
-    norm_tensor = sorted(zip(range(len(norm_tensor)), norm_tensor),
-                         key=lambda x: x[1], reverse=True)
-    channel_order = [x[0] for x in norm_tensor]
+
+def _get_channel_mask(filters: torch.Tensor, num_channels):
+    norm_tensor = torch.norm(filters, p=1, dim=(0, 2, 3))
+    channel_order = torch.argsort(norm_tensor, descending=True)
     mask = np.zeros(filters.shape[1], dtype=np.bool)
     reserved_channels = channel_order[:num_channels]
     mask[reserved_channels] = 1
