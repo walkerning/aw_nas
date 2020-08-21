@@ -126,6 +126,11 @@ def test_hardware(case):
 
     latency = [p["performances"]["latency"] for p in case["prof_nets"][0][0]["primitives"]]
     ss = get_search_space("ofa_mixin", **case["search_space_cfg"])
+    if case["hardware_obj_type"] == "regression":
+        try:
+            from sklearn import linear_model
+        except ImportError as e:
+            pytest.xfail("Do not install scikit-learn, this should fail")
     obj = HardwareObjective(ss, case["prof_prims_cfg"], case["hardware_obj_type"],
                             case["hardware_obj_cfg"])
     obj.hwobj_models[0].train(case["prof_nets"])

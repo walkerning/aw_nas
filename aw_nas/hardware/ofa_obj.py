@@ -1,7 +1,4 @@
 # -*- coding: utf-8 -*-
-import copy
-import pickle
-from collections import namedtuple
 from itertools import product
 from functools import reduce
 

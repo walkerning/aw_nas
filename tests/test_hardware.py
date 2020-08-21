@@ -218,7 +218,11 @@ def test_gen_model(case):
     assert isinstance(ss, MixinProfilingSearchSpace)
 
     prof_prim_latencies = case["prof_prim_latencies"]
-
+    if case["hwobjmodel_type"] == "regression":
+        try:
+            from sklearn import linear_model
+        except ImportError as e:
+            pytest.xfail("Do not install scikit-learn, this should fail")
     hwobj_model = ss.parse_profiling_primitives(case["prof_prim_cfg"],
                                                 case["hwobjmodel_type"],
                                                 case["hwobjmodel_cfg"])

@@ -104,7 +104,7 @@ class DetectionObjective(BaseObjective):
         """
         Get mAP.
         """
-        # FIXME: this method does not actually calculate mAP, but detection boxes
+        # This method does not actually calculate mAP, but detection boxes
         # of current batch only. After all batch's boxes are calculated, passing them
         # to method `evaluate_detections`
         confidences, regression = outputs
@@ -133,7 +133,7 @@ class DetectionObjective(BaseObjective):
         return [acc[0].item()]
 
     def get_reward(self, inputs, outputs, targets, cand_net):
-        # TODO: to be implemented calculating mAP.
+        # mAP is actually calculated using aggregate_fn
         return 0.
 
     def get_loss(self,

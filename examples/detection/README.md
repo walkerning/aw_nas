@@ -3,6 +3,8 @@
 
 There are some examples of detection task. Like classification task, there are two main steps to be done: search an optimal sub-network in the search space and post-training. Currently, we only implement OFA + SSD on detection task, which includes supernet training, searching, and final training. This flow is similar to DetNAS [Chen, Yukang, et al., 2019].
 
+Note that these configurations are for the COCO dataset, change `dataset_type` from `coco` to `voc`, and the `num_classes` configurations from 90 to 20 to run on VOC dataset.
+
 ### Supernet Training
 
 The first step is training a supernet pregressively. There way we implement pregressive training is using `schdule_cfg` to configure the sample space of sub-networks, which is defined in `examples/detection/ssd_supernet_training.yaml`. 

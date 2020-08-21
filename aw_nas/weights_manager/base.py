@@ -79,11 +79,11 @@ class CandidateNet(nn.Module):
         raise NotImplementedError()
 
     @abc.abstractmethod
-    def forward(self, *args, **kwargs):  #pylint: disable=arguments-differ
+    def forward(self, *args, **kwargs): #pylint: disable=arguments-differ
         pass
 
     @abc.abstractmethod
-    def _forward_with_params(self, *args, **kwargs):  #pylint: disable=arguments-differ
+    def _forward_with_params(self, *args, **kwargs): #pylint: disable=arguments-differ
         pass
 
     @abc.abstractmethod
@@ -193,6 +193,9 @@ class CandidateNet(nn.Module):
         #     return [None] * len(eval_criterions or [])
 
         self._set_mode("train")
+        if aggregate_fns is None:
+            aggregate_fns = [lambda perfs: np.mean(perfs) if len(perfs) > 0 else 0.]\
+                            * len(eval_criterions)
 
         aggr_ans = []
         for _ in range(steps):
@@ -225,6 +228,9 @@ class CandidateNet(nn.Module):
                    aggregate_fns=None,
                    **kwargs):
         self._set_mode(mode)
+        if aggregate_fns is None:
+            aggregate_fns = [lambda perfs: np.mean(perfs) if len(perfs) > 0 else 0.]\
+                            * len(criterions)
         assert len(criterions) == len(aggregate_fns)
 
         aggr_ans = []

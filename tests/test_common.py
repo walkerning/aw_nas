@@ -65,8 +65,8 @@ def test_plot_genotype_util(genotype, cls, tmp_path):
     {"cls": "cnn", "loose_end": True},
     {"cls": "rnn"},
     {"cls": "rnn", "loose_end": True},
-    {"cls": "nasbench-201", "load_nasbench": False},
-    {"cls": "nasbench-101", "load_nasbench": False, "validate_spec": False}
+    # {"cls": "nasbench-201", "load_nasbench": False},
+    # {"cls": "nasbench-101", "load_nasbench": False, "validate_spec": False}
 ])
 def test_rollout_from_genotype_str(case):
     from aw_nas.common import get_search_space, rollout_from_genotype_str
@@ -78,11 +78,7 @@ def test_rollout_from_genotype_str(case):
     else:
         rollout = ss.random_sample()
         rec_rollout = rollout_from_genotype_str(str(rollout.genotype), ss)
-        if case["cls"] == "nasbench-101":
-            assert all(np.all(rec_rollout.arch[i] == rollout.arch[i])
-                       for i in range(len(rec_rollout.arch)))
-        else:
-            assert np.all(np.array(rec_rollout.arch) == np.array(rollout.arch))
+        assert np.all(np.array(rec_rollout.arch) == np.array(rollout.arch))
 
 # ---- test mutation rollout/population ----
 def test_mutation_rollout_random_sample(population):

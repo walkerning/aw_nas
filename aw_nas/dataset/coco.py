@@ -74,7 +74,8 @@ class COCODetection(data.Dataset):
                  dataset_name="COCO"):
         self.root = root
         self.cache_path = os.path.join(self.root, "awnas_cache")
-        os.makedirs(self.cache_path, exist_ok=True)
+        if not os.path.exists(self.cache_path):
+            os.makedirs(self.cache_path)
         self.image_set = image_sets
         self.transform = transform
         self.target_transform = target_transform

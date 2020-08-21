@@ -1,13 +1,29 @@
 import os
 import pytest
+import numpy as np
 
 AWNAS_TEST_NASBENCH = os.environ.get("AWNAS_TEST_NASBENCH", None)
 
+@pytest.mark.skipif(
+    not AWNAS_TEST_NASBENCH, reason="do not test the nasbench BTC by default.")
+@pytest.mark.parametrize("case", [
+    {"cls": "nasbench-101", "load_nasbench": False, "validate_spec": False}])
+def test_rollout_from_genotype_str(case):
+    from aw_nas.common import get_search_space, rollout_from_genotype_str
+
+    genotype_str = case.pop("genotype_str", None)
+    ss = get_search_space(**case)
+    if genotype_str:
+        rec_rollout = rollout_from_genotype_str(genotype_str, ss)
+    else:
+        rollout = ss.random_sample()
+        rec_rollout = rollout_from_genotype_str(str(rollout.genotype), ss)
+        assert all(np.all(rec_rollout.arch[i] == rollout.arch[i])
+                   for i in range(len(rec_rollout.arch)))
 
 @pytest.mark.skipif(
     not AWNAS_TEST_NASBENCH, reason="do not test the nasbench BTC by default.")
 def test_plot_arch(tmp_path):
-    import numpy as np
     from aw_nas.common import get_search_space
     from aw_nas.btcs.nasbench_101 import NasBench101Rollout
 
@@ -49,7 +65,6 @@ def test_plot_arch(tmp_path):
          }},
     ])
 def test_embedder(case):
-    import numpy as np
     from aw_nas.evaluator.arch_network import ArchEmbedder
     from aw_nas.common import get_search_space
 
