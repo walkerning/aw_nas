@@ -3,7 +3,7 @@ import torch
 
 from aw_nas.objective.base import BaseObjective
 from aw_nas.objective.detection_utils import (
-    Losses, AnchorsGenerator, Matcher, PostProcessing)
+    Losses, AnchorsGenerator, Matcher, PostProcessing, Metrics)
 from aw_nas.utils.torch_utils import accuracy
 
 
@@ -17,10 +17,12 @@ class DetectionObjective(BaseObjective):
                  matcher_type,
                  loss_type,
                  post_processing_type,
+                 metrics_type,
                  anchors_generator_cfg={},
                  matcher_cfg={},
                  loss_cfg={},
                  post_processing_cfg={},
+                 metrics_cfg={},
                  schedule_cfg=None):
         super(DetectionObjective, self).__init__(search_space,
                                                  schedule_cfg=schedule_cfg)
@@ -33,6 +35,8 @@ class DetectionObjective(BaseObjective):
         self.box_loss = Losses.get_class_(loss_type)(num_classes, **loss_cfg)
         self.predictor = PostProcessing.get_class_(post_processing_type)(
             num_classes, anchors=self.anchors, **post_processing_cfg)
+
+        self.metrics = Metrics.get_class_(metrics_type)(**metrics_cfg)
 
         self.all_boxes = [{} for _ in range(self.num_classes)]
         self.cache = []
@@ -61,7 +65,11 @@ class DetectionObjective(BaseObjective):
         confidence_t = torch.zeros([batch_size, num_anchors])
 
         shapes = []
-        for i, (boxes, labels, _id, height, width) in enumerate(annotations):
+        for i, anno in enumerate(annotations):
+            boxes = anno["boxes"]
+            labels = anno["labels"]
+            height, width = anno["shape"]
+            _id = anno["image_id"]
             boxes = boxes / inputs.shape[-1]
             boxes = boxes.to(device)
             labels = labels.to(device)
@@ -95,7 +103,10 @@ class DetectionObjective(BaseObjective):
         # to method `evaluate_detections`
         confidences, regression = outputs
         detections = self.predictor(confidences, regression, inputs.shape[-1])
-        for batch_id, (_, _, _id, h, w) in enumerate(annotations):
+        self.metrics.target_to_gt_recs(annotations)
+        for batch_id, anno in enumerate(annotations):
+            _id = anno["image_id"]
+            h, w = anno["shape"]
             for j in range(self.num_classes):
                 dets = detections[batch_id][j]
                 if len(dets) == 0:
@@ -117,6 +128,8 @@ class DetectionObjective(BaseObjective):
 
     def get_reward(self, inputs, outputs, targets, cand_net, final=False):
         # TODO: to be implemented calculating mAP.
+        if final:
+            return self.metrics(self.all_boxes)
         return 0.
 
     def get_loss(self,

@@ -15,6 +15,11 @@ from aw_nas.dataset.transform import *
 
 min_keypoints_per_image = 10
 
+def collate_fn(batch):
+    inputs = [b[0] for b in batch]
+    targets = [b[1] for b in batch]
+    inputs = torch.stack(inputs, 0)
+    return inputs, targets
 
 def _count_visible_keypoints(anno):
     return sum(sum(1 for v in ann["keypoints"][2::3] if v > 0) for ann in anno)
@@ -68,7 +73,8 @@ class COCODetection(data.Dataset):
                  remove_no_anno=False,
                  dataset_name="COCO"):
         self.root = root
-        self.cache_path = os.path.join(self.root, "cache")
+        self.cache_path = os.path.join(self.root, "awnas_cache")
+        os.makedirs(self.cache_path, exist_ok=True)
         self.image_set = image_sets
         self.transform = transform
         self.target_transform = target_transform
@@ -115,12 +121,6 @@ class COCODetection(data.Dataset):
 
         self.image_indexes = self.image_indexes[:max_images]
         self.img_paths = self.img_paths[:max_images]
-
-        def collate_fn(batch):
-            inputs = [b[0] for b in batch]
-            targets = [b[1] for b in batch]
-            inputs = torch.stack(inputs, 0)
-            return inputs, targets
 
         self.kwargs = {"collate_fn": collate_fn}
 
@@ -217,7 +217,7 @@ class COCODetection(data.Dataset):
         objs = valid_objs
         num_objs = len(objs)
 
-        res = np.zeros((num_objs, 5))
+        res = np.zeros((num_objs, 6))
 
         # Lookup table to map from COCO category ids to our internal class
         # indices
@@ -226,37 +226,44 @@ class COCODetection(data.Dataset):
         #                                  for cls in self._classes[1:]])
 
         # do not transform label 1~90 to 1~80
-        for ix, obj in enumerate(objs):
+        for ix, (annId, obj) in enumerate(zip(annIds, objs)):
             # cls = coco_cat_id_to_class_ind[obj["category_id"]]
             cls = obj["category_id"]
-            res[ix, 0:4] = obj["clean_bbox"]
+            res[ix, :4] = obj["clean_bbox"]
             res[ix, 4] = cls
+            res[ix, 5] = annId
 
         return res
 
     def __getitem__(self, index):
-        image, boxes, labels, height, width = self._getitem(index)
-        return image, (boxes, labels, index, height, width)
+        image, boxes, labels, height, width, ori_boxes, annIds = self._getitem(index)
+        ori_boxes[:, 2] -= ori_boxes[:, 0]
+        ori_boxes[:, 3] -= ori_boxes[:, 1]
+        return image, {
+            "ori_boxes": ori_boxes,
+            "boxes": boxes,
+            "labels": labels,
+            "image_id": self.image_indexes[index],
+            "anno_ids": annIds,
+            "shape": [height, width],
+        }
 
     def _getitem(self, index):
         img_path = self.img_paths[index]
         target = self.annotations[index]
-        boxes, labels = target[:, :4], target[:, 4]
+        ori_boxes, labels, annIds = target[:, :4], target[:, 4], target[:, 5]
 
         img = cv2.imread(img_path, cv2.IMREAD_COLOR)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).astype(np.float32)
         height, width, _ = img.shape
 
         if self.transform is not None:
-            img, boxes, labels = self.transform(img, boxes, labels)
-
-        if self.target_transform is not None:
-            boxes, labels = self.target_transform(boxes, labels)
+            img, boxes, labels = self.transform(img, ori_boxes.copy(), labels)
 
         img = torch.from_numpy(img).to(torch.float)
         boxes = torch.from_numpy(boxes).to(torch.float)
         labels = torch.from_numpy(labels).to(torch.long)
-        return img, boxes, labels, height, width
+        return img, boxes, labels, height, width, ori_boxes, annIds
 
     def __len__(self):
         return len(self.img_paths)
@@ -304,103 +311,6 @@ class COCODetection(data.Dataset):
             tensorized version of img, squeezed
         '''
         return torch.tensor(self.pull_image(index)).unsqueeze_(0)
-
-    def _print_detection_eval_metrics(self, coco_eval):
-        IoU_lo_thresh = 0.5
-        IoU_hi_thresh = 0.95
-
-        def _get_thr_ind(coco_eval, thr):
-            ind = np.where((coco_eval.params.iouThrs > thr - 1e-5)
-                           & (coco_eval.params.iouThrs < thr + 1e-5))[0][0]
-            iou_thr = coco_eval.params.iouThrs[ind]
-            assert np.isclose(iou_thr, thr)
-            return ind
-
-        ind_lo = _get_thr_ind(coco_eval, IoU_lo_thresh)
-        ind_hi = _get_thr_ind(coco_eval, IoU_hi_thresh)
-        # precision has dims (iou, recall, cls, area range, max dets)
-        # area range index 0: all area ranges
-        # max dets index 2: 100 per image
-        precision = \
-            coco_eval.eval["precision"][ind_lo:(ind_hi + 1), :, :, 0, 2]
-        ap_default = np.mean(precision[precision > -1])
-        print("~~~~ Mean and per-category AP @ IoU=[{:.2f},{:.2f}] "
-              "~~~~".format(IoU_lo_thresh, IoU_hi_thresh))
-        print("{:.1f}".format(100 * ap_default))
-        for cls_ind, cls in enumerate(self._classes):
-            if cls == "__background__":
-                continue
-            # minus 1 because of __background__
-            precision = coco_eval.eval["precision"][ind_lo:(ind_hi + 1), :,
-                                                    cls_ind - 1, 0, 2]
-            ap = np.mean(precision[precision > -1])
-            print("{:.1f}".format(100 * ap))
-
-        print("~~~~ Summary metrics ~~~~")
-        coco_eval.summarize()
-        return coco_eval.stats
-
-    def _do_detection_eval(self, res_file, output_dir, eval_ids=None):
-        ann_type = "bbox"
-        coco_dt = self._COCO.loadRes(res_file)
-        coco_eval = COCOeval(self._COCO, coco_dt)
-        if eval_ids is not None:
-            coco_eval.params.imgIds = eval_ids
-        coco_eval.params.useSegm = (ann_type == "segm")
-        coco_eval.evaluate()
-        coco_eval.accumulate()
-        stats = self._print_detection_eval_metrics(coco_eval)
-        eval_file = os.path.join(output_dir, "detection_results.pkl")
-        with open(eval_file, "wb") as fid:
-            pickle.dump(coco_eval, fid, pickle.HIGHEST_PROTOCOL)
-        print("Wrote COCO eval results to: {}".format(eval_file))
-        return stats
-
-    def _coco_results_one_category(self, boxes, cat_id):
-        results = []
-        for im_ind, index in enumerate(self.image_indexes):
-            dets = np.array(boxes.get(im_ind, [])).astype(np.float)
-            if len(dets) == 0:
-                continue
-            scores = dets[:, -1]
-            xs = dets[:, 0]
-            ys = dets[:, 1]
-            ws = dets[:, 2] - xs + 1
-            hs = dets[:, 3] - ys + 1
-            results.extend([{
-                "image_id": index,
-                "category_id": cat_id,
-                "bbox": [xs[k], ys[k], ws[k], hs[k]],
-                "score": scores[k]
-            } for k in range(dets.shape[0])])
-        return results
-
-    def _write_coco_results_file(self, all_boxes, res_file):
-        results = []
-        for cls_ind, _cls in enumerate(self._classes):
-            if _cls == "__background__":
-                continue
-            print("Collecting {} results ({:d}/{:d})".format(
-                _cls, cls_ind, self.num_classes))
-            coco_cat_id = self._class_to_coco_cat_id[_cls]
-            # coco_cat_id: 1~90
-            results.extend(
-                self._coco_results_one_category(all_boxes[coco_cat_id - 1],
-                                                coco_cat_id))
-        print("Writing results json to {}".format(res_file))
-        with open(res_file, "w") as fid:
-            json.dump(results, fid)
-
-    def evaluate_detections(self, all_boxes, output_dir, eval_ids=None):
-        res_file = os.path.join(output_dir,
-                                ("detections_" + self.coco_name + "_results"))
-        res_file += ".json"
-        self._write_coco_results_file(all_boxes, res_file)
-        # Only do evaluation on non-test sets
-        if self.coco_name.find("test") == -1:
-            return self._do_detection_eval(res_file, output_dir, eval_ids
-                                           or self.image_indexes)
-        # Optionally cleanup results json file
 
 
 class COCODataset(BaseDataset):

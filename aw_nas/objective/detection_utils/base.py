@@ -46,3 +46,13 @@ class PostProcessing(Component):
     @abc.abstractmethod
     def __call__(self, confidences, locations, img_shape):
         pass
+
+class Metrics(Component):
+    REGISTRY = "det_metrics"
+
+    def __init__(self, schedule_cfg=None):
+        super(Metrics, self).__init__(schedule_cfg)
+
+    @abc.abstractmethod
+    def __call__(self, boxes):
+        pass

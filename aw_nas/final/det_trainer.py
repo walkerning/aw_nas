@@ -123,7 +123,6 @@ class DetectionFinalTrainer(CNNFinalTrainer): #pylint: disable=too-many-instance
 
         for step, (inputs, targets) in enumerate(train_queue):
             inputs = inputs.to(self.device)
-            # targets = targets.to(self.device)
 
             optimizer.zero_grad()
             predictions = model.forward(inputs)
@@ -164,9 +163,7 @@ class DetectionFinalTrainer(CNNFinalTrainer): #pylint: disable=too-many-instance
                 predictions = model.forward(inputs)
                 classification_loss, regression_loss = criterion(
                     inputs, predictions, targets, model)
-
                 prec1, prec5 = self._acc_func(inputs, predictions, targets, model)
-
                 perfs = self._perf_func(inputs, predictions, targets, model)
                 objective_perfs.update(dict(zip(self._perf_names, perfs)))
                 n = inputs.size(0)
@@ -180,6 +177,5 @@ class DetectionFinalTrainer(CNNFinalTrainer): #pylint: disable=too-many-instance
                                      step, cls_objs.avg, loc_objs.avg, top1.avg, top5.avg,
                                      "; ".join(["{}: {:.3f}".format(perf_n, v) \
                                                 for perf_n, v in objective_perfs.avgs().items()]))
-        stats = self.dataset.evaluate_detections(self.objective.all_boxes, self.eval_dir)
-        self.logger.info("mAP: {}".format(stats[0]))
+        self.objective.get_reward(None, None, None, None, final=True)
         return top1.avg, cls_objs.avg + loc_objs.avg, objective_perfs.avgs()

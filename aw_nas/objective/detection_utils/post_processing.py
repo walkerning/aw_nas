@@ -5,7 +5,7 @@ try:
     from torchvision.ops import nms
 except ModuleNotFoundError:
     from aw_nas.utils import log as _log
-    _log.logger.getChild("ssd").warn(
+    _log.logger.getChild("detection").warn(
         "Detection task functionalities cannot be used, update torchvision version to >=0.4.0. "
         "current: %s", str(torchvision.__version__))
 

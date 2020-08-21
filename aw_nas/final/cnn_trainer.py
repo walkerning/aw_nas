@@ -274,7 +274,7 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                                "and this genotype might not be so effective.")
                               .format(len(missing_keys)))
             self.logger.error(str(missing_keys))
-        self.model.load_state_dict(checkpoint, strict=False)
+        self.logger.info(self.model.load_state_dict(checkpoint, strict=False))
 
     def _parallelize(self):
         if self.multiprocess:

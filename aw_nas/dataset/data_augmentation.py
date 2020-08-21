@@ -204,6 +204,7 @@ class Preproc(object):
 
     def __call__(self, image, boxes, labels):
         # some bugs
+        boxes = np.array(boxes)
         if self.p == -2: # abs_test
             targets = np.zeros((1,5))
             targets[0] = image.shape[0]
