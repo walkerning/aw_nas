@@ -132,6 +132,7 @@ objective_cfg:
     nms_threshold: 0.5
     variance: [0.1, 0.2]
     apply_prob_type: "softmax"
+  metrics_type: coco
 
 ## ---- Component trainer ----
 trainer_type: async

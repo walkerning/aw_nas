@@ -153,23 +153,3 @@ class DetectionBackboneCandidateNet(CandidateNet):
             return self._forward(inputs)
         return out
 
-    def eval_queue(self, queue, criterions, steps=1, mode="eval", **kwargs):
-        self._set_mode(mode)
-
-        average_ans = None
-        context = torch.no_grad if self.eval_no_grad else nullcontext
-        with context():
-            for _ in range(steps):
-                data = next(queue)
-                # print("{}/{}\r".format(i, steps), end="")
-                data = (data[0].to(self.get_device()), data[1])
-                outputs = self.forward_data(data[0], **kwargs)
-                ans = utils.flatten_list([c(data[0], outputs, data[1]) for c in criterions])
-                if average_ans is None:
-                    average_ans = ans
-                else:
-                    average_ans = [s + a for s, a in zip(average_ans, ans)]
-        mAP = criterions[0](None, None, None, final=True)
-        average_ans = [s / steps for s in average_ans]
-        average_ans[0] = mAP
-        return average_ans

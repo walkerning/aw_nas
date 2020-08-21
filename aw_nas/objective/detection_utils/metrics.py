@@ -289,6 +289,8 @@ class COCODetectionMetrics(Metrics):
         ann_type = "bbox"
         self._COCO.dataset["images"] = [{"id": image_id} for image_id in self.eval_ids]
         self._COCO.createIndex()
+        if len(results) == 0:
+            return 0.
         coco_dt = self._COCO.loadRes(results)
         coco_eval = COCOeval(self._COCO, coco_dt)
         if self.eval_ids is not None and len(self.eval_ids) > 0:

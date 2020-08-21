@@ -87,6 +87,12 @@ class DetectionObjective(BaseObjective):
     def perf_names(self):
         return ["mAP"]
 
+    def aggregate_fn(self, perf_name, is_training=True):
+        assert perf_name in ["reward", "loss"] + self.perf_names()
+        if not is_training and perf_name == "reward":
+            return lambda perfs: self.metrics(self.all_boxes)
+        return super().aggregate_fn(perf_name, is_training)
+
     def get_acc(self, inputs, outputs, targets, cand_net):
         conf_t, _, _ = self.batch_transform(inputs, outputs, targets)
         # target: [batch_size, anchor_num, 5], boxes + labels
@@ -126,10 +132,8 @@ class DetectionObjective(BaseObjective):
             self.get_mAP(inputs, outputs, targets, cand_net)
         return [acc[0].item()]
 
-    def get_reward(self, inputs, outputs, targets, cand_net, final=False):
+    def get_reward(self, inputs, outputs, targets, cand_net):
         # TODO: to be implemented calculating mAP.
-        if final:
-            return self.metrics(self.all_boxes)
         return 0.
 
     def get_loss(self,

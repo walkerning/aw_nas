@@ -2,6 +2,7 @@
 
 import abc
 
+import numpy as np
 from aw_nas import Component, utils
 
 class BaseObjective(Component):
@@ -37,3 +38,6 @@ class BaseObjective(Component):
                       add_controller_regularization=True, add_evaluator_regularization=True):
         return self.get_loss(inputs, outputs, targets, cand_net,
                              add_controller_regularization, add_evaluator_regularization).item()
+
+    def aggregate_fn(self, perf_name, is_training=True):
+        return lambda perfs: np.mean(perfs) if len(perfs) > 0 else 0.

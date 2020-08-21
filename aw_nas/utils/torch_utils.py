@@ -657,8 +657,12 @@ def _to_device(data, device):
         return data.to(device)
     elif isinstance(data, (tuple, list)):
         return [_to_device(d, device) for d in data]
-    else:
+    elif isinstance(data, dict):
+        return {k: _to_device(v, device) for k, v in data.items()}
+    elif isinstance(data, np.ndarray):
         return torch.tensor(data).to(device)
+    else:
+        return data
 
 def to_device(datas, device):
     return [_to_device(data, device) for data in datas]
