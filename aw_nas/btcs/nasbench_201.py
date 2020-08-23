@@ -126,6 +126,16 @@ class NasBench201SearchSpace(SearchSpace):
     def supported_rollout_types(cls):
         return ["nasbench-201"]
 
+    def mutate(self, rollout): #pylint: disable=arguments-differ
+        rand_ind = np.random.randint(0, self.idx[0].shape[0])
+        neighbor_choice = np.random.randint(0, self.num_op_choices)
+        arch_mat = rollout.arch
+        while neighbor_choice == arch_mat[self.idx[0][rand_ind], self.idx[1][rand_ind]]:
+            neighbor_choice = np.random.randint(0, self.num_op_choices)
+        new_arch_mat = copy.deepcopy(arch_mat)
+        new_arch_mat[self.idx[0][rand_ind], self.idx[1][rand_ind]] = neighbor_choice
+        return NasBench201Rollout(new_arch_mat, self)
+
     # ---- helpers ----
     def matrix2str(self, arch):
         node_strs = []

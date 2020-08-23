@@ -44,6 +44,13 @@ class SearchSpace(Component):
     def supported_rollout_types(cls):
         pass
 
+    def mutate(self, rollout, **mutate_kwargs):
+        """
+        Mutate a rollout to a neighbor rollout in the search space.
+        Called by mutation-based controllers, e.g., EvoController.
+        """
+        raise NotImplementedError()
+
 
 class CellSearchSpace(SearchSpace):
     def __init__(self):

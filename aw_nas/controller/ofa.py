@@ -7,10 +7,8 @@ from collections import OrderedDict
 
 import numpy as np
 import torch
-from torch import nn
-import torch.nn.functional as F
 
-from aw_nas import utils, assert_rollout_type
+from aw_nas import assert_rollout_type
 from aw_nas.controller.base import BaseController
 from aw_nas.rollout.ofa import MNasNetOFARollout, genotype_from_str
 

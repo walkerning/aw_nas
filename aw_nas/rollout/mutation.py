@@ -325,6 +325,7 @@ class MutationRollout(BaseRollout):
         self.perf[name] = value
         if not self.model_record.perfs is self.perf:
             self.model_record.perfs[name] = value
+        return self
 
     def genotype_list(self):
         return list(self.genotype._asdict().items())

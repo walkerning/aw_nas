@@ -191,3 +191,34 @@ def test_nasbench_201_candidate_forward_with_params(nasbench_201):
         assert False, "Should raise, as new params are used"
     torch.autograd.grad(res, list(new_params.values()), allow_unused=True)
 
+@pytest.mark.skipif(
+    not AWNAS_TEST_NASBENCH, reason="do not test the nasbench-201 BTC by default.")
+def test_mutate_and_evo():
+    from aw_nas.common import get_search_space
+    search_space = get_search_space(cls="nasbench-201", load_nasbench=False)
+    rollout = search_space.random_sample()
+    mutated_rollout = search_space.mutate(rollout)
+    print("before mutate: ", rollout)
+    print("after mutate: ", mutated_rollout)
+
+    from aw_nas.controller.evo import EvoController
+    controller = EvoController(search_space, device="cpu", rollout_type="nasbench-201",
+                               mode="train", population_size=4, parent_pool_size=2)
+    # random sample 4
+    rollouts = controller.sample(4)
+    for rollout in rollouts:
+        rollout.perf["reward"] = np.random.rand()
+    controller.step(rollouts)
+    new_rollouts = controller.sample(2)
+    print(new_rollouts)
+    for rollout in new_rollouts:
+        rollout.perf["reward"] = np.random.rand()
+    controller.step(new_rollouts)
+    with controller.begin_mode("eval"):
+        eval_rollouts = controller.sample(2)
+        rewards = [r.perf["reward"] for r in rollouts + new_rollouts]
+        print("all rollout rewards ever seen: ", rewards)
+        print("eval sample (population): ", [r.perf["reward"] for r in eval_rollouts])
+        controller.eval_sample_strategy = "all"
+        eval_rollouts = controller.sample(2)
+        print("eval sample (all): ", [r.perf["reward"] for r in eval_rollouts])

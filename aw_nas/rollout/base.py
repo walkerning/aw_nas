@@ -45,10 +45,12 @@ class BaseRollout(object):
 
     def set_perf(self, value, name="reward"):
         self.perf[name] = value
+        return self
 
     def set_perfs(self, perfs):
         for n, v in perfs.items():
             self.set_perf(v, name=n)
+        return self
 
     def __getstate__(self):
         state = self.__dict__.copy()
