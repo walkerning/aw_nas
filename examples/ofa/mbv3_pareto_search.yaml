@@ -6,8 +6,6 @@ search_space_type: ofa
 search_space_cfg:
   num_cell_groups: [1, 4, 4, 4, 4, 4]
   expansions: [1, 6, 6, 6, 6, 6]
-  num_cell_groups: [1, 4, 4, 4, 4, 4]
-  expansions: [1, 6, 6, 6, 6, 6]
   kernel_choice: [7, 5, 3]
   width_choice: [6, 5, 4]
   depth_choice: [4, 3, 2]
@@ -25,15 +23,12 @@ dataset_cfg:
 
 ## ---- Component controller ----
 # ---- Type rl ----
-controller_type: evo
+controller_type: pareto-evo
 controller_cfg:
   # Schedulable attributes:
   rollout_type: ofa
-  population_size: 100
-  parent_pool_size: 10
-  eval_sample_strategy: population
-  elimination_strategy: regularized
-  mode: train
+  init_population_size: 10
+  eval_sample_strategy: all
 # ---- End Type rl ----
 ## ---- End Component controller ----
 
@@ -63,7 +58,7 @@ evaluator_cfg:
   mepa_samples: 1
   data_portion:
   - 0.0
-  - 0.5 # train evaluator weights
+  - 0.1 # train evaluator weights
   - 0.1 # for train controller
   mepa_as_surrogate: false
   bptt_steps: 35

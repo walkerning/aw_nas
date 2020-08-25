@@ -6,11 +6,19 @@ search_space_type: ofa
 search_space_cfg:
   num_cell_groups: [1, 4, 4, 4, 4, 4]
   expansions: [1, 6, 6, 6, 6, 6]
-  num_cell_groups: [1, 4, 4, 4, 4, 4]
-  expansions: [1, 6, 6, 6, 6, 6]
-  kernel_choice: [7, 5, 3]
-  width_choice: [6, 5, 4]
-  depth_choice: [4, 3, 2]
+  schedule_cfg:
+    kernel_choice:
+        type: value
+        boundary: [1, 51, 101]
+        value: [[7], [7, 5], [7, 5, 3]]
+    width_choice:
+      type: value
+      boundary: [1, 151, 201]
+      value: [[6], [6, 5, 4], [6, 5, 4, 3]]
+    depth_choice:
+      type: value
+      boundary: [1, 251, 301]
+      value: [[4], [4, 3], [4, 3, 2]]
 # ---- End Type mnsanet_ofa ----
 ## ---- End Component search_space ----
 
@@ -18,22 +26,17 @@ search_space_cfg:
 # ---- Type cifar10 ----
 dataset_type: cifar10
 dataset_cfg:
-  # Schedulable attributes:
+  # Schedulable attributes: 
   cutout: null
 # ---- End Type cifar10 ----
 ## ---- End Component dataset ----
 
 ## ---- Component controller ----
 # ---- Type rl ----
-controller_type: evo
+controller_type: ofa
 controller_cfg:
   # Schedulable attributes:
   rollout_type: ofa
-  population_size: 100
-  parent_pool_size: 10
-  eval_sample_strategy: population
-  elimination_strategy: regularized
-  mode: train
 # ---- End Type rl ----
 ## ---- End Component controller ----
 
@@ -45,7 +48,7 @@ evaluator_cfg:
   load_optimizer: false
   load_scheduler: false
   rollout_type: ofa
-  batch_size: 256
+  batch_size: 64
   controller_surrogate_steps: 0
   # derive_surrogate_steps: 0
   mepa_surrogate_steps: 0
@@ -53,7 +56,7 @@ evaluator_cfg:
     lr: 0.05
     momentum: 0.9
     type: SGD
-    weight_decay: 0.00004
+    weight_decay: 0.0001
   mepa_scheduler:
     eta_min: 0.0
     T_max: 500
@@ -63,12 +66,11 @@ evaluator_cfg:
   mepa_samples: 1
   data_portion:
   - 0.0
-  - 0.5 # train evaluator weights
-  - 0.1 # for train controller
+  - 1.0 # train evaluator weights
+  - 0.0 # for train controller
   mepa_as_surrogate: false
   bptt_steps: 35
   schedule_cfg: null
-  multiprocess: false
 # ---- End Type mepa ----
 ## ---- End Component evaluator ----
 
@@ -76,20 +78,18 @@ evaluator_cfg:
 # ---- Type supernet ----
 weights_manager_type: ofa_supernet
 weights_manager_cfg:
-  # Schedulable attributes:
+  # Schedulable attributes: 
   rollout_type: ofa
-  backbone_type: mbv3_backbone
+  backbone_type: mbv2_backbone
   backbone_cfg:
     blocks: [1, 4, 4, 4, 4, 4]
-    strides: [1, 2, 1, 2, 1, 1]
+    strides: [1, 2, 2, 2, 1, 2]
     expansions: [1, 6, 6, 6, 6, 6]
-    layer_channels: [16, 16, 24, 40, 80, 112, 160, 960, 1280]
+    layer_channels: [32, 16, 24, 32, 64, 96, 160, 320, 1280]
     mult_ratio: 1.
-    kernel_sizes: [3, 5, 7]
+    kernel_sizes: [7, 5, 3]
     num_classes: 10
-    block_type: mbv3_block
-    stem_stride: 1
-  multiprocess: false
+    block_type: mbv2_block
 # ---- End Type supernet ----
 ## ---- End Component weights_manager ----
 
@@ -100,7 +100,7 @@ objective_cfg:
     soft_loss_coeff:
       type: value
       boundary: [1, 60]
-      value: [0.0, 6.0]
+      value: [0.0, 1.0]
   soft_loss_coeff: 0.0
   latency_coeff: 1.0
   expect_latency: 20
@@ -117,12 +117,12 @@ trainer_cfg:
   epochs: 500
   test_every: 10
   controller_scheduler: null
-  controller_samples: 10
-  derive_samples: 10
+  controller_samples: 1
+  derive_samples: 8
   evaluator_steps: null
-  controller_steps: 1
+  controller_steps: 0
   controller_train_every: 1
-  controller_train_begin: 0
+  controller_train_begin: 1001
   interleave_controller_every: null
   schedule_cfg: null
 # ---- End Type simple ----

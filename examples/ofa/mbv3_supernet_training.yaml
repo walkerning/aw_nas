@@ -6,11 +6,19 @@ search_space_type: ofa
 search_space_cfg:
   num_cell_groups: [1, 4, 4, 4, 4, 4]
   expansions: [1, 6, 6, 6, 6, 6]
-  num_cell_groups: [1, 4, 4, 4, 4, 4]
-  expansions: [1, 6, 6, 6, 6, 6]
-  kernel_choice: [7, 5, 3]
-  width_choice: [6, 5, 4]
-  depth_choice: [4, 3, 2]
+  schedule_cfg:
+    kernel_choice:
+        type: value
+        boundary: [1, 61, 121]
+        value: [[7], [7, 5], [7, 5, 3]]
+    width_choice:
+      type: value
+      boundary: [1, 181, 241]
+      value: [[6], [6,5,4], [6,5,4,3,2]]
+    depth_choice:
+      type: value
+      boundary: [1, 301, 361]
+      value: [[4], [4, 3], [4,3,2]]
 # ---- End Type mnsanet_ofa ----
 ## ---- End Component search_space ----
 
@@ -25,15 +33,10 @@ dataset_cfg:
 
 ## ---- Component controller ----
 # ---- Type rl ----
-controller_type: evo
+controller_type: ofa
 controller_cfg:
   # Schedulable attributes:
   rollout_type: ofa
-  population_size: 100
-  parent_pool_size: 10
-  eval_sample_strategy: population
-  elimination_strategy: regularized
-  mode: train
 # ---- End Type rl ----
 ## ---- End Component controller ----
 
@@ -56,15 +59,15 @@ evaluator_cfg:
     weight_decay: 0.00004
   mepa_scheduler:
     eta_min: 0.0
-    T_max: 500
+    T_max: 60
     type: CosineAnnealingLR
   surrogate_optimizer: null
   surrogate_scheduler: null
   mepa_samples: 1
   data_portion:
   - 0.0
-  - 0.5 # train evaluator weights
-  - 0.1 # for train controller
+  - 1.0 # train evaluator weights
+  - 0.0 # for train controller
   mepa_as_surrogate: false
   bptt_steps: 35
   schedule_cfg: null
@@ -117,12 +120,12 @@ trainer_cfg:
   epochs: 500
   test_every: 10
   controller_scheduler: null
-  controller_samples: 10
-  derive_samples: 10
+  controller_samples: 1
+  derive_samples: 8
   evaluator_steps: null
-  controller_steps: 1
+  controller_steps: 0
   controller_train_every: 1
-  controller_train_begin: 0
+  controller_train_begin: 1001
   interleave_controller_every: null
   schedule_cfg: null
 # ---- End Type simple ----

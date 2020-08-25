@@ -1,6 +1,7 @@
 """
 Definitions of mnasnet OFA rollout and search space.
 """
+import copy
 
 import numpy as np
 
@@ -71,23 +72,21 @@ class MNasNetOFASearchSpace(SearchSpace):
     def rollout_from_genotype(self, genotype):
         if isinstance(genotype, str):
             genotype = genotype_from_str(genotype, self)
-        genotype_list = list(genotype._asdict().values())
 
-        depth = genotype[:len(self.num_cell_groups)]
+        depth = list(genotype[:len(self.num_cell_groups)])
         width = []
         kernel = []
         ind = len(self.num_cell_groups)
-        for i, max_depth in zip(depth, self.num_cell_groups):
+        for _, max_depth in zip(depth, self.num_cell_groups):
             width_list = []
             kernel_list = []
-            for j in range(max_depth):
-                if j < i:
-                    try:
-                        width_list.append(genotype[ind][0])
-                        kernel_list.append(genotype[ind][1])
-                    except Exception:
-                        width_list.append(genotype[ind])
-                        kernel_list.append(3)
+            for _ in range(max_depth):
+                try:
+                    width_list.append(genotype[ind][0])
+                    kernel_list.append(genotype[ind][1])
+                except Exception:
+                    width_list.append(genotype[ind])
+                    kernel_list.append(3)
                 ind += 1
             width.append(width_list)
             kernel.append(kernel_list)
@@ -96,6 +95,65 @@ class MNasNetOFASearchSpace(SearchSpace):
 
     def supported_rollout_types(self):
         return ["ofa"]
+
+    def _uniform_mutate(self, rollout, mutation_prob=1.0): #pylint: disable=arguments-differ
+        arch = rollout.arch
+        new_arch = {
+            "depth": [1, ],
+            "width": [[1], ],
+            "kernel": [[3], ]
+        }
+        layers = sum(arch["depth"][1:], 0)
+        layer_mutation_prob = mutation_prob / layers
+        depth_mutation_prob = mutation_prob / len(arch["depth"])
+        for i, depth in enumerate(arch["depth"][1:], 1):
+            width = arch["width"][i]
+            kernel = arch["kernel"][i]
+            new_depth = depth
+            if np.random.random() < depth_mutation_prob:
+                new_depth = np.random.choice(self.depth_choice)
+            new_arch["depth"] += [new_depth]
+            new_arch["width"] += [[]]
+            new_arch["kernel"] += [[]]
+            for w, k in zip(width, kernel):
+                new_w = w
+                new_k = k
+                if np.random.random() < layer_mutation_prob:
+                    new_w = np.random.choice(self.width_choice)
+                if np.random.random() < layer_mutation_prob:
+                    new_k = np.random.choice(self.kernel_choice)
+                new_arch["width"][-1] += [new_w]
+                new_arch["kernel"][-1] += [new_k]
+        import ipdb; ipdb.set_trace()
+        return MNasNetOFARollout(new_arch, "", self)
+
+    def _single_mutate(self, rollout, depth_mutate_prob=0.5):
+        arch = rollout.arch
+        new_arch = copy.deepcopy(arch)
+        mutate_depth_idx = np.random.randint(1, len(arch["depth"]))
+        if np.random.random() < depth_mutate_prob:
+            new_depth = np.random.choice(self.depth_choice)
+            while new_depth == new_arch["depth"][mutate_depth_idx]:
+                new_depth = np.random.choice(self.depth_choice)
+            new_arch["depth"][mutate_depth_idx] = new_depth
+        else:
+            mutate_block_idx = np.random.randint(0, len(arch["width"][mutate_depth_idx]))
+            new_width = np.random.choice(self.width_choice)
+            new_kernel = np.random.choice(self.kernel_choice)
+            while new_width == new_arch["width"][mutate_depth_idx][mutate_block_idx] and \
+                new_kernel == new_arch["kernel"][mutate_depth_idx][mutate_block_idx]:
+                new_width = np.random.choice(self.width_choice)
+                new_kernel = np.random.choice(self.kernel_choice)
+            new_arch["width"][mutate_depth_idx][mutate_block_idx] = new_width
+            new_arch["kernel"][mutate_depth_idx][mutate_block_idx] = new_kernel
+        return MNasNetOFARollout(new_arch, "", self)
+
+    def mutate(self, rollout, mutation="single", **kwargs): #pylint: disable=arguments-differ
+        assert mutation in ("uniform", "single")
+        if mutation == "uniform":
+            return self._uniform_mutate(rollout, **kwargs)
+        elif mutation == "single":
+            return self._single_mutate(rollout, **kwargs)
 
     def plot_arch(self, genotypes, filename, label, **kwargs):
         pass

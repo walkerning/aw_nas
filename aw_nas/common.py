@@ -274,6 +274,26 @@ class CNNSearchSpace(CellSearchSpace):
             self._num_primitives if not self.cellwise_primitives else self._num_primitives_list),
                        info={}, search_space=self)
 
+    def mutate(self, rollout, node_mutate_prob=0.5):
+        new_arch = copy.deepcopy(rollout.arch)
+        mutate_i_cg = np.random.randint(0, self.num_cell_groups)
+        num_prims = self._num_primitives if not self.cellwise_primitives else self._num_primitives_list[mutate_i_cg]
+        _num_step = self.get_num_steps(mutate_i_cg)
+        if np.random.random() < node_mutate_prob:
+            node_mutate_idx = np.random.randint(0, len(new_arch[mutate_i_cg][0]))
+            i_out = node_mutate_idx // self.num_init_nodes
+            new_node = np.random.randint(0, i_out + self.num_init_nodes)
+            while new_node == new_arch[mutate_i_cg][0][node_mutate_idx]:
+                new_node = np.random.randint(0, i_out + self.num_init_nodes)
+            new_arch[mutate_i_cg][0][node_mutate_idx] = new_node
+        else:
+            op_mutate_idx = np.random.randint(0, len(new_arch[mutate_i_cg][1]))
+            new_prim = np.random.randint(0, num_prims)
+            while new_prim == new_arch[mutate_i_cg][0][op_mutate_idx]:
+                new_prim = np.random.randint(0, num_prims)
+            new_arch[mutate_i_cg][0][op_mutate_idx] = new_prim
+        return Rollout(new_arch, info={}, search_space=self)
+
     def genotype(self, arch):
         """
         Get a human readable description of an discrete architecture.
@@ -307,6 +327,8 @@ class CNNSearchSpace(CellSearchSpace):
             else:
                 concat = list(range(self.num_init_nodes, num_steps + self.num_init_nodes))
             concat_list.append(concat)
+        genotype_list = utils.recur_apply(lambda x: x, genotype_list, depth=10, out_type=tuple)
+        concat_list = utils.recur_apply(lambda x: x, concat_list, depth=10, out_type=tuple)
         kwargs = dict(itertools.chain(
             zip(self.cell_group_names, genotype_list),
             zip([n + "_concat" for n in self.cell_group_names], concat_list)
