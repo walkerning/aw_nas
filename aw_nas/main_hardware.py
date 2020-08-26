@@ -193,8 +193,25 @@ def parse(hwobj_cfg_file, prof_result_dir, prof_prim_file, prim_to_ops_file,
     LOGGER.info("Constructed hardware compiler {}{}".format(
         hw_name, ":{}".format(hw_kwargs) if hw_kwargs else ""))
 
-    with open(prim_to_ops_file, "rb") as r_f:
-        prim_to_ops = pickle.load(r_f)
+    # prim_to_ops_file = ./results_zns/hardwares/0-dpu/
+    # under this directory:
+    # 0-dpu
+    # |- 0
+    # |- 1
+    #    |_pytorch_to_caffe
+    #           |_ *.pkl
+    prim_to_ops = dict()
+    for _dir in os.listdir(prim_to_ops_file):
+        cur_dir = os.path.join(prim_to_ops_file, _dir, 'pytorch_to_caffe')
+        for _file in os.listdir(cur_dir):
+            if not _file.endswith('prim2names.pkl'): 
+                continue
+            pkl = os.path.join(cur_dir, _file)
+            with open(pkl, "rb") as r_f:
+                _dict = pickle.load(r_f)
+                prim_to_ops.update(_dict)
+                LOGGER.info("Unpickled file: {pkl}".format(pkl=pkl))
+
     # meta info: prim_to_ops is saved when generate profiling final-yaml folder for each net
     for _dir in os.listdir(prof_result_dir):
         cur_dir = os.path.join(prof_result_dir, _dir)

@@ -46,6 +46,8 @@ class Prim(Prim_):
                     "{} is a non-default parameter which should be provided explicitly.".format(
                     name)
 
+        kwargs = {k: v for k, v in kwargs.items() if v is not None}
+
         assert set(params.keys()) == set(
             position_params + list(kwargs.keys())),\
             ("The passed parameters are different from the formal parameter list of primitive "
@@ -56,7 +58,7 @@ class Prim(Prim_):
              )
 
         kwargs = tuple(
-            sorted([(k, v) for k, v in kwargs.items() if v is not None]))
+            sorted([(k, v) for k, v in kwargs.items()]))
         return super(Prim, cls).__new__(
             cls,
             prim_type,
@@ -74,6 +76,8 @@ class Prim(Prim_):
         origin_dict.update(dict(kwargs))
         return origin_dict
 
+    def __getnewargs_ex__(self):
+        return tuple(), self._asdict() 
 
 def assemble_profiling_nets_from_file(fname,
                                       base_cfg_fname,
@@ -131,6 +135,7 @@ def assemble_profiling_nets(profiling_primitives,
         num_sample = np.inf
 
     # genotypes: "[prim_type, *params], [] ..."
+    profiling_primitives = [prim for prim in profiling_primitives if prim["C"] != 3]
     profiling_primitives = sorted(profiling_primitives,
                                   key=lambda x: (x["C"], x["stride"]))
     ith_arch = 0
@@ -171,7 +176,6 @@ def assemble_profiling_nets(profiling_primitives,
         for _ in range(max_layers):
             if len(available_idx) == 0:
                 break
-
             try:
                 # find layer which has exactly same channel number and spatial size with the previous one
                 idx = channel_to_idx[cur_channel]
@@ -179,7 +183,7 @@ def assemble_profiling_nets(profiling_primitives,
                     raise ValueError
                 for i in idx:
                     sampled_prim = profiling_primitives[i]
-                    if sampled_prim["spatila_size"] == cur_size:
+                    if sampled_prim["spatial_size"] == cur_size:
                         break
                 else:
                     raise ValueError

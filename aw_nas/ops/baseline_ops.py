@@ -479,6 +479,6 @@ register_primitive("dense_reduce_block",
 
 
 register_primitive("mobilenet_v2_block",
-                   lambda expansion, C, C_out, stride, kernel_size, affine=True: MobileNetV2Block(expansion, C, C_out, stride, kernel_size, affine=affine))
+                   lambda C, C_out, stride, affine, expansion, kernel_size, activation: MobileNetV2Block(expansion, C, C_out, stride, kernel_size, affine=affine, activation=activation))
 register_primitive("mobilenet_v3_block",
-                   lambda expansion, C, C_out, stride, kernel_size, activation, use_se, affine=True: MobileNetV3Block(expansion, C, C_out, stride, kernel_size, affine=affine, activation=activation, use_se=use_se))
+                   lambda C, C_out, stride, affine, expansion, kernel_size, activation, use_se: MobileNetV3Block(expansion, C, C_out, stride, kernel_size, affine=affine, activation=activation, use_se=use_se))

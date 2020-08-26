@@ -71,12 +71,12 @@ class OFAMixinProfilingSearchSpace(MNasNetOFASearchSpace,
         sample=None,
         as_dict=True,
     ):
-        channels = [c * mult_ratio for c in base_channels]
+        channels = [make_divisible(c * mult_ratio, 8) for c in base_channels]
         primitives = []
         acts = acts or [
             None,
         ] * len(strides)
-        use_se = use_ses or [
+        use_ses = use_ses or [
             None,
         ] * len(strides)
         sizes = [
