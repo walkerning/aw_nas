@@ -188,3 +188,10 @@ If you find this codebase helpful, you can cite the following research for now.
 * **DARTS** Liu, Hanxiao, Karen Simonyan, and Yiming Yang. "DARTS: Differentiable Architecture Search." In International Conference on Learning Representations. 2018.
 * **SNAS** Xie, Sirui, Hehui Zheng, Chunxiao Liu, and Liang Lin. "SNAS: stochastic neural architecture search." In International Conference on Learning Representations. 2018.
 * **OFA** Cai, Han, Chuang Gan, Tianzhe Wang, Zhekai Zhang, and Song Han. "Once-for-All: Train One Network and Specialize it for Efficient Deployment." In International Conference on Learning Representations. 2019.
+
+## Unit Tests
+![coverage percentage](./doc/pics/coverage.svg) (Version 0.4.0-dev1)
+
+Run `pytest -x ./tests` to run the unit tests.
+
+The tests of NAS-Bench-101 and NAS-Bench-201 is skipped by default, run `pytest` with `AWNAS_TEST_NASBENCH` env variable set to run those tests: `AWNAS_TEST_NASBENCH=1 pytest -x ./tests/test_nasbench*`. There are other tests that are skipped because they might be very slow (see the test outputs (marked as "s") and test cases under `tests/`).

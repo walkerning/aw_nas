@@ -61,7 +61,7 @@ class EvoController(BaseController):
 
     def sample(self, n, batch_size=1):
         assert batch_size == 1, "`batch_size` is not meaningful for Evolutionary controller"
-        if self.mode == "eval" and len(self.population) > 0:
+        if self.mode == "eval" and self.population:
             if self.eval_sample_strategy == "population":
                 # return n archs with best rewards in the population
                 genotypes, scores = zip(*list(self.population.items()))
@@ -192,15 +192,14 @@ class ParetoEvoController(BaseController):
                 # return all archs on the pareto curve,
                 # note that number of sampled rollouts does not necessarily equals `n`
                 choices = self.population.items()
-            elif self.eval_sample_strategy == "n" and len(self.population) > 0:
+            elif self.eval_sample_strategy == "n" and self.population:
                 # return only `n` random samples on the pareto curve
-                choices = np.random.choice(zip(*list(self.population.items())), size=min(n, len(self.population)), replace=False)
-            rollouts = []
-            for geno, perfs in choices:
-                rollout = self.search_space.rollout_from_genotype(geno)
-                for name, perf in zip(self.perf_names, perfs):
-                    rollout.set_perf(perf, name)
-                rollouts += [rollout]
+                choices = np.random.choice(zip(*list(self.population.items())),
+                                           size=min(n, len(self.population)), replace=False)
+            rollouts = [self.search_space.rollout_from_genotype(geno)\
+                        .set_perfs(dict(zip(self.perf_names, perfs)))
+                        for geno, perfs in choices]
+            # fill to n rollouts by random samples, note that these rollouts are not evaluated
             rollouts += [self.search_space.random_sample() for _ in range(n - len(rollouts))]
             return rollouts
 
