@@ -124,7 +124,6 @@ class MNasNetOFASearchSpace(SearchSpace):
                     new_k = np.random.choice(self.kernel_choice)
                 new_arch["width"][-1] += [new_w]
                 new_arch["kernel"][-1] += [new_k]
-        import ipdb; ipdb.set_trace()
         return MNasNetOFARollout(new_arch, "", self)
 
     def _single_mutate(self, rollout, depth_mutate_prob=0.5):

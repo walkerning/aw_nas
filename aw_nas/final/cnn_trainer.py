@@ -108,6 +108,8 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                 _splits["test"], batch_size=batch_size, pin_memory=True,
                 num_workers=workers_per_queue, shuffle=False, **test_kwargs)
 
+        if self.calib_bn_setup:
+            self.model = calib_bn(self.model, self.train_queue)
 
         if self.model is not None:
             self.optimizer = self._init_optimizer()
@@ -120,9 +122,6 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
         self.report_every = None
         self.train_dir = None
         self._is_setup = False
-
-        if self.calib_bn_setup:
-            self.model = calib_bn(self.model, self.train_queue)
 
     def setup(self, load=None, load_state_dict=None,
               save_every=None, train_dir=None, report_every=50):
@@ -211,7 +210,7 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
             if epoch < self.warmup_epochs:
                 _warmup_update_lr(self.optimizer, epoch, self.learning_rate, self.warmup_epochs)
             else:
-                if self.scheduler is not None:
+                if self.scheduler is not None and epoch != 1:
                     self.scheduler.step()
             self.logger.info("epoch %d lr %e", epoch, self.optimizer.param_groups[0]["lr"])
 

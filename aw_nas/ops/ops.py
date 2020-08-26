@@ -638,8 +638,10 @@ class FlexibleDepthWiseConv(nn.Conv2d, FlexibleLayer):
         if self.do_kernel_transform:
             for smaller, larger in reversed(list(zip(self.kernel_sizes[:-1], self.kernel_sizes[1:]))):
                 if self.max_kernel_size >= larger:
-                    self.__setattr__("linear_{}to{}".format(larger, smaller),
-                                     nn.Linear(smaller * smaller, smaller * smaller, bias=False))
+                    kernel_transform_matrix = nn.Linear(
+                        smaller * smaller, smaller * smaller, bias=False)
+                    torch.nn.init.eye_(kernel_transform_matrix.weight.data)
+                    setattr(self, "linear_{}to{}".format(larger, smaller), kernel_transform_matrix)
 
         FlexibleLayer.__init__(self)
         self._bias = bias
@@ -803,7 +805,7 @@ class FlexibleSEModule(SEModule, FlexibleLayer):
     def set_mask(self, mask):
         if mask is None:
             return
-        channel = torch.Tensor(mask).to(torch.bool).sum().item()
+        channel = mask.sum().item()
         mid_channel = make_divisible(channel // self.reduction, 8)
         exp_mask = _get_channel_mask(self.se.expand.weight.data, mid_channel)
         self.se.reduction.set_mask(mask, exp_mask)
