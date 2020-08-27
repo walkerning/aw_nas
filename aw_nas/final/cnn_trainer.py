@@ -51,6 +51,7 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                  save_as_state_dict=False,
                  workers_per_queue=2,
                  eval_no_grad=True,
+                 eval_every=1,
                  calib_bn_setup=False, # for OFA final model
                  schedule_cfg=None):
         super(CNNFinalTrainer, self).__init__(schedule_cfg)
@@ -77,6 +78,7 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
         self.add_regularization = add_regularization
         self.save_as_state_dict = save_as_state_dict
         self.eval_no_grad = eval_no_grad
+        self.eval_every = eval_every
         self.calib_bn_setup = calib_bn_setup
 
         # for optimizer
@@ -219,13 +221,14 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                                                     self.device, epoch)
             self.logger.info("train_acc %f ; train_obj %f", train_acc, train_obj)
 
-            valid_acc, valid_obj, valid_perfs = self.infer_epoch(self.valid_queue,
-                                                                 self.parallel_model,
-                                                                 self._criterion, self.device)
-            self.logger.info("valid_acc %f ; valid_obj %f ; valid performances: %s",
-                             valid_acc, valid_obj,
-                             "; ".join(
-                                 ["{}: {:.3f}".format(n, v) for n, v in valid_perfs.items()]))
+            if epoch % self.eval_every == 0:
+                valid_acc, valid_obj, valid_perfs = self.infer_epoch(self.valid_queue,
+                                                                    self.parallel_model,
+                                                                    self._criterion, self.device)
+                self.logger.info("valid_acc %f ; valid_obj %f ; valid performances: %s",
+                                valid_acc, valid_obj,
+                                "; ".join(
+                                    ["{}: {:.3f}".format(n, v) for n, v in valid_perfs.items()]))
 
             if self.save_every and epoch % self.save_every == 0:
                 path = os.path.join(self.train_dir, str(epoch))

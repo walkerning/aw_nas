@@ -21,6 +21,57 @@ There are a several of things you may need to edit in configure YAML file:
   * `backbone_cfg.pretrained_path`: load the (ImageNet or other dataset) pretrained model for backbone.
   * `backbone_cfg.num_classes`: the number of classes of dataset. It does not include the background class, and the background label will be add to `0`. The number of finally predicted classes always includes the background, which will be `num_classes + 1`.
 
+#### Distillation
+Distillation is an essential part during the OFA training process, which can pass the knowledge of the supernet to sub-networks to gain improvements. Currently, we implement [Adaptive Distillation Loss](https://arxiv.org/abs/1901.00366) with focal loss only.
+
+At first we used all of logits of teacher as the soft labels that has the exactly same number with the hard labels. However, we noticed there was a significant decrease after applying distillation. Thus, we discarded all negative and ignored samples that are indicated by the hard labels (anchors whose IoU with GTboxes are lower than 0.5), and only applied the soft loss on positive samples, then we gained 1%~2% mAP improvement on VOC.
+
+There are three different ways to build a teacher model: using supernet (`search` command only), loading a pytorch model, or initial an `aw_nas` final model.
+
+```yaml
+objective_cfg:
+  ...
+  soft_losses_cfg:
+    teacher_cfg: ["supernet" or "$PYTORCH_MODEL_PATH" or a dict]
+    losses_cfg:
+      type: adaptive_distillation_loss
+      cfg:
+        alpha: 1.5
+        gamma: 1.0
+        temperature: 2.
+        loss_coef: 0.1
+```
+If you want use the supernet as the teacher model, set `teacher_cfg` as `supernet`(**Recommened**). Or you can set an arbitrary network as the teacher model, only if `teacher_cfg` is set as the path of the pytorch model (the whole pytorch model, instead of the `state_dict`.)
+Or you can initialize a aw_nas final model by passing a final model config to `teacher_cfg` as following:
+
+```yaml
+teacher_cfg:
+  state_dict: $PATH_TO_MODEL
+  teacher_final_type: ssd_final_model
+  teacher_final_cfg:
+    num_classes: 20
+    feature_levels: [4, 5]
+    backbone_type: ofa_final_model
+    backbone_cfg:
+      genotypes: "cell_0=1,cell_1=2,cell_2=2,cell_3=2,cell_4=2,cell_5=2,cell_0_block_0=(1, 3),cell_1_block_0=(3, 3),cell_1_block_1=(3, 3),cell_2_block_0=(3, 5),cell_2_block_1=(3, 5),cell_3_block_0=(4, 7),cell_3_block_1=(3, 3),cell_4_block_0=(3, 5),cell_4_block_1=(4, 3),cell_5_block_0=(6, 3),cell_5_block_1=(6, 7),cell_1_block_2=(0, 0),cell_1_block_3=(0, 0),cell_2_block_2=(0, 0),cell_2_block_3=(0, 0),cell_3_block_2=(0, 0),cell_3_block_3=(0, 0),cell_4_block_2=(0, 0),cell_4_block_3=(0, 0),cell_5_block_2=(0, 0),cell_5_block_3=(0, 0)"
+      backbone_type: mbv3_backbone
+      backbone_cfg:
+        layer_channels: [16, 16, 24, 40, 80, 112, 160, 960, 1280]
+        strides: [1, 2, 2, 2, 1, 2]
+        mult_ratio: 1.
+        kernel_sizes: [3, 5, 7]
+        pretrained_path: null
+    head_type: ssd_head_final_model
+    head_cfg:
+      expansions: [0.5, 0.5, 0.5, 0.5]
+      channels: [512, 256, 256, 128]
+      aspect_ratios: [[2], [2, 3], [2, 3], [2, 3], [2], [2]]
+      pretrained_path: null
+    supernet_state_dict: null
+```
+
+
+
 #### Usage
 ```sh
 aw_nas search examples/detection/ssd_supernet_training.yaml --train-dir ${dir} --save-every ${num} [--load ${previous_trained_dir}]
@@ -62,3 +113,4 @@ aw_nas train examples/detection/ssd_final.yaml --train-dir ${dir} --save-every $
 
 ## References
 * **DetNAS**: Chen, Yukang, et al. "DetNAS: Backbone search for object detection." Advances in Neural Information Processing Systems. 2019.
+* **Adaptive Distillation** Tang, Shitao, et al. "Learning efficient detector with semi-supervised adaptive distillation." arXiv preprint arXiv:1901.00366 (2019).

@@ -11,51 +11,56 @@ from aw_nas.utils.common_utils import nullcontext
 from aw_nas.utils.exception import expect
 
 
-class DetectionFinalTrainer(CNNFinalTrainer): #pylint: disable=too-many-instance-attributes
+class DetectionFinalTrainer(CNNFinalTrainer):  #pylint: disable=too-many-instance-attributes
     NAME = "det_final_trainer"
 
-    def __init__(self, model, dataset, device, gpus, objective,#pylint: disable=dangerous-default-value
-                 multiprocess=False,
-                 epochs=600, batch_size=96,
-                 optimizer_type="SGD", optimizer_kwargs=None,
-                 learning_rate=0.025, momentum=0.9,
-                 freeze_base_net=False,
-                 base_net_lr=1e-4,
-                 warmup_epochs=0,
-                 optimizer_scheduler={
-                     "type": "CosineAnnealingLR",
-                     "T_max": 600,
-                     "eta_min": 0.001
-                 },
-                 weight_decay=3e-4, no_bias_decay=False,
-                 grad_clip=5.0,
-                 auxiliary_head=False, auxiliary_weight=0.4,
-                 add_regularization=False,
-                 save_as_state_dict=False,
-                 workers_per_queue=2,
-                 eval_every=10,
-                 eval_no_grad=True,
-                 eval_dir=None,
-                 schedule_cfg=None):
+    def __init__(
+            self,
+            model,
+            dataset,
+            device,
+            gpus,
+            objective,  #pylint: disable=dangerous-default-value
+            multiprocess=False,
+            epochs=600,
+            batch_size=96,
+            optimizer_type="SGD",
+            optimizer_kwargs=None,
+            learning_rate=0.025,
+            momentum=0.9,
+            freeze_base_net=False,
+            base_net_lr=1e-4,
+            warmup_epochs=0,
+            optimizer_scheduler={
+                "type": "CosineAnnealingLR",
+                "T_max": 600,
+                "eta_min": 0.001
+            },
+            weight_decay=3e-4,
+            no_bias_decay=False,
+            grad_clip=5.0,
+            auxiliary_head=False,
+            auxiliary_weight=0.4,
+            add_regularization=False,
+            save_as_state_dict=False,
+            workers_per_queue=2,
+            eval_every=10,
+            eval_no_grad=True,
+            eval_dir=None,
+            schedule_cfg=None):
 
         self.freeze_base_net = freeze_base_net
         self.base_net_lr = base_net_lr
-        super(DetectionFinalTrainer, self).__init__(model, dataset, device, gpus, objective,
-                multiprocess,
-                epochs, batch_size,
-                optimizer_type, optimizer_kwargs,
-                learning_rate, momentum,
-                warmup_epochs,
-                optimizer_scheduler,
-                weight_decay, no_bias_decay,
-                grad_clip,
-                auxiliary_head, auxiliary_weight,
-                add_regularization,
-                save_as_state_dict,
-                workers_per_queue,
-                eval_no_grad, schedule_cfg)
+        super(DetectionFinalTrainer,
+              self).__init__(model, dataset, device, gpus, objective,
+                             multiprocess, epochs, batch_size, optimizer_type,
+                             optimizer_kwargs, learning_rate, momentum,
+                             warmup_epochs, optimizer_scheduler, weight_decay,
+                             no_bias_decay, grad_clip, auxiliary_head,
+                             auxiliary_weight, add_regularization,
+                             save_as_state_dict, workers_per_queue,
+                             eval_no_grad, eval_every, schedule_cfg)
 
-        self.eval_every = eval_every
         self.predictor = self.objective.predictor
         self._criterion = self.objective._criterion
         self._acc_func = self.objective.get_acc
@@ -80,15 +85,12 @@ class DetectionFinalTrainer(CNNFinalTrainer): #pylint: disable=too-many-instance
         if not self.freeze_base_net:
             params = self.model.parameters()
         else:
-            params = [
-                {
-                    "params": backbone.parameters(),
-                    "lr": self.base_net_lr
-                },
-                {
-                    "params": head.parameters()
-                }
-            ]
+            params = [{
+                "params": backbone.parameters(),
+                "lr": self.base_net_lr
+            }, {
+                "params": head.parameters()
+            }]
         optim_kwargs.update(self.optimizer_kwargs or {})
         optimizer = optim_cls(params, **optim_kwargs)
 
@@ -104,21 +106,21 @@ class DetectionFinalTrainer(CNNFinalTrainer): #pylint: disable=too-many-instance
             queue = self.train_queue
         acc, obj, perfs = self.infer_epoch(queue, self.parallel_model,
                                            self._criterion, self.device)
-        self.logger.info("acc %f ; obj %f ; performance: %s", acc, obj,
-                         "; ".join(
-                             ["{}: {:.3f}".format(n, v) for n, v in perfs.items()]))
+        self.logger.info(
+            "acc %f ; obj %f ; performance: %s", acc, obj,
+            "; ".join(["{}: {:.3f}".format(n, v) for n, v in perfs.items()]))
         return acc, obj
 
     @classmethod
     def supported_data_types(cls):
         return ["image"]
 
-    def train_epoch(self, train_queue, model, criterion, optimizer, device, epoch):
+    def train_epoch(self, train_queue, model, criterion, optimizer, device,
+                    epoch):
         expect(self._is_setup, "trainer.setup should be called first")
-        cls_objs = utils.AverageMeter()
-        loc_objs = utils.AverageMeter()
         top1 = utils.AverageMeter()
         top5 = utils.AverageMeter()
+        losses_obj = utils.OrderedStats()
         model.train()
 
         for step, (inputs, targets) in enumerate(train_queue):
@@ -126,8 +128,8 @@ class DetectionFinalTrainer(CNNFinalTrainer): #pylint: disable=too-many-instance
 
             optimizer.zero_grad()
             predictions = model.forward(inputs)
-            classification_loss, regression_loss = criterion(inputs, predictions, targets, model)
-            loss = classification_loss + regression_loss
+            losses = criterion(inputs, predictions, targets, model)
+            loss = sum(losses.values())
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), self.grad_clip)
             optimizer.step()
@@ -135,23 +137,24 @@ class DetectionFinalTrainer(CNNFinalTrainer): #pylint: disable=too-many-instance
             prec1, prec5 = self._acc_func(inputs, predictions, targets, model)
 
             n = inputs.size(0)
-            cls_objs.update(classification_loss.item(), n)
-            loc_objs.update(regression_loss.item(), n)
+            losses_obj.update(losses)
             top1.update(prec1.item(), n)
             top5.update(prec5.item(), n)
 
             if step % self.report_every == 0:
-                self.logger.info("train %03d %.3f %.3f; %.2f%%; %.2f%%",
-                                 step, cls_objs.avg, loc_objs.avg, top1.avg, top5.avg)
-        return top1.avg, cls_objs.avg + loc_objs.avg
+                self.logger.info("train %03d %.2f%%; %.2f%%; %s",
+                                 step, top1.avg, top5.avg, "; ".join(
+                                     ["{}: {:.3f}".format(perf_n, v) \
+                                      for perf_n, v in losses_obj.avgs().items()]))
+        return top1.avg, sum(losses_obj.avgs().values())
 
     def infer_epoch(self, valid_queue, model, criterion, device):
         expect(self._is_setup, "trainer.setup should be called first")
-        cls_objs = utils.AverageMeter()
-        loc_objs = utils.AverageMeter()
         top1 = utils.AverageMeter()
         top5 = utils.AverageMeter()
         objective_perfs = utils.OrderedStats()
+        losses_obj = utils.OrderedStats()
+        all_perfs = []
         model.eval()
 
         context = torch.no_grad if self.eval_no_grad else nullcontext
@@ -161,21 +164,27 @@ class DetectionFinalTrainer(CNNFinalTrainer): #pylint: disable=too-many-instance
                 # targets = targets.to(device)
 
                 predictions = model.forward(inputs)
-                classification_loss, regression_loss = criterion(
-                    inputs, predictions, targets, model)
-                prec1, prec5 = self._acc_func(inputs, predictions, targets, model)
+                losses = criterion(inputs, predictions, targets, model)
+                prec1, prec5 = self._acc_func(inputs, predictions, targets,
+                                              model)
                 perfs = self._perf_func(inputs, predictions, targets, model)
+                all_perfs.append(perfs)
                 objective_perfs.update(dict(zip(self._perf_names, perfs)))
+                losses_obj.update(losses)
                 n = inputs.size(0)
-                cls_objs.update(classification_loss.item(), n)
-                loc_objs.update(regression_loss.item(), n)
                 top1.update(prec1.item(), n)
                 top5.update(prec5.item(), n)
 
                 if step % self.report_every == 0:
-                    self.logger.info("valid %03d %e %e;  %.2f%%; %.2f%%; %s",
-                                     step, cls_objs.avg, loc_objs.avg, top1.avg, top5.avg,
-                                     "; ".join(["{}: {:.3f}".format(perf_n, v) \
-                                                for perf_n, v in objective_perfs.avgs().items()]))
-        self.objective.get_reward(None, None, None, None, final=True)
-        return top1.avg, cls_objs.avg + loc_objs.avg, objective_perfs.avgs()
+                    self.logger.info(
+                        "valid %03d %.2f%%; %.2f%%; %s", step, top1.avg, top5.avg,
+                        "; ".join([
+                            "{}: {:.3f}".format(perf_n, v) for perf_n, v in \
+                            list(objective_perfs.avgs().items()) + \
+                            list(losses_obj.avgs().items())]))
+        all_perfs = list(zip(*all_perfs))
+        obj_perfs = {
+            k: self.objective.aggregate_fn(k, False)(v)
+            for k, v in zip(self._perf_names, all_perfs)
+        }
+        return top1.avg, sum(losses_obj.avgs().values()), obj_perfs

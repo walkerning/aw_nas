@@ -30,6 +30,10 @@ dataset_cfg:
   random_seed: 123
   train_crop_size: 300
   test_crop_size: 300
+  image_mean: 0.
+  image_std: 1.
+  image_norm_factor: 128.
+  image_bias: -1
 # ---- End Type cifar10 ----
 ## ---- End Component dataset ----
 
@@ -97,12 +101,12 @@ weights_manager_cfg:
       num_classes: 90
       block_type: mbv3_block
       pretrained_path: null
-
   head_type: ssd_head_final_model
   head_cfg:
     expansions: [0.5, 0.5, 0.5, 0.5]
     channels: [512, 256, 256, 128]
-    aspect_ratios: [[2, 3], [2, 3], [2, 3], [2, 3], [2], [2]]
+    aspect_ratios: [[2], [2, 3], [2, 3], [2, 3], [2], [2]]
+    pretrained_path: null
   num_classes: 90
   feature_levels: [4, 5]
   
@@ -116,7 +120,7 @@ objective_cfg:
   anchors_generator_type: ssd_anchors_generator
   anchors_generator_cfg:
     min_dim: 300
-    aspect_ratios: [[2, 3], [2, 3], [2, 3], [2, 3], [2], [2]]
+    aspect_ratios: [[2], [2, 3], [2, 3], [2, 3], [2], [2]]
     feature_maps: [19, 10, 5, 3, 2, 1]
     scales: [45, 90, 135, 180, 225, 270, 315]
     steps: [16, 32, 64, 100, 150, 300]
@@ -124,19 +128,34 @@ objective_cfg:
   matcher_type: iou_matcher
   matcher_cfg:
     matched_threshold: 0.5
-    unmatched_threshold: 0.5
+    unmatched_threshold: 0.4
     variance: [0.1, 0.2]
-  loss_type: multibox_loss
+  loss_type: focal_loss
   loss_cfg:
-    neg_mining: true
-    neg_pos: 3
+    alpha: 0.25
+    gamma: 2.0
+    loc_coef: 1.
+  soft_losses_cfg:
+    teacher_cfg: supernet
+    losses_cfg:
+      type: adaptive_distillation_loss
+      cfg:
+        alpha: 1.5
+        gamma: 1.0
+        temperature: 2.
+        loss_coef: 0.
+        schedule_cfg:
+          loss_coef:
+            type: value
+            boundary: [1, 81]
+            value: [0., 0.1]
   post_processing_type: ssd_post_processing
   post_processing_cfg:
     top_k: 200
     confidence_threshold: 0.01
     nms_threshold: 0.5
     variance: [0.1, 0.2]
-    apply_prob_type: "softmax"
+    apply_prob_type: "sigmoid"
   metrics_type: coco
 
 ## ---- Component trainer ----

@@ -12,7 +12,7 @@ class Losses(Component, nn.Module):
         nn.Module.__init__(self)
 
     @abc.abstractmethod
-    def forward(self, predictions, targets):
+    def forward(self, predictions, targets, indices, normalizer):
         pass
 
 

@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
+import os
 import torch
 
+from aw_nas.final.base import FinalModel
 from aw_nas.objective.base import BaseObjective
 from aw_nas.objective.detection_utils import (
     Losses, AnchorsGenerator, Matcher, PostProcessing, Metrics)
@@ -21,6 +23,7 @@ class DetectionObjective(BaseObjective):
                  anchors_generator_cfg={},
                  matcher_cfg={},
                  loss_cfg={},
+                 soft_losses_cfg={},
                  post_processing_cfg={},
                  metrics_cfg={},
                  schedule_cfg=None):
@@ -35,8 +38,42 @@ class DetectionObjective(BaseObjective):
         self.box_loss = Losses.get_class_(loss_type)(num_classes, **loss_cfg)
         self.predictor = PostProcessing.get_class_(post_processing_type)(
             num_classes, anchors=self.anchors, **post_processing_cfg)
-
         self.metrics = Metrics.get_class_(metrics_type)(**metrics_cfg)
+
+        self.soft_losses = None
+        self.teacher_net = None
+
+        """
+        soft_losses_cfg:
+            teacher_cfg: str or dict
+                teacher_final_type: str
+                teacher_final_cfg: {}
+            losses_cfg:
+              - type: str
+                cfg: {}
+              - type: ...
+
+        """
+        if soft_losses_cfg.get("losses_cfg") and soft_losses_cfg.get("teacher"):
+            teacher_cfg = soft_losses_cfg.get("teacher_cfg", "supernet")
+            if isinstance(teacher_cfg, str):
+                if teacher_cfg == "supernet":
+                    self.teacher_net = "supernet"
+                elif os.path.exists(teacher_cfg):
+                    self.teacher_net = torch.load(teacher_cfg)
+                else:
+                    raise ValueError("Except teacher_cfg to be 'supernet' or the path of the teacher model, got {} instead.".format(teacher_cfg))
+            elif isinstance(teacher_cfg, dict):
+                state_dict = teacher_cfg.pop("state_dict", None)
+                self.teacher_net = FinalModel.get_class_(teacher_cfg["teacher_final_type"])(teacher_cfg["teacher_final_cfg"])
+                if state_dict:
+                    self.teacher_net.load_state(state_dict, restrict=True)
+            else:
+                raise ValueError("Except teacher_cfg to be a str or dict, got {} instead.".format(teacher_cfg))
+            losses_cfg = soft_losses_cfg["losses_cfg"]
+            if isinstance(losses_cfg, dict):
+                losses_cfg = [losses_cfg]
+            self.soft_losses = [Losses.get_class_(cfg["type"])(**cfg["cfg"]) for cfg in losses_cfg]
 
         self.all_boxes = [{} for _ in range(self.num_classes)]
         self.cache = []
@@ -89,12 +126,12 @@ class DetectionObjective(BaseObjective):
 
     def aggregate_fn(self, perf_name, is_training=True):
         assert perf_name in ["reward", "loss"] + self.perf_names()
-        if not is_training and perf_name == "reward":
+        if not is_training and perf_name in ("reward", "mAP"):
             return lambda perfs: self.metrics(self.all_boxes)
         return super().aggregate_fn(perf_name, is_training)
 
-    def get_acc(self, inputs, outputs, targets, cand_net):
-        conf_t, _, _ = self.batch_transform(inputs, outputs, targets)
+    def get_acc(self, inputs, outputs, annotations, cand_net):
+        conf_t, _, _ = self.batch_transform(inputs, outputs, annotations)
         # target: [batch_size, anchor_num, 5], boxes + labels
         keep = conf_t > 0
         confidences, _ = outputs
@@ -126,20 +163,20 @@ class DetectionObjective(BaseObjective):
                 self.all_boxes[j][_id] = cls_dets
         return [0.]
 
-    def get_perfs(self, inputs, outputs, targets, cand_net):
-        acc = self.get_acc(inputs, outputs, targets, cand_net)
+    def get_perfs(self, inputs, outputs, annotations, cand_net):
+        acc = self.get_acc(inputs, outputs, annotations, cand_net)
         if not cand_net.training:
-            self.get_mAP(inputs, outputs, targets, cand_net)
+            self.get_mAP(inputs, outputs, annotations, cand_net)
         return [acc[0].item()]
 
-    def get_reward(self, inputs, outputs, targets, cand_net):
+    def get_reward(self, inputs, outputs, annotations, cand_net):
         # mAP is actually calculated using aggregate_fn
         return 0.
 
     def get_loss(self,
                  inputs,
                  outputs,
-                 targets,
+                 annotations,
                  cand_net,
                  add_controller_regularization=True,
                  add_evaluator_regularization=True):
@@ -150,9 +187,20 @@ class DetectionObjective(BaseObjective):
             outputs: logits
             targets: labels
         """
-        return sum(self._criterion(inputs, outputs, targets, cand_net))
+        return sum(self._criterion(inputs, outputs, annotations, cand_net).values())
 
-    def _criterion(self, inputs, outputs, annotations, model):
+    def _criterion(self, inputs, outputs, annotations, cand_net):
         conf_t, loc_t, _ = self.batch_transform(inputs, outputs,
                                                      annotations)
-        return self.box_loss(outputs, (conf_t, loc_t))
+        indices, normalizer = self.box_loss.filter_samples(outputs, (conf_t, loc_t))
+        hard_losses = self.box_loss(outputs, (conf_t, loc_t), indices, normalizer)
+        soft_losses = {}
+        if self.soft_losses is not None and cand_net.training:
+            teacher_net = cand_net.super_net if self.teacher_net == "supernet" else self.teacher_net
+            teacher_net = teacher_net.to(inputs.device)
+            teacher_net.train()
+            with torch.no_grad():
+                soft_target = teacher_net(inputs)
+            soft_losses = [soft_loss(outputs, soft_target, indices, normalizer) for soft_loss in self.soft_losses]
+        return dict(**hard_losses, **soft_losses)
+

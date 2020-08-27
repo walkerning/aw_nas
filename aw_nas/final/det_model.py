@@ -11,8 +11,7 @@ class HeadModel(nn.Module):
                  num_classes=10,
                  extras=None,
                  regression_headers=None,
-                 classification_headers=None,
-                 norm=None):
+                 classification_headers=None):
         super(HeadModel, self).__init__()
         self.device = device
         self.num_classes = num_classes
@@ -20,10 +19,6 @@ class HeadModel(nn.Module):
         self.extras = extras
         self.regression_headers = regression_headers
         self.classification_headers = classification_headers
-        if norm:
-            self.norm = norm
-        else:
-            self.norm = None
         expect(
             None not in [extras, regression_headers, classification_headers],
             "Extras, regression_headers and classification_headers must be provided, "
@@ -33,8 +28,6 @@ class HeadModel(nn.Module):
     def forward(self, features):
         expect(isinstance(features, (list, tuple)),
                'features must be a series of feature.', ValueError)
-        if self.norm:
-            features = self.norm(features)
         features = self.extras(features)
 
         batch_size = features[0].shape[0]
