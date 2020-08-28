@@ -91,11 +91,12 @@ class MultiBoxLoss(Losses):
 class FocalLoss(Losses):
     NAME = "focal_loss"
 
-    def __init__(self, num_classes, alpha, gamma, loc_coef=1., schedule_cfg=None):
+    def __init__(self, num_classes, alpha, gamma, background_label=0, loc_coef=1., schedule_cfg=None):
         super().__init__(schedule_cfg)
         self.num_classes = num_classes
         self.alpha = alpha
         self.gamma = gamma
+        self.background_label = background_label
         self.loc_coef = loc_coef
 
     def filter_samples(self, predictions, targets):
@@ -134,6 +135,7 @@ class FocalLoss(Losses):
             "please ensure the correction of configuration."
         conf_t = torch.zeros_like(confidences).to(device).scatter_(
             1, conf_t.reshape(-1, 1), 1).to(torch.float)
+        conf_t[:, 0] = self.background_label
         loc_t = loc_t[positive_indices]
 
         alpha_factor = torch.ones_like(confidences) * self.alpha
