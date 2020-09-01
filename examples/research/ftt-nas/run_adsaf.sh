@@ -1,8 +1,9 @@
 #!/bin/bash
+here=$(dirname "$0")
 gpu=${GPU:-0}
 weight_fault=1
 exp_name=${1}
-result_dir=./results/ftt_nas_adsaf/$exp_name
+result_dir=$here/results/ftt_nas_adsaf/$exp_name
 seed=${seed:-123}
 
 if [[ $weight_fault -gt 0 ]]; then
@@ -13,7 +14,8 @@ if [[ $weight_fault -gt 0 ]]; then
     if [[ ! -e $result_dir/awnas/data ]]; then
         ln -s ~/awnas/data $result_dir/awnas/data
     fi
-    cp ./examples/research/ftt-nas/fixed_point_plugins/fixed_point_rram_patch_bit.py $result_dir/awnas/plugins/
+    # cp $here/fixed_point_plugins/fixed_point_rram_patch_bit.py $result_dir/awnas/plugins/
+    cp $here/fixed_point_plugins/fixed_point_rram_patch_all.py $result_dir/awnas/plugins/
 fi
 config=${2}
 shift 2
