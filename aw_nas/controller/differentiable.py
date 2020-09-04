@@ -14,6 +14,7 @@ from aw_nas import utils, assert_rollout_type
 from aw_nas.common import DifferentiableRollout as DiffRollout
 from aw_nas.controller.base import BaseController
 
+
 class DiffController(BaseController, nn.Module):
     """
     Using the gumbel softmax reparametrization of categorical distribution.
@@ -61,13 +62,27 @@ class DiffController(BaseController, nn.Module):
         self.force_uniform = force_uniform
 
         _num_init_nodes = self.search_space.num_init_nodes
-        _num_edges_list = [sum(_num_init_nodes+i
-                               for i in range(self.search_space.get_num_steps(i_cg)))
-                           for i_cg in range(self.search_space.num_cell_groups)]
+        _num_edges_list = [
+            sum(
+                _num_init_nodes + i
+                for i in range(self.search_space.get_num_steps(i_cg))
+            )
+            for i_cg in range(self.search_space.num_cell_groups)
+        ]
+
         self.cg_alphas = nn.ParameterList([
-            nn.Parameter(1e-3*torch.randn(_num_edges,
-                                          len(self.search_space.cell_shared_primitives[i_cg])))
-            for i_cg, _num_edges in enumerate(_num_edges_list)])
+            nn.Parameter(
+                1e-3 * torch.randn(
+                    _num_edges, len(self.search_space.cell_shared_primitives[i_cg])
+                )
+            )
+            for i_cg, _num_edges in enumerate(_num_edges_list)
+        ])
+
+        # self.cg_betas = nn.ParameterList([
+        #     nn.Parameter(1e-3 * torch.randn(_num_edges))
+        #     for _num_edges in _num_edges_list
+        # ])
 
         self.to(self.device)
 
@@ -84,7 +99,7 @@ class DiffController(BaseController, nn.Module):
         self.device = device
         self.to(device)
 
-    def forward(self, n=1): #pylint: disable=arguments-differ
+    def forward(self, n=1):  # pylint: disable=arguments-differ
         return self.sample(n=n)
 
     def sample(self, n=1, batch_size=1):
@@ -94,12 +109,12 @@ class DiffController(BaseController, nn.Module):
             sampled_list = []
             logits_list = []
             for alpha in self.cg_alphas:
-                if self.force_uniform: # cg_alpha parameters will not be in the graph
+                if self.force_uniform:  # cg_alpha parameters will not be in the graph
                     alpha = torch.zeros_like(alpha)
                 if batch_size > 1:
-                    expanded_alpha = alpha.reshape([alpha.shape[0], 1, alpha.shape[1]])\
-                                          .repeat([1, batch_size, 1])\
-                                          .reshape([-1, alpha.shape[-1]])
+                    expanded_alpha = alpha.reshape([alpha.shape[0], 1, alpha.shape[1]]) \
+                        .repeat([1, batch_size, 1]) \
+                        .reshape([-1, alpha.shape[-1]])
                 else:
                     expanded_alpha = alpha
                 if self.use_prob:
@@ -166,7 +181,7 @@ class DiffController(BaseController, nn.Module):
         # apply the gradients
         optimizer.step()
 
-    def step(self, rollouts, optimizer, perf_name): # very memory inefficient
+    def step(self, rollouts, optimizer, perf_name):  # very memory inefficient
         self.zero_grad()
         losses = [r.get_perf(perf_name) for r in rollouts]
         optimizer.step()
@@ -203,8 +218,8 @@ class DiffController(BaseController, nn.Module):
             # maybe log the summary
             self.logger.info("%s%d rollouts: %s ENTROPY: %2f (%s)",
                              log_prefix, num,
-                             "-LOG_PROB: %.2f (%s) ;"%(-total_logprob, cg_logprobs_str) \
-                             if self.gumbel_hard else "",
+                             "-LOG_PROB: %.2f (%s) ;" % (-total_logprob, cg_logprobs_str) \
+                                 if self.gumbel_hard else "",
                              total_entro, cg_entro_str)
             if step is not None and not self.writer.is_none():
                 if self.gumbel_hard:

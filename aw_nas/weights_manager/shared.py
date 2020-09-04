@@ -11,7 +11,7 @@ from torch import nn
 from aw_nas import ops
 from aw_nas.weights_manager.base import BaseWeightsManager
 from aw_nas.utils.common_utils import Context
-from aw_nas.utils.exception import expect
+from aw_nas.utils.exception import expect, ConfigException
 
 class SharedNet(BaseWeightsManager, nn.Module):
     def __init__(self, search_space, device, rollout_type,
@@ -296,19 +296,30 @@ class SharedCell(nn.Module):
             from_, to_ = self._edge_name_pattern.match(edge_name).groups()
             self.edges[int(from_)][int(to_)] = edge_mod
 
+
 class SharedOp(nn.Module):
     """
     The operation on an edge, consisting of multiple primitives.
     """
-
-    def __init__(self, C, C_out, stride, primitives):
+    def __init__(self, C, C_out, stride, primitives, partial_channel_proportion=None):
         super(SharedOp, self).__init__()
+
         self.primitives = primitives
         self.stride = stride
+        self.partial_channel_proportion = partial_channel_proportion
+
+        if self.partial_channel_proportion is not None:
+            expect(C % self.partial_channel_proportion == 0,
+                   "partial_channel_proportion must be divisible by #channels", ConfigException)
+            expect(C_out % self.partial_channel_proportion == 0,
+                   "partial_channel_proportion must be divisible by #channels", ConfigException)
+            C = C // self.partial_channel_proportion
+            C_out = C_out // self.partial_channel_proportion
+
         self.p_ops = nn.ModuleList()
         for primitive in self.primitives:
             op = ops.get_op(primitive)(C, C_out, stride, False)
             if "pool" in primitive:
-                op = nn.Sequential(op, nn.BatchNorm2d(C_out,
-                                                      affine=False))
+                op = nn.Sequential(op, nn.BatchNorm2d(C_out, affine=False))
+
             self.p_ops.append(op)

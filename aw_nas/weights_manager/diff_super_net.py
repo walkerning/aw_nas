@@ -5,6 +5,7 @@ Supernet for differentiable rollouts.
 import contextlib
 
 import torch
+from torch.nn import functional as F
 
 from aw_nas import assert_rollout_type, utils
 from aw_nas.weights_manager.base import CandidateNet
@@ -144,21 +145,65 @@ class DiffSharedCell(SharedCell):
 
 
 class DiffSharedOp(SharedOp):
-    def forward(self, x, weights, detach_arch=True): #pylint: disable=arguments-differ
+    def forward(self, x, weights, detach_arch=True):  # pylint: disable=arguments-differ
         if weights.ndimension() == 2:
             # weights: (batch_size, num_op)
             if not weights.shape[0] == x.shape[0]:
                 # every `x.shape[0] % weights.shape[0]` data use the same sampled arch weights
                 assert x.shape[0] % weights.shape[0] == 0
                 weights = weights.repeat(x.shape[0] // weights.shape[0], 1)
-            return sum([weights[:, i].reshape(-1, 1, 1, 1) * op(x)
-                        for i, op in enumerate(self.p_ops)])
+            return sum(
+                [
+                    weights[:, i].reshape(-1, 1, 1, 1) * op(x)
+                    for i, op in enumerate(self.p_ops)
+                ]
+            )
 
-        out_act = 0.
+        out_act: torch.Tensor = 0.0
         # weights: (num_op)
-        for w, op in zip(weights, self.p_ops):
-            if detach_arch and w.item() == 0:
-                continue
-            act = op(x).detach_() if w.item() == 0 else op(x)
-            out_act += w * act
+        if self.partial_channel_proportion is None:
+            for w, op in zip(weights, self.p_ops):
+                if detach_arch and w.item() == 0:
+                    continue
+                act = op(x).detach_() if w.item() == 0 else op(x)
+                out_act += w * act
+        else:
+            op_channels = x.shape[1] // self.partial_channel_proportion
+            x_1 = x[:, :op_channels, :, :]  # these channels goes through op
+            x_2 = x[:, op_channels:, :, :]  # these channels skips op
+
+            # apply pooling if the ops have stride=2
+            if self.stride == 2:
+                x_2 = F.max_pool2d(x_2, 2, 2)
+
+            for w, op in zip(weights, self.p_ops):
+                # if detach_arch and w.item() == 0:
+                #     continue  # not really sure about this
+                act = op(x_1)
+
+                # if w.item() == 0:
+                #     act.detach_()  # not really sure about this either
+                out_act += w * act
+
+            out_act = torch.cat((out_act, x_2), dim=1)
+
+            # PC-DARTS implements a deterministic channel_shuffle() (not what they said in the paper)
+            # ref: https://github.com/yuhuixu1993/PC-DARTS/blob/b74702f86c70e330ce0db35762cfade9df026bb7/model_search.py#L9
+            out_act = self._channel_shuffle(out_act, self.partial_channel_proportion)
+
+            # this is the random channel shuffle for now
+            # channel_perm = torch.randperm(out_act.shape[1])
+            # out_act = out_act[:, channel_perm, :, :]
+
         return out_act
+
+    @staticmethod
+    def _channel_shuffle(x: torch.Tensor, groups: int):
+        """channel shuffle for PC-DARTS"""
+        n, c, h, w = x.shape
+
+        x = x.view(n, groups, -1, h, w).transpose(1, 2).contiguous()
+
+        x = x.view(n, c, h, w).contiguous()
+
+        return x
