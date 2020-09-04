@@ -182,15 +182,15 @@ class OrderedStats(object):
 
     __bool__ = __nonzero__
 
-    def update(self, stats):
+    def update(self, stats, n=1):
         if self.stat_meters is None:
-            self.stat_meters = OrderedDict([(n, AverageMeter()) for n in stats])
-        [self.stat_meters[n].update(v) for n, v in stats.items()]
+            self.stat_meters = OrderedDict([(name, AverageMeter()) for name in stats])
+        [self.stat_meters[name].update(v, n) for name, v in stats.items()]
 
     def avgs(self):
         if self.stat_meters is None:
             return None
-        return OrderedDict((n, meter.avg) for n, meter in self.stat_meters.items())
+        return OrderedDict((name, meter.avg) for name, meter in self.stat_meters.items())
 
     def items(self):
         return self.stat_meters.items() if self.stat_meters is not None else None

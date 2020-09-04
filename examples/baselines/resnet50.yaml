@@ -1,0 +1,86 @@
+# param: 23.52M
+# flops: 2595M
+# clean acc: 0.944
+
+## ---- Component search_space ----
+# ---- Type cnn ----
+search_space_type: cnn
+search_space_cfg:
+  # Schedulable attributes: 
+  cell_layout: [0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0]
+  num_cell_groups: 2
+  num_init_nodes: 1
+  num_layers: 16
+  num_node_inputs: 1
+  num_steps: 1
+  reduce_cell_groups:
+  - 1
+  shared_primitives: # this is not used
+  - none
+ 
+# ---- End Type cnn ----
+## ---- End Component search_space ----
+
+## ---- Component dataset ----
+# ---- Type cifar10 ----
+dataset_type: cifar10
+dataset_cfg:
+  # Schedulable attributes: 
+  cutout: null
+# ---- End Type cifar10 ----
+## ---- End Component dataset ----
+
+## ---- Component final_model ----
+# ---- Type cnn_genotype ----
+final_model_type: cnn_final_model
+final_model_cfg:
+  # Schedulable attributes: dropout_path_rate
+  genotypes: "normal_0=[('resnet_bottleneck_block', 0, 1)], reduce_1=[('resnet_bottleneck_block', 0, 1)]"
+  auxiliary_cfg: null
+  auxiliary_head: false
+  # num layers per stage: 3,4(stride),6(stride),3(stride)
+  # mid planes: 64, 128, 256, 512
+  # [64, 256, 256, 256, 512s, 512, 512, 512, 1024s, 1024, 1024, 1024, 1024, 1024, 2048s, 2048, 2048]
+  layer_channels: [64, 256, 256, 256, 512, 512, 512, 512, 1024, 1024, 1024, 1024, 1024, 1024, 2048, 2048, 2048]
+  dropout_path_rate: 0.0
+  dropout_rate: 0.0
+  init_channels: 64
+  num_classes: 10
+  cell_use_preprocess: false
+  schedule_cfg: null
+  stem_multiplier: 1
+  use_stem: conv_bn_relu_3x3
+  stem_stride: 1
+  stem_affine: true
+# ---- End Type cnn_genotype ----
+## ---- End Component final_model ----
+
+objective_type: classification
+objective_cfg: {}
+
+## ---- Component final_trainer ----
+# ---- Type cnn_trainer ----
+final_trainer_type: cnn_trainer
+final_trainer_cfg:
+  # Schedulable attributes: 
+  # auxiliary_head: true
+  # auxiliary_weight: 0.4
+  auxiliary_head: false
+  auxiliary_weight: 0.0
+  add_regularization: true
+  batch_size: 128
+  epochs: 100
+  grad_clip: 5.0
+  learning_rate: 0.05
+  momentum: 0.9
+  no_bias_decay: false
+  optimizer_scheduler:
+    eta_min: 0.0001
+    T_max: 100
+    type: CosineAnnealingLR
+  schedule_cfg: null
+  warmup_epochs: 0
+  weight_decay: 0.0003
+  save_as_state_dict: true
+# ---- End Type cnn_trainer ----
+## ---- End Component final_trainer ----

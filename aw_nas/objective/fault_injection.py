@@ -149,7 +149,7 @@ class FaultInjector(object):
             fault_bit_list = np.array([2**x for x in range(-n_addi_affect_bits, bitwidth_data)] + \
                                       [-2**x for x in range(-n_addi_affect_bits, bitwidth_data)],
                                       dtype=np.float32)
-            size_ = fault_ind.sum().cpu().data
+            size_ = fault_ind.sum().cpu().numpy()
             n_bias = n_mac if self.m_i_rate == 1.0 else\
                      torch.tensor(binom.rvs(int(n_mac), self.m_i_rate, size=size_).astype(np.float32)).to(out.device)
             random_tensor[fault_ind] = step * \
