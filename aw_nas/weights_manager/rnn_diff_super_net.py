@@ -8,6 +8,7 @@ import torch
 from torch import nn
 
 from aw_nas import assert_rollout_type, ops
+from aw_nas.rollout.base import DartsArch
 from aw_nas.weights_manager.diff_super_net import DiffSubCandidateNet
 from aw_nas.weights_manager.rnn_shared import (
     RNNSharedNet, RNNSharedCell, RNNSharedOp, INIT_RANGE
@@ -16,9 +17,19 @@ from aw_nas.utils.exception import expect, ConfigException
 
 __all__ = ["RNNDiffSubCandidateNet", "RNNDiffSuperNet"]
 
+# TODO: fix RNN diff super net
+
 class RNNDiffSubCandidateNet(DiffSubCandidateNet):
     def forward(self, inputs, hiddens, detach_arch=True): #pylint: disable=arguments-differ
-        arch = [a.detach() for a in self.arch] if detach_arch else self.arch
+        if detach_arch:
+            arch = [
+                DartsArch(
+                    op_weights=op_weights.detach(),
+                    edge_norms=edge_norms.detach() if edge_norms is not None else None
+                ) for op_weights, edge_norms in self.arch
+            ]
+        else:
+            arch = self.arch
         # make a copy of the hiddens and forward
         hiddens_copy = hiddens.clone()
         logits, raw_outs, outs, next_hiddens \
@@ -143,7 +154,7 @@ class RNNDiffSharedFromCell(nn.Module):
             cs = cs.sigmoid()
             # weights: (num_from_nodes, num_pritmives);
             # states: (num_from_nodes, batch_size, num_hid);
-            weights = arch[offset:offset+to_]
+            weights = arch[offset:offset+to_].op_weights
             # unweighted: (num_from_nodes, batch_size, num_hid, num_primitives)
             unweighted = states.unsqueeze(-1) + cs.unsqueeze(-1) * \
                          torch.stack([op(hs) - states for op in self.p_ops], dim=-1)
@@ -190,9 +201,15 @@ class RNNDiffSharedCell(RNNSharedCell):
                 inp_states = states * h_mask.unsqueeze(0)
             else:
                 inp_states = states
-            act_lst = [self.edges[from_][to_](inp, arch[offset+from_], s_prev,
-                                              detach_arch=detach_arch)
-                       for from_, (inp, s_prev) in enumerate(zip(inp_states, states))]
+            act_lst = [
+                self.edges[from_][to_](
+                    inp,
+                    arch.op_weights[offset+from_],
+                    s_prev,
+                    detach_arch=detach_arch
+                )
+                for from_, (inp, s_prev) in enumerate(zip(inp_states, states))
+            ]
             new_state = sum(act_lst)
             offset += len(states)
             states = torch.cat([states, new_state.unsqueeze(0)], dim=0)

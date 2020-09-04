@@ -3,27 +3,27 @@ rollout_type: differentiable
 # ---- Type cnn ----
 search_space_type: cnn
 search_space_cfg:
-  # Schedulable attributes: 
+  # Schedulable attributes:
   num_cell_groups: 2
   num_init_nodes: 2
   num_layers: 8
   cell_layout: null
   reduce_cell_groups:
-  - 1
+    - 1
   num_steps: 4
   num_node_inputs: 2
   concat_op: concat
   concat_nodes: null
   loose_end: false
   shared_primitives:
-  - none
-  - max_pool_3x3
-  - avg_pool_3x3
-  - skip_connect
-  - sep_conv_3x3
-  - sep_conv_5x5
-  - dil_conv_3x3
-  - dil_conv_5x5
+    - none
+    - max_pool_3x3
+    - avg_pool_3x3
+    - skip_connect
+    - sep_conv_3x3
+    - sep_conv_5x5
+    - dil_conv_3x3
+    - dil_conv_5x5
   cell_shared_primitives: null
 # ---- End Type cnn ----
 ## ---- End Component search_space ----
@@ -45,6 +45,7 @@ controller_cfg:
   use_prob: false
   gumbel_hard: false
   gumbel_temperature: 1.0
+  use_edge_normalization: true
   entropy_coeff: 0.01
   max_grad_norm: null
   force_uniform: false
@@ -94,9 +95,9 @@ evaluator_cfg:
   disable_step_current: false
   use_same_surrogate_data: false
   data_portion:
-  - 0.0
-  - 0.5
-  - 0.5
+    - 0.0
+    - 0.5
+    - 0.5
   mepa_as_surrogate: false
   shuffle_data_before_split: false
   workers_per_queue: 2
@@ -113,7 +114,7 @@ weights_manager_type: diff_supernet
 weights_manager_cfg:
   # Schedulable attributes: 
   rollout_type: differentiable
-  gpus: [0]
+  gpus: [ 0 ]
   num_classes: 10
   init_channels: 16
   stem_multiplier: 3
@@ -124,7 +125,9 @@ weights_manager_cfg:
   stem_affine: true
   preprocess_op_type: null
   cell_use_preprocess: true
-  cell_group_kwargs: null
+  cell_group_kwargs:
+    - partial_channel_proportion: 4 # for normal cell group
+    - partial_channel_proportion: 4 # for reduction cell group
   candidate_virtual_parameter_only: false
   candidate_eval_no_grad: true
 # ---- End Type diff_supernet ----
@@ -149,7 +152,7 @@ trainer_cfg:
   test_every: 10
   controller_optimizer:
     lr: 3.e-4
-    betas: [0.5,0.999]
+    betas: [ 0.5, 0.999 ]
     weight_decay: 1.e-3
     type: Adam
   controller_scheduler: null

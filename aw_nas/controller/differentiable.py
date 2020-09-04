@@ -4,15 +4,17 @@ Differentiable-relaxation based controllers
 """
 
 from collections import OrderedDict
+from typing import List
 
 import numpy as np
 import torch
 from torch import nn
-import torch.nn.functional as F
+from torch.nn import functional as F
 
 from aw_nas import utils, assert_rollout_type
 from aw_nas.common import DifferentiableRollout as DiffRollout
 from aw_nas.controller.base import BaseController
+from aw_nas.rollout.base import DartsArch
 
 
 class DiffController(BaseController, nn.Module):
@@ -30,6 +32,7 @@ class DiffController(BaseController, nn.Module):
 
     def __init__(self, search_space, device, rollout_type="differentiable",
                  use_prob=False, gumbel_hard=False, gumbel_temperature=1.0,
+                 use_edge_normalization=False,
                  entropy_coeff=0.01, max_grad_norm=None, force_uniform=False,
                  schedule_cfg=None):
         """
@@ -56,6 +59,9 @@ class DiffController(BaseController, nn.Module):
         self.gumbel_hard = gumbel_hard
         self.gumbel_temperature = gumbel_temperature
 
+        # edge normalization
+        self.use_edge_normalization = use_edge_normalization
+
         # training
         self.entropy_coeff = entropy_coeff
         self.max_grad_norm = max_grad_norm
@@ -75,14 +81,17 @@ class DiffController(BaseController, nn.Module):
                 1e-3 * torch.randn(
                     _num_edges, len(self.search_space.cell_shared_primitives[i_cg])
                 )
-            )
+            )  # shape: [num_edges, num_ops]
             for i_cg, _num_edges in enumerate(_num_edges_list)
         ])
 
-        # self.cg_betas = nn.ParameterList([
-        #     nn.Parameter(1e-3 * torch.randn(_num_edges))
-        #     for _num_edges in _num_edges_list
-        # ])
+        if self.use_edge_normalization:
+            self.cg_betas = nn.ParameterList([
+                nn.Parameter(1e-3 * torch.randn(_num_edges))  # shape: [num_edges]
+                for _num_edges in _num_edges_list
+            ])
+        else:
+            self.cg_betas = None
 
         self.to(self.device)
 
@@ -105,18 +114,26 @@ class DiffController(BaseController, nn.Module):
     def sample(self, n=1, batch_size=1):
         rollouts = []
         for _ in range(n):
-            arch_list = []
+            # TODO: should edge_norms have batch_size?
+            # op_weights.shape: [num_edges, [batch_size,] num_ops]
+            # edge_norms.shape: [num_edges]
+            op_weights_list = []
+            edge_norms_list = []
             sampled_list = []
             logits_list = []
-            for alpha in self.cg_alphas:
+
+            for alphas in self.cg_alphas:
+                # TODO: should force_uniform affects betas?
                 if self.force_uniform:  # cg_alpha parameters will not be in the graph
-                    alpha = torch.zeros_like(alpha)
+                    alphas = torch.zeros_like(alphas)
+
                 if batch_size > 1:
-                    expanded_alpha = alpha.reshape([alpha.shape[0], 1, alpha.shape[1]]) \
+                    expanded_alpha = alphas.reshape([alphas.shape[0], 1, alphas.shape[1]]) \
                         .repeat([1, batch_size, 1]) \
-                        .reshape([-1, alpha.shape[-1]])
+                        .reshape([-1, alphas.shape[-1]])
                 else:
-                    expanded_alpha = alpha
+                    expanded_alpha = alphas
+
                 if self.use_prob:
                     # probability as sample
                     sampled = F.softmax(expanded_alpha / self.gumbel_temperature, dim=-1)
@@ -124,16 +141,45 @@ class DiffController(BaseController, nn.Module):
                     # gumbel sampling
                     sampled, _ = utils.gumbel_softmax(expanded_alpha, self.gumbel_temperature,
                                                       hard=False)
+
                 if self.gumbel_hard:
-                    arch = utils.straight_through(sampled)
+                    op_weights = utils.straight_through(sampled)
                 else:
-                    arch = sampled
+                    op_weights = sampled
+
                 if batch_size > 1:
-                    sampled = sampled.reshape([-1, batch_size, arch.shape[-1]])
-                    arch = arch.reshape([-1, batch_size, arch.shape[-1]])
-                arch_list.append(arch)
+                    sampled = sampled.reshape([-1, batch_size, op_weights.shape[-1]])
+                    op_weights = op_weights.reshape([-1, batch_size, op_weights.shape[-1]])
+
+                op_weights_list.append(op_weights)
                 sampled_list.append(utils.get_numpy(sampled))
-                logits_list.append(utils.get_numpy(alpha))
+                logits_list.append(utils.get_numpy(alphas))
+
+            if self.use_edge_normalization:
+                for i_cg, betas in enumerate(self.cg_betas):
+                    # eg: for 2 init_nodes and 3 steps, this is [2, 3, 4]
+                    num_inputs_on_nodes = np.arange(self.search_space.get_num_steps(i_cg)) \
+                                          + self.search_space.num_init_nodes
+                    edge_norms = []
+                    for i_node, num_inputs_on_node in enumerate(num_inputs_on_nodes):
+                        # eg: for node_0, it has edge_{0, 1} as inputs, there for start=0, end=2
+                        start = num_inputs_on_nodes[i_node - 1] if i_node > 0 else 0
+                        end = start + num_inputs_on_node
+
+                        edge_norms.append(F.softmax(betas[start:end], dim=0))
+
+                    edge_norms_list.append(torch.cat(edge_norms))
+
+                arch_list = [
+                    DartsArch(op_weights=op_weights, edge_norms=edge_norms)
+                    for op_weights, edge_norms in zip(op_weights_list, edge_norms_list)
+                ]
+            else:
+                arch_list = [
+                    DartsArch(op_weights=op_weights, edge_norms=None)
+                    for op_weights in op_weights_list
+                ]
+
             rollouts.append(DiffRollout(arch_list, sampled_list, logits_list, self.search_space))
         return rollouts
 
@@ -200,8 +246,9 @@ class DiffController(BaseController, nn.Module):
                 prob = utils.softmax(cg_logits)
                 logprob = np.log(prob)
                 if self.gumbel_hard:
-                    inds = np.argmax(utils.get_numpy(vec), axis=-1)
+                    inds = np.argmax(utils.get_numpy(vec.op_weights), axis=-1)
                     cg_logprobs[cg_idx] += np.sum(logprob[range(len(inds)), inds])
+                # FIXME: 'cg_logprobs' might be referenced before assignment ↓
                 cg_entros[cg_idx] += -(prob * logprob).sum()
 
         # mean across rollouts

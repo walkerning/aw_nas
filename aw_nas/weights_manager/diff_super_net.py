@@ -8,14 +8,15 @@ import torch
 from torch.nn import functional as F
 
 from aw_nas import assert_rollout_type, utils
+from aw_nas.rollout.base import DartsArch, DifferentiableRollout
+from aw_nas.utils import data_parallel, use_params
 from aw_nas.weights_manager.base import CandidateNet
 from aw_nas.weights_manager.shared import SharedNet, SharedCell, SharedOp
-from aw_nas.utils import data_parallel, use_params
 
 __all__ = ["DiffSubCandidateNet", "DiffSuperNet"]
 
 class DiffSubCandidateNet(CandidateNet):
-    def __init__(self, super_net, rollout, gpus=tuple(), virtual_parameter_only=True,
+    def __init__(self, super_net, rollout: DifferentiableRollout, gpus=tuple(), virtual_parameter_only=True,
                  eval_no_grad=True):
         super(DiffSubCandidateNet, self).__init__(eval_no_grad=eval_no_grad)
         self.super_net = super_net
@@ -45,18 +46,35 @@ class DiffSubCandidateNet(CandidateNet):
             del buffer_clone
 
     def forward(self, inputs, detach_arch=True): #pylint: disable=arguments-differ
-        arch = [a.detach() for a in self.arch] if detach_arch else self.arch
+        if detach_arch:
+            arch = [
+                DartsArch(
+                    op_weights=op_weights.detach(),
+                    edge_norms=edge_norms.detach() if edge_norms is not None else None
+                ) for op_weights, edge_norms in self.arch
+            ]
+        else:
+            arch = self.arch
+
         if not self.gpus or len(self.gpus) == 1:
             return self.super_net.forward(inputs, arch, detach_arch=detach_arch)
-        if arch[0].ndimension() == 2:
-            arch = [a.repeat([len(self.gpus), 1]) for a in arch]
+
+        # FIXME: arch changed to namedtuple. Fix this for multiple GPUs!
+        if arch[0].op_weights.ndimension() == 2:
+            arch = [
+                DartsArch(
+                    op_weights=a.op_weights.repeat(len(self.gpus), 1),
+                    edge_norms=a.edge_norms.repeat(len(self.gpus), 1),
+                )
+                for a in arch
+            ]
         else:
             # Ugly fix for rollout_size > 1
             # call scatter here and stack...
             # split along dimension 1,
             # then concatenate along dimension 0 for `data_parallel` to scatter it again
             num_split = len(self.gpus)
-            rollout_batch_size = arch[0].shape[1]
+            rollout_batch_size = arch[0].op_weights.shape[1]
             assert rollout_batch_size % num_split == 0
             split_size = rollout_batch_size // num_split
             arch = [torch.cat(torch.split(a, split_size, dim=1), dim=0) for a in arch]
@@ -128,16 +146,32 @@ class DiffSharedCell(SharedCell):
     def num_out_channel(self):
         return self.num_out_channels * self._steps
 
-    def forward(self, inputs, arch, detach_arch=True): #pylint: disable=arguments-differ
+    def forward(self, inputs, arch: DartsArch, detach_arch=True):  # pylint: disable=arguments-differ
         assert self._num_init == len(inputs)
         states = [op(_input) for op, _input in zip(self.preprocess_ops, inputs)]
         offset = 0
 
+        use_edge_normalization = arch.edge_norms is not None
+
         for i_step in range(self._steps):
             to_ = i_step + self._num_init
-            act_lst = [self.edges[from_][to_](state, arch[offset+from_],
-                                              detach_arch=detach_arch) \
-                       for from_, state in enumerate(states)]
+            if use_edge_normalization:
+                act_lst = [
+                    arch.edge_norms[offset + from_] *  # edge norm factor on this edge, computed from betas
+                    self.edges[from_][to_](
+                        state,
+                        arch.op_weights[offset + from_],  # op weights on this edge, computed from alphas
+                        detach_arch=detach_arch
+                    )
+                    for from_, state in enumerate(states)
+                ]
+            else:
+                act_lst = [
+                    self.edges[from_][to_](
+                        state, arch.op_weights[offset + from_], detach_arch=detach_arch
+                    )
+                    for from_, state in enumerate(states)
+                ]
             new_state = sum(act_lst)
             offset += len(states)
             states.append(new_state)

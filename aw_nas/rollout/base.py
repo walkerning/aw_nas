@@ -4,15 +4,17 @@ Rollout base class and discrete/differentiable rollouts.
 
 import abc
 import collections
+from typing import List, Optional, NamedTuple
 
-import six
 import numpy as np
+import six
+import torch
 
 from aw_nas import utils
-from aw_nas.utils import logger as _logger
 from aw_nas.utils import RegistryMeta, softmax
+from aw_nas.utils import logger as _logger
 
-__all__ = ["BaseRollout", "Rollout", "DifferentiableRollout"]
+__all__ = ["BaseRollout", "Rollout", "DifferentiableRollout", "DartsArch"]
 
 @six.add_metaclass(RegistryMeta)
 class BaseRollout(object):
@@ -56,6 +58,7 @@ class BaseRollout(object):
         state = self.__dict__.copy()
         state["_genotype"] = None # might be unpickable
         return state
+
 
 class Rollout(BaseRollout):
     """Discrete rollout"""
@@ -124,12 +127,28 @@ class Rollout(BaseRollout):
             arch.append((nodes, ops))
         return arch
 
+
+try:  # Python >= 3.6
+    class DartsArch(NamedTuple):
+        op_weights: torch.Tensor
+        edge_norms: Optional[torch.Tensor] = None
+except (SyntaxError, TypeError):
+    DartsArch = NamedTuple(
+        "DartsArch",
+        [("op_weights", torch.Tensor), ("edge_norms", Optional[torch.Tensor])]
+    )
+
+
 class DifferentiableRollout(BaseRollout):
     """Rollout based on differentiable relaxation"""
     NAME = "differentiable"
-    def __init__(self, arch, sampled, logits, search_space, candidate_net=None):
+
+    def __init__(self, arch: List[DartsArch], sampled, logits, search_space, candidate_net=None):
         super(DifferentiableRollout, self).__init__()
 
+        # The old arch is [op_weights, op_weights, ...]
+        # The new arch is [(op_weights, edge_norms), (op_weights, edge_norms), ...]
+        # Therefore old arch[0] is equivalent to new arch[0].op_weights
         self.arch = arch
         self.sampled = sampled # softmax-relaxed sample
         self.logits = logits
@@ -184,11 +203,12 @@ class DifferentiableRollout(BaseRollout):
 
     @property
     def discretized_arch_and_prob(self):
+        # TODO: discretize self.arch[].edge_norms?
         if self._discretized_arch is None:
-            if self.arch[0].ndimension() == 2:
+            if self.arch[0].op_weights.ndimension() == 2:
                 self._discretized_arch, self._edge_probs = self.parse(self.sampled)
             else:
-                assert self.arch[0].ndimension() == 3
+                assert self.arch[0].op_weights.ndimension() == 3
                 self.logger.warning("Rollout batch size > 1, use logits instead of samples"
                                     "to parse the discretized arch.")
                 # if multiple arch samples per step is used, (2nd dim of sampled/arch is
