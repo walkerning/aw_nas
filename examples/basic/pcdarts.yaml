@@ -25,6 +25,7 @@ search_space_cfg:
     - dil_conv_3x3
     - dil_conv_5x5
   cell_shared_primitives: null
+  derive_without_none_op: true
 # ---- End Type cnn ----
 ## ---- End Component search_space ----
 

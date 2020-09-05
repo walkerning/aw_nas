@@ -178,6 +178,13 @@ class DifferentiableRollout(BaseRollout):
         archs = []
         edge_probs = []
         for i_cg, (cg_weight, cg_logits) in enumerate(zip(weights, self.logits)):
+            if self.search_space.derive_without_none_op:
+                try:
+                    none_op_idx = self.search_space.cell_shared_primitives[i_cg].index("none")
+                    cg_weight[:, none_op_idx] = -1
+                except ValueError:  # "none" is not in primitives
+                    pass
+
             cg_probs = softmax(cg_logits)
             start = 0
             n = self.search_space.num_init_nodes
@@ -206,7 +213,17 @@ class DifferentiableRollout(BaseRollout):
         # TODO: discretize self.arch[].edge_norms?
         if self._discretized_arch is None:
             if self.arch[0].op_weights.ndimension() == 2:
-                self._discretized_arch, self._edge_probs = self.parse(self.sampled)
+                if self.arch[0].edge_norms is None:
+                    weights = self.sampled
+                else:
+                    weights = []
+                    for cg_sampled, (_, cg_edge_norms) in zip(self.sampled, self.arch):
+                        cg_edge_norms = utils.get_numpy(cg_edge_norms) \
+                            .repeat(cg_sampled.shape[-1]) \
+                            .reshape(cg_sampled.shape)
+                        weights.append(cg_sampled * cg_edge_norms)
+
+                self._discretized_arch, self._edge_probs = self.parse(weights)
             else:
                 assert self.arch[0].op_weights.ndimension() == 3
                 self.logger.warning("Rollout batch size > 1, use logits instead of samples"

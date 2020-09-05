@@ -148,7 +148,8 @@ class CNNSearchSpace(CellSearchSpace):
                      "sep_conv_5x5",
                      "dil_conv_3x3",
                      "dil_conv_5x5"),
-                 cell_shared_primitives=None):
+                 cell_shared_primitives=None,
+                 derive_without_none_op=False):
 
         super(CNNSearchSpace, self).__init__()
 
@@ -255,6 +256,7 @@ class CNNSearchSpace(CellSearchSpace):
 
         # init nodes(meta arch: connect from the last `num_init_nodes` cell's output)
         self.num_init_nodes = num_init_nodes
+        self.derive_without_none_op = derive_without_none_op
 
     def get_layer_num_steps(self, layer_index):
         return self.get_num_steps(self.cell_layout[layer_index])
