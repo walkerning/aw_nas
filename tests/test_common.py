@@ -26,19 +26,35 @@ def test_search_space(case, tmp_path):
 def test_diff_rollout(tmp_path):
     import torch
     from aw_nas.common import get_search_space, DifferentiableRollout
+    from aw_nas.rollout.base import DartsArch
     from aw_nas.utils import softmax
 
     ss = get_search_space(cls="cnn")
     k = sum(ss.num_init_nodes+i for i in range(ss.num_steps))
     logits = [np.random.randn(k, len(ss.shared_primitives)) for _ in range(ss.num_cell_groups)]
     eps = 1e-20
-    sampled = arch = [torch.Tensor(softmax(
-        cg_logits +
-        -np.log(-np.log(np.random.rand(*cg_logits.shape)+eps)+eps)))
-                      for cg_logits in logits]
+    sampled = [
+        torch.Tensor(softmax(cg_logits + -np.log(-np.log(np.random.rand(*cg_logits.shape)+eps)+eps)))
+        for cg_logits in logits
+    ]
+
+    # pcdarts rollout
+    arch = [
+        DartsArch(op_weights=s, edge_norms=torch.randn(k)) for s in sampled
+    ]
     rollout = DifferentiableRollout(arch, sampled, logits, search_space=ss)
     print("genotype: ", rollout.genotype)
-    prefix = os.path.join(str(tmp_path), "cell")
+    prefix = os.path.join(str(tmp_path), "cell_pcdarts")
+    fnames = rollout.plot_arch(prefix, label="test plot")
+    assert fnames == [(cn, prefix + "-{}.pdf".format(cn)) for cn in ss.cell_group_names]
+
+    # normal darts rollout
+    arch = [
+        DartsArch(op_weights=s, edge_norms=None) for s in sampled
+    ]
+    rollout = DifferentiableRollout(arch, sampled, logits, search_space=ss)
+    print("genotype: ", rollout.genotype)
+    prefix = os.path.join(str(tmp_path), "cell_darts")
     fnames = rollout.plot_arch(prefix, label="test plot")
     assert fnames == [(cn, prefix + "-{}.pdf".format(cn)) for cn in ss.cell_group_names]
 

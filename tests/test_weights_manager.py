@@ -322,16 +322,17 @@ def test_candidate_forward_with_params(super_net):
 # ---- End test super_net ----
 
 # ---- Test diff_super_net ----
-@pytest.mark.parametrize("diff_super_net", [
-    {"search_space_cfg": {"num_steps": [2, 4]}}
+@pytest.mark.parametrize("diff_super_net,controller_cfg", [
+    ({"search_space_cfg": {"num_steps": [2, 4]}}, {}),
+    ({"search_space_cfg": {"num_steps": [2, 4]}}, {"use_edge_normalization": True})
 ], indirect=["diff_super_net"])
-def test_diff_supernet_forward(diff_super_net):
+def test_diff_supernet_forward(diff_super_net, controller_cfg):
     from aw_nas.common import get_search_space
     from aw_nas.controller import DiffController
 
     search_space = get_search_space(cls="cnn")
     device = "cuda"
-    controller = DiffController(search_space, device)
+    controller = DiffController(search_space, device, **controller_cfg)
     rollout = controller.sample(1)[0]
     cand_net = diff_super_net.assemble_candidate(rollout)
 
@@ -365,13 +366,17 @@ def test_diff_supernet_to_arch(diff_super_net):
     loss.backward()
     assert controller.cg_alphas[0].grad is not None
 
-def test_diff_supernet_forward_rollout_batch_size(diff_super_net):
+@pytest.mark.parametrize("diff_super_net,controller_cfg", [
+    ({}, {}),
+    ({}, {"use_edge_normalization": True})
+], indirect=["diff_super_net"])
+def test_diff_supernet_forward_rollout_batch_size(diff_super_net, controller_cfg):
     from aw_nas.common import get_search_space
     from aw_nas.controller import DiffController
 
     search_space = get_search_space(cls="cnn")
     device = "cuda"
-    controller = DiffController(search_space, device)
+    controller = DiffController(search_space, device, **controller_cfg)
     rollout = controller.sample(1, batch_size=3)[0]
     cand_net = diff_super_net.assemble_candidate(rollout)
 
@@ -379,16 +384,17 @@ def test_diff_supernet_forward_rollout_batch_size(diff_super_net):
     logits = cand_net.forward_data(data[0])
     assert tuple(logits.shape) == (6, 10)
 
-@pytest.mark.parametrize("diff_super_net", [{
-    "gpus": [0, 1, 2]
-}], indirect=["diff_super_net"])
-def test_diff_supernet_data_parallel_forward(diff_super_net):
+@pytest.mark.parametrize("diff_super_net,controller_cfg", [
+    ({"gpus": [0, 1, 2]}, {}),
+    ({"gpus": [0, 1, 2]}, {"use_edge_normalization": True})
+], indirect=["diff_super_net"])
+def test_diff_supernet_data_parallel_forward(diff_super_net, controller_cfg):
     from aw_nas.common import get_search_space
     from aw_nas.controller import DiffController
 
     search_space = get_search_space(cls="cnn")
     device = "cuda"
-    controller = DiffController(search_space, device)
+    controller = DiffController(search_space, device, **controller_cfg)
     rollout = controller.sample(1)[0]
     cand_net = diff_super_net.assemble_candidate(rollout)
 
@@ -397,16 +403,17 @@ def test_diff_supernet_data_parallel_forward(diff_super_net):
     logits = cand_net.forward_data(data[0])
     assert tuple(logits.shape) == (batch_size, 10)
 
-@pytest.mark.parametrize("diff_super_net", [{
-    "gpus": [0, 1, 2]
-}], indirect=["diff_super_net"])
-def test_diff_supernet_data_parallel_forward_rolloutsize(diff_super_net):
+@pytest.mark.parametrize("diff_super_net,controller_cfg", [
+    ({"gpus": [0, 1, 2]}, {}),
+    ({"gpus": [0, 1, 2]}, {"use_edge_normalization": True})
+], indirect=["diff_super_net"])
+def test_diff_supernet_data_parallel_forward_rolloutsize(diff_super_net, controller_cfg):
     from aw_nas.common import get_search_space
     from aw_nas.controller import DiffController
 
     search_space = get_search_space(cls="cnn")
     device = "cuda"
-    controller = DiffController(search_space, device)
+    controller = DiffController(search_space, device, **controller_cfg)
     rollout = controller.sample(1, batch_size=9)[0]
     cand_net = diff_super_net.assemble_candidate(rollout)
 

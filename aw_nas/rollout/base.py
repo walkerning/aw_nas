@@ -210,7 +210,6 @@ class DifferentiableRollout(BaseRollout):
 
     @property
     def discretized_arch_and_prob(self):
-        # TODO: discretize self.arch[].edge_norms?
         if self._discretized_arch is None:
             if self.arch[0].op_weights.ndimension() == 2:
                 if self.arch[0].edge_norms is None:
@@ -218,10 +217,8 @@ class DifferentiableRollout(BaseRollout):
                 else:
                     weights = []
                     for cg_sampled, (_, cg_edge_norms) in zip(self.sampled, self.arch):
-                        cg_edge_norms = utils.get_numpy(cg_edge_norms) \
-                            .repeat(cg_sampled.shape[-1]) \
-                            .reshape(cg_sampled.shape)
-                        weights.append(cg_sampled * cg_edge_norms)
+                        cg_edge_norms = utils.get_numpy(cg_edge_norms)[:, None]
+                        weights.append(utils.get_numpy(cg_sampled) * cg_edge_norms)
 
                 self._discretized_arch, self._edge_probs = self.parse(weights)
             else:

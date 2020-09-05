@@ -59,13 +59,12 @@ class DiffSubCandidateNet(CandidateNet):
         if not self.gpus or len(self.gpus) == 1:
             return self.super_net.forward(inputs, arch, detach_arch=detach_arch)
 
-        # FIXME: arch changed to namedtuple. Fix this for multiple GPUs!
         if arch[0].op_weights.ndimension() == 2:
             arch = [
                 DartsArch(
                     op_weights=a.op_weights.repeat(len(self.gpus), 1),
-                    edge_norms=a.edge_norms.repeat(len(self.gpus), 1),
-                )
+                    edge_norms=(a.edge_norms.repeat(len(self.gpus)) \
+                     if a.edge_norms is not None else None))
                 for a in arch
             ]
         else:
@@ -77,7 +76,13 @@ class DiffSubCandidateNet(CandidateNet):
             rollout_batch_size = arch[0].op_weights.shape[1]
             assert rollout_batch_size % num_split == 0
             split_size = rollout_batch_size // num_split
-            arch = [torch.cat(torch.split(a, split_size, dim=1), dim=0) for a in arch]
+            # arch = [torch.cat(torch.split(a, split_size, dim=1), dim=0) for a in arch]
+            # Note: edge_norms (1-dim) do not support batch_size, just repeat
+            arch = [DartsArch(
+                op_weights=torch.cat(torch.split(a.op_weights, split_size, dim=1), dim=0),
+                edge_norms=(a.edge_norms.repeat(len(self.gpus)) \
+                            if a.edge_norms is not None else None))
+                    for a in arch]
         return data_parallel(self.super_net, (inputs, arch), self.gpus,
                              module_kwargs={"detach_arch": detach_arch})
 
@@ -146,21 +151,23 @@ class DiffSharedCell(SharedCell):
     def num_out_channel(self):
         return self.num_out_channels * self._steps
 
-    def forward(self, inputs, arch: DartsArch, detach_arch=True):  # pylint: disable=arguments-differ
+    def forward(self, inputs, arch, detach_arch=True):  # pylint: disable=arguments-differ
         assert self._num_init == len(inputs)
         states = [op(_input) for op, _input in zip(self.preprocess_ops, inputs)]
         offset = 0
 
+        # in parallel forward, after scatter, a namedtuple will be come a normal tuple
+        arch = DartsArch(*arch)
         use_edge_normalization = arch.edge_norms is not None
 
         for i_step in range(self._steps):
             to_ = i_step + self._num_init
             if use_edge_normalization:
                 act_lst = [
-                    arch.edge_norms[offset + from_] *  # edge norm factor on this edge, computed from betas
+                    arch.edge_norms[offset + from_] *  # edge norm factor scalar on this edge
                     self.edges[from_][to_](
                         state,
-                        arch.op_weights[offset + from_],  # op weights on this edge, computed from alphas
+                        arch.op_weights[offset + from_],  # op weights vector on this edge
                         detach_arch=detach_arch
                     )
                     for from_, state in enumerate(states)

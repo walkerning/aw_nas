@@ -4,7 +4,6 @@ Differentiable-relaxation based controllers
 """
 
 from collections import OrderedDict
-from typing import List
 
 import numpy as np
 import torch
@@ -248,7 +247,6 @@ class DiffController(BaseController, nn.Module):
                 if self.gumbel_hard:
                     inds = np.argmax(utils.get_numpy(vec.op_weights), axis=-1)
                     cg_logprobs[cg_idx] += np.sum(logprob[range(len(inds)), inds])
-                # FIXME: 'cg_logprobs' might be referenced before assignment ↓
                 cg_entros[cg_idx] += -(prob * logprob).sum()
 
         # mean across rollouts
