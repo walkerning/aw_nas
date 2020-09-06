@@ -47,6 +47,7 @@ class DetectionFinalTrainer(CNNFinalTrainer):  #pylint: disable=too-many-instanc
             eval_every=10,
             eval_no_grad=True,
             eval_dir=None,
+            calib_bn_setup=False,
             schedule_cfg=None):
 
         self.freeze_base_net = freeze_base_net
@@ -59,7 +60,7 @@ class DetectionFinalTrainer(CNNFinalTrainer):  #pylint: disable=too-many-instanc
                              no_bias_decay, grad_clip, auxiliary_head,
                              auxiliary_weight, add_regularization,
                              save_as_state_dict, workers_per_queue,
-                             eval_no_grad, eval_every, schedule_cfg)
+                             eval_no_grad, eval_every, calib_bn_setup, schedule_cfg)
 
         self.predictor = self.objective.predictor
         self._criterion = self.objective._criterion

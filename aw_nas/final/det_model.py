@@ -29,20 +29,6 @@ class HeadModel(nn.Module):
         expect(isinstance(features, (list, tuple)),
                'features must be a series of feature.', ValueError)
         features = self.extras(features)
-
-        batch_size = features[0].shape[0]
-
-        confidences = [
-            feat.permute(0, 2, 3, 1).contiguous()
-            for feat in self.classification_headers(features)
-        ]
-        locations = [
-            feat.permute(0, 2, 3, 1).contiguous()
-            for feat in self.regression_headers(features)
-        ]
-
-        confidences = torch.cat([t.view(t.size(0), -1) for t in confidences],
-                                1).view(batch_size, -1, self.num_classes)
-        locations = torch.cat([t.view(t.size(0), -1) for t in locations],
-                              1).view(batch_size, -1, 4)
+        confidences = self.classification_headers(features)
+        locations =  self.regression_headers(features)
         return confidences, locations

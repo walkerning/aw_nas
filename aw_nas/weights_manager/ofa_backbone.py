@@ -12,7 +12,6 @@ from aw_nas.ops import *
 from aw_nas.ops.baseline_ops import MobileNetV2Block, MobileNetV3Block
 from aw_nas.utils import make_divisible, feature_level_to_stage_index
 from aw_nas.utils.common_utils import _get_channel_mask
-from aw_nas.utils.exception import ConfigException, expect
 
 
 class FlexibleBlock(Component, nn.Module):
@@ -146,24 +145,25 @@ class FlexibleMobileNetV2Block(MobileNetV2Block, FlexibleBlock):
 
 class FlexibleMobileNetV3Block(MobileNetV3Block, FlexibleBlock):
     NAME = "mbv3_block"
+
     def __init__(self,
-        expansion,
-        C,
-        C_out,
-        stride,
-        kernel_sizes=(3, 5, 7),
-        do_kernel_transform=True,
-        affine=True,
-        activation="relu",
-        use_se=False,
-        schedule_cfg=None
-    ):
+                 expansion,
+                 C,
+                 C_out,
+                 stride,
+                 kernel_sizes=(3, 5, 7),
+                 do_kernel_transform=True,
+                 affine=True,
+                 activation="relu",
+                 use_se=False,
+                 schedule_cfg=None
+                 ):
         FlexibleBlock.__init__(self, schedule_cfg)
         self.expansion = expansion
         self.activation = activation
         self.C = C
         self.C_out = C_out
-        self.C_inner = C * expansion
+        self.C_inner = make_divisible(C * expansion, 8)
         self.stride = stride
         self.kernel_sizes = sorted(kernel_sizes)
         self.kernel_size = self.kernel_sizes[-1]
@@ -340,6 +340,7 @@ class MobileNetV2Arch(BaseBackboneArch):
     rather than 7 bottleneck stages, we fix the last bottleneck(160 -> 320) as
     t=6, n=1, k=3.
     """
+
     def __init__(
         self,
         device,
@@ -372,7 +373,8 @@ class MobileNetV2Arch(BaseBackboneArch):
         )
         self.block_initializer = FlexibleBlock.get_class_(block_type)
         self.stem_stride = stem_stride
-        self.channels = [make_divisible(c * mult_ratio, 8) for c in layer_channels]
+        self.channels = [make_divisible(c * mult_ratio, 8)
+                         for c in layer_channels]
         self.stem = nn.Sequential(
             nn.Conv2d(
                 3, self.channels[0], kernel_size=3, stride=self.stem_stride, padding=1, bias=False
@@ -410,15 +412,15 @@ class MobileNetV2Arch(BaseBackboneArch):
             )
         self.cells = nn.ModuleList(self.cells)
         self.conv_head = self.block_initializer(
-                    6,
-                    self.channels[-3],
-                    self.channels[-2],
-                    1,
-                    self.kernel_sizes,
-                    self.do_kernel_transform,
-                    activation="relu",
-                    affine=True,
-                )
+            6,
+            self.channels[-3],
+            self.channels[-2],
+            1,
+            self.kernel_sizes,
+            self.do_kernel_transform,
+            activation="relu",
+            affine=True,
+        )
         self.conv_final = nn.Sequential(
             FlexiblePointLinear(self.channels[-2], self.channels[-1], 1, 1, 0),
             nn.BatchNorm2d(self.channels[-1]),
@@ -430,7 +432,8 @@ class MobileNetV2Arch(BaseBackboneArch):
             if state_dict["classifier.weight"].shape[0] != self.num_classes:
                 del state_dict["classifier.weight"]
                 del state_dict["classifier.bias"]
-            self.logger.info(f"loading pretrained model from path {self.pretrained_path}...")
+            self.logger.info(
+                f"loading pretrained model from path {self.pretrained_path}...")
             self.logger.info(self.load_state_dict(state_dict, strict=False))
 
         self.to(self.device)
@@ -574,7 +577,8 @@ class MobileNetV3Arch(BaseBackboneArch):
             schedule_cfg,
         )
         self.block_initializer = FlexibleBlock.get_class_(block_type)
-        self.channels = [make_divisible(c * mult_ratio, 8) for c in layer_channels]
+        self.channels = [make_divisible(c * mult_ratio, 8)
+                         for c in layer_channels]
 
         self.stem_stride = stem_stride
         self.stem = nn.Sequential(
@@ -621,12 +625,14 @@ class MobileNetV3Arch(BaseBackboneArch):
             )
         self.cells = nn.ModuleList(self.cells)
         self.conv_head = nn.Sequential(
-            nn.Conv2d(self.channels[-3], self.channels[-2], 1, 1, 0, bias=False),
+            nn.Conv2d(self.channels[-3],
+                      self.channels[-2], 1, 1, 0, bias=False),
             nn.BatchNorm2d(self.channels[-2]),
             get_op("h_swish")(),
         )
         self.conv_final = nn.Sequential(
-            nn.Conv2d(self.channels[-2], self.channels[-1], 1, 1, 0, bias=False),
+            nn.Conv2d(self.channels[-2],
+                      self.channels[-1], 1, 1, 0, bias=False),
             get_op("h_swish")(),
         )
         self.classifier = nn.Linear(self.channels[-1], num_classes)

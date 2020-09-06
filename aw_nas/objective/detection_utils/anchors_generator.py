@@ -1,11 +1,12 @@
 from math import sqrt
 from itertools import product
-
+import numpy as np
 import torch
 
 from aw_nas.objective.detection_utils.base import AnchorsGenerator
 
 __all__ = ["SSDAnchorsGenerator"]
+
 
 class SSDAnchorsGenerator(AnchorsGenerator):
     NAME = "ssd_anchors_generator"
@@ -13,15 +14,15 @@ class SSDAnchorsGenerator(AnchorsGenerator):
     def __init__(self,
                  min_dim=300,
                  aspect_ratios=[[2], [2, 3], [2, 3], [2, 3], [2], [2]],
-                 feature_maps=[19, 10, 5, 3, 2, 1],
+                 feature_maps=[4, 5, 6, 7, 8, 9],
                  scales=[45, 90, 135, 180, 225, 270, 315],
                  steps=[16, 32, 64, 100, 150, 300],
                  clip=True,
                  schedule_cfg=None):
 
         super(SSDAnchorsGenerator, self).__init__(schedule_cfg)
-        self.min_dim = min_dim  #[height, width]
-        self.feature_maps = feature_maps  #[(height, width), ...]
+        self.min_dim = min_dim  # [height, width]
+        self.feature_maps = feature_maps  # [(height, width), ...]
         self.aspect_ratios = aspect_ratios
         self.num_anchors = len(aspect_ratios)
         self.clip = clip
@@ -41,8 +42,13 @@ class SSDAnchorsGenerator(AnchorsGenerator):
             return self.anchors_boxes[image_shape]
 
         mean = []
-        # l = 0
-        for k, f in enumerate(self.feature_maps):
+        feature_maps = [image_shape]
+        fz = image_shape
+        for _ in range(max(self.feature_maps) + 1):
+            fz = np.ceil(fz / 2)
+            feature_maps += [int(fz)]
+        feature_maps = [feature_maps[i] for i in self.feature_maps]
+        for k, f in enumerate(feature_maps):
             for i, j in product(range(f), range(f)):
                 cx = j * self.steps[k] + self.offset[k]
                 cy = i * self.steps[k] + self.offset[k]
@@ -58,7 +64,7 @@ class SSDAnchorsGenerator(AnchorsGenerator):
                         mean += [cx, cy, s_k / ar_sqrt, s_k * ar_sqrt]
                     elif isinstance(ar, list):
                         mean += [cx, cy, s_k * ar[0], s_k * ar[1]]
-        output = torch.Tensor(mean).view(-1, 4)
+        output = torch.Tensor(mean).view(-1, 4) / image_shape
         if self.clip:
             output.clamp_(max=1, min=0)
         self.anchors_boxes[image_shape] = output

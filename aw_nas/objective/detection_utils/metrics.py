@@ -161,16 +161,17 @@ else:
                 anno_ids = info["anno_ids"]
                 height, width = info["shape"]
                 self.eval_ids += [image_id]
+                bboxes = bboxes.cpu() if hasattr(bboxes, "cpu") else bboxes
                 anns = [
                     {
                         "bbox": box,
                         "image_id": image_id,
                         "category_id": int(label),
                         "id": anno_id,
-                        "height": height,
-                        "width": width,
+                        "height": int(height),
+                        "width": int(width),
                         "iscrowd": 0,
-                        "area": box[2] * box[3],
+                        "area": float(box[2] * box[3]),
                     }
                     for box, label, anno_id in zip(bboxes, labels, anno_ids)
                 ]
@@ -182,7 +183,8 @@ else:
                 if cls == "__background__" or cls == "":
                     continue
                 results.extend(
-                    self._coco_results_one_category(det_boxes[cls_ind - 1], cls_ind)
+                    self._coco_results_one_category(
+                        det_boxes[cls_ind - 1], cls_ind)
                 )
             ann_type = "bbox"
             self._COCO.dataset["images"] = [
@@ -224,7 +226,8 @@ else:
             # precision has dims (iou, recall, cls, area range, max dets)
             # area range index 0: all area ranges
             # max dets index 2: 100 per image
-            precision = coco_eval.eval["precision"][ind_lo : (ind_hi + 1), :, :, 0, 2]
+            precision = coco_eval.eval["precision"][ind_lo: (
+                ind_hi + 1), :, :, 0, 2]
             ap_default = np.mean(precision[precision > -1])
             print(
                 "~~~~ Mean and per-category AP @ IoU=[{:.2f},{:.2f}] "
@@ -236,7 +239,7 @@ else:
                     continue
                 # minus 1 because of __background__
                 precision = coco_eval.eval["precision"][
-                    ind_lo : (ind_hi + 1), :, cls_ind - 1, 0, 2
+                    ind_lo: (ind_hi + 1), :, cls_ind - 1, 0, 2
                 ]
                 ap = np.mean(precision[precision > -1])
                 print("{:.1f}".format(100 * ap))
@@ -316,12 +319,14 @@ class VOCMetrics(Metrics):
             bboxes = info["ori_boxes"]
             labels = info["labels"]
             is_difficult = info["is_difficult"]
+            bboxes = bboxes.cpu() if hasattr(bboxes, "cpu") else bboxes
             for bbox, label, is_diff in zip(bboxes, labels, is_difficult):
                 class_recs = self.gt_recs[self.class_names[label]]
                 class_recs.setdefault(image_id, {})
                 class_recs[image_id].setdefault("bbox", []).append(bbox)
                 class_recs[image_id].setdefault("det", []).append(False)
-                class_recs[image_id].setdefault("difficult", []).append(is_diff)
+                class_recs[image_id].setdefault(
+                    "difficult", []).append(is_diff)
 
     def voc_ap(self, rec, prec, use_07_metric=True):
         """ ap = voc_ap(rec, prec, [use_07_metric])
@@ -394,10 +399,11 @@ class VOCMetrics(Metrics):
             scores = pred[:, -1]
             det_scores += [scores]
             det_bboxes += [bboxes]
-        det_scores = np.concatenate(det_scores, 0)
-        det_bboxes = np.concatenate(det_bboxes, 0)
 
         if len(det_scores) > 0:
+            det_scores = np.concatenate(det_scores, 0)
+            det_bboxes = np.concatenate(det_bboxes, 0)
+
             confidence = np.asarray(det_scores).astype(np.float).reshape(-1)
             BB = np.asarray(det_bboxes)
 
@@ -416,7 +422,8 @@ class VOCMetrics(Metrics):
                 bb = BB[d, :].astype(float)
                 ovmax = -np.inf
                 if len(R["bbox"]) > 0:
-                    BBGT = np.concatenate(R["bbox"], 0).reshape(-1, 4).astype(float)
+                    BBGT = np.concatenate(
+                        R["bbox"], 0).reshape(-1, 4).astype(float)
                     # compute overlaps
                     # intersection
                     ixmin = np.maximum(BBGT[:, 0], bb[0])
@@ -479,7 +486,8 @@ class VOCMetrics(Metrics):
         self.logger.info(
             "--------------------------------------------------------------"
         )
-        self.logger.info("Results computed with the **unofficial** Python eval code.")
+        self.logger.info(
+            "Results computed with the **unofficial** Python eval code.")
         self.logger.info(
             "Results should be very close to the official MATLAB eval code."
         )

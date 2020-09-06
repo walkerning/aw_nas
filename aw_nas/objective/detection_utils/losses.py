@@ -178,9 +178,9 @@ class AdaptiveDistillationLoss(Losses):
     NAME = "adaptive_distillation_loss"
     SCHEDULABLE_ATTRS = ["loss_coef"]
 
-    def __init__(self, alpha, gamma, temperature, loss_coef=1., schedule_cfg=None):
+    def __init__(self, beta, gamma, temperature, loss_coef=1., schedule_cfg=None):
         super().__init__(schedule_cfg)
-        self.alpha = alpha
+        self.beta = beta
         self.gamma = gamma
         self.temperature = temperature
         self.loss_coef = loss_coef

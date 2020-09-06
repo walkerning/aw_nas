@@ -1,11 +1,14 @@
-rollout_type: ofa
+rollout_type: ssd_ofa
 
 ## ---- Component search_space ----
 # ---- Type ofa ----
-search_space_type: ofa
+search_space_type: ssd_ofa
 search_space_cfg:
   num_cell_groups: [1, 4, 4, 4, 4, 4]
   expansions: [1, 6, 6, 6, 6, 6]
+  image_size_choice: [300]
+  num_head: 4
+  head_width_choice: [0.5]
   schedule_cfg:
     kernel_choice:
         type: value
@@ -54,7 +57,7 @@ evaluator_cfg:
   load_optimizer: false
   load_scheduler: false
   rollout_type: ofa
-  batch_size: 48
+  batch_size: 32
   controller_surrogate_steps: 0
   # derive_surrogate_steps: 0
   mepa_surrogate_steps: 0
@@ -101,10 +104,11 @@ weights_manager_cfg:
       num_classes: 90
       block_type: mbv3_block
       pretrained_path: null
-  head_type: ssd_head_final_model
+  head_type: ssd_header
   head_cfg:
     expansions: [0.5, 0.5, 0.5, 0.5]
     channels: [512, 256, 256, 128]
+    kernel_sizes: [3]
     aspect_ratios: [[2], [2, 3], [2, 3], [2, 3], [2], [2]]
     pretrained_path: null
   num_classes: 90
@@ -121,7 +125,7 @@ objective_cfg:
   anchors_generator_cfg:
     min_dim: 300
     aspect_ratios: [[2], [2, 3], [2, 3], [2, 3], [2], [2]]
-    feature_maps: [19, 10, 5, 3, 2, 1]
+    feature_maps: [4, 5, 6, 7, 8, 9]
     scales: [45, 90, 135, 180, 225, 270, 315]
     steps: [16, 32, 64, 100, 150, 300]
     clip: true
@@ -140,7 +144,7 @@ objective_cfg:
     losses_cfg:
       type: adaptive_distillation_loss
       cfg:
-        alpha: 1.5
+        beta: 1.5
         gamma: 1.0
         temperature: 2.
         loss_coef: 0.

@@ -1,17 +1,15 @@
 import logging
 import os
 import pathlib
-import pickle
 import xml.etree.ElementTree as ET
 
 import cv2
 import numpy as np
-import six
+import torch
 from torchvision import datasets, transforms
 
 from aw_nas.dataset.base import BaseDataset
 from aw_nas.dataset.transform import *
-from aw_nas.utils import logger
 from aw_nas.utils.box_utils import *
 
 
@@ -200,6 +198,8 @@ class VOC(BaseDataset):
         self.datasets = {}
         self.datasets['train'] = VOCDataset(self.train_data_dir, train_sets,
                                             train_transform)
+        self.datasets['train_testTransform'] = VOCDataset(self.train_data_dir, train_sets,
+                                                          test_transform)
         self.grouped_annotation = {}
 
         if not self.load_train_only:

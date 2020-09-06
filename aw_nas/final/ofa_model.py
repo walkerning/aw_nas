@@ -36,7 +36,8 @@ class OFAGenotypeModel(FinalModel):
         self.load_supernet_state_dict(supernet_state_dict, filter_regex)
         self.genotypes = genotypes
         if genotypes:
-            self.finalize(genotypes)
+            rollout = search_space.rollout_from_genotype(genotypes)
+            self.finalize(rollout)
 
         self.to(self.device)
 
@@ -83,13 +84,8 @@ class OFAGenotypeModel(FinalModel):
             self.logger.info("loading supernet: " + str(mismatch))
         return self
 
-    def finalize(self, genotypes, filter_regex=None):
-        assert isinstance(genotypes, str), \
-            "Type str excepted, got {} instead.".format(type(genotypes))
-        genotypes = list(genotype_from_str(genotypes, self.search_space)._asdict().values())
-        depth, width, kernel = self.parse(genotypes)
-
-        self.backbone = self.backbone.finalize(depth, width, kernel)
+    def finalize(self, rollout):
+        self.backbone = self.backbone.finalize(rollout.depth, rollout.width, rollout.kernel)
         return self
 
     def set_hook(self):
@@ -110,27 +106,6 @@ class OFAGenotypeModel(FinalModel):
     @classmethod
     def supported_data_types(cls):
         return ["image"]
-
-    def parse(self, genotype):
-        depth = genotype[:len(self.search_space.num_cell_groups)]
-        width = []
-        kernel = []
-        ind = len(self.search_space.num_cell_groups)
-        for i, max_depth in zip(depth, self.search_space.num_cell_groups):
-            width_list = []
-            kernel_list = []
-            for j in range(max_depth):
-                if j < i:
-                    try:
-                        width_list.append(genotype[ind][0])
-                        kernel_list.append(genotype[ind][1])
-                    except Exception:
-                        width_list.append(genotype[ind])
-                        kernel_list.append(3)
-                ind += 1
-            width.append(width_list)
-            kernel.append(kernel_list)
-        return depth, width, kernel
 
     def layer_idx_to_named_modules(self, idx):
         stage_idx, block_idx = idx

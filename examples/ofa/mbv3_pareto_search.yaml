@@ -9,6 +9,7 @@ search_space_cfg:
   kernel_choice: [7, 5, 3]
   width_choice: [6, 5, 4]
   depth_choice: [4, 3, 2]
+  image_size_choice: [32]
 # ---- End Type mnsanet_ofa ----
 ## ---- End Component search_space ----
 

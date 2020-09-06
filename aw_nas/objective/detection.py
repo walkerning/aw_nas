@@ -54,13 +54,14 @@ class DetectionObjective(BaseObjective):
               - type: ...
 
         """
-        if soft_losses_cfg.get("losses_cfg") and soft_losses_cfg.get("teacher"):
+        if soft_losses_cfg.get("losses_cfg") and \
+            soft_losses_cfg.get("teacher_cfg"):
             teacher_cfg = soft_losses_cfg.get("teacher_cfg", "supernet")
             if isinstance(teacher_cfg, str):
                 if teacher_cfg == "supernet":
                     self.teacher_net = "supernet"
                 elif os.path.exists(teacher_cfg):
-                    self.teacher_net = torch.load(teacher_cfg)
+                    self.teacher_net = torch.load(teacher_cfg, "cpu")
                 else:
                     raise ValueError("Except teacher_cfg to be 'supernet' or the path of the teacher model, got {} instead.".format(teacher_cfg))
             elif isinstance(teacher_cfg, dict):
@@ -196,11 +197,15 @@ class DetectionObjective(BaseObjective):
         hard_losses = self.box_loss(outputs, (conf_t, loc_t), indices, normalizer)
         soft_losses = {}
         if self.soft_losses is not None and cand_net.training:
-            teacher_net = cand_net.super_net if self.teacher_net == "supernet" else self.teacher_net
-            teacher_net = teacher_net.to(inputs.device)
+            if self.teacher_net == "supernet":
+                teacher_net = cand_net.super_net
+            else:
+                self.teacher_net = self.teacher_net.to(inputs.device)
+                teacher_net = self.teacher_net
             teacher_net.train()
             with torch.no_grad():
                 soft_target = teacher_net(inputs)
-            soft_losses = [soft_loss(outputs, soft_target, indices, normalizer) for soft_loss in self.soft_losses]
-        return dict(**hard_losses, **soft_losses)
+            [soft_losses.update(soft_loss(outputs, soft_target, indices,
+                normalizer)) for soft_loss in self.soft_losses]
+        return {**hard_losses, **soft_losses}
 

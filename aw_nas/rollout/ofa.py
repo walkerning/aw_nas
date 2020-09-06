@@ -12,13 +12,15 @@ from aw_nas.common import SearchSpace, genotype_from_str
 
 class MNasNetOFASearchSpace(SearchSpace):
     NAME = "ofa"
-    SCHEDULABLE_ATTRS = ["width_choice", "depth_choice", "kernel_choice"]
+    SCHEDULABLE_ATTRS = ["width_choice", "depth_choice", "kernel_choice",
+                         "image_size"]
 
     def __init__(
         self,
         width_choice=(4, 5, 6),
         depth_choice=(4, 5, 6),
         kernel_choice=(3, 5, 7),
+        image_size_choice=[224, 192, 160, 128],
         num_cell_groups=[1, 4, 4, 4, 4, 4],
         expansions=[1, 6, 6, 6, 6, 6],
         schedule_cfg=None,
@@ -30,6 +32,7 @@ class MNasNetOFASearchSpace(SearchSpace):
         self.expansions = expansions
 
         self.block_names = sum(
+            [["image_size"]] +
             [["cell_{}".format(i) for i in range(len(num_cell_groups))]]
             + [
                 [
@@ -47,6 +50,8 @@ class MNasNetOFASearchSpace(SearchSpace):
         self.width_choice = width_choice
         self.depth_choice = depth_choice
         self.kernel_choice = kernel_choice
+        self.image_size_choice = image_size_choice
+        self.max_image_size = max(self.image_size_choice)
 
     def __getstate__(self):
         state = super(MNasNetOFASearchSpace, self).__getstate__().copy()
@@ -60,7 +65,7 @@ class MNasNetOFASearchSpace(SearchSpace):
         )
 
     def genotype(self, arch):
-        geno_arch = arch["depth"] + sum(
+        geno_arch = [arch["image_size"]] + arch["depth"] + sum(
             [
                 list(zip(channels, kernels))
                 for channels, kernels in zip(arch["width"], arch["kernel"])
@@ -73,10 +78,16 @@ class MNasNetOFASearchSpace(SearchSpace):
         if isinstance(genotype, str):
             genotype = genotype_from_str(genotype, self)
 
-        depth = list(genotype[:len(self.num_cell_groups)])
+        image_size, depth, width, kernel = self.parse(genotype)
+        arch = {"image_size": image_size, "depth": depth,
+                "width": width, "kernel": kernel}
+        return MNasNetOFARollout(arch, {}, self)
+
+    def parse(self, genotype):
+        depth = list(genotype[1: 1 + len(self.num_cell_groups)])
         width = []
         kernel = []
-        ind = len(self.num_cell_groups)
+        ind = 1 + len(self.num_cell_groups)
         for _, max_depth in zip(depth, self.num_cell_groups):
             width_list = []
             kernel_list = []
@@ -90,13 +101,13 @@ class MNasNetOFASearchSpace(SearchSpace):
                 ind += 1
             width.append(width_list)
             kernel.append(kernel_list)
-        arch = {"depth": depth, "width": width, "kernel": kernel}
-        return MNasNetOFARollout(arch, {}, self)
+        image_size = genotype[0]
+        return image_size, depth, width, kernel
 
     def supported_rollout_types(self):
         return ["ofa"]
 
-    def _uniform_mutate(self, rollout, mutation_prob=1.0): #pylint: disable=arguments-differ
+    def _uniform_mutate(self, rollout, mutation_prob=1.0):  # pylint: disable=arguments-differ
         arch = rollout.arch
         new_arch = {
             "depth": [1, ],
@@ -136,18 +147,19 @@ class MNasNetOFASearchSpace(SearchSpace):
                 new_depth = np.random.choice(self.depth_choice)
             new_arch["depth"][mutate_depth_idx] = new_depth
         else:
-            mutate_block_idx = np.random.randint(0, len(arch["width"][mutate_depth_idx]))
+            mutate_block_idx = np.random.randint(
+                0, len(arch["width"][mutate_depth_idx]))
             new_width = np.random.choice(self.width_choice)
             new_kernel = np.random.choice(self.kernel_choice)
             while new_width == new_arch["width"][mutate_depth_idx][mutate_block_idx] and \
-                new_kernel == new_arch["kernel"][mutate_depth_idx][mutate_block_idx]:
+                    new_kernel == new_arch["kernel"][mutate_depth_idx][mutate_block_idx]:
                 new_width = np.random.choice(self.width_choice)
                 new_kernel = np.random.choice(self.kernel_choice)
             new_arch["width"][mutate_depth_idx][mutate_block_idx] = new_width
             new_arch["kernel"][mutate_depth_idx][mutate_block_idx] = new_kernel
         return MNasNetOFARollout(new_arch, "", self)
 
-    def mutate(self, rollout, mutation="single", **kwargs): #pylint: disable=arguments-differ
+    def mutate(self, rollout, mutation="single", **kwargs):  # pylint: disable=arguments-differ
         assert mutation in ("uniform", "single")
         if mutation == "uniform":
             return self._uniform_mutate(rollout, **kwargs)
@@ -165,6 +177,7 @@ class MNasNetOFASearchSpace(SearchSpace):
                 self.width_choice,
                 self.depth_choice,
                 self.kernel_choice,
+                self.image_size_choice,
             ),
             info={},
             search_space=self,
@@ -193,7 +206,8 @@ class MNasNetOFARollout(Rollout):
 
     @classmethod
     def random_sample_arch(
-        cls, num_channels, num_cell_groups, width_choice, depth_choice, kernel_choice
+        cls, num_channels, num_cell_groups, width_choice, depth_choice,
+        kernel_choice, image_size_choice
     ):
         arch = {}
         arch["depth"] = np.min(
@@ -212,4 +226,110 @@ class MNasNetOFARollout(Rollout):
         arch["kernel"] = [[3]] + [
             np.random.choice(kernel_choice, size=c).tolist() for c in num_cell_groups[1:]
         ]
+        arch["image_size"] = np.random.choice(image_size_choice)
+        return arch
+
+
+class SSDOFASearchSpace(MNasNetOFASearchSpace):
+    NAME = "ssd_ofa"
+    SCHEDULABLE_ATTRS = ["width_choice", "depth_choice", "kernel_choice",
+                         "head_width_choice"]
+
+    def __init__(
+        self,
+        width_choice=(4, 5, 6),
+        depth_choice=(4, 5, 6),
+        kernel_choice=(3, 5, 7),
+        image_size_choice=[512, 384, 320, 256, 192],
+        head_width_choice=(0.25, 0.5, 0.75),
+        num_cell_groups=[1, 4, 4, 4, 4, 4],
+        expansions=[1, 6, 6, 6, 6, 6],
+        num_head=4,
+        schedule_cfg=None,
+    ):
+        super().__init__(
+            width_choice,
+            depth_choice,
+            kernel_choice,
+            image_size_choice,
+            num_cell_groups,
+            expansions,
+            schedule_cfg
+        )
+        self.head_width_choice = head_width_choice
+        self.num_head = num_head
+        self.num_cell_groups = num_cell_groups
+        self.block_names += ["head_{}".format(i)
+                             for i in range(num_head)]
+        self.genotype_type = utils.namedtuple_with_defaults(
+            self.genotype_type_name, self.block_names, []
+        )
+
+    def genotype(self, arch):
+        geno_arch = [arch["image_size"]] + arch["depth"] + sum(
+            [
+                list(zip(channels, kernels))
+                for channels, kernels in zip(
+                    arch["width"] + arch["head_width"], arch["kernel"] +
+                    arch["head_kernel"]
+                )
+            ],
+            [],
+        )
+        return self.genotype_type(**dict(zip(self.block_names, geno_arch)))
+
+    def rollout_from_genotype(self, genotype):
+        if isinstance(genotype, str):
+            genotype = genotype_from_str(genotype, self)
+        image_size, depth, width, kernel = self.parse(
+            genotype[:-self.num_head])
+        head_width, head_kernel = list(zip(*genotype[-self.num_head:]))
+        arch = {"image_size": image_size, "depth": depth, "width": width, "kernel": kernel,
+                "head_width": head_width, "head_kernel": head_kernel}
+        return SSDOFARollout(arch, {}, self)
+
+    def random_sample(self):
+        return SSDOFARollout(
+            SSDOFARollout.random_sample_arch(
+                self.expansions,
+                self.num_cell_groups,
+                self.num_head,
+                self.width_choice,
+                self.depth_choice,
+                self.kernel_choice,
+                self.image_size_choice,
+                self.head_width_choice
+            ),
+            info={},
+            search_space=self,
+        )
+
+
+class SSDOFARollout(MNasNetOFARollout):
+    NAME = "ssd_ofa"
+
+    @property
+    def head_width(self):
+        return self.arch["head_width"]
+
+    @property
+    def head_kernel(self):
+        return self.arch["head_kernel"]
+
+    @property
+    def image_size(self):
+        return self.arch["image_size"]
+
+    @classmethod
+    def random_sample_arch(
+        cls, num_channels, num_cell_groups, num_head, width_choice,
+        depth_choice, kernel_choice, image_size_choice, head_width_choice,
+    ):
+        arch = super(SSDOFARollout, cls).random_sample_arch(
+            num_channels, num_cell_groups, width_choice, depth_choice,
+            kernel_choice, image_size_choice)
+        arch["head_width"] = np.random.choice(
+            head_width_choice, size=num_head)
+        arch["head_kernel"] = np.random.choice(
+            kernel_choice, size=num_head)
         return arch

@@ -51,6 +51,7 @@ class Extras(nn.Module):
 class Classifier(nn.Module):
     def __init__(self, num_classes, channels, ratios):
         super(Classifier, self).__init__()
+        self.num_classes = num_classes
         self.convs = nn.ModuleList([
             SeperableConv2d(in_channels,
                             out_channels=ratio * num_classes,
@@ -60,7 +61,11 @@ class Classifier(nn.Module):
         ])
 
     def forward(self, features):
-        return [conv(ft) for ft, conv in zip(features, self.convs)]
+        return torch.cat([
+            conv(ft).permute(0, 2, 3, 1).contiguous().view(
+                features[0].shape[0], -1, self.num_classes)
+            for ft, conv in zip(features, self.convs)
+        ], 1)
 
 
 class SSDHeadFinalModel(FinalModel):
@@ -87,8 +92,8 @@ class SSDHeadFinalModel(FinalModel):
         classification_headers = Classifier(num_classes + 1, head_channels,
                                             multi_ratio)
         expect(None not in [extras, regression_headers, classification_headers],
-            "Extras, regression_headers and classification_headers must be provided, "
-            "got None instead.", ConfigException)
+               "Extras, regression_headers and classification_headers must be provided, "
+               "got None instead.", ConfigException)
         head = HeadModel(device,
                          num_classes=num_classes + 1,
                          extras=extras,
@@ -112,11 +117,12 @@ class SSDFinalModel(FinalModel):
     def __init__(self,
                  search_space,
                  device,
+                 genotypes,
                  backbone_type,
                  backbone_cfg,
                  feature_levels=[4, 5],
                  supernet_state_dict=None,
-                 head_type='ssd_head_final_model',
+                 head_type='ssd_header',
                  head_cfg={},
                  num_classes=10,
                  schedule_cfg=None):
@@ -126,7 +132,6 @@ class SSDFinalModel(FinalModel):
         self.num_classes = num_classes
         self.feature_levels = feature_levels
 
-        genotypes = backbone_cfg.pop("genotypes")
         self.backbone = RegistryMeta.get_class('final_model',
                                                backbone_type)(search_space,
                                                               device,
@@ -134,12 +139,17 @@ class SSDFinalModel(FinalModel):
 
         feature_channels = self.backbone.get_feature_channel_num(
             feature_levels)
-        self.head = SSDHeadFinalModel(device, num_classes, feature_channels,
-                                      **head_cfg)
+        self.head = RegistryMeta.get_class("detection_header",
+                head_type)(device, num_classes, feature_channels, **head_cfg)
+        
+        
+        #self.head = SSDHeadFinalModel(device, num_classes, feature_channels,
+        #                              **head_cfg)
 
         if supernet_state_dict:
             self.load_supernet_state_dict(supernet_state_dict)
-        self.finalize(genotypes)
+        rollout = search_space.rollout_from_genotype(genotypes)
+        self.finalize(rollout)
 
         self.search_space = search_space
         self.device = device
@@ -151,8 +161,9 @@ class SSDFinalModel(FinalModel):
         self._flops_calculated = False
         self.set_hook()
 
-    def finalize(self, genotypes):
-        self.backbone.finalize(genotypes)
+    def finalize(self, rollout):
+        self.backbone.finalize(rollout)
+        self.head.finalize(rollout)
         return self
 
     def load_supernet_state_dict(self, supernet_state_dict, strict=True):
@@ -178,9 +189,9 @@ class SSDFinalModel(FinalModel):
     def _hook_intermediate_feature(self, module, inputs, outputs):
         if not self._flops_calculated:
             if isinstance(module, nn.Conv2d):
-                self.total_flops += 2* inputs[0].size(1) * outputs.size(1) * \
-                                    module.kernel_size[0] * module.kernel_size[1] * \
-                                    outputs.size(2) * outputs.size(3) / module.groups
+                self.total_flops += 2 * inputs[0].size(1) * outputs.size(1) * \
+                    module.kernel_size[0] * module.kernel_size[1] * \
+                    outputs.size(2) * outputs.size(3) / module.groups
             elif isinstance(module, nn.Linear):
                 self.total_flops += 2 * inputs[0].size(1) * outputs.size(1)
         else:
@@ -191,6 +202,7 @@ class SSDFinalModel(FinalModel):
         return ["image"]
 
     def forward(self, inputs):
-        features, _ = self.backbone.extract_features(inputs, [4, 5])
+        features, _ = self.backbone.extract_features(
+            inputs, self.feature_levels)
         confidences, locations = self.head(features)
         return confidences, locations

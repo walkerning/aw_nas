@@ -526,7 +526,15 @@ def prepare_data_queues(splits, queue_cfg_lst, data_type="image", drop_last=Fals
         indices = dset_indices[split]
         size = dset_sizes[split]
         d_kwargs = getattr(dset_splits[split], "kwargs", {})
-        subset_indices = indices[int(size*used_portion):int(size*(used_portion+portion))]
+        if isinstance(portion, (list, tuple)) and len(portion) == 2:
+            ranges = int(size * portion[0]), int(size * portion[1])
+            used_portions[split] = portion[1]
+        elif isinstance(portion, float) and 0. <= portion <= 1.:
+            ranges = int(size * used_portion), int(size *(used_portion + portion))
+            used_portions[split] += portion
+        else:
+            raise ValueError("Except portion to be a float between 0~1 or a list like [left, right], got {} instead.".format(portion))
+        subset_indices = indices[ranges[0]: ranges[1]]
         if data_type == "image":
             kwargs = {
                 "batch_size": batch_size,
@@ -546,7 +554,7 @@ def prepare_data_queues(splits, queue_cfg_lst, data_type="image", drop_last=Fals
             bptt_steps = cfg["bptt_steps"]
             dataset = SimpleDataset(
                 batchify_sentences(
-                    dset_splits[split][int(size*used_portion):int(size*(used_portion+portion))],
+                    dset_splits[split][ranges[0]: ranges[1]],
                     batch_size)
             )
             kwargs = {
@@ -561,7 +569,6 @@ def prepare_data_queues(splits, queue_cfg_lst, data_type="image", drop_last=Fals
             queue = get_inf_iterator(torch.utils.data.DataLoader(
                 dataset, **kwargs), callback)
 
-        used_portions[split] += portion
         queues.append(queue)
 
     return queues

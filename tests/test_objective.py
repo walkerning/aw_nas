@@ -68,6 +68,7 @@ def test_inject(super_net):
         "width_choice": [3, 4, 6],
         "depth_choice": [2, 3, 4],
         "kernel_choice": [3, 5, 7],
+        "image_size_choice": [224],
         "num_cell_groups": [1, 4, 4, 4, 4, 4],
         "expansions": [1, 6, 6, 6, 6, 6],
     },
@@ -116,7 +117,7 @@ def test_inject(super_net):
         }]
     }]],
     "genotypes":
-    "cell_0=1, cell_1=2, cell_2=2, cell_3=1, cell_4=1, cell_5=1, cell_0_block_0=(1, 3), cell_1_block_0=(1, 3), cell_1_block_1=(4, 5), cell_1_block_2=(6, 3), cell_1_block_3=(2, 3), cell_2_block_0=(3, 3), cell_2_block_1=(3, 5), cell_2_block_2=(6, 3), cell_2_block_3=(5, 3), cell_3_block_0=(3, 5), cell_3_block_1=(3, 5), cell_3_block_2=(6, 3), cell_3_block_3=(3, 3), cell_4_block_0=(3, 3), cell_4_block_1=(2, 3), cell_4_block_2=(2, 3), cell_4_block_3=(6, 3), cell_5_block_0=(6, 3), cell_5_block_1=(6, 5), cell_5_block_2=(4, 5), cell_5_block_3=(4, 5)"
+    "image_size=224, cell_0=1, cell_1=2, cell_2=2, cell_3=1, cell_4=1, cell_5=1, cell_0_block_0=(1, 3), cell_1_block_0=(1, 3), cell_1_block_1=(4, 5), cell_1_block_2=(6, 3), cell_1_block_3=(2, 3), cell_2_block_0=(3, 3), cell_2_block_1=(3, 5), cell_2_block_2=(6, 3), cell_2_block_3=(5, 3), cell_3_block_0=(3, 5), cell_3_block_1=(3, 5), cell_3_block_2=(6, 3), cell_3_block_3=(3, 3), cell_4_block_0=(3, 3), cell_4_block_1=(2, 3), cell_4_block_2=(2, 3), cell_4_block_3=(6, 3), cell_5_block_0=(6, 3), cell_5_block_1=(6, 5), cell_5_block_2=(4, 5), cell_5_block_3=(4, 5)"
 }])
 def test_hardware(case):
     from collections import namedtuple

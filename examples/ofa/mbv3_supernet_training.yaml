@@ -6,6 +6,7 @@ search_space_type: ofa
 search_space_cfg:
   num_cell_groups: [1, 4, 4, 4, 4, 4]
   expansions: [1, 6, 6, 6, 6, 6]
+  image_size_choice: [32]
   schedule_cfg:
     kernel_choice:
         type: value
