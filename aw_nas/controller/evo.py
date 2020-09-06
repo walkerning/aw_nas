@@ -12,6 +12,45 @@ from aw_nas.common import BaseRollout, genotype_from_str
 from aw_nas.controller.base import BaseController
 from aw_nas.utils.exception import expect, ConfigException
 
+
+__all__ = ["RandomSampleController", "EvoController", "ParetoEvoController"]
+
+
+class RandomSampleController(BaseController):
+    NAME = "random_sample"
+
+    def __init__(self, search_space, device, rollout_type=None, mode="eval",
+                 schedule_cfg=None):
+        super(RandomSampleController, self).__init__(
+            search_space, rollout_type, mode, schedule_cfg)
+        self.device = device
+
+    def set_device(self, device):
+        self.device = device
+
+    def sample(self, n, batch_size=1):
+        rollouts = []
+        for _ in range(n):
+            rollouts.append(self.search_space.random_sample())
+        return rollouts
+
+    def step(self, rollouts, optimizer, perf_name):
+        return 0.
+
+    def summary(self, rollouts, log=False, log_prefix="", step=None):
+        pass
+
+    def save(self, path):
+        pass
+
+    def load(self, path):
+        pass
+
+    @classmethod
+    def supported_rollout_types(cls):
+        return list(BaseRollout.all_classes_().keys())
+
+
 class EvoController(BaseController):
     """
     A single-objective (reward) evolutionary controller.
@@ -29,6 +68,13 @@ class EvoController(BaseController):
     def __init__(self, search_space, device, rollout_type=None, mode="eval",
                  population_size=100, parent_pool_size=10, mutate_kwargs={},
                  eval_sample_strategy="population", elimination_strategy="regularized",
+                 avoid_repeat=False,
+                 avoid_mutate_repeat=False,
+                 # if `avoid_repeat_worst_threshold` mutation cannot go out, raise/return
+                 # controlled by `avoid_repeat_fallback`
+                 avoid_repeat_worst_threshold=10,
+                 avoid_mutate_repeat_worst_threshold=10,
+                 avoid_repeat_fallback="return",
                  schedule_cfg=None):
         super(EvoController, self).__init__(
             search_space, rollout_type, mode, schedule_cfg)
@@ -47,6 +93,13 @@ class EvoController(BaseController):
         self.mutate_kwargs = mutate_kwargs
         self.eval_sample_strategy = eval_sample_strategy
         self.elimination_strategy = elimination_strategy
+        self.avoid_repeat = avoid_repeat
+        self.avoid_mutate_repeat = avoid_mutate_repeat
+        self.avoid_repeat_worst_threshold = avoid_repeat_worst_threshold
+        self.avoid_mutate_repeat_worst_threshold = avoid_mutate_repeat_worst_threshold
+        self.avoid_repeat_fallback = avoid_repeat_fallback
+        expect(self.avoid_repeat_fallback in {"return", "raise"})
+
         self.population = collections.OrderedDict()
 
         # keep track of all seen rollouts and scores
@@ -58,6 +111,37 @@ class EvoController(BaseController):
         self.population = collections.OrderedDict()
         for r in rollout_list:
             self.population[r.genotype] = r.get_perf(perf_name)
+
+    def _avoid_repeat_fallback(self, is_mutate=False):
+        resample_str_ = "mutate" if is_mutate else "reselect-and-mutate"
+        trials = self.avoid_mutate_repeat_worst_threshold \
+                 if is_mutate else self.avoid_repeat_worst_threshold
+        if self.avoid_repeat_fallback == "raise":
+            raise Exception(
+                "Cannot get a new rollout that is not in the population by {} {} trials.".format(
+                    trials, resample_str_))
+
+    def _mutate(self, rollout, **mutate_kwargs):
+        if not self.avoid_mutate_repeat:
+            return self.search_space.mutate(rollout, **mutate_kwargs)
+        for _ in range(self.avoid_mutate_repeat_worst_threshold):
+            new_rollout = self.search_space.mutate(rollout, **mutate_kwargs)
+            if rollout.genotype not in self.population:
+                break
+        else:
+            self._avoid_repeat_fallback(is_mutate=True)
+        return new_rollout
+
+    def _sample_one(self, population_items, population_size):
+        # random select tournament with size `self.parent_pool_size`
+        choices = np.random.choice(np.arange(population_size),
+                                   size=self.parent_pool_size, replace=False)
+        selected_pop = [population_items[i] for i in choices]
+        parent_ind = np.argmax([item[1] for item in selected_pop])
+        parent_geno = selected_pop[parent_ind][0]
+        parent_rollout = self.search_space.rollout_from_genotype(parent_geno)
+        new_rollout = self._mutate(parent_rollout, **self.mutate_kwargs)
+        return new_rollout
 
     def sample(self, n, batch_size=1):
         assert batch_size == 1, "`batch_size` is not meaningful for Evolutionary controller"
@@ -83,18 +167,19 @@ class EvoController(BaseController):
             self.logger.info("Population not full, random sample {}".format(n))
             return [self.search_space.random_sample() for _ in range(n)]
 
-        rollouts = []
         population_items = list(self.population.items())
         population_size = len(self.population)
+        rollouts = []
         for _ in range(n):
-            # random select tournament with size `self.parent_pool_size`
-            choices = np.random.choice(np.arange(population_size),
-                                       size=self.parent_pool_size, replace=False)
-            selected_pop = [population_items[i] for i in choices]
-            parent_ind = np.argmax([item[1] for item in selected_pop])
-            parent_geno = selected_pop[parent_ind][0]
-            parent_rollout = self.search_space.rollout_from_genotype(parent_geno)
-            new_rollout = self.search_space.mutate(parent_rollout, **self.mutate_kwargs)
+            if self.avoid_repeat:
+                for _ in range(self.avoid_repeat_worst_threshold):
+                    new_rollout = self._sample_one(population_items, population_size)
+                    if new_rollout.genotype not in self.population:
+                        break
+                else:
+                    self._avoid_repeat_fallback(is_mutate=False)
+            else:
+                new_rollout = self._sample_one(population_items, population_size)
             rollouts.append(new_rollout)
         return rollouts
 
@@ -169,6 +254,13 @@ class ParetoEvoController(BaseController):
                  mode="eval", init_population_size=100, perf_names=["reward"],
                  mutate_kwargs={},
                  eval_sample_strategy="all",
+                 avoid_repeat=False,
+                 avoid_mutate_repeat=False,
+                 # if `avoid_repeat_worst_threshold` mutation cannot go out, raise/return
+                 # controlled by `avoid_repeat_fallback`
+                 avoid_repeat_worst_threshold=10,
+                 avoid_mutate_repeat_worst_threshold=10,
+                 avoid_repeat_fallback="return",
                  schedule_cfg=None):
         super(ParetoEvoController, self).__init__(
             search_space, rollout_type, mode, schedule_cfg)
@@ -180,11 +272,44 @@ class ParetoEvoController(BaseController):
         self.perf_names = perf_names
         self.mutate_kwargs = mutate_kwargs
         self.eval_sample_strategy = eval_sample_strategy
+        self.avoid_repeat = avoid_repeat
+        self.avoid_mutate_repeat = avoid_mutate_repeat
+        self.avoid_repeat_worst_threshold = avoid_repeat_worst_threshold
+        self.avoid_mutate_repeat_worst_threshold = avoid_mutate_repeat_worst_threshold
+        self.avoid_repeat_fallback = avoid_repeat_fallback
+        expect(self.avoid_repeat_fallback in {"return", "raise"})
 
         # after initial random sampling, only pareto front points are saved in the population
         self.population = collections.OrderedDict()
         # whether or not sampling by mutation from pareto front has started
         self._start_pareto_sample = False
+
+    def _avoid_repeat_fallback(self, is_mutate=False):
+        resample_str_ = "mutate" if is_mutate else "reselect-and-mutate"
+        trials = self.avoid_mutate_repeat_worst_threshold \
+                 if is_mutate else self.avoid_repeat_worst_threshold
+        if self.avoid_repeat_fallback == "raise":
+            raise Exception(
+                "Cannot get a new rollout that is not in the population by {} {} trials.".format(
+                    trials, resample_str_))
+
+    def _mutate(self, rollout, **mutate_kwargs):
+        if not self.avoid_mutate_repeat:
+            return self.search_space.mutate(rollout, **mutate_kwargs)
+        for _ in range(self.avoid_mutate_repeat_worst_threshold):
+            new_rollout = self.search_space.mutate(rollout, **mutate_kwargs)
+            if rollout.genotype not in self.population:
+                break
+        else:
+            self._avoid_repeat_fallback(is_mutate=True)
+        return new_rollout
+
+    def _sample_one(self, population_items, population_size):
+        choices = np.random.choice(np.arange(population_size), size=1, replace=False)
+        parent_geno = population_items[choices[0]][0]
+        parent_rollout = self.search_space.rollout_from_genotype(parent_geno)
+        new_rollout = self._mutate(parent_rollout, **self.mutate_kwargs)
+        return new_rollout
 
     def sample(self, n, batch_size=1):
         if self.mode == "eval":
@@ -210,10 +335,15 @@ class ParetoEvoController(BaseController):
         population_items = list(self.population.items())
         population_size = len(self.population)
         for _ in range(n):
-            choices = np.random.choice(np.arange(population_size), size=1, replace=False)
-            parent_geno = population_items[choices[0]][0]
-            parent_rollout = self.search_space.rollout_from_genotype(parent_geno)
-            new_rollout = self.search_space.mutate(parent_rollout, **self.mutate_kwargs)
+            if self.avoid_repeat:
+                for _ in range(self.avoid_repeat_worst_threshold):
+                    new_rollout = self._sample_one(population_items, population_size)
+                    if new_rollout.genotype not in self.population:
+                        break
+                else:
+                    self._avoid_repeat_fallback(is_mutate=False)
+            else:
+                new_rollout = self._sample_one(population_items, population_size)
             rollouts.append(new_rollout)
         return rollouts
 

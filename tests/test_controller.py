@@ -1,5 +1,4 @@
 from __future__ import print_function
-import os
 import pytest
 import numpy as np
 from aw_nas.common import get_search_space
@@ -275,6 +274,40 @@ def test_diff_controller_rollout_batch_size():
 
 
 # ---- test controller evo ----
+def test_population_controller_avoid_repeat():
+    from aw_nas.controller import EvoController
+    ss_cfgs = {
+        "cell_layout": [0, 1, 0, 1, 0],
+        "num_layers": 5,
+        "shared_primitives": ["skip_connect", "sep_conv_3x3"],
+        "num_init_nodes": 1,
+        "num_steps": 3,
+        "num_cell_groups": 2,
+        "reduce_cell_groups": [1],
+    }
+    ss = get_search_space("cnn", **ss_cfgs)
+    controller = EvoController(ss, "cuda", rollout_type="discrete",
+                               avoid_mutate_repeat=True, avoid_mutate_repeat_worst_threshold=3,
+                               avoid_repeat_fallback="raise",
+                               population_size=100, parent_pool_size=1)
+    rollout = controller.sample(n=1)[0]
+    rollout.set_perf(1.0)
+    controller.set_mode("train")
+    # make it the highest reward
+    rollouts = []
+    for i in range(99):
+        rollouts.append(ss.mutate(rollout).set_perf(0.3))
+    controller.step([rollout] + rollouts)
+    controller.population_size = len(controller.population)
+    with pytest.raises(Exception):
+        for _ in range(3):
+            controller.sample(n=1)
+
+    controller.avoid_repeat_fallback = "return" # let's fallback to return, not rais
+    for _ in range(3):
+        controller.sample(n=1)
+
+
 def test_population_controller_mutate():
     from aw_nas.controller import EvoController, ParetoEvoController
 
