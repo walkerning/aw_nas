@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
-from aw_nas.ops import register_primitive, ConvBNReLU, Identity, SEModule, get_op
+from aw_nas.ops import register_primitive, ConvBNReLU, Identity, SEModule, get_op, BNReLU
 from aw_nas.utils import make_divisible, drop_connect
 
 class VggBlock(nn.Module):
@@ -244,6 +244,83 @@ class ResNetBlock(nn.Module):
             context.flag_inject(False)
         return out, context
 
+class ResNetBottleneckBlock(nn.Module):
+    """
+    References: https://github.com/kuangliu/pytorch-cifar/blob/master/models/resnet.py
+    For resnet-50, resnet-101, resnet-152
+    """
+    expansion = 4
+
+    def __init__(self, inplanes, planes, stride=1, affine=True, downsample="conv1x1"):
+        super(ResNetBottleneckBlock, self).__init__()
+        mid_planes = planes // self.expansion
+        self.conv1 = nn.Conv2d(inplanes, mid_planes, kernel_size=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(mid_planes, affine=affine)
+        self.conv2 = nn.Conv2d(mid_planes, mid_planes, kernel_size=3, padding=1,
+                               stride=stride, bias=False)
+        self.bn2 = nn.BatchNorm2d(mid_planes, affine=affine)
+        self.conv3 = nn.Conv2d(mid_planes, planes, kernel_size=1, bias=False)
+        self.bn3 = nn.BatchNorm2d(planes, affine=affine)
+        self.relu = nn.ReLU(inplace=True)
+        if stride != 1 or inplanes != planes:
+            if downsample == "conv1x1":
+                self.downsample = nn.Sequential(
+                    nn.Conv2d(inplanes, planes, kernel_size=1, stride=stride),
+                    nn.BatchNorm2d(planes),
+                )
+        else:
+            self.downsample = None
+        self.stride = stride
+
+    def forward(self, x):
+        identity = x
+
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+
+        out = self.conv2(out)
+        out = self.bn2(out)
+        out = self.relu(out)
+
+        out = self.conv3(out)
+        out = self.bn3(out)
+
+        if self.downsample is not None:
+            identity = self.downsample(x)
+
+        out += identity
+        out = self.relu(out)
+
+        return out
+
+class ResNetBlock_bnreluconv(nn.Module):
+    """
+    Reference: https://github.com/meliketoy/wide-resnet.pytorch/blob/master/networks/wide_resnet.py
+    For WideResNet
+    """
+    def __init__(self, C, C_out, stride, affine, kernel_size=3, dropout_rate=0.0):
+        super(ResNetBlock_bnreluconv, self).__init__()
+        self.C = C
+        self.C_out = C_out
+        self.dropout_rate = dropout_rate
+
+        self.op_1 = BNReLU(C, C, affine=affine)
+        self.op_2 = ConvBNReLU(C, C_out, kernel_size, stride, padding=1, affine=affine, relu=True)
+        self.dropout = nn.Dropout(p=self.dropout_rate) if self.dropout_rate > 0 else nn.Identity()
+        self.op_3 = nn.Conv2d(C_out, C_out, kernel_size, stride=1, padding=1, bias=False)
+        self.downsample = None
+        if stride != 1 or C != C_out:
+            self.downsample = nn.Conv2d(
+                C, C_out, kernel_size=1, stride=stride, padding=0, bias=False)
+
+    def forward(self, inputs):
+        out = self.op_1(inputs)
+        out = self.dropout(self.op_2(out))
+        out = self.op_3(out)
+        identity = inputs if self.downsample is None else self.downsample(inputs)
+        return out + identity
+
 
 class DenseBlock(nn.Module):
     def __init__(self, C, C_out, stride, affine, act='relu', bc_mode=True, bc_ratio=4.0,
@@ -470,6 +547,12 @@ register_primitive("resnet_block_split_sigmoid",
                    lambda C, C_out, stride, affine: ResNetBlockSplit(C, C_out,
                                                                      stride, affine=affine,
                                                                      act='sigmoid'))
+register_primitive("resnet_bottleneck_block",
+                   lambda C, C_out, stride, affine: ResNetBottleneckBlock(
+                       C, C_out, stride=stride, affine=affine))
+register_primitive("wideresnet_block_3x3",
+                   lambda C, C_out, stride, affine: ResNetBlock_bnreluconv(
+                       C, C_out, stride, affine, kernel_size=3, dropout_rate=0.))
 register_primitive("vgg_block",
                    lambda C, C_out, stride, affine: VggBlock(C, C_out, stride, affine=affine))
 register_primitive("dense_block",

@@ -185,39 +185,12 @@ nn.Linear = FixedLinear
 class CNNGenotypeModelPatch(CNNGenotypeModel):
     NAME = "cnn_patch_final_model"
 
-    SCHEDULABLE_ATTRS = ["dropout_path_rate"]
-
-    def __init__(self, search_space, device, genotypes,
-                 num_classes=10, init_channels=36, layer_channels=tuple(), stem_multiplier=3,
-                 dropout_rate=0.1, dropout_path_rate=0.2,
-                 auxiliary_head=False, auxiliary_cfg=None,
-                 use_stem="conv_bn_3x3", stem_stride=1, stem_affine=True,
-                 cell_use_preprocess=True, preprocess_op_type=None,
-                 cell_pool_batchnorm=False, cell_group_kwargs=None,
-                 cell_independent_conn=False,
-                 schedule_cfg=None):
-        super(CNNGenotypeModelPatch, self).__init__(search_space, device, genotypes,
-                 num_classes, init_channels, layer_channels, stem_multiplier, dropout_rate,
-                 dropout_path_rate, auxiliary_head, auxiliary_cfg, 
-                 use_stem, stem_stride, stem_affine,
-                 cell_use_preprocess, preprocess_op_type, cell_pool_batchnorm, cell_group_kwargs,
-                 cell_independent_conn, schedule_cfg)
-
     def set_saf_ratio(self, ratio):
         for idx, _module in self.named_modules():
             if isinstance(_module, nn.Conv2d):
                 _module.set_saf_ratio(ratio)
 
 class SubCandidateNetPatch(SubCandidateNet):
-    """
-    The candidate net for SuperNet weights manager.
-    """
-
-    def __init__(self, super_net, rollout, member_mask, gpus=tuple(), cache_named_members=False,
-                 virtual_parameter_only=True, eval_no_grad=True):
-        super(SubCandidateNetPatch, self).__init__(super_net, rollout, member_mask, gpus, cache_named_members,
-                 virtual_parameter_only, eval_no_grad)
- 
     def set_saf_ratio(self, ratio):
         for idx, _module in self.named_modules():
             if isinstance(_module, nn.Conv2d):

@@ -193,9 +193,6 @@ class CandidateNet(nn.Module):
         #     return [None] * len(eval_criterions or [])
 
         self._set_mode("train")
-        if aggregate_fns is None:
-            aggregate_fns = [lambda perfs: np.mean(perfs) if len(perfs) > 0 else 0.]\
-                            * len(eval_criterions)
 
         aggr_ans = []
         for _ in range(steps):
@@ -213,8 +210,11 @@ class CandidateNet(nn.Module):
             optimizer.step()
 
         if eval_criterions:
-            assert len(eval_criterions) == len(aggregate_fns)
             aggr_ans = np.asarray(aggr_ans).transpose()
+            if aggregate_fns is None:
+                # by default, aggregate batch rewards with MEAN
+                aggregate_fns = [lambda perfs: np.mean(perfs) if len(perfs) > 0 else 0.]\
+                                * len(aggr_ans)
             return [
                 aggr_fn(ans) for aggr_fn, ans in zip(aggregate_fns, aggr_ans)
             ]
@@ -228,10 +228,6 @@ class CandidateNet(nn.Module):
                    aggregate_fns=None,
                    **kwargs):
         self._set_mode(mode)
-        if aggregate_fns is None:
-            aggregate_fns = [lambda perfs: np.mean(perfs) if len(perfs) > 0 else 0.]\
-                            * len(criterions)
-        assert len(criterions) == len(aggregate_fns)
 
         aggr_ans = []
         context = torch.no_grad if self.eval_no_grad else nullcontext
@@ -245,6 +241,10 @@ class CandidateNet(nn.Module):
                     [c(data[0], outputs, data[1]) for c in criterions])
                 aggr_ans.append(ans)
         aggr_ans = np.asarray(aggr_ans).transpose()
+        if aggregate_fns is None:
+            # by default, aggregate batch rewards with MEAN
+            aggregate_fns = [lambda perfs: np.mean(perfs) if len(perfs) > 0 else 0.]\
+                            * len(aggr_ans)
         return [aggr_fn(ans) for aggr_fn, ans in zip(aggregate_fns, aggr_ans)]
 
     def eval_data(self, data, criterions, mode="eval", **kwargs):
