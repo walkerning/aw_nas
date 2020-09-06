@@ -644,7 +644,8 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
                     self.controller_queue,
                     criterions=criterions,
                     steps=eval_steps,
-                    mode="train",  # FIXME: let's keep using train mode !!! Is this correct?
+                    # NOTE: In parameter-sharing evaluation, let's keep using train-mode BN!!!
+                    mode="train",
                     # if test, differentiable rollout does not need to set detach_arch=True too
                     aggregate_fns=aggregate_fns,
                     **self.c_hid_kwargs)

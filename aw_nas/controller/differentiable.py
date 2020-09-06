@@ -113,17 +113,17 @@ class DiffController(BaseController, nn.Module):
     def sample(self, n=1, batch_size=1):
         rollouts = []
         for _ in range(n):
-            # TODO: should edge_norms have batch_size?
             # op_weights.shape: [num_edges, [batch_size,] num_ops]
-            # edge_norms.shape: [num_edges]
+            # edge_norms.shape: [num_edges] do not have batch_size.
             op_weights_list = []
             edge_norms_list = []
             sampled_list = []
             logits_list = []
 
             for alphas in self.cg_alphas:
-                # TODO: should force_uniform affects betas?
                 if self.force_uniform:  # cg_alpha parameters will not be in the graph
+                    # NOTE: `force_uniform` config does not affects edge_norms (betas),
+                    # if one wants a force_uniform search, keep `use_edge_normalization=False`
                     alphas = torch.zeros_like(alphas)
 
                 if batch_size > 1:

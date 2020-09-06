@@ -58,7 +58,6 @@ class DetectionBackboneSupernet(BaseWeightsManager, nn.Module):
         self.multiprocess = multiprocess
         self.gpus = gpus
 
-        # TODO: update SSDHeadModel in ssd_model to be able to accept yaml config
         self.feature_levels = feature_levels
         backbone_stage_channel = self.backbone.backbone.get_feature_channel_num(
             feature_levels)
@@ -228,10 +227,6 @@ class DetectionBackboneCandidateNet(CandidateNet):
                    aggregate_fns=None,
                    **kwargs):
         self._set_mode(mode)
-        if aggregate_fns is None:
-            aggregate_fns = [lambda perfs: np.mean(perfs) if len(perfs) > 0 else 0.]\
-                * len(criterions)
-        assert len(criterions) == len(aggregate_fns)
 
         aggr_ans = []
         context = torch.no_grad if self.eval_no_grad else nullcontext
@@ -247,4 +242,8 @@ class DetectionBackboneCandidateNet(CandidateNet):
                 aggr_ans.append(ans)
                 self._set_mode(mode)
         aggr_ans = np.asarray(aggr_ans).transpose()
+        if aggregate_fns is None:
+            # by default, aggregate batch rewards with MEAN
+            aggregate_fns = [lambda perfs: np.mean(perfs) if len(perfs) > 0 else 0.]\
+                            * len(aggr_ans)
         return [aggr_fn(ans) for aggr_fn, ans in zip(aggregate_fns, aggr_ans)]

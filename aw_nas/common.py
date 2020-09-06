@@ -87,7 +87,9 @@ class CNNSearchSpace(CellSearchSpace):
     """
     A cell-based CNN search space.
 
-    This SearchSpace is cell-based, as used in ....@TODO: add paper refs.
+    This SearchSpace is cell-based, as used in ENAS, DARTS, FBNet and so on.
+    Also support baseline architectures (see `examples/baselines/`) with linear structure,
+    as long as the basic blocks are defined and registered as ops.
 
     .. note::
     If cell group number (`num_cell_groups`) is 2, which is the default,

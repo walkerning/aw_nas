@@ -136,9 +136,6 @@ def genprof(cfg_file, hwobj_cfg_file, result_dir, compile_hardware,
                 os.path.join(hw_compile_dir, "{}-{}".format(i_hw, hw_name)))
             for i_net, prof_cfg in enumerate(prof_net_cfgs):
                 res_dir = utils.makedir(os.path.join(hw_res_dir, str(i_net)))
-                # TODO (@tcc): if need some meta infomation about the correspondance o0
-                # profiling net layer (net_idx, layer_idx) <=> profiling primitive (prim_idx)
-                # can save another meta info file, change the interface here
                 hw_compiler.compile("{}-{}-{}".format(i_hw, hw_name, i_net),
                                     prof_cfg, res_dir)
 
