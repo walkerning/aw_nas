@@ -10,7 +10,6 @@ from collections import OrderedDict
 import contextlib
 import six
 
-import torch
 from torch import nn
 
 from aw_nas.common import assert_rollout_type, group_and_sort_by_to_node
@@ -203,6 +202,8 @@ class SuperNet(SharedNet):
                  use_stem="conv_bn_3x3", stem_stride=1, stem_affine=True,
                  preprocess_op_type=None,
                  cell_use_preprocess=True, cell_group_kwargs=None,
+                 cell_use_shortcut=False,
+                 cell_shortcut_op_type="skip_connect",
                  candidate_member_mask=True, candidate_cache_named_members=False,
                  candidate_virtual_parameter_only=False, candidate_eval_no_grad=True):
         """
@@ -229,7 +230,9 @@ class SuperNet(SharedNet):
                                        stem_affine=stem_affine,
                                        preprocess_op_type=preprocess_op_type,
                                        cell_use_preprocess=cell_use_preprocess,
-                                       cell_group_kwargs=cell_group_kwargs)
+                                       cell_group_kwargs=cell_group_kwargs,
+                                       cell_use_shortcut=cell_use_shortcut,
+                                       cell_shortcut_op_type=cell_shortcut_op_type)
 
         # candidate net with/without parameter mask
         self.candidate_member_mask = candidate_member_mask
@@ -339,7 +342,10 @@ class DiscreteSharedCell(SharedCell):
                 state_to_ = state_to_ + out
             states.append(state_to_)
 
-        return self.concat_op([states[ind] for ind in concat_nodes])
+        out = self.concat_op([states[ind] for ind in concat_nodes])
+        if self.use_shortcut and self.layer_index != 0:
+            out = out + self.shortcut_reduction_op(inputs[-1])
+        return out
 
     def forward_one_step(self, context, genotype_grouped):
         to_ = cur_step = context.next_step_index[1]

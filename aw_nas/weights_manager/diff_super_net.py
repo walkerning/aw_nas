@@ -118,7 +118,10 @@ class DiffSuperNet(SharedNet):
                  max_grad_norm=5.0, dropout_rate=0.1,
                  use_stem="conv_bn_3x3", stem_stride=1, stem_affine=True,
                  preprocess_op_type=None,
-                 cell_use_preprocess=True, cell_group_kwargs=None,
+                 cell_use_preprocess=True,
+                 cell_use_shortcut=False,
+                 cell_shortcut_op_type="skip_connect",
+                 cell_group_kwargs=None,
                  candidate_virtual_parameter_only=False,
                  candidate_eval_no_grad=True):
         super(DiffSuperNet, self).__init__(
@@ -131,7 +134,9 @@ class DiffSuperNet(SharedNet):
             use_stem=use_stem, stem_stride=stem_stride, stem_affine=stem_affine,
             preprocess_op_type=preprocess_op_type,
             cell_use_preprocess=cell_use_preprocess,
-            cell_group_kwargs=cell_group_kwargs)
+            cell_group_kwargs=cell_group_kwargs,
+            cell_use_shortcut=cell_use_shortcut,
+            cell_shortcut_op_type=cell_shortcut_op_type)
 
         self.candidate_virtual_parameter_only = candidate_virtual_parameter_only
         self.candidate_eval_no_grad = candidate_eval_no_grad
@@ -153,6 +158,7 @@ class DiffSharedCell(SharedCell):
 
     def forward(self, inputs, arch, detach_arch=True):  # pylint: disable=arguments-differ
         assert self._num_init == len(inputs)
+
         states = [op(_input) for op, _input in zip(self.preprocess_ops, inputs)]
         offset = 0
 
@@ -182,7 +188,11 @@ class DiffSharedCell(SharedCell):
             new_state = sum(act_lst)
             offset += len(states)
             states.append(new_state)
-        return torch.cat(states[-self._steps:], dim=1)
+
+        out = torch.cat(states[-self._steps:], dim=1)
+        if self.use_shortcut and self.layer_index != 0:
+            out = out + self.shortcut_reduction_op(inputs[-1])
+        return out
 
 
 class DiffSharedOp(SharedOp):

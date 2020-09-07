@@ -3,21 +3,25 @@ NN operations.
 """
 #pylint: disable=arguments-differ,useless-super-delegation,invalid-name
 
+from collections import OrderedDict
+from functools import partial
+
 import numpy as np
 import torch
-import torch.nn.functional as F
-from collections import OrderedDict
-from aw_nas.utils.common_utils import get_sub_kernel, make_divisible, _get_channel_mask
-from aw_nas.utils.exception import ConfigException, expect
 from torch import nn
+import torch.nn.functional as F
+from aw_nas.utils.common_utils import get_sub_kernel, make_divisible, _get_channel_mask
+from aw_nas.utils.exception import expect
 
-def avg_pool_3x3(C, C_out, stride, affine):
-    assert C == C_out
-    return nn.AvgPool2d(3, stride=stride, padding=1, count_include_pad=False)
 
-def max_pool_3x3(C, C_out, stride, affine):
-    assert C == C_out
-    return nn.MaxPool2d(3, stride=stride, padding=1)
+def get_avg_pool_with_size(size):
+    f = lambda C, C_out, stride, affine: nn.AvgPool2d(
+        size, stride=stride, padding=(size-1)//2, count_include_pad=False)
+    return f
+
+def get_max_pool_with_size(size):
+    f = lambda C, C_out, stride, affine: nn.MaxPool2d(size, stride=stride, padding=(size-1)//2)
+    return f
 
 def conv_7x1_1x7(C, C_out, stride, affine):
     assert C == C_out
@@ -47,8 +51,9 @@ class Hsigmoid(nn.Module):
 
 PRIMITVE_FACTORY = {
     "none" : lambda C, C_out, stride, affine: Zero(stride),
-    "avg_pool_3x3" : avg_pool_3x3,
-    "max_pool_3x3" : max_pool_3x3,
+    "avg_pool_2x2" : get_avg_pool_with_size(2),
+    "avg_pool_3x3" : get_avg_pool_with_size(3),
+    "max_pool_3x3" : get_max_pool_with_size(3),
     "skip_connect" : lambda C, C_out, stride, affine: Identity() if stride == 1 \
       else FactorizedReduce(C, C_out, stride=stride, affine=affine),
     "res_reduce_block": lambda C, C_out, stride, affine: ResFactorizedReduceBlock(
@@ -645,7 +650,7 @@ class FlexibleDepthWiseConv(nn.Conv2d, FlexibleLayer):
 
         FlexibleLayer.__init__(self)
         self._bias = bias
-        
+
     def _select_channels(self, mask):
         return self.weight[mask, :, :, :].contiguous(), self.bias[mask].contiguous() if self.bias else None
 

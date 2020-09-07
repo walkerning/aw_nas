@@ -87,7 +87,10 @@ class CNNGenotypeModel(FinalModel):
                  cell_use_preprocess=True,
                  cell_pool_batchnorm=False, cell_group_kwargs=None,
                  cell_independent_conn=False,
-                 cell_preprocess_stride="skip_connect", cell_preprocess_normal="relu_conv_bn_1x1",
+                 cell_use_shortcut=False,
+                 cell_shortcut_op_type="skip_connect",
+                 cell_preprocess_stride="skip_connect",
+                 cell_preprocess_normal="relu_conv_bn_1x1",
                  schedule_cfg=None):
         super(CNNGenotypeModel, self).__init__(schedule_cfg)
 
@@ -192,6 +195,8 @@ class CNNGenotypeModel(FinalModel):
                                    independent_conn=cell_independent_conn,
                                    preprocess_stride=cell_preprocess_stride,
                                    preprocess_normal=cell_preprocess_normal,
+                                   use_shortcut=cell_use_shortcut,
+                                   shortcut_op_type=cell_shortcut_op_type,
                                    **kwargs)
             # TODO: support specify concat explicitly
             prev_num_channel = cell.num_out_channel()
@@ -334,7 +339,9 @@ class CNNGenotypeModel(FinalModel):
 class CNNGenotypeCell(nn.Module):
     def __init__(self, search_space, genotype_grouped, layer_index, num_channels, num_out_channels,
                  prev_num_channels, stride, prev_strides, use_preprocess, pool_batchnorm,
-                 independent_conn, preprocess_stride, preprocess_normal, **op_kwargs):
+                 independent_conn, preprocess_stride, preprocess_normal,
+                 use_shortcut, shortcut_op_type,
+                 **op_kwargs):
         super(CNNGenotypeCell, self).__init__()
         self.search_space = search_space
         self.conns_grouped, self.concat_nodes = genotype_grouped
@@ -347,6 +354,8 @@ class CNNGenotypeCell(nn.Module):
         self.pool_batchnorm = pool_batchnorm
         self.independent_conn = independent_conn
         self.op_kwargs = op_kwargs
+        self.use_shortcut = use_shortcut
+        self.shortcut_op_type = shortcut_op_type
 
         self._steps = self.search_space.get_layer_num_steps(layer_index)
         self._num_init = self.search_space.num_init_nodes
@@ -358,11 +367,11 @@ class CNNGenotypeCell(nn.Module):
             expect(not self.search_space.loose_end,
                    "For shared weights weights manager, when non-elementwise concat op do not "
                    "support loose-end search space")
-            self._out_multipler = self._steps if not self.search_space.concat_nodes \
+            self._out_multiplier = self._steps if not self.search_space.concat_nodes \
                                   else len(self.search_space.concat_nodes)
         else:
             # elementwise concat op. e.g. sum, mean
-            self._out_multipler = 1
+            self._out_multiplier = 1
 
         self.preprocess_ops = nn.ModuleList()
         prev_strides = list(np.cumprod(list(reversed(prev_strides))))
@@ -380,7 +389,7 @@ class CNNGenotypeCell(nn.Module):
                 preprocess = ops.get_op(preprocess_stride)(
                     C=prev_c,
                     C_out=num_channels,
-                    stride=prev_s,
+                    stride=int(prev_s),
                     affine=True)
             else: # prev_c == _steps * num_channels or inputs
                 preprocess = ops.get_op(preprocess_normal)(
@@ -389,6 +398,12 @@ class CNNGenotypeCell(nn.Module):
                     stride=1,
                     affine=True)
             self.preprocess_ops.append(preprocess)
+        # only apply the inter-cell shortcut between last layer
+        if self.use_shortcut:
+            self.shortcut_reduction_op = ops.get_op(self.shortcut_op_type)(
+                C=prev_num_channels[-1], C_out=self.num_out_channel(),
+                stride=self.stride, affine=True)
+
         assert len(self.preprocess_ops) == self._num_init
 
         self.edges = _defaultdict_3()
@@ -411,7 +426,7 @@ class CNNGenotypeCell(nn.Module):
         self._edge_name_pattern = re.compile("f_([0-9]+)_t_([0-9]+)-([a-z0-9_-]+)-([0-9])")
 
     def num_out_channel(self):
-        return self.num_out_channels * self._out_multipler
+        return self.num_out_channels * self._out_multiplier
 
     def forward(self, inputs, dropout_path_rate): #pylint: disable=arguments-differ
         assert self._num_init == len(inputs)
@@ -431,7 +446,11 @@ class CNNGenotypeCell(nn.Module):
                 state_to_ = state_to_ + out
             states.append(state_to_)
 
-        return self.concat_op([states[ind] for ind in self.concat_nodes])
+        out = self.concat_op([states[ind] for ind in self.concat_nodes])
+        if self.use_shortcut and self.layer_index != 0:
+            out = out + self.shortcut_reduction_op(inputs[-1])
+
+        return out
 
     def forward_one_step(self, context, dropout_path_rate):
         to_ = cur_step = context.next_step_index[1]

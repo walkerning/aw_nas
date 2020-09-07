@@ -44,40 +44,57 @@ class Fp32Activation(torch.autograd.Function):
 # ---- XNOR modules ----
 class xnor_binarize(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, x, fp_weight, fp32_act):
-        fp_weight.data = fp_weight.data - fp_weight.data.mean(1, keepdim=True)
+    def forward(ctx, x, fp_weight, fp32_act, scale):
+
+        # fp_weight.data = fp_weight.data - fp_weight.data.mean(1, keepdim=True)
         fp_weight.data.clamp_(-1, 1)
+
         old_x = x
         if fp32_act:
             x = Fp32Activation.apply(x)
         else:
             x = BinaryActivation.apply(x)
         # scale
-        mean_val = fp_weight.abs().view(fp_weight.shape[0], -1).mean(1, keepdim=True)
-        bi_weight = fp_weight.sign() * mean_val.view(-1, 1, 1, 1)
-        ctx.save_for_backward(old_x, fp_weight, bi_weight, mean_val)
+
+        if scale:
+            mean_val = fp_weight.abs().view(fp_weight.shape[0], -1).mean(1, keepdim=True)
+            bi_weight = fp_weight.sign() * mean_val.view(-1, 1, 1,1)
+        else:
+            mean_val = fp_weight.abs().mean()
+            # bi_weight = fp_weight.sign() * mean_val
+            bi_weight = fp_weight.sign()
+
+        ctx.save_for_backward(old_x, fp_weight, bi_weight, mean_val, scale)
         return x, bi_weight
 
     @staticmethod
     def backward(ctx, g_x, g_bi_weight):
-        x, fp_weight, bi_weight, mean_val = ctx.saved_tensors
-        g_x[x.ge(1)] = 0
-        g_x[x.le(-1)] = 0
+        x, fp_weight, bi_weight, mean_val, scale = ctx.saved_tensors
+        clip_value=1.3
+        g_x[x.ge(clip_value)] = 0
+        g_x[x.le(-clip_value)] = 0
 
-        proxy = fp_weight.abs().sign()
-        proxy[fp_weight.abs() > 1] = 0 # mask out gradients
-        binary_grad = g_bi_weight * mean_val.view(-1, 1, 1, 1) * proxy
+        if scale:
+            proxy = fp_weight.abs().sign()
+            proxy[fp_weight.abs() > 1] = 0 # mask out gradients
+            binary_grad = g_bi_weight * mean_val.view(-1, 1, 1, 1) * proxy
 
-        mean_grad = bi_weight.data.sign() * g_bi_weight
-        mean_grad = mean_grad.view(mean_grad.shape[0], -1).mean(1).view(-1, 1, 1, 1)
-        mean_grad = mean_grad * bi_weight.data.sign()
+            mean_grad = bi_weight.data.sign() * g_bi_weight
+            mean_grad = mean_grad.view(mean_grad.shape[0], -1).mean(1).view(-1, 1, 1, 1)
+            mean_grad = mean_grad * bi_weight.data.sign()
 
-        g_fp_weight = binary_grad + mean_grad
-        g_fp_weight = (
-            g_fp_weight * fp_weight[0].nelement() * (1 - 1 / fp_weight.size(1))
-        ) # gradients w.r.t full-precision weights before centralizing
+            g_fp_weight = binary_grad + mean_grad
+            g_fp_weight = (
+                g_fp_weight * fp_weight[0].nelement() * (1 - 1 / fp_weight.size(1))
+            ) # gradients w.r.t full-precision weights before centralizing
+        else:
+            # g_bi_weight[bi_weight.ge(clip_value*mean_val)] = 0
+            # g_bi_weight[bi_weight.le(-clip_value*mean_val)] = 0
+            g_bi_weight[bi_weight.ge(clip_value)] = 0
+            g_bi_weight[bi_weight.le(-clip_value)] = 0
+            g_fp_weight = g_bi_weight
 
-        return g_x, g_fp_weight, None
+        return g_x, g_fp_weight, None, None
 
 
 class XNORConv2d(nn.Module):
@@ -89,8 +106,10 @@ class XNORConv2d(nn.Module):
         stride,
         padding,
         groups,
+        dilation=1,
         dropout_ratio=0,
         fp32_act=False,
+        scale=False,
     ):
         super(XNORConv2d, self).__init__()
         (
@@ -99,25 +118,29 @@ class XNORConv2d(nn.Module):
             self.kernel_size,
             self.stride,
             self.padding,
+            self.dilation,
             self.groups,
             self.dropout_ratio,
             self.fp32_act,
+            self.scale,
         ) = (
             in_channels,
             out_channels,
             kernel_size,
             stride,
             padding,
+            dilation,
             groups,
             dropout_ratio,
             fp32_act,
+            scale
         )
         self.binarize = xnor_binarize.apply
         self.full_precision = nn.Parameter(
             torch.zeros(
                 [
                     self.out_channels,
-                    self.in_channels,
+                    self.in_channels // self.groups,
                     self.kernel_size,
                     self.kernel_size,
                 ]
@@ -127,13 +150,31 @@ class XNORConv2d(nn.Module):
         self.bias = nn.Parameter(torch.zeros([self.out_channels]).cuda())
 
     def forward(self, x):
-        x, bi_weight = self.binarize(x, self.full_precision, False)
+        x, bi_weight = self.binarize(x, self.full_precision, self.fp32_act, torch.tensor([self.scale]))
         x = F.conv2d(
-            x, bi_weight, bias=self.bias, stride=self.stride, padding=self.padding
+            x, bi_weight, bias=self.bias, stride=self.stride, padding=self.padding, dilation=self.dilation, groups=self.groups
         )
         return x
 
 
+class XNORFactorizedReduce(nn.Module):
+    def __init__(self, C, C_out, stride, affine):
+        super(XNORFactorizedReduce, self).__init__()
+        assert C_out == 2*C
+        assert stride == 2
+        kernel_size=3
+        padding=1
+        # self.op1 = nn.AvgPool2d(2)
+        self.op2 = XNORGroupConv(C, C, kernel_size, 2, padding, affine)
+        self.op3 = XNORGroupConv(C, C, kernel_size, 2, padding, affine)
+
+    def forward(self, x):
+        # x = self.op1(x)
+        x1 = self.op2(x)
+        x2 = self.op3(x)
+        return torch.cat([x1,x2],1)
+
+# the plain xnor-conv without shortcut(also surpport different channel size)
 class XNORConvBNReLU(nn.Module):
     def __init__(
         self,
@@ -142,29 +183,160 @@ class XNORConvBNReLU(nn.Module):
         kernel_size,
         stride,
         padding,
+        dilation=1,
         affine=True,
         groups=1,
         dropout_ratio=0,
         fp32_act=False,
     ):
         super(XNORConvBNReLU, self).__init__()
-        self.bn = nn.BatchNorm2d(out_channels, eps=1e-4, momentum=0.1, affine=True)
+        self.bn = nn.BatchNorm2d(in_channels, eps=1e-4, momentum=0.1, affine=True)
         self.conv = XNORConv2d(
             in_channels,
             out_channels,
             kernel_size,
             stride,
             padding,
+            dilation,
             groups,
             dropout_ratio,
             fp32_act,
         )
 
     def forward(self, x):
-        out = self.conv(x)
-        out = self.bn(out)
+        out = self.bn(x)
+        out = self.conv(out)
         out = F.relu(out)
         return out
+
+
+class XNORGroupConv(nn.Module):
+    # the XNOR group conv for binaryNN search
+
+    def __init__(self, C_in, C_out, kernel_size, stride, padding, affine=True, expansion=1, group=1, shortcut=True): # FIXME: default using the shortcut for binary op may not be proper
+        super(XNORGroupConv, self).__init__()
+        if shortcut: # only use shortcut when C-in and C-out are the same
+            self.use_shortcut = True
+        else:
+            self.use_shortcut = False
+        if self.use_shortcut:
+            if expansion is not 1:
+                raise Exception("when enabling shortcut, so donot support expansion")
+            if C_in != C_out:
+                raise Exception("when enabling shortcut, only surpport c-in == c-out")
+            if stride == 1:
+                self.shortcut = Identity()
+            else:
+                self.shortcut = nn.AvgPool2d(kernel_size=2)
+        else:
+            pass
+        self.op = nn.Sequential(
+            nn.BatchNorm2d(C_in*expansion, affine=affine),
+            XNORConv2d(C_in, C_out*expansion, kernel_size=kernel_size, stride=stride,
+                      padding=padding, groups=group),
+            nn.ReLU(inplace=False),
+        )
+
+    def forward(self, x):
+        if self.use_shortcut:
+            out = self.op(x)+self.shortcut(x)
+        else:
+            out = self.op(x)
+        return out
+
+    def forward_one_step(self, context=None, inputs=None):
+        return self.op.forward_one_step(context, inputs)
+
+class XNORDilConv(nn.Module):
+    # the XNOR group conv for binaryNN search
+
+    def __init__(self, C_in, C_out, kernel_size, stride, padding, dilation, affine=True, expansion=1, group=1):
+        super(XNORDilConv, self).__init__()
+        if expansion is not 1:
+            raise Exception("binary block has inner connection, so donot support expansion")
+        if stride == 1:
+            self.shortcut = Identity()
+        else:
+            self.shortcut = nn.AvgPool2d(kernel_size=2) # maybe avgpool2d will cause grad loss
+        self.op = nn.Sequential(
+            nn.BatchNorm2d(C_in*expansion, affine=affine),
+            XNORConv2d(C_in, C_in*expansion, kernel_size=kernel_size, stride=stride,
+                      dilation=dilation , padding=padding, groups=group),
+            nn.ReLU(inplace=False),
+        )
+
+    def forward(self, x):
+        # FIXME: not sure how to add shortcut with reduction of dilated conv
+        return self.op(x)+self.shortcut(x)
+
+    def forward_one_step(self, context=None, inputs=None):
+        return self.op.forward_one_step(context, inputs)
+
+register_primitive("xnor_conv_3x3",
+                   lambda C, C_out, stride, affine: XNORGroupConv(
+                       C, C_out, 3, stride, 1, affine=affine, group=1),
+)
+
+register_primitive("xnor_conv_3x3_noskip",
+                   lambda C, C_out, stride, affine: XNORGroupConv(
+                       C, C_out, 3, stride, 1, affine=affine, group=1, shortcut=False),
+)
+register_primitive("cond_xnor_conv_3x3_noskip",
+                   lambda C, C_out, stride, affine: XNORGroupConv(
+                       C, C_out, 3, stride, 1, affine=affine, group=1, shortcut=False)\
+                   if stride > 1 or C != C_out else Identity()
+)
+
+register_primitive("xnor_conv_5x5",
+                   lambda C, C_out, stride, affine: XNORGroupConv(
+                       C, C_out, 5, stride, 2, affine=affine, group=1),
+)
+
+register_primitive("xnor_conv_5x5_noskip",
+                   lambda C, C_out, stride, affine: XNORGroupConv(
+                       C, C_out, 5, stride, 2, affine=affine, group=1, shortcut=False),
+)
+
+register_primitive("xnor_conv_1x1",
+                   lambda C, C_out, stride, affine: XNORGroupConv(
+                       C, C_out, 1, stride, 0, affine=affine, group=1),
+)
+
+register_primitive("xnor_group_conv_3x3",
+                   lambda C, C_out, stride, affine: XNORGroupConv(
+                       C, C_out, 3, stride, 1, affine=affine, group=3),
+)
+
+register_primitive("xnor_group_conv_5x5",
+                   lambda C, C_out, stride, affine: XNORGroupConv(
+                       C, C_out, 5, stride, 2, affine=affine, group=3),
+)
+
+register_primitive("xnor_dil_conv_3x3",
+                   lambda C, C_out, stride, affine: XNORDilConv(
+                       C, C_out, 3, stride, 2, 2, affine=affine),
+)
+
+register_primitive("xnor_dil_conv_5x5",
+                   lambda C, C_out, stride, affine: XNORDilConv(
+                       C, C_out, 5, stride, 4, 2, affine=affine),
+)
+
+# the preporcess node in the supernet, without the shortcut, and c-in != c-out
+register_primitive("xnor_conv_bn_3x3",
+                    lambda C, C_out, stride, affine: XNORConvBNReLU(
+                        C, C_out, 3, stride, 1, affine=affine),
+)
+
+register_primitive("xnor_conv_bn_1x1",
+                    lambda C, C_out, stride, affine: XNORConvBNReLU(
+                        C, C_out, 1, stride, 0, affine=affine),
+)
+
+register_primitive("xnor_factorized_reduce",
+                   lambda C, C_out, stride, affine: XNORFactorizedReduce(
+                       C, C_out, stride, affine),
+)
 
 
 # ---- the bireal modules ---
@@ -486,18 +658,21 @@ register_primitive(
         C, C_out, stride=stride, affine=affine, block="bireal", act=BirealActivation()
     ),
 )
+
 register_primitive(
     "xnor_resnet_block",
     lambda C, C_out, stride, affine: BinaryResNetBlock(
         C, C_out, stride=stride, affine=affine, block="xnor", fp32_act=False
     ),
 )
+
 register_primitive(
     "dorefa_resnet_block",
     lambda C, C_out, stride, affine: BinaryResNetBlock(
         C, C_out, stride=stride, affine=affine, block="dorefa"
     ),
 )
+
 register_primitive(
     "xnor_resnet_block_pool_downsample",
     lambda C, C_out, stride, affine: BinaryResNetBlock(
