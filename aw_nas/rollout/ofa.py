@@ -18,7 +18,7 @@ class MNasNetOFASearchSpace(SearchSpace):
     def __init__(
         self,
         width_choice=(4, 5, 6),
-        depth_choice=(4, 5, 6),
+        depth_choice=(2, 3, 4),
         kernel_choice=(3, 5, 7),
         image_size_choice=[224, 192, 160, 128],
         num_cell_groups=[1, 4, 4, 4, 4, 4],
@@ -238,10 +238,11 @@ class SSDOFASearchSpace(MNasNetOFASearchSpace):
     def __init__(
         self,
         width_choice=(4, 5, 6),
-        depth_choice=(4, 5, 6),
+        depth_choice=(2, 3, 4),
         kernel_choice=(3, 5, 7),
         image_size_choice=[512, 384, 320, 256, 192],
         head_width_choice=(0.25, 0.5, 0.75),
+        head_kernel_choice=[3],
         num_cell_groups=[1, 4, 4, 4, 4, 4],
         expansions=[1, 6, 6, 6, 6, 6],
         num_head=4,
@@ -257,6 +258,7 @@ class SSDOFASearchSpace(MNasNetOFASearchSpace):
             schedule_cfg
         )
         self.head_width_choice = head_width_choice
+        self.head_kernel_choice = head_kernel_choice
         self.num_head = num_head
         self.num_cell_groups = num_cell_groups
         self.block_names += ["head_{}".format(i)
@@ -270,8 +272,8 @@ class SSDOFASearchSpace(MNasNetOFASearchSpace):
             [
                 list(zip(channels, kernels))
                 for channels, kernels in zip(
-                    arch["width"] + arch["head_width"], arch["kernel"] +
-                    arch["head_kernel"]
+                    arch["width"] + [arch["head_width"]], arch["kernel"] +
+                    [arch["head_kernel"]]
                 )
             ],
             [],
@@ -288,6 +290,10 @@ class SSDOFASearchSpace(MNasNetOFASearchSpace):
                 "head_width": head_width, "head_kernel": head_kernel}
         return SSDOFARollout(arch, {}, self)
 
+    def mutate(self, rollout, mutation="single", **kwargs):
+        ofa_rollout = super().mutate(rollout, mutation, **kwargs)
+        return SSDOFARollout(rollout.arch, {}, self)
+
     def random_sample(self):
         return SSDOFARollout(
             SSDOFARollout.random_sample_arch(
@@ -298,7 +304,8 @@ class SSDOFASearchSpace(MNasNetOFASearchSpace):
                 self.depth_choice,
                 self.kernel_choice,
                 self.image_size_choice,
-                self.head_width_choice
+                self.head_width_choice,
+                self.head_kernel_choice
             ),
             info={},
             search_space=self,
@@ -307,6 +314,7 @@ class SSDOFASearchSpace(MNasNetOFASearchSpace):
 
 class SSDOFARollout(MNasNetOFARollout):
     NAME = "ssd_ofa"
+    supported_components = [("evaluator", "mepa"), ("trainer", "simple")]
 
     @property
     def head_width(self):
@@ -324,12 +332,13 @@ class SSDOFARollout(MNasNetOFARollout):
     def random_sample_arch(
         cls, num_channels, num_cell_groups, num_head, width_choice,
         depth_choice, kernel_choice, image_size_choice, head_width_choice,
+        head_kernel_choice
     ):
         arch = super(SSDOFARollout, cls).random_sample_arch(
             num_channels, num_cell_groups, width_choice, depth_choice,
             kernel_choice, image_size_choice)
         arch["head_width"] = np.random.choice(
-            head_width_choice, size=num_head)
+            head_width_choice, size=num_head).tolist()
         arch["head_kernel"] = np.random.choice(
-            kernel_choice, size=num_head)
+            head_kernel_choice, size=num_head).tolist()
         return arch

@@ -44,7 +44,7 @@ dataset_cfg:
 controller_type: ofa-evo
 controller_cfg:
   # Schedulable attributes:
-  rollout_type: ofa
+  rollout_type: ssd_ofa
   mode: train
 # ---- End Type rl ----
 ## ---- End Component controller ----
@@ -56,7 +56,7 @@ evaluator_cfg:
   # Schedulable attributes: controller_surrogate_steps, mepa_surrogate_steps, mepa_samples
   load_optimizer: false
   load_scheduler: false
-  rollout_type: ofa
+  rollout_type: ssd_ofa
   batch_size: 10
   controller_surrogate_steps: 0
   evaluate_with_whole_queue: True
@@ -89,7 +89,7 @@ evaluator_cfg:
 weights_manager_type: det_supernet
 weights_manager_cfg:
   # Schedulable attributes: 
-  rollout_type: ofa
+  rollout_type: ssd_ofa
   search_backbone_type: ofa_supernet
   search_backbone_cfg:
     backbone_type: mbv3_backbone
@@ -120,11 +120,8 @@ objective_cfg:
   num_classes: 90
   anchors_generator_type: ssd_anchors_generator
   anchors_generator_cfg:
-    min_dim: 300
     aspect_ratios: [[2], [2, 3], [2, 3], [2, 3], [2], [2]]
     feature_maps: [4, 5, 6, 7, 8, 9]
-    scales: [45, 90, 135, 180, 225, 270, 315]
-    steps: [16, 32, 64, 100, 150, 300]
     clip: true
   matcher_type: iou_matcher
   matcher_cfg:
@@ -149,7 +146,7 @@ objective_cfg:
 trainer_type: async
 trainer_cfg:
   # Schedulable attributes: controller_samples, derive_samples
-  rollout_type: ofa
+  rollout_type: ssd_ofa
   steps: 16
   num_epochs: 1000
   parallelism: 4

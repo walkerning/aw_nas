@@ -222,7 +222,7 @@ class Preproc(object):
             height, width, _ = image.shape
             boxes[:, 0::2] /= width
             boxes[:, 1::2] /= height
-            boxes *= self.resize
+            # boxes *= self.resize
             image = preproc_for_test(image, self.resize)
             return image, boxes, labels
 

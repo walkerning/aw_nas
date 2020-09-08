@@ -140,9 +140,11 @@ else:
             self._init_gt_recs()
 
         def __call__(self, det_boxes):
-            if self.mAP is not None:
+            if self.mAP is not None and len(self.eval_ids) == 0:
                 return self.mAP
-            return self._do_eval(det_boxes, self.gt_recs, self.class_names)
+            self.mAP = self._do_eval(det_boxes, self.gt_recs, self.class_names)
+            self._init_gt_recs()
+            return self.mAP
 
         def _init_gt_recs(self):
             self._COCO = COCO()
@@ -151,7 +153,6 @@ else:
             ]
             self._COCO.dataset.setdefault("images", [])
             self.eval_ids = []
-            self.mAP = None
 
         def target_to_gt_recs(self, targets):
             for info in targets:
@@ -311,7 +312,6 @@ class VOCMetrics(Metrics):
 
     def _init_gt_recs(self):
         self.gt_recs = {cls_name: {} for cls_name in self.class_names}
-        self.mAP = None
 
     def target_to_gt_recs(self, targets):
         for info in targets:
@@ -494,10 +494,12 @@ class VOCMetrics(Metrics):
         self.logger.info(
             "--------------------------------------------------------------"
         )
-        self._init_gt_recs()
         return np.mean(aps)
 
     def __call__(self, det_boxes):
-        if self.mAP is not None:
+        if self.mAP is not None and all([len(gt) == 0 for gt in
+            self.gt_recs.values()]):
             return self.mAP
-        return self.do_python_eval(det_boxes, self.gt_recs, self.class_names)
+        self.mAP = self.do_python_eval(det_boxes, self.gt_recs, self.class_names)
+        self._init_gt_recs()
+        return self.mAP

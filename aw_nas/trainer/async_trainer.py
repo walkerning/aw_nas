@@ -91,7 +91,6 @@ class BaseDispatcher(Component):
         Return the current available parallelism.
         """
 
-
 class MultiprocessDispatcher(BaseDispatcher):
     NAME = "multiprocess"
 
@@ -346,6 +345,7 @@ class AsyncTrainer(BaseTrainer):
 
     def train(self):
         num_nofinish = 0
+        self.controller.set_mode("train")
         for epoch in range(self.last_epoch + 1, self.num_epochs + 1):
             if self._ended:
                 break
@@ -362,8 +362,10 @@ class AsyncTrainer(BaseTrainer):
                 finished_rollouts = self.dispatcher.get_finished_rollouts(timeout=self.log_timeout)
                 if not finished_rollouts:
                     num_nofinish += 1
-                    self.logger.info("No rollout finished in the past %d seconds",
-                                     num_nofinish * self.log_timeout)
+                    self.logger.info("No rollout finished in the past %d "
+                            "rollouts(s) to be sampled.",
+                                     num_nofinish * self.log_timeout,
+                                     self._to_issue)
                 else:
                     num_nofinish = 0
                     self.controller.step(finished_rollouts, None, perf_name="reward")
@@ -374,7 +376,7 @@ class AsyncTrainer(BaseTrainer):
                     self._remain_steps -= num_new
                     # print("epoch: {}; to issue: {}; to get: {}".format(
                     # epoch, self._to_issue, self._remain_steps))
-                    if self._remain_steps == 0:
+                    if self._remain_steps <= 0:
                         break
                     new_rollouts = self.controller.sample(n=min(num_new, self._to_issue))
                     for r in new_rollouts:
@@ -395,6 +397,8 @@ class AsyncTrainer(BaseTrainer):
             ("You'd better provide a path using `--train-dir` to save all the checkpoint "
              "when using async trainer")
 
+        super(AsyncTrainer, self).setup(load, save_every, train_dir, writer, load_components,
+                interleave_report_every)
         self.train_dir = train_dir
         ckpt_dir = utils.makedir(os.path.join(train_dir, "checkpoints"))
         self.dispatcher.init(self.evaluator, ckpt_dir)

@@ -108,7 +108,6 @@ class DetectionObjective(BaseObjective):
             labels = anno["labels"]
             height, width = anno["shape"]
             _id = anno["image_id"]
-            boxes = boxes / inputs.shape[-1]
             boxes = boxes.to(device)
             labels = labels.to(device)
             conf_t, loc_t = self.target_transform(boxes, labels, anchors)
@@ -123,7 +122,7 @@ class DetectionObjective(BaseObjective):
         return cache
 
     def perf_names(self):
-        return ["mAP"]
+        return ["mAP", "FLOPs"]
 
     def aggregate_fn(self, perf_name, is_training=True):
         assert perf_name in ["reward", "loss"] + self.perf_names()
@@ -168,7 +167,15 @@ class DetectionObjective(BaseObjective):
         acc = self.get_acc(inputs, outputs, annotations, cand_net)
         if not cand_net.training:
             self.get_mAP(inputs, outputs, annotations, cand_net)
-        return [acc[0].item()]
+        if hasattr(cand_net, "super_net"):
+            flops = cand_net.super_net.total_flops / 1e9
+            cand_net.super_net.reset_flops()
+        elif hasattr(cand_net, "total_flops"):
+            flops = cand_net.total_flops / 1e9
+            cand_net.total_flops = 0
+        else:
+            flops = 0
+        return [acc[0].item(), -flops]
 
     def get_reward(self, inputs, outputs, annotations, cand_net):
         # mAP is actually calculated using aggregate_fn

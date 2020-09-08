@@ -70,7 +70,13 @@ class DetectionBackboneSupernet(BaseWeightsManager, nn.Module):
             **head_cfg
         )
 
+        self.reset_flops()
+        self.set_hook()
         self._parallelize()
+
+    def reset_flops(self):
+        self._flops_calculated = False
+        self.total_flops = 0
 
     def _parallelize(self):
         if self.multiprocess:
@@ -85,16 +91,38 @@ class DetectionBackboneSupernet(BaseWeightsManager, nn.Module):
     def forward(self, inputs, rollout=None):
         features, out = self.backbone.extract_features(
             inputs, self.feature_levels, rollout)
-        confidences, regression = self.head(features)
+        confidences, regression = self.head.forward_rollout(features, rollout)
         return confidences, regression
 
+    def set_hook(self):
+        for name, module in self.named_modules():
+            module.register_forward_hook(self._hook_intermediate_feature)
+
+    def _hook_intermediate_feature(self, module, inputs, outputs):
+        if not self._flops_calculated:
+            if isinstance(module, nn.Conv2d):
+                self.total_flops += (
+                    inputs[0].size(1)
+                    * outputs.size(1)
+                    * module.kernel_size[0]
+                    * module.kernel_size[1]
+                    * inputs[0].size(2)
+                    * inputs[0].size(3)
+                    / (module.stride[0] * module.stride[1] * module.groups)
+                )
+            elif isinstance(module, nn.Linear):
+                self.total_flops += inputs[0].size(1) * outputs.size(1)
+        else:
+            pass
+
     # ---- APIs ----
+
     def assemble_candidate(self, rollout):
         return DetectionBackboneCandidateNet(self, rollout)
 
     @classmethod
     def supported_rollout_types(cls):
-        return [assert_rollout_type("ofa")]
+        return [assert_rollout_type("ofa"), assert_rollout_type("ssd_ofa")]
 
     @classmethod
     def supported_data_types(cls):
@@ -245,5 +273,5 @@ class DetectionBackboneCandidateNet(CandidateNet):
         if aggregate_fns is None:
             # by default, aggregate batch rewards with MEAN
             aggregate_fns = [lambda perfs: np.mean(perfs) if len(perfs) > 0 else 0.]\
-                            * len(aggr_ans)
+                * len(aggr_ans)
         return [aggr_fn(ans) for aggr_fn, ans in zip(aggregate_fns, aggr_ans)]

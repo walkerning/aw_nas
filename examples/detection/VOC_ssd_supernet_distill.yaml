@@ -123,11 +123,8 @@ objective_cfg:
   num_classes: 20
   anchors_generator_type: ssd_anchors_generator
   anchors_generator_cfg:
-    min_dim: 300
     aspect_ratios: [[2], [2, 3], [2, 3], [2, 3], [2], [2]]
     feature_maps: [4, 5, 6, 7, 8, 9]
-    scales: [45, 90, 135, 180, 225, 270, 315]
-    steps: [16, 32, 64, 100, 150, 300]
     clip: true
   matcher_type: iou_matcher
   matcher_cfg:

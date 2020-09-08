@@ -44,7 +44,7 @@ class FlexibleMobileNetV2Block(MobileNetV2Block, FlexibleBlock):
     ):
         FlexibleBlock.__init__(self, schedule_cfg)
         self.activation = activation
-        C_inner = C * expansion
+        C_inner = make_divisible(C * expansion, 8)
         self.kernel_sizes = sorted(kernel_sizes)
         self.kernel_size = self.kernel_sizes[-1]
         self.do_kernel_transform = do_kernel_transform
@@ -92,7 +92,8 @@ class FlexibleMobileNetV2Block(MobileNetV2Block, FlexibleBlock):
         mask = None
         if expansion is not None and expansion != self.expansion:
             filters = self.point_linear[0].weight.data
-            mask = _get_channel_mask(filters, self.C * expansion)
+            mask = _get_channel_mask(filters, make_divisible(self.C *
+                expansion, 8))
         if self.inv_bottleneck:
             self.inv_bottleneck[0].set_mask(None, mask)
             self.inv_bottleneck[1].set_mask(mask)
@@ -219,7 +220,8 @@ class FlexibleMobileNetV3Block(MobileNetV3Block, FlexibleBlock):
         mask = None
         if expansion != self.expansion:
             filters = self.point_linear[0].weight.data
-            mask = _get_channel_mask(filters, self.C * expansion)
+            mask = _get_channel_mask(filters, make_divisible(self.C *
+                expansion, 8))
         if self.inv_bottleneck:
             self.inv_bottleneck[0].set_mask(None, mask)
             self.inv_bottleneck[1].set_mask(mask)

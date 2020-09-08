@@ -22,7 +22,9 @@ from aw_nas.rollout.dense import (
 )
 from aw_nas.rollout.ofa import (
     MNasNetOFASearchSpace,
-    MNasNetOFARollout
+    MNasNetOFARollout,
+    SSDOFASearchSpace,
+    SSDOFARollout
 )
 
 from aw_nas.rollout.compare import (

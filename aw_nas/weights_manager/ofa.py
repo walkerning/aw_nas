@@ -52,6 +52,8 @@ class OFASupernet(BaseWeightsManager, nn.Module):
         self.gpus = gpus
         object.__setattr__(self, "parallel_model", self)
 
+        self.reset_flops()
+        self.set_hook()
         self._parallelize()
 
     def _parallelize(self):
@@ -99,7 +101,7 @@ class OFASupernet(BaseWeightsManager, nn.Module):
 
     @classmethod
     def supported_rollout_types(cls):
-        return [assert_rollout_type("ofa")]
+        return [assert_rollout_type("ofa"), assert_rollout_type("ssd_ofa")]
 
     @classmethod
     def supported_data_types(cls):
