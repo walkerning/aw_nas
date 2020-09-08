@@ -6,7 +6,7 @@ search_space_type: ssd_ofa
 search_space_cfg:
   num_cell_groups: [1, 4, 4, 4, 4, 4]
   expansions: [1, 6, 6, 6, 6, 6]
-  image_size_choice: [300]
+  image_size_choice: [300, 192]
   head_width_choice: [0.5]
   num_head: 4
   schedule_cfg:
@@ -57,7 +57,7 @@ evaluator_cfg:
   load_optimizer: false
   load_scheduler: false
   rollout_type: ofa
-  batch_size: 32
+  batch_size: 16
   controller_surrogate_steps: 0
   # derive_surrogate_steps: 0
   mepa_surrogate_steps: 0
@@ -124,7 +124,6 @@ objective_cfg:
   anchors_generator_type: ssd_anchors_generator
   anchors_generator_cfg:
     aspect_ratios: [[2], [2, 3], [2, 3], [2, 3], [2], [2]]
-    feature_maps: [4, 5, 6, 7, 8, 9]
     clip: true
   matcher_type: iou_matcher
   matcher_cfg:

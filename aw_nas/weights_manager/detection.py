@@ -91,8 +91,29 @@ class DetectionBackboneSupernet(BaseWeightsManager, nn.Module):
     def forward(self, inputs, rollout=None):
         features, out = self.backbone.extract_features(
             inputs, self.feature_levels, rollout)
-        confidences, regression = self.head.forward_rollout(features, rollout)
-        return confidences, regression
+        features, confidences, regression = self.head.forward_rollout(features, rollout)
+        return features, confidences, regression
+
+    def set_hook(self):
+        for name, module in self.named_modules():
+            module.register_forward_hook(self._hook_intermediate_feature)
+
+    def _hook_intermediate_feature(self, module, inputs, outputs):
+        if not self._flops_calculated:
+            if isinstance(module, nn.Conv2d):
+                self.total_flops += (
+                    inputs[0].size(1)
+                    * outputs.size(1)
+                    * module.kernel_size[0]
+                    * module.kernel_size[1]
+                    * inputs[0].size(2)
+                    * inputs[0].size(3)
+                    / (module.stride[0] * module.stride[1] * module.groups)
+                )
+            elif isinstance(module, nn.Linear):
+                self.total_flops += inputs[0].size(1) * outputs.size(1)
+        else:
+            pass
 
     def set_hook(self):
         for name, module in self.named_modules():

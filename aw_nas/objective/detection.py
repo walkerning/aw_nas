@@ -91,13 +91,15 @@ class DetectionObjective(BaseObjective):
         """
         annotations: [-1, 4 + 1 + 1 + 2] boxes + labels + ids + shapes
         """
+        features, _, _ = outputs
+        feature_maps = [ft.shape[-2:] for ft in features]
         for _id, cache in self.cache:
-            if _id == hash(str(annotations)):
+            if _id == hash(str(annotations) + str(feature_maps)):
                 return cache
         device = inputs.device
         img_shape = inputs.shape[-1]
         batch_size = inputs.shape[0]
-        anchors = self.anchors(img_shape).to(device)
+        anchors = self.anchors(feature_maps).to(device)
         num_anchors = anchors.shape[0]
         location_t = torch.zeros([batch_size, num_anchors, 4])
         confidence_t = torch.zeros([batch_size, num_anchors])
@@ -116,9 +118,9 @@ class DetectionObjective(BaseObjective):
             shapes.append([_id, height, width])
 
         cache = confidence_t.long().to(device), location_t.to(device), shapes
-        if len(self.cache) >= 1:
-            del self.cache[-1]
-        self.cache.append((hash(str(annotations)), cache))
+        if len(self.cache) >= 2:
+            del self.cache[0]
+        self.cache.append((hash(str(annotations) + str(feature_maps)), cache))
         return cache
 
     def perf_names(self):
@@ -134,7 +136,7 @@ class DetectionObjective(BaseObjective):
         conf_t, _, _ = self.batch_transform(inputs, outputs, annotations)
         # target: [batch_size, anchor_num, 5], boxes + labels
         keep = conf_t > 0
-        confidences, _ = outputs
+        _, confidences, _ = outputs
         return accuracy(confidences[keep], conf_t[keep], topk=(1, 5))
 
     def get_mAP(self, inputs, outputs, annotations, cand_net):
@@ -144,8 +146,7 @@ class DetectionObjective(BaseObjective):
         # This method does not actually calculate mAP, but detection boxes
         # of current batch only. After all batch's boxes are calculated, passing them
         # to method `evaluate_detections`
-        confidences, regression = outputs
-        detections = self.predictor(confidences, regression, inputs.shape[-1])
+        detections = self.predictor(*outputs)
         self.metrics.target_to_gt_recs(annotations)
         for batch_id, anno in enumerate(annotations):
             _id = anno["image_id"]

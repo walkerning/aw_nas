@@ -13,13 +13,11 @@ class SSDAnchorsGenerator(AnchorsGenerator):
 
     def __init__(self,
                  aspect_ratios=[[2], [2, 3], [2, 3], [2, 3], [2], [2]],
-                 feature_maps=[4, 5, 6, 7, 8, 9],
                  scales=[0.15, 0.3, 0.45, 0.6, 0.75, 0.9, 1.05],
                  clip=True,
                  schedule_cfg=None):
 
         super(SSDAnchorsGenerator, self).__init__(schedule_cfg)
-        self.feature_maps = feature_maps  # [(height, width), ...]
         self.aspect_ratios = aspect_ratios
         self.num_anchors = len(aspect_ratios)
         self.clip = clip
@@ -27,23 +25,18 @@ class SSDAnchorsGenerator(AnchorsGenerator):
 
         self.anchors_boxes = {}
 
-    def __call__(self, image_shape):
-        if image_shape in self.anchors_boxes:
-            return self.anchors_boxes[image_shape]
+    def __call__(self, feature_maps):
+        feature_maps = tuple(feature_maps)
+        if feature_maps in self.anchors_boxes:
+            return self.anchors_boxes[feature_maps]
 
         mean = []
-        feature_maps = [image_shape]
-        fz = image_shape
-        for _ in range(max(self.feature_maps) + 1):
-            fz = np.ceil(fz / 2)
-            feature_maps += [int(fz)]
-        feature_maps = [feature_maps[i] for i in self.feature_maps]
-        steps = [1 / f for f in feature_maps]
-        offset = [step * 0.5 for step in steps]
+        steps = [(float(1 / f[0]), float(1 / f[1])) for f in feature_maps]
+        offset = [(step[0] * 0.5, step[1] * 0.5) for step in steps]
         for k, f in enumerate(feature_maps): 
-            for i, j in product(range(f), range(f)):
-                cx = j * steps[k] + offset[k]
-                cy = i * steps[k] + offset[k]
+            for i, j in product(range(int(f[0])), range(int(f[1]))):
+                cx = j * steps[k][1] + offset[k][1]
+                cy = i * steps[k][0] + offset[k][0]
                 s_k = self.scales[k]
                 mean += [cx, cy, s_k, s_k]
                 s_k_prime = sqrt(s_k * self.scales[k + 1])
@@ -58,5 +51,5 @@ class SSDAnchorsGenerator(AnchorsGenerator):
         output = torch.Tensor(mean).view(-1, 4)
         if self.clip:
             output.clamp_(max=1, min=0)
-        self.anchors_boxes[image_shape] = output
+        self.anchors_boxes[feature_maps] = output
         return output

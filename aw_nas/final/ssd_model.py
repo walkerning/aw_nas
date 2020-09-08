@@ -204,5 +204,5 @@ class SSDFinalModel(FinalModel):
     def forward(self, inputs):
         features, _ = self.backbone.extract_features(
             inputs, self.feature_levels)
-        confidences, locations = self.head(features)
-        return confidences, locations
+        features, confidences, locations = self.head(features)
+        return features, confidences, locations

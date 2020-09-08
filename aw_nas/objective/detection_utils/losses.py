@@ -28,7 +28,7 @@ class MultiBoxLoss(Losses):
         self.loc_coef = loc_coef
 
     def filter_samples(self, predictions, targets):
-        conf_data, loc_data = predictions
+        _, conf_data, loc_data = predictions
         conf_t, _ = targets
         batch_size = loc_data.size(0)
 
@@ -67,7 +67,7 @@ class MultiBoxLoss(Losses):
             targets (tensor): Ground truth boxes and labels for a batch,
                 shape: [batch_size,num_objs,5] (last idx is the label).
         """
-        conf_data, loc_data = predictions
+        _, conf_data, loc_data = predictions
         conf_t, loc_t = targets
 
         loc_t = torch.autograd.Variable(loc_t, requires_grad=False)
@@ -116,7 +116,7 @@ class FocalLoss(Losses):
                                                       reg_normalizer)
 
     def forward(self, predicts, targets, indices, normalizer):
-        logits, regressions = predicts
+        _, logits, regressions = predicts
         conf_t, loc_t = targets
         confidences = logits.sigmoid()
         confidences = torch.clamp(confidences, 1e-4, 1.0 - 1e-4)
@@ -189,13 +189,13 @@ class AdaptiveDistillationLoss(Losses):
         if self.loss_coef == 0:
             return {
                 "adaptive_soft_loss":
-                torch.tensor(0.).to(predictions[0].device)
+                torch.tensor(0.).to(predictions[-1].device)
             }
         _, positive_indices = indices
         _, pos_normalizer = normalizer
 
-        logit_s, _ = predictions
-        logit_t, _ = targets
+        logit_s = predictions[1]
+        logit_t = targets[1]
         logit_s = logit_s[positive_indices] / self.temperature
         logit_t = logit_t[positive_indices] / self.temperature
 

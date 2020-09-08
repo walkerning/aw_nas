@@ -26,7 +26,7 @@ class DetectionHeader(Component, nn.Module):
         features = self.extras.forward_rollout(features, rollout)
         confidences = self.classification_headers(features)
         locations = self.regression_headers(features)
-        return confidences, locations
+        return features, confidences, locations
 
     def finalize(self, rollout):
         raise NotImplementedError()

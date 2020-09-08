@@ -44,7 +44,6 @@ objective_cfg:
   anchors_generator_type: ssd_anchors_generator
   anchors_generator_cfg:
     aspect_ratios: [[2], [2, 3], [2, 3], [2, 3], [2], [2]]
-    feature_maps: [4, 5, 6, 7, 8, 9]
     clip: true
   matcher_type: iou_matcher
   matcher_cfg:
@@ -61,7 +60,7 @@ objective_cfg:
     losses_cfg:
       type: adaptive_distillation_loss
       cfg:
-        alpha: 1.5
+        beta: 1.5
         gamma: 1.0
         temperature: 2.
         loss_coef: 0.1
