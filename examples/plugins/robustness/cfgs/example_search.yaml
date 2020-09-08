@@ -1,0 +1,158 @@
+rollout_type: dense_rob
+## ---- Component search_space ----
+# ---- Type dense_rob ----
+search_space_type: dense_rob
+search_space_cfg:
+  cell_layout:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+  - 6
+  - 7
+  concat_nodes: null
+  concat_op: concat
+  loose_end: false
+  num_cell_groups: 8
+  num_init_nodes: 2
+  num_steps: 4
+  primitives:
+  - none
+  - skip_connect
+  - sep_conv_3x3
+  - ResSepConv
+  reduce_cell_groups:
+  - 2
+  - 5
+# ---- End Type dense_rob ----
+## ---- End Component search_space ----
+
+## ---- Component dataset ----
+# ---- Type cifar10 ----
+dataset_type: cifar10
+dataset_cfg:
+  # Schedulable attributes: 
+  cutout: null
+# ---- End Type cifar10 ----
+## ---- End Component dataset ----
+
+## ---- Component controller ----
+controller_type: random_sample
+controller_cfg: {}
+## ---- End Component controller ----
+
+## ---- Component evaluator ----
+# ---- Type mepa ----
+evaluator_type: mepa
+evaluator_cfg:
+  # Schedulable attributes: controller_surrogate_steps, mepa_surrogate_steps, mepa_samples
+  rollout_type: dense_rob
+  batch_size: 64
+  mepa_optimizer: null
+  mepa_scheduler: null
+  mepa_samples: 1
+  data_portion:
+  - 0.0
+  - 0.8
+  - 0.2
+  shuffle_data_before_split: false
+  evaluate_with_whole_queue: true # evaluate each rollout on the whole valid queue (0.2)
+
+  # cfg items below are of no use
+  controller_surrogate_steps: 0
+  mepa_surrogate_steps: 0
+  derive_surrogate_steps: null
+  surrogate_optimizer: null
+  surrogate_scheduler: null
+  schedule_every_batch: false
+  load_optimizer: true
+  load_scheduler: true
+  strict_load_weights_manager: true
+  use_maml_plus: false
+  high_order: false
+  learn_per_weight_step_lr: false
+  use_multi_step_loss: false
+  multi_step_loss_epochs: 10
+  multi_step_loss_start: null
+  surrogate_lr_optimizer: null
+  surrogate_lr_scheduler: null
+  report_inner_diagnostics: false
+  report_cont_data_diagnostics: false
+  update_mepa_surrogate_steps: null
+  disable_step_current: true
+  use_same_surrogate_data: false
+  mepa_as_surrogate: false
+  workers_per_queue: 2
+  schedule_cfg: null
+# ---- End Type mepa ----
+## ---- End Component evaluator ----
+
+## ---- Component weights_manager ----
+# ---- Type dense_rob_wm ----
+weights_manager_type: dense_rob_wm
+weights_manager_cfg:
+  # Schedulable attributes: 
+  rollout_type: dense_rob
+  gpus: []
+  num_classes: 10
+  init_channels: 24
+  stem_multiplier: 1
+  max_grad_norm: 5.0
+  drop_rate: 0.1
+  drop_out_rate: 0.1
+  use_stem: conv_bn_3x3
+  stem_stride: 1
+  stem_affine: true
+  candidate_eval_no_grad: false
+# ---- End Type dense_rob_wm ----
+## ---- End Component weights_manager ----
+
+## ---- Component objective ----
+# ---- Type adversarial_robustness_objective ----
+objective_type: adversarial_robustness_objective
+objective_cfg:
+  # Schedulable attributes: 
+  epsilon: 0.03
+  n_step: 7
+  step_size: 0.0078
+  rand_init: false
+  adv_loss_coeff: 0.5
+  as_controller_regularization: false
+  as_evaluator_regularization: true
+  adv_reward_coeff: 0.5
+  mean:
+  - 0.49139968
+  - 0.48215827
+  - 0.44653124
+  std:
+  - 0.24703233
+  - 0.24348505
+  - 0.26158768
+  schedule_cfg: null
+# ---- End Type adversarial_robustness_objective ----
+## ---- End Component objective ----
+
+
+## ---- Component trainer ----
+# ---- Type simple ----
+trainer_type: simple
+trainer_cfg:
+  # Schedulable attributes: controller_samples, derive_samples
+  rollout_type: dense_rob
+  epochs: 400
+  test_every: 400
+  controller_optimizer: null
+  controller_scheduler: null
+  controller_samples: 1
+  derive_samples: 8
+  rollout_batch_size: 1
+  evaluator_steps: 0
+  controller_steps: 1
+  controller_train_every: 1
+  controller_train_begin: 1
+  interleave_controller_every: null
+  schedule_cfg: null
+# ---- End Type simple ----
+## ---- End Component trainer ----

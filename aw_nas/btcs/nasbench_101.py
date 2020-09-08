@@ -131,7 +131,7 @@ class NasBench101SearchSpace(SearchSpace):
                     size=self.num_possible_edges - 1)) + [self.max_edges]))
             edges = np.minimum(splits[1:] - splits[:-1], 1)
             matrix = self.edges_to_matrix(edges)
-            ops = np.random.randint(0, self.num_op_choices - 1, size=self.num_ops)
+            ops = np.random.randint(0, self.num_op_choices, size=self.num_ops)
             rollout = NasBench101Rollout(
                 matrix, ops, search_space=self)
             try:
@@ -624,9 +624,9 @@ class NasBench101SAController(BaseController):
                         break
             else:
                 ops_ind = np.random.randint(0, ss.num_ops, size=1)[0]
-                new_ops = np.random.randint(0, ss.num_op_choices - 1, size=1)[0]
+                new_ops = np.random.randint(0, ss.num_op_choices, size=1)[0]
                 while new_ops == cur_ops[ops_ind]:
-                    new_ops = np.random.randint(0, ss.num_op_choices - 1, size=1)[0]
+                    new_ops = np.random.randint(0, ss.num_op_choices, size=1)[0]
                 cur_ops[ops_ind] = new_ops
             rollouts.append(NasBench101Rollout(
                 cur_matrix,
