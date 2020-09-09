@@ -1,0 +1,80 @@
+# ---- Arch 0 (Reward 0.40005394168522046) ----
+- CNNGenotype(normal_0=(('sep_conv_3x3', 0, 2), ('sep_conv_3x3', 1, 2), ('skip_connect',
+  0, 3), ('sep_conv_3x3', 1, 3), ('skip_connect', 0, 4), ('sep_conv_3x3', 1, 4), ('skip_connect',
+  0, 5), ('skip_connect', 1, 5)), reduce_1=(('max_pool_3x3', 0, 2), ('max_pool_3x3',
+  1, 2), ('max_pool_3x3', 0, 3), ('skip_connect', 2, 3), ('skip_connect', 2, 4), ('avg_pool_3x3',
+  0, 4), ('skip_connect', 2, 5), ('avg_pool_3x3', 0, 5)), normal_0_concat=(2, 3, 4,
+  5), reduce_1_concat=(2, 3, 4, 5))
+
+# ---- Arch 1 (Reward 0.39950944337507954) ----
+- CNNGenotype(normal_0=(('sep_conv_3x3', 0, 2), ('sep_conv_3x3', 1, 2), ('skip_connect',
+  0, 3), ('sep_conv_3x3', 1, 3), ('skip_connect', 0, 4), ('sep_conv_3x3', 1, 4), ('skip_connect',
+  0, 5), ('skip_connect', 1, 5)), reduce_1=(('max_pool_3x3', 0, 2), ('max_pool_3x3',
+  1, 2), ('max_pool_3x3', 0, 3), ('skip_connect', 2, 3), ('skip_connect', 2, 4), ('avg_pool_3x3',
+  0, 4), ('skip_connect', 2, 5), ('avg_pool_3x3', 0, 5)), normal_0_concat=(2, 3, 4,
+  5), reduce_1_concat=(2, 3, 4, 5))
+
+# ---- Arch 2 (Reward 0.3982113619975727) ----
+- CNNGenotype(normal_0=(('sep_conv_3x3', 0, 2), ('sep_conv_3x3', 1, 2), ('skip_connect',
+  0, 3), ('sep_conv_3x3', 1, 3), ('skip_connect', 0, 4), ('sep_conv_3x3', 1, 4), ('skip_connect',
+  0, 5), ('skip_connect', 1, 5)), reduce_1=(('max_pool_3x3', 0, 2), ('max_pool_3x3',
+  1, 2), ('max_pool_3x3', 0, 3), ('skip_connect', 2, 3), ('skip_connect', 2, 4), ('avg_pool_3x3',
+  0, 4), ('skip_connect', 2, 5), ('avg_pool_3x3', 0, 5)), normal_0_concat=(2, 3, 4,
+  5), reduce_1_concat=(2, 3, 4, 5))
+
+# ---- Arch 3 (Reward 0.3964543912531165) ----
+- CNNGenotype(normal_0=(('sep_conv_3x3', 0, 2), ('sep_conv_3x3', 1, 2), ('skip_connect',
+  0, 3), ('sep_conv_3x3', 1, 3), ('skip_connect', 0, 4), ('sep_conv_3x3', 1, 4), ('skip_connect',
+  0, 5), ('skip_connect', 1, 5)), reduce_1=(('max_pool_3x3', 0, 2), ('max_pool_3x3',
+  1, 2), ('max_pool_3x3', 0, 3), ('skip_connect', 2, 3), ('skip_connect', 2, 4), ('avg_pool_3x3',
+  0, 4), ('skip_connect', 2, 5), ('avg_pool_3x3', 0, 5)), normal_0_concat=(2, 3, 4,
+  5), reduce_1_concat=(2, 3, 4, 5))
+
+# ---- Arch 4 (Reward 0.3945366169333153) ----
+- CNNGenotype(normal_0=(('sep_conv_3x3', 0, 2), ('sep_conv_3x3', 1, 2), ('skip_connect',
+  0, 3), ('sep_conv_3x3', 1, 3), ('skip_connect', 0, 4), ('sep_conv_3x3', 1, 4), ('skip_connect',
+  0, 5), ('skip_connect', 1, 5)), reduce_1=(('max_pool_3x3', 0, 2), ('max_pool_3x3',
+  1, 2), ('max_pool_3x3', 0, 3), ('skip_connect', 2, 3), ('skip_connect', 2, 4), ('avg_pool_3x3',
+  0, 4), ('skip_connect', 2, 5), ('avg_pool_3x3', 0, 5)), normal_0_concat=(2, 3, 4,
+  5), reduce_1_concat=(2, 3, 4, 5))
+
+# ---- Arch 5 (Reward 0.394243635637376) ----
+- CNNGenotype(normal_0=(('sep_conv_3x3', 0, 2), ('sep_conv_3x3', 1, 2), ('skip_connect',
+  0, 3), ('sep_conv_3x3', 1, 3), ('skip_connect', 0, 4), ('sep_conv_3x3', 1, 4), ('skip_connect',
+  0, 5), ('skip_connect', 1, 5)), reduce_1=(('max_pool_3x3', 0, 2), ('max_pool_3x3',
+  1, 2), ('max_pool_3x3', 0, 3), ('skip_connect', 2, 3), ('skip_connect', 2, 4), ('avg_pool_3x3',
+  0, 4), ('skip_connect', 2, 5), ('avg_pool_3x3', 0, 5)), normal_0_concat=(2, 3, 4,
+  5), reduce_1_concat=(2, 3, 4, 5))
+
+# ---- Arch 6 (Reward 0.39417491637913465) ----
+- CNNGenotype(normal_0=(('sep_conv_3x3', 0, 2), ('sep_conv_3x3', 1, 2), ('skip_connect',
+  0, 3), ('sep_conv_3x3', 1, 3), ('skip_connect', 0, 4), ('sep_conv_3x3', 1, 4), ('skip_connect',
+  0, 5), ('skip_connect', 1, 5)), reduce_1=(('max_pool_3x3', 0, 2), ('max_pool_3x3',
+  1, 2), ('max_pool_3x3', 0, 3), ('skip_connect', 2, 3), ('skip_connect', 2, 4), ('avg_pool_3x3',
+  0, 4), ('skip_connect', 2, 5), ('avg_pool_3x3', 0, 5)), normal_0_concat=(2, 3, 4,
+  5), reduce_1_concat=(2, 3, 4, 5))
+
+# ---- Arch 7 (Reward 0.3918809951723689) ----
+- CNNGenotype(normal_0=(('sep_conv_3x3', 0, 2), ('sep_conv_3x3', 1, 2), ('skip_connect',
+  0, 3), ('sep_conv_3x3', 1, 3), ('skip_connect', 0, 4), ('sep_conv_3x3', 1, 4), ('skip_connect',
+  0, 5), ('skip_connect', 1, 5)), reduce_1=(('max_pool_3x3', 0, 2), ('max_pool_3x3',
+  1, 2), ('max_pool_3x3', 0, 3), ('skip_connect', 2, 3), ('skip_connect', 2, 4), ('avg_pool_3x3',
+  0, 4), ('skip_connect', 2, 5), ('avg_pool_3x3', 0, 5)), normal_0_concat=(2, 3, 4,
+  5), reduce_1_concat=(2, 3, 4, 5))
+
+# ---- Arch 8 (Reward 0.39182252564546094) ----
+- CNNGenotype(normal_0=(('sep_conv_3x3', 0, 2), ('sep_conv_3x3', 1, 2), ('skip_connect',
+  0, 3), ('sep_conv_3x3', 1, 3), ('skip_connect', 0, 4), ('sep_conv_3x3', 1, 4), ('skip_connect',
+  0, 5), ('skip_connect', 1, 5)), reduce_1=(('max_pool_3x3', 0, 2), ('max_pool_3x3',
+  1, 2), ('max_pool_3x3', 0, 3), ('skip_connect', 2, 3), ('skip_connect', 2, 4), ('avg_pool_3x3',
+  0, 4), ('skip_connect', 2, 5), ('avg_pool_3x3', 0, 5)), normal_0_concat=(2, 3, 4,
+  5), reduce_1_concat=(2, 3, 4, 5))
+
+# ---- Arch 9 (Reward 0.3916899090265984) ----
+- CNNGenotype(normal_0=(('sep_conv_3x3', 0, 2), ('sep_conv_3x3', 1, 2), ('skip_connect',
+  0, 3), ('sep_conv_3x3', 1, 3), ('skip_connect', 0, 4), ('sep_conv_3x3', 1, 4), ('skip_connect',
+  0, 5), ('skip_connect', 1, 5)), reduce_1=(('max_pool_3x3', 0, 2), ('max_pool_3x3',
+  1, 2), ('max_pool_3x3', 0, 3), ('skip_connect', 2, 3), ('skip_connect', 2, 4), ('avg_pool_3x3',
+  0, 4), ('skip_connect', 2, 5), ('avg_pool_3x3', 0, 5)), normal_0_concat=(2, 3, 4,
+  5), reduce_1_concat=(2, 3, 4, 5))
+

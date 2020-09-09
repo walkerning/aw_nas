@@ -1,0 +1,166 @@
+rollout_type: differentiable
+## ---- Component search_space ----
+# ---- Type cnn ----
+search_space_type: cnn
+search_space_cfg:
+  # Schedulable attributes: 
+  num_cell_groups: 2
+  num_init_nodes: 2
+  num_layers: 8
+  cell_layout: null
+  reduce_cell_groups:
+  - 1
+  num_steps: 4
+  num_node_inputs: 2
+  concat_op: concat
+  concat_nodes: null
+  loose_end: false
+  shared_primitives:
+  - none
+  - max_pool_3x3
+  - avg_pool_3x3
+  - skip_connect
+  - sep_conv_3x3
+  - sep_conv_5x5
+  - dil_conv_3x3
+  - dil_conv_5x5
+  cell_shared_primitives: null
+# ---- End Type cnn ----
+## ---- End Component search_space ----
+
+## ---- Component dataset ----
+# ---- Type cifar10 ----
+dataset_type: cifar10
+dataset_cfg:
+  # Schedulable attributes: 
+  cutout: null
+# ---- End Type cifar10 ----
+## ---- End Component dataset ----
+
+## ---- Component controller ----
+# ---- Type differentiable ----
+controller_type: differentiable
+controller_cfg:
+  # Schedulable attributes: gumbel_temperature, entropy_coeff, force_uniform
+  rollout_type: differentiable
+  use_prob: false
+  gumbel_hard: false
+  gumbel_temperature: 1.0
+  entropy_coeff: 0.01
+  max_grad_norm: null
+  force_uniform: false
+  schedule_cfg: null
+# ---- End Type differentiable ----
+## ---- End Component controller ----
+
+## ---- Component evaluator ----
+# ---- Type mepa ----
+evaluator_type: mepa
+evaluator_cfg:
+  # Schedulable attributes: controller_surrogate_steps, mepa_surrogate_steps, mepa_samples
+  rollout_type: differentiable
+  batch_size: 64
+  controller_surrogate_steps: 0
+  mepa_surrogate_steps: 0
+  derive_surrogate_steps: null
+  mepa_optimizer:
+    lr: 0.025
+    momentum: 0.9
+    type: SGD
+    weight_decay: 3.e-4
+  mepa_scheduler:
+    eta_min: 0.0001
+    T_max: 50
+    type: CosineAnnealingLR
+  surrogate_optimizer: null
+  surrogate_scheduler: null
+  schedule_every_batch: false
+  load_optimizer: true
+  load_scheduler: true
+  strict_load_weights_manager: true
+  use_maml_plus: false
+  high_order: false
+  learn_per_weight_step_lr: false
+  use_multi_step_loss: false
+  multi_step_loss_epochs: 10
+  multi_step_loss_start: null
+  surrogate_lr_optimizer: null
+  surrogate_lr_scheduler: null
+  report_inner_diagnostics: false
+  report_cont_data_diagnostics: false
+  update_mepa_surrogate_steps: null
+  mepa_samples: 1
+  disable_step_current: false
+  use_same_surrogate_data: false
+  data_portion:
+  - 0.0
+  - 0.5
+  - 0.5
+  mepa_as_surrogate: false
+  shuffle_data_before_split: false
+  workers_per_queue: 2
+  rollout_batch_size: 1
+  bptt_steps: 35
+  multiprocess: false
+  schedule_cfg: null
+# ---- End Type mepa ----
+## ---- End Component evaluator ----
+
+## ---- Component weights_manager ----
+# ---- Type diff_supernet ----
+weights_manager_type: diff_supernet
+weights_manager_cfg:
+  # Schedulable attributes: 
+  rollout_type: differentiable
+  gpus: []
+  num_classes: 10
+  init_channels: 16
+  stem_multiplier: 3
+  max_grad_norm: 5.0
+  dropout_rate: 0.1
+  use_stem: conv_bn_3x3
+  stem_stride: 1
+  stem_affine: true
+  preprocess_op_type: null
+  cell_use_preprocess: true
+  cell_group_kwargs: null
+  candidate_virtual_parameter_only: false
+  candidate_eval_no_grad: true
+# ---- End Type diff_supernet ----
+## ---- End Component weights_manager ----
+
+## ---- Component objective ----
+# ---- Type classification ----
+objective_type: classification
+objective_cfg:
+  # Schedulable attributes: 
+  label_smooth: null
+# ---- End Type classification ----
+## ---- End Component objective ----
+
+## ---- Component trainer ----
+# ---- Type simple ----
+trainer_type: simple
+trainer_cfg:
+  # Schedulable attributes: controller_samples, derive_samples
+  rollout_type: differentiable
+  epochs: 50
+  test_every: 10
+  controller_optimizer:
+    lr: 3.e-4
+    betas: [0.5,0.999]
+    weight_decay: 1.e-3
+    type: Adam
+  controller_scheduler: null
+  controller_samples: 1
+  derive_samples: 8
+  rollout_batch_size: 1
+  evaluator_steps: null
+  controller_steps: null
+  controller_train_every: 1
+  controller_train_begin: 1
+  interleave_controller_every: 1
+  schedule_cfg: null
+# ---- End Type simple ----
+## ---- End Component trainer ----
+

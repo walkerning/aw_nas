@@ -33,6 +33,7 @@ class DiffController(BaseController, nn.Module):
                  use_prob=False, gumbel_hard=False, gumbel_temperature=1.0,
                  use_edge_normalization=False,
                  entropy_coeff=0.01, max_grad_norm=None, force_uniform=False,
+                 inspect_hessian_every=-1,  # inspect Hessian eigenvalues every 1 epoch. Disabled when <= 0
                  schedule_cfg=None):
         """
         Args:
@@ -66,6 +67,9 @@ class DiffController(BaseController, nn.Module):
         self.max_grad_norm = max_grad_norm
         self.force_uniform = force_uniform
 
+        self.inspect_hessian_every = inspect_hessian_every
+        self.inspect_hessian = False
+
         _num_init_nodes = self.search_space.num_init_nodes
         _num_edges_list = [
             sum(
@@ -93,6 +97,11 @@ class DiffController(BaseController, nn.Module):
             self.cg_betas = None
 
         self.to(self.device)
+
+    def on_epoch_start(self, epoch):
+        super(DiffController, self).on_epoch_start(epoch)
+        if self.inspect_hessian_every >= 0 and epoch % self.inspect_hessian_every == 0:
+            self.inspect_hessian = True
 
     def set_mode(self, mode):
         super(DiffController, self).set_mode(mode)
@@ -204,6 +213,16 @@ class DiffController(BaseController, nn.Module):
     def gradient(self, loss, return_grads=True, zero_grads=True):
         if zero_grads:
             self.zero_grad()
+
+        if self.inspect_hessian:
+            for name, param in self.named_parameters():
+                max_eig = utils.torch_utils.max_eig_of_hessian(loss, param)
+                self.logger.info(
+                    "Max eigenvalue of Hessian of %s: %f", name, max_eig
+                )
+
+            self.inspect_hessian = False
+
         _loss = loss + self._entropy_loss()
         _loss.backward()
         if return_grads:

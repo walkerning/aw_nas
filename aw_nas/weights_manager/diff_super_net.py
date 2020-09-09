@@ -242,7 +242,7 @@ class DiffSharedOp(SharedOp):
             # ref: https://github.com/yuhuixu1993/PC-DARTS/blob/b74702f86c70e330ce0db35762cfade9df026bb7/model_search.py#L9
             out_act = self._channel_shuffle(out_act, self.partial_channel_proportion)
 
-            # this is the random channel shuffle for now
+            # this is the random channel shuffle
             # channel_perm = torch.randperm(out_act.shape[1])
             # out_act = out_act[:, channel_perm, :, :]
 

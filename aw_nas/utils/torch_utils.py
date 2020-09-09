@@ -362,7 +362,7 @@ class DenseGraphSimpleOpEdgeFlow(nn.Module):
                  residual_only=None,
                  concat=None, has_aggregate_op=False):
         super(DenseGraphSimpleOpEdgeFlow, self).__init__()
-        
+
         self.plus_I = plus_I
         self.share_self_op_emb = share_self_op_emb
         self.residual_only = residual_only
@@ -706,7 +706,7 @@ class CustomDistributedSampler(DistributedSampler):
 
 def drop_connect(inputs, p, training):
     """ Drop connect. """
-    if not training: 
+    if not training:
         return inputs
     batch_size = inputs.shape[0]
     keep_prob = 1 - p
@@ -723,7 +723,7 @@ def accumulate_bn(inputs, running_means, running_vars):
     batch_mean = inputs.mean(0, keepdim=True).mean(2, keepdim=True).mean(3, keepdim=True)  # 1, C, 1, 1
     batch_var = (inputs - batch_mean) * (inputs - batch_mean)
     batch_var = batch_var.mean(0, keepdim=True).mean(2, keepdim=True).mean(3, keepdim=True)
-    
+
     batch_mean = torch.squeeze(batch_mean)
     batch_var = torch.squeeze(batch_var)
 
@@ -775,7 +775,7 @@ def calib_bn(model, data_queue, max_inputs=2000):
             num_inputs += inputs.shape[0]
             if num_inputs > max_inputs:
                 break
-    
+
     for name, m in new_model.named_modules():
         if name in bn_running_mean and not bn_running_mean[name].is_empty():
             feature_dim = bn_running_mean[name].avg.shape[0]
@@ -785,3 +785,32 @@ def calib_bn(model, data_queue, max_inputs=2000):
             m.running_mean.data[:feature_dim].copy_(bn_running_mean[name].avg)
             m.running_var.data[:feature_dim].copy_(bn_running_var[name].avg)
     return new_model
+
+
+# higher order grad utils
+# https://gist.github.com/apaszke/226abdf867c4e9d6698bd198f3b45fb7
+def jacobian(y, x, create_graph=False):
+    jac = []
+    flat_y = y.reshape(-1)
+    grad_y = torch.zeros_like(flat_y)
+    for i in range(len(flat_y)):
+        grad_y[i] = 1.0
+        grad_x, = torch.autograd.grad(flat_y, x, grad_y, retain_graph=True, create_graph=create_graph)
+        jac.append(grad_x.reshape(x.shape))
+        grad_y[i] = 0.0
+
+    return torch.stack(jac).reshape(y.shape + x.shape)
+
+
+def hessian(y, x, flatten=True):
+    if flatten:
+        n = x.nelement()
+        return jacobian(jacobian(y, x, create_graph=True), x).view(n, n)
+
+    return jacobian(jacobian(y, x, create_graph=True), x)
+
+
+def max_eig_of_hessian(y, x):
+    max_eig = torch.eig(hessian(y, x))[0].norm(dim=1).max()
+
+    return max_eig.item()
