@@ -21,3 +21,5 @@ except ImportError as e:
          "Should install the NASBench 201 package following "
          "https://github.com/D-X-Y/NAS-Bench-201").format(e))
         
+
+from aw_nas.btcs import layer2
