@@ -4,7 +4,6 @@ NN operations.
 #pylint: disable=arguments-differ,useless-super-delegation,invalid-name
 
 from collections import OrderedDict
-from functools import partial
 
 import numpy as np
 import torch

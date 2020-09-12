@@ -5,6 +5,7 @@ Micro: Possibly densely-connected micro search space.
 """
 
 import os
+import re
 import copy
 import random
 import collections
@@ -12,12 +13,13 @@ from collections import namedtuple
 
 import numpy as np
 
-from aw_nas.common import SearchSpace
+from aw_nas.common import SearchSpace, genotype_from_str
 from aw_nas.rollout.base import BaseRollout
 from aw_nas.utils.exception import expect, ConfigException
 
 class Layer2Rollout(BaseRollout):
     NAME = "layer2"
+    supported_components = [("trainer", "simple"), ("evaluator", "mepa")]
 
     def __init__(self, macro_rollout, micro_rollout, search_space, candidate_net=None):
         super(Layer2Rollout, self).__init__()
@@ -132,6 +134,13 @@ class Layer2SearchSpace(SearchSpace):
             # mutate in micro search space
             new_rollout.micro = self.micro_search_space.mutate(new_rollout.micro)
         return new_rollout
+
+    def genotype_from_str(self, genotype_str):
+        match = re.search(r"\((.+Genotype\(.+\)), (.+Genotype\(.+\))\)", genotype_str)
+        macro_genotype_str = match.group(1)
+        micro_genotype_str = match.group(2)
+        return (genotype_from_str(macro_genotype_str, self.macro_search_space),
+                genotype_from_str(micro_genotype_str, self.micro_search_space))
 
 
 class StagewiseMacroRollout(BaseRollout):
@@ -257,14 +266,37 @@ class StagewiseMacroSearchSpace(SearchSpace):
                                     if node_str.strip("|")
                                     for i_input in node_str.strip("|").split("|")]))
             stage_conn = np.zeros((stage_node_num, stage_node_num))
-            stage_conn[conn_idxes] = 1
+            if len(conn_idxes):
+                stage_conn[conn_idxes] = 1
             stage_conns.append(stage_conn)
         return StagewiseMacroRollout(stage_conns, search_space=self)
 
+    def parse_overall_adj(self, genotypes):
+        """
+        node 0: stem output
+        node k: cell k - 1. k = 1, ..., num_layer
+        node num_layers + 1: avgpooling input
+        """
+        stage_conns = self.rollout_from_genotype(genotypes).arch
+        last_node_idx = 0
+        overall_adj = np.zeros((self.num_layers + 2, self.num_layers + 2))
+        for i_stage, stage_conn in enumerate(stage_conns):
+            # NOTE: all stages_end/stages_begin indexes should add 1 because we add a stem layer
+            while last_node_idx < self.stages_begin[i_stage] + 1:
+                # sequential connection
+                overall_adj[last_node_idx + 1, last_node_idx] = 1
+                last_node_idx += 1
+            for to_, from_ in zip(*np.where(stage_conn)):
+                overall_adj[self.stages_begin[i_stage] + 1 + to_,
+                            self.stages_begin[i_stage] + 1 + from_] = 1
+            last_node_idx = self.stages_end[i_stage] + 1
+        while last_node_idx < self.num_layers:
+            overall_adj[last_node_idx + 1, last_node_idx] = 1
+            last_node_idx += 1
+        return overall_adj
+
     def plot_arch(self, genotypes, filename, label, edge_labels=None, plot_format="pdf"):
         from graphviz import Digraph
-
-        stage_conns = self.rollout_from_genotype(genotypes).arch
 
         graph = Digraph(
             format=plot_format,
@@ -295,21 +327,9 @@ class StagewiseMacroSearchSpace(SearchSpace):
                           if self.cell_layout[i_layer] in self.reduce_cell_groups else "lightblue"))
          for i_layer, n in enumerate(cell_nodes[1:-1])]
 
-        last_node_idx = 0
-        for i_stage, stage_conn in enumerate(stage_conns):
-            # NOTE: all stages_end/stages_begin indexes should add 1 because we add a stem layer
-            while last_node_idx < self.stages_begin[i_stage] + 1:
-                # sequential connection
-                graph.edge(
-                    cell_nodes[last_node_idx], cell_nodes[last_node_idx + 1], fillcolor="gray")
-                last_node_idx += 1
-            for to_, from_ in zip(*np.where(stage_conn)):
-                graph.edge(cell_nodes[self.stages_begin[i_stage] + 1 + from_],
-                           cell_nodes[self.stages_begin[i_stage] + 1 + to_], fillcolor="gray")
-            last_node_idx = self.stages_end[i_stage] + 1
-        while last_node_idx < self.num_layers:
-            graph.edge(cell_nodes[last_node_idx], cell_nodes[last_node_idx + 1], fillcolor="gray")
-            last_node_idx += 1
+        overall_adj = self.parse_overall_adj(genotypes)
+        for to_, from_ in zip(*np.where(overall_adj)):
+            graph.edge(cell_nodes[from_], cell_nodes[to_], fillcolor="gray")
 
         graph.render(filename, view=False)
         return [filename + ".{}".format(plot_format)]
@@ -386,6 +406,7 @@ class DenseMicroSearchSpace(SearchSpace):
         expect(num_init_nodes == 1, "Currently only support `num_init_nodes==1`",
                ConfigException)
         expect("none" not in primitives)
+        expect(concat_op in {"concat", "add"})
 
         self.num_cell_groups = num_cell_groups
         self.num_init_nodes = num_init_nodes

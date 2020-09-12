@@ -279,7 +279,7 @@ class DenseRobCell(nn.Module):
             states.append(state_to_)
 
         # concat all internal nodes
-        return torch.cat(states[self.num_init_nodes :], dim=1)
+        return torch.cat(states[self.num_init_nodes:], dim=1)
 
     def on_replicate(self):
         # Although this edges is easy to understand, when paralleized,
