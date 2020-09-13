@@ -412,6 +412,7 @@ class DenseMicroSearchSpace(SearchSpace):
         self.num_init_nodes = num_init_nodes
         self.num_steps = num_steps
         self.primitives = primitives
+        self.cell_shared_primitives = [primitives]*self.num_cell_groups
         self.concat_op = concat_op
         self.cellwise_cfgs = cellwise_cfgs
         expect(self.cellwise_cfgs is None, "Currently only support the same cfg for each cell")
@@ -496,6 +497,10 @@ class DenseMicroSearchSpace(SearchSpace):
         return filename + ".{}".format(plot_format)
 
     # ---- APIs ----
+
+    def get_num_steps(self, cell_index):
+        return self.num_steps if isinstance(self.num_steps, int) else self.num_steps[cell_index]
+
     def random_sample(self):
         """Random sample an architecture rollout from search space"""
         return DenseMicroRollout(self._random_sample_arch(), search_space=self)

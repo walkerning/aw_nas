@@ -12,6 +12,7 @@ from torch import nn
 
 from aw_nas import ops, utils
 from aw_nas.final.base import FinalModel
+from aw_nas.final.cnn_model import AuxiliaryHead, AuxiliaryHeadImageNet
 from aw_nas.common import genotype_from_str
 
 
@@ -28,7 +29,10 @@ class MicroDenseCell(FinalModel):
     NAME = "micro-dense-model"
 
     def __init__(self, search_space, arch, num_input_channels, num_out_channels, stride,
-                 output_process_op="nor_conv_1x1", schedule_cfg=None):
+                 output_process_op="nor_conv_1x1",
+                 use_shortcut=False,
+                 shortcut_op_type="skip_connect",
+                 schedule_cfg=None):
         super(MicroDenseCell, self).__init__(schedule_cfg)
 
         self.search_space = search_space
@@ -37,6 +41,15 @@ class MicroDenseCell(FinalModel):
         self.num_out_channels = num_out_channels
         self.stride = stride
         self.output_process_op = output_process_op
+
+        self.use_shortcut = use_shortcut
+        self.shortcut_op_type = shortcut_op_type
+
+        if self.use_shortcut:
+            self.shortcut_reduction_op = ops.get_op(self.shortcut_op_type)(
+                C=num_input_channels, C_out=num_out_channels,
+                stride=self.stride, affine=True,
+            )
 
         self._num_nodes = self.search_space._num_nodes
         self._primitives = self.search_space.primitives
@@ -70,6 +83,7 @@ class MicroDenseCell(FinalModel):
                 C_out=self.num_out_channels, stride=1, affine=False)
 
     def forward(self, inputs, dropout_path_rate):
+        # TOOD: Add cell-shortcut
         states = [inputs]
         batch_size, _, height, width = states[0].shape
         o_height, o_width = height // self.stride, width // self.stride
@@ -96,6 +110,9 @@ class MicroDenseCell(FinalModel):
             out = self.out_process_op(out)
         else:
             out = sum(states[self._num_init_nodes:])
+
+        if self.use_shortcut:
+            out = out + self.shortcut_reduction_op(inputs)
 
         return out
 
@@ -136,6 +153,7 @@ class MacroStagewiseFinalModel(FinalModel):
             use_stem="conv_bn_3x3",
             stem_stride=1,
             stem_affine=True,
+            auxiliary_head=False, auxiliary_cfg=None,
             schedule_cfg=None,
     ):
         super(MacroStagewiseFinalModel, self).__init__(schedule_cfg)
@@ -160,6 +178,8 @@ class MacroStagewiseFinalModel(FinalModel):
         # training
         self.dropout_rate = dropout_rate
         self.dropout_path_rate = dropout_path_rate
+
+        self.auxiliary_head = auxiliary_head
 
         self.overall_adj = self.macro_ss.parse_overall_adj(self.macro_g)
 
@@ -203,6 +223,14 @@ class MacroStagewiseFinalModel(FinalModel):
             # assume non-reduce cell does not change channel number
             prev_num_channels = cell.num_out_channel()
             self.cells.append(cell)
+            # add auxiliary head
+            if i_layer == (2 * self.macro_ss.num_layers) // 3 and self.auxiliary_head:
+                if auxiliary_head == "imagenet":
+                    self.auxiliary_net = AuxiliaryHeadImageNet(
+                        prev_num_channels, num_classes, **(auxiliary_cfg or {}))
+                else:
+                    self.auxiliary_net = AuxiliaryHead(
+                        prev_num_channels, num_classes, **(auxiliary_cfg or {}))
 
         self.lastact = nn.Identity()
         self.global_pooling = nn.AdaptiveAvgPool2d(1)
@@ -240,6 +268,18 @@ class MacroStagewiseFinalModel(FinalModel):
                 input_ += states[input_node]
             output = cell(input_, dropout_path_rate=self.dropout_path_rate)
             states.append(output)
+            # forward the auxiliary head
+            if layer_idx == 2 * len(self.cells) // 3:
+                if self.auxiliary_head and self.training:
+                    logits_aux = self.auxiliary_net(states[-1])
+
+        # final_processing
+        input_ = torch.zeros(
+            (batch_size, self.input_channel_list[layer_idx], i_height, i_width),
+            device=inputs.device) 
+        for input_node in np.where(self.overall_adj[node_idx+1])[0]:
+            input_ += states[input_node]
+        states.append(input_)
 
         out = self.global_pooling(states[-1])
         out = self.dropout(out)
@@ -248,6 +288,9 @@ class MacroStagewiseFinalModel(FinalModel):
         if not self._flops_calculated:
             self.logger.info("FLOPS: flops num = %d M", self.total_flops/1.e6)
             self._flops_calculated = True
+
+        if self.auxiliary_head and self.training:
+            return logits, logits_aux
 
         return logits
 
@@ -282,3 +325,4 @@ class MacroStagewiseFinalModel(FinalModel):
                 self.total_flops += 2 * inputs[0].size(1) * outputs.size(1)
         else:
             pass
+

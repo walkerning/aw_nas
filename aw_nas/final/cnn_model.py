@@ -229,6 +229,7 @@ class CNNGenotypeModel(FinalModel):
         self._flops_calculated = False
         self.set_hook()
 
+
     def set_hook(self):
         for name, module in self.named_modules():
             if "auxiliary" in name:
