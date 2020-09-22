@@ -205,7 +205,13 @@ class DiffController(BaseController, nn.Module):
         self.logger.info("Loaded controller network from %s", path)
 
     def _entropy_loss(self):
-        if self.entropy_coeff > 0:
+        # if self.entropy_coeff > 0:
+        # In the early stage of differentiable search, entropy should be encouraged
+        # to avoid the search get stuck in degenerated solutions (usually many skips, no convs).
+        # While in the later stage, entropy should be regularized to make the
+        # op dist more close to one-hot, thus the discrepancy before & after derive
+        # will be smaller.
+        if self.entropy_coeff is not None:
             probs = [F.softmax(alpha, dim=-1) for alpha in self.cg_alphas]
             return self.entropy_coeff * sum(-(torch.log(prob) * prob).sum() for prob in probs)
         return 0.

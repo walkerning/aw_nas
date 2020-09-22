@@ -100,12 +100,15 @@ There are several sections in the configuration file that describe the configura
 
 For a detailed breakup of the ENAS search configuration, please refer to the [config notes](./doc/enas_cfg_notes.md).
 
-**DARTS** Also, you can run a DARTS [Liu et. al., ICLR 2018] search by running:
+**DARTS** Also, you can run an improved version of DARTS [Liu et. al., ICLR 2018] search by running:
 
 ```
 awnas search examples/basic/darts.yaml --gpu 0 --save-every <SAVE_EVERY> --train-dir <TRAIN_DIR>
 ```
-We provide a walk-through of DARTS components and flow [here](./doc/darts_flow.md).
+We provide a walk-through of the components and flow [here](./doc/darts_flow.md). Note that this configuration is a little different from the original DARTS in that 1) `entropy_coeff: 0.01`: An entropy regularization
+coefficient of 0.01 is used, which encourage the op distribution to be more close to one-hot; 2) `use_prob: false`: Gumbel-softmax sampling is used, instead of directly using the probability.
+
+**Results Reproduction** For the exact reproduction of the results of various popular methods, see the doc, configuration, and results under [`examples/mloss/`](./example/mloss).
 
 #### Generate sample search config
 To generate a sample configuration file for searching, try ``awnas gen-sample-config`` utility. For example, if you want a sample search configuration for searching on NAS-Bench-101, run
@@ -165,6 +168,7 @@ We use this codebase to finish the following researches
 * Xuefei Ning, Guangjun Ge, Wenshuo Li, Zhenhua Zhu, Yin Zheng, Xiaoming Chen, Zhen Gao, Yu Wang, and Huazhong Yang, FTT-NAS: Discovering Fault-Tolerant Neural Architecture, in https://arxiv.org/abs/2003.10375, 2020.
 * Xuefei Ning, Yin Zheng, Tianchen Zhao, Yu Wang, Huazhong Yang, A Generic Graph-based Neural Architecture Encoding Scheme for Predictor-based NAS, in ECCV 2020, https://arxiv.org/abs/2004.01899
 * Xuefei Ning*, Wenshuo Li*, Zixuan Zhou*, Tianchen Zhao, Yin Zheng, Shuang Liang, Huazhong Yang, Yu Wang, A Surgery of the Neural Architecture Evaluators, in https://arxiv.org/abs/2008.03064
+* Xuefei Ning*, Junbo Zhao*, Wenshuo Li, Huazhong Yang, Yu Wang, Multi-shot NAS for Discovering Adversarially Robust Convolutional Neural Architectures.
 
 
 See the sub-directories under `examples/research/` for more details.
