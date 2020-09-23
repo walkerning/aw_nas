@@ -121,6 +121,7 @@ class Layer2SearchSpace(SearchSpace):
     def distance(self, arch1, arch2):
         raise NotImplementedError()
 
+    @classmethod
     def supported_rollout_types(cls):
         return ["layer2"]
 
@@ -337,6 +338,7 @@ class StagewiseMacroSearchSpace(SearchSpace):
     def distance(self, arch1, arch2):
         raise NotImplementedError()
 
+    @classmethod
     def supported_rollout_types(cls):
         return ["macro-stagewise"]
 
@@ -434,7 +436,7 @@ class DenseMicroSearchSpace(SearchSpace):
         self.genotype_type = namedtuple(self.genotype_type_name, self.cell_group_names)
 
     def _random_sample_cell_arch(self):
-        arch = np.zeros((self._num_nodes, self._num_nodes, self.num_op_choices))
+        arch = np.zeros((self._num_nodes, self._num_nodes, self.num_op_choices), dtype=int)
         arch[self.idx] = np.random.randint(
             low=0, high=2, size=(self.num_possible_edges, self.num_op_choices)
         ) # 0/1

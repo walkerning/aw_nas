@@ -178,3 +178,40 @@ def test_layer2_controller():
     print("--- the micro controller's grad ---")
     print(controller.micro_controller.cg_alphas[0].grad)
 
+
+def test_layer2_weights_manager():
+    from aw_nas.common import get_search_space
+    from aw_nas.btcs.layer2.weights_manager import Layer2MacroSupernet
+
+    search_space = get_search_space("layer2", macro_search_space_cfg={
+        "num_cell_groups": 2,
+        "cell_layout": [0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0],
+        "reduce_cell_groups": [1]
+    }, micro_search_space_cfg={
+        "num_cell_groups": 2,
+        "num_steps": 4
+    })
+
+    macro_arch = [
+        np.tril(np.ones(n), -1)
+        for n in search_space.macro_search_space.stage_node_nums
+    ]
+
+    micro_arch = [
+        np.repeat(np.tril(np.ones(5), -1)[:, :, np.newaxis], 2, axis=-1),
+        np.repeat(np.tril(np.ones(5), -1)[:, :, np.newaxis], 2, axis=-1),
+    ]
+
+    # fully dense macro and micro rollout
+    rollout = search_space.random_sample()
+    rollout.macro.arch = macro_arch
+    rollout.micro.arch = micro_arch
+
+    device = torch.device("cuda:3")
+
+    supernet = Layer2MacroSupernet(
+        search_space, device
+    )
+
+    out = supernet.forward(torch.randn(10, 3, 32, 32).to(device), rollout)
+    assert out.shape == torch.Size([10, 10])
