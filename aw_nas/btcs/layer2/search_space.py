@@ -143,6 +143,12 @@ class Layer2SearchSpace(SearchSpace):
         return (genotype_from_str(macro_genotype_str, self.macro_search_space),
                 genotype_from_str(micro_genotype_str, self.micro_search_space))
 
+def DFS(v, adj, visited):
+    visited[v] = 1
+    for new_v in np.argwhere(adj[:,v].reshape(-1)):
+        if not visited[new_v]:
+            DFS(new_v, adj, visited)
+    return visited
 
 class StagewiseMacroRollout(BaseRollout):
     NAME = "macro-stagewise"
@@ -172,6 +178,15 @@ class StagewiseMacroRollout(BaseRollout):
     def __eq__(self, other):
         return all((self.arch[i] == other.arch[i]).all() for i in range(len(self.arch)))
 
+    def ck_connect(self, verbose=False):
+        all_connected = np.array([(DFS(0,arch,np.zeros(arch.shape[0]))).all() \
+             for arch in self.arch])
+        connected = np.array([(DFS(0,arch,np.zeros(arch.shape[0])))[-1] \
+             for arch in self.arch])
+        if not verbose:
+            return connected.all()
+        else:
+            return connected, all_connected
 
 class StagewiseMacroSearchSpace(SearchSpace):
     NAME = "macro-stagewise"
@@ -272,13 +287,19 @@ class StagewiseMacroSearchSpace(SearchSpace):
             stage_conns.append(stage_conn)
         return StagewiseMacroRollout(stage_conns, search_space=self)
 
-    def parse_overall_adj(self, genotypes):
+    def parse_overall_adj(self, geno_or_rollout):
         """
         node 0: stem output
         node k: cell k - 1. k = 1, ..., num_layer
         node num_layers + 1: avgpooling input
         """
-        stage_conns = self.rollout_from_genotype(genotypes).arch
+        if isinstance(geno_or_rollout, tuple):
+            stage_conns = self.rollout_from_genotype(geno_or_rollout).arch
+        elif isinstance(geno_or_rollout, StagewiseMacroRollout):
+            stage_conns = geno_or_rollout.arch
+        else:
+            raise TypeError("We don't do that here")
+
         last_node_idx = 0
         overall_adj = np.zeros((self.num_layers + 2, self.num_layers + 2))
         for i_stage, stage_conn in enumerate(stage_conns):

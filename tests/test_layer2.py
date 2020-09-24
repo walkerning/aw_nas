@@ -215,3 +215,49 @@ def test_layer2_weights_manager():
 
     out = supernet.forward(torch.randn(10, 3, 32, 32).to(device), rollout)
     assert out.shape == torch.Size([10, 10])
+
+def test_tfnas_macro_controller():
+    from aw_nas.common import get_search_space
+    from aw_nas.btcs.layer2.controller import Layer2Controller, MacroStagewiseDiffController, MicroDenseDiffController
+    ss = get_search_space("layer2", macro_search_space_cfg={
+        "num_cell_groups": 2,
+        "cell_layout": [0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0],
+        "reduce_cell_groups": [1]
+    }, micro_search_space_cfg={
+        "num_cell_groups": 2,
+
+        "num_steps": 4,
+    })
+    device="cuda"
+    macro_controller_cfg = {
+    }
+    micro_controller_cfg = {
+        # "use_edge_normalization": True,
+    }
+    controller=Layer2Controller(ss,"layer2",
+                                mode="eval",
+                                macro_controller_type="macro-sink-connect-diff",
+                                micro_controller_type="micro-dense-diff",
+                                macro_controller_cfg=macro_controller_cfg,
+                                micro_controller_cfg=micro_controller_cfg,
+                                )
+    rollouts = controller.sample(3)
+    (rollouts[0].macro.arch[0]).sum().backward()
+
+@pytest.mark.parametrize("genotype_str", [
+    None])
+
+def test_check_connectivity(genotype_str):
+    from aw_nas.common import get_search_space, rollout_from_genotype_str
+    search_space = get_search_space("layer2", macro_search_space_cfg={
+        "num_cell_groups": 2,
+        "cell_layout": [0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0],
+        "reduce_cell_groups": [1]
+    }, micro_search_space_cfg={
+        "num_cell_groups": 2,
+        "num_steps": 4
+    })
+    for i in range(10):
+        rollout = search_space.random_sample()
+        print(rollout.macro.ck_connect())
+

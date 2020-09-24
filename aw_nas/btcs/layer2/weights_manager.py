@@ -38,6 +38,7 @@ class Layer2MacroSupernet(BaseWeightsManager, nn.Module):
                  # classifier
                  num_classes=10,
                  dropout_rate=0.0,
+                 max_grad_norm=None,
                  # stem
                  use_stem="conv_bn_3x3",
                  stem_stride=1,
@@ -57,6 +58,8 @@ class Layer2MacroSupernet(BaseWeightsManager, nn.Module):
         self.num_cell_groups = self.macro_search_space.num_cell_groups
         self.cell_layout = self.macro_search_space.cell_layout
         self.reduce_cell_groups = self.macro_search_space.reduce_cell_groups
+
+        self.max_grad_norm = max_grad_norm
 
         self.candidate_eval_no_grad = candidate_eval_no_grad
 
@@ -124,7 +127,7 @@ class Layer2MacroSupernet(BaseWeightsManager, nn.Module):
         macro_rollout = rollout.macro  # type: StagewiseMacroRollout
         micro_rollout = rollout.micro  # type: DenseMicroRollout
 
-        overall_adj = self.macro_search_space.parse_overall_adj(macro_rollout.genotype)
+        overall_adj = self.macro_search_space.parse_overall_adj(macro_rollout)
 
         # all cell outputs + input/output states
         states = [None] * (len(self.cells) + 2)  # type: list[torch.Tensor]
@@ -162,21 +165,34 @@ class Layer2MacroSupernet(BaseWeightsManager, nn.Module):
 
         return out
 
-    # TODO
     def assemble_candidate(self, rollout):
         return Layer2CandidateNet(self, rollout, self.candidate_eval_no_grad)
 
     def set_device(self, device):
-        pass
+        self.device = device
+        self.to(device)
 
     def step(self, gradients, optimizer):
-        pass
+        self.zero_grad() # clear all gradients
+        named_params = dict(self.named_parameters())
+        for k, grad in gradients:
+            named_params[k].grad = grad
+        if self.max_grad_norm is not None:
+            # clip the gradients
+            torch.nn.utils.clip_grad_norm_(self.parameters(), self.max_grad_norm)
+        # apply the gradients
+        optimizer.step()
 
     def save(self, path):
-        pass
+        torch.save(
+            {"epoch": self.epoch, "state_dict": self.state_dict()},
+            path
+        )
 
     def load(self, path):
-        pass
+        checkpoint = torch.load(path, map_location=torch.device("cpu"))
+        self.load_state_dict(checkpoint["state_dict"])
+        self.on_epoch_start(checkpoint["epoch"])
 
     @classmethod
     def supported_data_types(cls):

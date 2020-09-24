@@ -65,6 +65,12 @@ def gumbel_softmax(logits, temperature, eps=None, hard=True):
         y = straight_through(y)
     return y, eps
 
+# bernoulli sample
+def relaxed_bernoulli_sample(logits, temperature):
+    relaxed_bernoulli = torch.distributions.relaxed_bernoulli.RelaxedBernoulli(temperature, logits=logits)
+    y = relaxed_bernoulli.rsample()
+    return y
+
 def straight_through(y):
     shape = y.size()
     _, ind = y.max(dim=-1)

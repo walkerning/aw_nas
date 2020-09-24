@@ -51,7 +51,7 @@ elif args.type == "cnn": # cnn
     train_ylims = [(80, 100), None]
     valid_pattern = re.compile("valid_acc ([0-9.]+) ; valid_obj ([0-9.]+)")
     valid_obj_names = ["acc", "loss"]
-    valid_ylims = [(20, 80), None]
+    valid_ylims = [(20, 100), None]
 elif args.type == "cnn_oneshot_search":
     train_pattern = re.compile(r"\[evaluator update\][^\n]+loss: ([0-9.]+); acc: ([0-9.]+)")
     train_obj_names = ["loss", "acc"]
