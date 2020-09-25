@@ -4,10 +4,11 @@ from torch import nn
 from aw_nas import ops
 from aw_nas.btcs.layer2.search_space import *
 from aw_nas.weights_manager.base import BaseWeightsManager, CandidateNet
+from aw_nas.weights_manager.shared import SharedOp
 
 
 # TODO
-class Layer2CandidateNet(CandidateNet):
+class Layer2DiffCandidateNet(CandidateNet):
     def __init__(self, supernet, rollout, eval_no_grad):
         super().__init__(eval_no_grad)
 
@@ -27,8 +28,8 @@ class Layer2CandidateNet(CandidateNet):
         return self.supernet.device
 
 
-class Layer2MacroSupernet(BaseWeightsManager, nn.Module):
-    NAME = "layer2_supernet"
+class Layer2MacroDiffSupernet(BaseWeightsManager, nn.Module):
+    NAME = "layer2_diff_supernet"
 
     def __init__(self,
                  search_space,  # type: Layer2SearchSpace
@@ -38,18 +39,18 @@ class Layer2MacroSupernet(BaseWeightsManager, nn.Module):
                  # classifier
                  num_classes=10,
                  dropout_rate=0.0,
-                 max_grad_norm=None,
                  # stem
                  use_stem="conv_bn_3x3",
                  stem_stride=1,
                  stem_affine=True,
                  stem_multiplier=1,
+                 max_grad_norm=5.0,
                  # candidate
                  candidate_eval_no_grad=True,
                  # schedule
                  schedule_cfg=None,
                  ):
-        super().__init__(search_space, device, rollout_type, schedule_cfg)
+        super(Layer2MacroDiffSupernet, self).__init__(search_space, device, rollout_type, schedule_cfg)
         nn.Module.__init__(self)
 
         self.macro_search_space = search_space.macro_search_space  # type: StagewiseMacroSearchSpace
@@ -95,7 +96,7 @@ class Layer2MacroSupernet(BaseWeightsManager, nn.Module):
             num_channels *= stride
 
             self.cells.append(
-                Layer2MicroCell(
+                Layer2MicroDiffCell(
                     prev_num_channels,
                     num_channels,
                     stride,
@@ -113,7 +114,6 @@ class Layer2MacroSupernet(BaseWeightsManager, nn.Module):
 
             prev_num_channels = num_channels
 
-
         # make pooling and classifier
         self.pooling = nn.AdaptiveAvgPool2d((1, 1))
         self.dropout = nn.Dropout(dropout_rate) if dropout_rate else nn.Identity()
@@ -128,7 +128,7 @@ class Layer2MacroSupernet(BaseWeightsManager, nn.Module):
         macro_rollout = rollout.macro  # type: StagewiseMacroRollout
         micro_rollout = rollout.micro  # type: DenseMicroRollout
 
-        overall_adj = self.macro_search_space.parse_overall_adj(macro_rollout)
+        overall_adj = self.macro_search_space.parse_overall_adj(macro_rollout.genotype)
 
         # all cell outputs + input/output states
         states = [None] * (len(self.cells) + 2)  # type: list[torch.Tensor]
@@ -139,24 +139,28 @@ class Layer2MacroSupernet(BaseWeightsManager, nn.Module):
 
         assert len(states) == len(overall_adj)
 
-        for to, froms in enumerate(overall_adj):
-            froms = np.nonzero(froms)[0]
-            if len(froms) == 0:
-                continue  # no inputs to this cell
-            if any(states[i] is None for i in froms):
-                raise RuntimeError(
-                    "Invalid compute graph. Cell output used before computed"
-                )
+        for i_stage in range(len(macro_rollout.arch)):
+            for to, froms_with_weight in enumerate(macro_rollout.arch[i_stage]):
 
-            # all inputs to a cell are added
-            cell_idx = to - 1
-            cell_input = sum(states[i] for i in froms)
+                froms = np.nonzero(froms_with_weight).detach()  # no detach will cause autograd failure, this bug occurs on some pytorch versions. e.g. 1.2.0
+                if len(froms) == 0:
+                    continue  # no inputs to this cell
+                if any(states[i] is None for i in froms):
+                    raise RuntimeError(
+                        "Invalid compute graph. Cell output used before computed"
+                    )
 
-            if cell_idx < len(self.cells):
-                cell_arch = micro_rollout.arch[self.cell_layout[cell_idx]]
-                states[to] = self.cells[cell_idx].forward(cell_input, cell_arch)
-            else:
-                states[to] = cell_input  # the final output state
+                # all inputs to a cell are added
+                prev_idx = sum(self.search_space.macro_search_space.stage_node_nums[:i_stage]) - i_stage
+                to = prev_idx + to
+                cell_idx = to - 1
+                cell_input = sum(states[prev_idx+i]*froms_with_weight[i] for i in froms)
+
+                if cell_idx < len(self.cells):
+                    cell_arch = micro_rollout.arch[self.cell_layout[cell_idx]]
+                    states[to] = self.cells[cell_idx].forward(cell_input, cell_arch)
+                else:
+                    states[to] = cell_input  # the final output state
 
         assert states[-1] is not None
 
@@ -166,12 +170,18 @@ class Layer2MacroSupernet(BaseWeightsManager, nn.Module):
 
         return out
 
+    # TODO
     def assemble_candidate(self, rollout):
-        return Layer2CandidateNet(self, rollout, self.candidate_eval_no_grad)
+        return Layer2DiffCandidateNet(self, rollout, self.candidate_eval_no_grad)
 
     def set_device(self, device):
         self.device = device
         self.to(device)
+
+    def step_current_gradients(self, optimizer):
+        if self.max_grad_norm is not None:
+            torch.nn.utils.clip_grad_norm_(self.parameters(), self.max_grad_norm)
+        optimizer.step()
 
     def step(self, gradients, optimizer):
         self.zero_grad() # clear all gradients
@@ -185,10 +195,8 @@ class Layer2MacroSupernet(BaseWeightsManager, nn.Module):
         optimizer.step()
 
     def save(self, path):
-        torch.save(
-            {"epoch": self.epoch, "state_dict": self.state_dict()},
-            path
-        )
+        torch.save({"epoch": self.epoch,
+                    "state_dict": self.state_dict()}, path)
 
     def load(self, path):
         checkpoint = torch.load(path, map_location=torch.device("cpu"))
@@ -201,10 +209,10 @@ class Layer2MacroSupernet(BaseWeightsManager, nn.Module):
 
     @classmethod
     def supported_rollout_types(cls):
-        return ["layer2"]
+        return ["layer2", "layer2-differentiable"]
 
 
-class Layer2MicroCell(nn.Module):
+class Layer2MicroDiffCell(nn.Module):
     def __init__(self,
                  in_channels,
                  out_channels,
@@ -217,8 +225,9 @@ class Layer2MicroCell(nn.Module):
                  postprocess_op="conv_1x1",
                  cell_shortcut=False,
                  cell_shortcut_op="skip_connect",
+                 partial_channel_proportion=None,
                  ):
-        super().__init__()
+        super(Layer2MicroDiffCell, self).__init__()
 
         self.out_channels = out_channels
         self.stride = stride
@@ -228,15 +237,18 @@ class Layer2MicroCell(nn.Module):
         self.num_nodes = num_steps + num_init_nodes
         self.output_op = output_op
 
+        self.partial_channel_proportion = partial_channel_proportion
+        assert partial_channel_proportion is None # currently dont support partial channel
+
         # it's easier to calc edge indices with a longer ModuleList and some None
         self.edges = nn.ModuleList()
         for j in range(self.num_nodes):
             for i in range(self.num_nodes):
                 if j > i:
                     if i < self.num_init_nodes:
-                        self.edges.append(Layer2MicroEdge(primitives, in_channels, out_channels, stride, affine))
+                        self.edges.append(Layer2MicroDiffEdge(primitives, in_channels, out_channels, stride, affine))
                     else:
-                        self.edges.append(Layer2MicroEdge(primitives, out_channels, out_channels, 1, affine))
+                        self.edges.append(Layer2MicroDiffEdge(primitives, out_channels, out_channels, 1, affine))
                 else:
                     self.edges.append(None)
 
@@ -256,7 +268,7 @@ class Layer2MicroCell(nn.Module):
         node_outputs = [inputs] * self.num_init_nodes
 
         for to in range(self.num_init_nodes, self.num_nodes):
-            froms = np.nonzero(cell_arch[to].sum(axis=1))[0]
+            froms = np.nonzero(cell_arch[to].sum(axis=1))[0].detach()
 
             edge_indices = froms + (to * self.num_nodes)
             if any(self.edges[i] is None for i in edge_indices):
@@ -295,26 +307,94 @@ class Layer2MicroCell(nn.Module):
         return out
 
 
-class Layer2MicroEdge(nn.Module):
-    def __init__(self, primitives, in_channels, out_channels, stride, affine):
-        super().__init__()
-
+class Layer2MicroDiffEdge(nn.Module):
+    def __init__(self, primitives, in_channels, out_channels, stride, affine, partial_channel_proportion=None):
+        super(Layer2MicroDiffEdge, self).__init__()
         assert "none" not in primitives, "Edge should not have `none` primitive"
 
-        self.ops = nn.ModuleList(
-            ops.get_op(prim)(in_channels, out_channels, stride, affine)
-            for prim in primitives
-        )
+        self.primitives = primitives
+        self.stride = stride
+        self.partial_channel_proportion = partial_channel_proportion
 
-    def forward(self, inputs, edge_arch):
-        outputs = []
-        for op, use_op in zip(self.ops, edge_arch):
-            if use_op != 0:
-                outputs.append(op(inputs))
+        if self.partial_channel_proportion is not None:
+            expect(in_channels % self.partial_channel_proportion == 0,
+                   "partial_channel_proportion must be divisible by #channels", ConfigException)
+            expect(out_channels % self.partial_channel_proportion == 0,
+                   "partial_channel_proportion must be divisible by #channels", ConfigException)
+            in_channels = in_channels // self.partial_channel_proportion
+            out_channels = out_channels // self.partial_channel_proportion
 
-        if len(outputs) != 0:
-            return sum(outputs)
+        self.p_ops = nn.ModuleList()
+        for primitive in self.primitives:
+            op = ops.get_op(primitive)(in_channels, out_channels, stride, False)
+            if "pool" in primitive:
+                op = nn.Sequential(op, nn.BatchNorm2d(out_channels, affine=False))
+
+            self.p_ops.append(op)
+
+    def forward(self, x, weights, detach_arch=True):
+        # TODO: think what diff does sigmoid has with softmax, consider bernoulli sample
+        # actully since weights are fed in, should be competible？
+        if weights.ndimension() == 2:
+            # weights: (batch_size, num_op)
+            if not weights.shape[0] == x.shape[0]:
+                # every `x.shape[0] % weights.shape[0]` data use the same sampled arch weights
+                assert x.shape[0] % weights.shape[0] == 0
+                weights = weights.repeat(x.shape[0] // weights.shape[0], 1)
+            return sum(
+                [
+                    weights[:, i].reshape(-1, 1, 1, 1) * op(x)
+                    for i, op in enumerate(self.p_ops)
+                ]
+            )
+
+        out_act: torch.Tensor = 0.0
+        # weights: (num_op)
+        if self.partial_channel_proportion is None:
+            for w, op in zip(weights, self.p_ops):
+                if detach_arch and w.item() == 0:
+                    continue
+                act = op(x).detach_() if w.item() == 0 else op(x)
+                out_act += w * act
         else:
-            raise RuntimeError("Edge module does not handle the case where no op is "
-                               "used. It should be handled in Cell and Edge.forward "
-                               "should not be called")
+            op_channels = x.shape[1] // self.partial_channel_proportion
+            x_1 = x[:, :op_channels, :, :]  # these channels goes through op
+            x_2 = x[:, op_channels:, :, :]  # these channels skips op
+
+            # apply pooling if the ops have stride=2
+            if self.stride == 2:
+                x_2 = F.max_pool2d(x_2, 2, 2)
+
+            for w, op in zip(weights, self.p_ops):
+                # if detach_arch and w.item() == 0:
+                #     continue  # not really sure about this
+                act = op(x_1)
+
+                # if w.item() == 0:
+                #     act.detach_()  # not really sure about this either
+                out_act += w * act
+
+            out_act = torch.cat((out_act, x_2), dim=1)
+
+            # PC-DARTS implements a deterministic channel_shuffle() (not what they said in the paper)
+            # ref: https://github.com/yuhuixu1993/PC-DARTS/blob/b74702f86c70e330ce0db35762cfade9df026bb7/model_search.py#L9
+            out_act = self._channel_shuffle(out_act, self.partial_channel_proportion)
+
+            # this is the random channel shuffle for now
+            # channel_perm = torch.randperm(out_act.shape[1])
+            # out_act = out_act[:, channel_perm, :, :]
+
+        return out_act
+
+    @staticmethod
+    def _channel_shuffle(x: torch.Tensor, groups: int):
+        """channel shuffle for PC-DARTS"""
+        n, c, h, w = x.shape
+
+        x = x.view(n, groups, -1, h, w).transpose(1, 2).contiguous()
+
+        x = x.view(n, c, h, w).contiguous()
+
+        return x
+
+

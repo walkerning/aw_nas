@@ -12,6 +12,7 @@ import collections
 from collections import namedtuple
 
 import numpy as np
+import torch
 
 from aw_nas.common import SearchSpace, genotype_from_str
 from aw_nas.rollout.base import BaseRollout
@@ -47,6 +48,35 @@ class Layer2Rollout(BaseRollout):
     def __eq__(self, other):
         return self.macro == other.macro and self.micro == other.micro
 
+class Layer2DiffRollout(BaseRollout):
+    NAME = "layer2-differentiable"
+    supported_components = [("trainer", "simple"), ("evaluator", "mepa")]
+
+    def __init__(self, macro_rollout, micro_rollout, search_space, candidate_net=None):
+        super(Layer2DiffRollout, self).__init__()
+
+        self.macro = macro_rollout
+        self.micro = micro_rollout
+        self.search_space = search_space
+        self.candidate_net = candidate_net
+        self._perf = collections.OrderedDict()
+        self._genotype = None
+
+    def set_candidate_net(self, c_net):
+        self.candidate_net = c_net
+
+    @property
+    def genotype(self):
+        if self._genotype is None:
+            self._genotype = self.search_space.genotype((self.macro, self.micro))
+        return self._genotype
+
+    def plot_arch(self, filename, label="", edge_labels=None, plot_format="pdf"):
+        return self.search_space.plot_arch(self.genotype, filename=filename, label=label,
+                                           edge_labels=edge_labels, plot_format=plot_format)
+
+    def __eq__(self, other):
+        return self.macro == other.macro and self.micro == other.micro
 
 class Layer2SearchSpace(SearchSpace):
     """
@@ -158,7 +188,7 @@ class StagewiseMacroRollout(BaseRollout):
 
         self.arch = arch
         self.search_space = search_space
-        self.perf = collections.OrderedDict
+        self.perf = collections.OrderedDict()
         self._genotype = None
 
     def set_candidate_net(self, c_net):
@@ -187,6 +217,83 @@ class StagewiseMacroRollout(BaseRollout):
             return connected.all()
         else:
             return connected, all_connected
+
+# FIXME: current the diff macro-rollout are nearly the same as the discrete ones, needs more methods further
+class StagewiseMacroDiffRollout(BaseRollout):
+    NAME = "macro-stagewise-diff"
+
+    def __init__(self, arch, sampled, logits, search_space):
+        super(StagewiseMacroDiffRollout, self).__init__()
+
+        self.arch = arch
+        self.sampled = sampled
+        self.logits = logits
+        self.search_space = search_space
+        self.perf = collections.OrderedDict()
+        self._genotype = None
+        self._discretized_arch = None
+
+    def set_candidate_net(self, c_net):
+        # should not corresponding to a candidate net
+        raise Exception("A macro rollout only should not correpond to a candidate net")
+
+    @property
+    def genotype(self):
+        if self._genotype is None:
+            self._genotype = self.search_space.genotype(self.discretized_arch_and_prob)
+        return self._genotype
+
+    def plot_arch(self, filename, label="", edge_labels=None, plot_format="pdf"):
+        return self.search_space.plot_arch(self.genotype, filename, label=label,
+                                           edge_labels=edge_labels, plot_format=plot_format)
+    @property
+    def discretized_arch_and_prob(self):
+    # a wrapper for applying self.parse() for discreticize alphas 
+        if self._discretized_arch is None:
+            assert self.arch[0].ndimension() == 2 # does not support rollout-batch-size > 1 yet
+            self._discretized_arch = self.parse(self.arch)
+
+        return self._discretized_arch
+
+    def parse(self, weights):
+        """parse and get the discertized arch"""
+        if self.NAME == "macro-sink-connect-diff":
+            new_weights = []
+            for i_stage, weight in enumerate(weights):
+                new_weight = torch.zeros(weight.shape)
+                # only keep one path with maximum prob
+                max_ind = weight[-1].argmax()
+                new_weight[-1,max_ind] = 1
+                # added previous path
+                if max_ind == 0:
+                    pass
+                else:
+                    for i in range(max_ind):
+                        new_weight[i+1, i] = 1
+                new_weights.append(new_weight)
+            return new_weights
+        else:
+            raise NotImplementedError("currently only support deirve with macro-sink-connect-rollout, more general cases will be added later")
+
+    def __eq__(self, other):
+        return all((self.arch[i] == other.arch[i]).all() for i in range(len(self.arch)))
+
+    def ck_connect(self, verbose=False):
+        all_connected = np.array([(DFS(0,arch,np.zeros(arch.shape[0]))).all() \
+             for arch in self.arch])
+        connected = np.array([(DFS(0,arch,np.zeros(arch.shape[0])))[-1] \
+             for arch in self.arch])
+        if not verbose:
+            return connected.all()
+        else:
+            return connected, all_connected
+
+# same as stagewise-macro-diff-rollout rather than name
+# used for identification in the derive process
+class SinkConnectMacroDiffRollout(StagewiseMacroDiffRollout):
+    NAME = "macro-sink-connect-diff"
+    def __init__(self, *args, **kwargs):
+        super(SinkConnectMacroDiffRollout, self).__init__(*args, **kwargs)
 
 class StagewiseMacroSearchSpace(SearchSpace):
     NAME = "macro-stagewise"
@@ -220,6 +327,10 @@ class StagewiseMacroSearchSpace(SearchSpace):
         self.cell_layout = cell_layout
         self.reduce_cell_groups = reduce_cell_groups
         self.num_layers = len(cell_layout)
+
+        self.cell_group_names = ["{}_{}".format( \
+            "reduce" if i in self.reduce_cell_groups else "normal", i)\
+                         for i in range(self.num_cell_groups)]
 
         # parse stages
         reduce_layer_idxes = [i_layer for i_layer, cg in enumerate(cell_layout)
@@ -406,6 +517,82 @@ class DenseMicroRollout(BaseRollout):
     def __eq__(self, other):
         return all((self.arch[i] == other.arch[i]).all() for i in range(len(self.arch)))
 
+class DenseMicroDiffRollout(BaseRollout):
+    NAME = "micro-dense-diff"
+
+    def __init__(self, arch, sampled, logits, search_space):
+        super(DenseMicroDiffRollout, self).__init__()
+
+        self.arch = arch
+        self.sampled = sampled
+        self.logits = logits
+        self.search_space = search_space
+        self.perf = collections.OrderedDict()
+        self._genotype = None  # calc when need
+        self._discretized_arch = None
+
+    def set_candidate_net(self, c_net):
+        # should not corresponding to a candidate net
+        raise Exception("A micro rollout only should not correpond to a candidate net")
+
+    @property
+    def discretized_arch_and_prob(self):
+    # a wrapper for applying self.parse() for discreticize alphas 
+        if self._discretized_arch is None:
+            assert self.arch[0].ndimension() == 3 # does not support rollout-batch-size > 1 yet
+            self._discretized_arch = self.parse(self.sampled) # when applying gumbel_hard, should use sampled instead of hard ones
+
+        return self._discretized_arch
+
+    def parse(self, weights):
+        """parse and get the discertized arch"""
+        if self.NAME == "micro-dense-diff":
+            # TODO: [Micro-Dense Derive Strategy]
+            new_weights = []
+            for i_cell_group, weight in enumerate(weights):
+                # weight shape [num_edges, num_ops]
+                weight = torch.tensor(weight)
+                new_weight = torch.zeros(weight.shape)
+                one_op_per_edge = True # TODO: how 2 feed derive args into rollout
+                if one_op_per_edge:
+                    max_ind = torch.argmax(weight,dim= -1)
+                    # FIXME: ugly, pytorch should have a function for that
+                    for i in range(new_weight.shape[0]):
+                        new_weight[i][max_ind[i]] = 1
+                else:
+                    new_weight = (weight > 0).int()
+                new_weights.append(new_weight)
+            # transform it to arch
+            new_weights = self.search_space.arch_from_edges(new_weights)
+            return new_weights
+        else:
+            raise NotImplementedError("currently only support deirve with micro-dense-diff rollout, more general cases will be added later")
+
+    @property
+    def genotype(self):
+        if self._genotype is None:
+            self._genotype = self.search_space.genotype(self.discretized_arch_and_prob)
+        return self._genotype
+
+    def plot_arch(self, filename, label="", edge_labels=None, plot_format="pdf"):
+        fnames = []
+        for i_cell, cell_arch in enumerate(self.arch):
+            fname = self.search_space.plot_cell(
+                cell_arch,
+                os.path.join(filename, "{}".format(i_cell)),
+                label="{}cell {}".format(
+                    "{} - ".format(label) if label else "", i_cell
+                ),
+                edge_labels=edge_labels[i_cell] if edge_labels else None,
+                plot_format=plot_format,
+            )
+            fnames.append(("cell{}".format(i_cell), fname))
+        return fnames
+
+    def __eq__(self, other):
+        return all((self.arch[i] == other.arch[i]).all() for i in range(len(self.arch)))
+
+
 
 class DenseMicroSearchSpace(SearchSpace):
     """
@@ -584,6 +771,15 @@ class DenseMicroSearchSpace(SearchSpace):
             cell_arch[all_conn_op_inds] = 1
             arch.append(cell_arch)
         return DenseMicroRollout(arch, search_space=self)
+
+    def arch_from_edges(self, edges):
+        assert len(edges) == self.num_cell_groups
+        archs = []
+        for cell_edges in edges:
+            arch = torch.zeros(self._num_nodes, self._num_nodes, self.num_op_choices)
+            arch[self.idx] = cell_edges
+            archs.append(arch)
+        return archs
 
     def plot_arch(self, genotypes, filename, label="", edge_labels=None, **kwargs):
         return self.rollout_from_genotype(genotypes).plot_arch(

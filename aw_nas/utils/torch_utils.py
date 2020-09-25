@@ -45,13 +45,13 @@ def drop_path(x, drop_prob):
     return x
 
 # gumbel softmax
-def sample_gumbel(shape, eps=1e-20):
-    uniform_rand = torch.rand(shape).cuda()
+def sample_gumbel(shape, device, eps=1e-20):
+    uniform_rand = torch.rand(shape).to(device)
     return Variable(-torch.log(-torch.log(uniform_rand + eps) + eps))
 
 def gumbel_softmax_sample(logits, temperature, eps=None):
     if eps is None:
-        eps = sample_gumbel(logits.size())
+        eps = sample_gumbel(logits.size(), logits.device)
     y = logits + eps
     return F.softmax(y / temperature, dim=-1), eps
 

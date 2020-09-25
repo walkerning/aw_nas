@@ -4,7 +4,10 @@
 
 from aw_nas import utils, assert_rollout_type
 from aw_nas.controller.base import BaseController
-from aw_nas.btcs.layer2.search_space import Layer2Rollout, DenseMicroRollout, StagewiseMacroRollout
+from aw_nas.btcs.layer2.search_space import Layer2Rollout, Layer2DiffRollout, DenseMicroRollout, DenseMicroDiffRollout, StagewiseMacroRollout, StagewiseMacroDiffRollout, SinkConnectMacroDiffRollout
+
+from collections import OrderedDict
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -23,10 +26,10 @@ class Layer2Optimizer(optim.Optimizer):
         self.macro_optimizer.step()
         self.micro_optimizer.step()
 
-torch.optim.Layer2 = Layer2Optimizer # add patch the torch optim
+torch.optim.layer2 = Layer2Optimizer # add patch the torch optim
 
-class Layer2Controller(BaseController, nn.Module):
-    NAME = "layer2"
+class Layer2DiffController(BaseController, nn.Module):
+    NAME = "layer2-differentiable"
 
     def __init__(self, search_space, rollout_type, mode="eval",device="cuda",
                  macro_controller_type="random_sample",
@@ -34,13 +37,13 @@ class Layer2Controller(BaseController, nn.Module):
                  micro_controller_type="random_sample",
                  micro_controller_cfg={},
                  schedule_cfg=None):
-        super(Layer2Controller, self).__init__(search_space, rollout_type, schedule_cfg=schedule_cfg)
+        super(Layer2DiffController, self).__init__(search_space, rollout_type, schedule_cfg=schedule_cfg)
 
         nn.Module.__init__(self)
 
         self.search_space=search_space
         self.rollout_type=rollout_type
-        self.device=device  
+        self.device=device
         self.to(self.device)
 
         # the macro/micro controllers
@@ -48,12 +51,14 @@ class Layer2Controller(BaseController, nn.Module):
             self.macro_controller = MacroStagewiseDiffController(
                                         self.search_space.macro_search_space,
                                         macro_controller_type,
+                                        device = self.device,
                                         **macro_controller_cfg,
             )
         elif macro_controller_type == "macro-sink-connect-diff":
             self.macro_controller = MacroSinkConnectDiffController(
                                         self.search_space.macro_search_space,
                                         macro_controller_type,
+                                        device = self.device,
                                         **macro_controller_cfg,
             )
         else:
@@ -63,6 +68,7 @@ class Layer2Controller(BaseController, nn.Module):
             self.micro_controller = MicroDenseDiffController(
                                         self.search_space.micro_search_space,
                                         micro_controller_type,
+                                        device = self.device,
                                         **micro_controller_cfg,
             )
         else:
@@ -73,7 +79,7 @@ class Layer2Controller(BaseController, nn.Module):
         self.to(device)
 
     def set_mode(self, mode):
-        super(MacroStagewiseDiffController, self).set_mode(mode)
+        super(Layer2DiffController, self).set_mode(mode)
         if mode == "train":
             nn.Module.train(self)
         elif mode == "eval":
@@ -92,7 +98,8 @@ class Layer2Controller(BaseController, nn.Module):
         macro_rollouts = self.macro_controller.sample(n=n,batch_size=batch_size)
         micro_rollouts = self.micro_controller.sample(n=n,batch_size=batch_size)
         for i in range(n):
-            rollouts.append(Layer2Rollout(macro_rollouts[i],micro_rollouts[i], self.search_space))
+            rollouts.append(Layer2DiffRollout(macro_rollouts[i],micro_rollouts[i], self.search_space))
+
         return rollouts
 
     def gradient(self, loss, return_grads=True, zero_grads=True):
@@ -101,27 +108,25 @@ class Layer2Controller(BaseController, nn.Module):
         return macro_loss, micro_loss
 
     def step_current_gradient(self, optimizer):
-        if self.max_grad_norm is not None:
-            torch.nn.utils.clip_grad_norm_(self.parameters(), self.max_grad_norm)
-        optimizer.step()
+        self.macro_controller.step_current_gradient(optimizer.macro_optimizer)
+        self.micro_controller.step_current_gradient(optimizer.micro_optimizer)
 
     def step_gradient(self, gradients, optimizer):
-        #FIXME: maybe  optimizer being a list of [macro_grad, micro_grad]
         self.macro_controller.step_gradient(gradients[0], optimizer.macro_optimizer)
         self.micro_controller.step_gradient(gradients[1], optimizer.micro_optimizer)
 
     def step(self, rollouts, optimizer, perf_name):
-        macro_rollouts = [r.macro_rollout for r in rollouts]
-        micro_rollouts = [r.micro_rollout for r in rollouts]
+        macro_rollouts = [r.macro for r in rollouts]
+        micro_rollouts = [r.micro for r in rollouts]
         macro_loss = self.macro_controller.step(macro_rollouts, optimizer.macro_optimizer, perf_name)
         micro_loss = self.micro_controller.step(micro_rollouts, optimizer.micro_optimizer, perf_name)
         return macro_loss, micro_loss
 
     def summary(self, rollouts, log=False, log_prefix="", step=None):
-        macro_rollouts = [r.macro_rollout for r in rollouts]
-        micro_rollouts = [r.micro_rollout for r in rollouts]
-        self.macro_controller.summary(macro_rollout, log=log, log_prefix=log_prefix, step=None)
-        self.micro_controller.summary(micro_rollout, log=log, log_prefix=log_prefix, step=None)
+        macro_rollouts = [r.macro for r in rollouts]
+        micro_rollouts = [r.micro for r in rollouts]
+        self.macro_controller.summary(macro_rollouts, log=log, log_prefix=log_prefix, step=None)
+        self.micro_controller.summary(micro_rollouts, log=log, log_prefix=log_prefix, step=None)
 
     def save(self, path):
         """Save the parameters to disk."""
@@ -136,9 +141,17 @@ class Layer2Controller(BaseController, nn.Module):
         self.on_epoch_start(checkpoint["epoch"])
         self.logger.info("Loaded controller network from %s", path)
 
+    # since the layer2controller.parameters() is a list of [macro_parameters(), micro_parameters()], we need to override the zero_grad() since it used model.parameters()
+    def zero_grad(self):
+        for param in self.parameters():
+            for p in param:
+                if p.grad is not None:
+                    p.grad.detach_()
+                    p.grad.zero_()
+
     @classmethod
     def supported_rollout_types(cls):
-        return ["layer2"]
+        return ["layer2", "layer2-differentiable"]
 
 class GetArchMacro(torch.autograd.Function):
     @staticmethod
@@ -168,6 +181,7 @@ class MacroStagewiseDiffController(BaseController, nn.Module):
 
     def __init__(self, search_space, rollout_type, mode="eval",device="cuda",
                  use_prob=False, gumbel_hard=False, gumbel_temperature=1.0,
+                 use_sigmoid=False,
                  use_edge_normalization=False,
                  entropy_coeff=0.01, max_grad_norm=None, force_uniform=False,
                  sink_connecting_ss=True, # TF-NAS like sink-based ss
@@ -181,6 +195,8 @@ class MacroStagewiseDiffController(BaseController, nn.Module):
         self.use_prob = use_prob
         self.gumbel_hard = gumbel_hard
         self.gumbel_temperature = gumbel_temperature
+        self.use_sigmoid = use_sigmoid
+        assert use_prob != use_sigmoid
 
         # edge normalization
         self.use_edge_normalization = use_edge_normalization
@@ -243,6 +259,8 @@ class MacroStagewiseDiffController(BaseController, nn.Module):
 
                 if self.use_prob:
                     sampled = F.softmax(expanded_alpha / self.gumbel_temperature, dim=-1)
+                elif self.use_sigmoid:
+                    sampled = utils.relaxed_bernoulli_sample(expanded_alpha, self.gumbel_temperature)
                 else:
                     # gumbel sampling
                     sampled, _ = utils.gumbel_softmax(expanded_alpha, self.gumbel_temperature,
@@ -268,7 +286,7 @@ class MacroStagewiseDiffController(BaseController, nn.Module):
                     stage_conn = self.get_arch.apply(self.search_space, split_op_weights[i_stage], self.device, i_stage)
                     stage_conns.append(stage_conn)
 
-            rollouts.append(StagewiseMacroRollout(stage_conns, search_space=self.search_space))
+            rollouts.append(StagewiseMacroDiffRollout(stage_conns,sampled_list,logits_list,search_space=self.search_space))
 
         return rollouts
 
@@ -377,8 +395,8 @@ class GetArchMacroSinkConnect(torch.autograd.Function):
     def forward(ctx, search_space, op_weights, device, i_stage,):
         stage_conn = torch.zeros((search_space.stage_node_nums[i_stage],
                                search_space.stage_node_nums[i_stage])).to(device)
-        stage_conn[-1,:len(op_weights)] = op_weights
         stage_conn[np.arange(len(op_weights))+1, np.arange(len(op_weights))] = 1
+        stage_conn[-1,:len(op_weights)] = op_weights
         ctx.save_for_backward(torch.as_tensor(op_weights), torch.as_tensor(search_space.idxes[i_stage]))
         return stage_conn
 
@@ -401,9 +419,71 @@ class MacroSinkConnectDiffController(MacroStagewiseDiffController):
                 sum([n-1 for n in self.search_space.stage_node_nums])
             )
         )])
+        assert self.use_sigmoid == False # sink-connecting should introduce competition in edges
         self.get_arch = GetArchMacroSinkConnect()
         self.stage_num_alphas = [n-1 for n in self.search_space.stage_node_nums]
         self.to(self.device)  # move the newly generated cg_alphas to cuda
+
+    # FIXME: the only difference with MacroStageWiseDiffController's sample is that the arch is packed into `sink-connect-diff-rollout`
+    # maybe use a NAME-based method like op.get_op to get rollout-type by name will be more elegant, not sure how to implement, so dirty fix
+    # here
+    def sample(self, n=1, batch_size=1):
+        rollouts = []
+        for _ in range(n):
+            # op_weights.shape: [num_edges, [batch_size,] num_ops]
+            # edge_norms.shape: [num_edges] do not have batch_size.
+            op_weights_list = []
+            edge_norms_list = []
+            sampled_list = []
+            logits_list = []
+
+            for alphas in self.cg_alphas:
+                if self.force_uniform:  # cg_alpha parameters will not be in the graph
+                    # NOTE: `force_uniform` config does not affects edge_norms (betas),
+                    # if one wants a force_uniform search, keep `use_edge_normalization=False`
+                    alphas = torch.zeros_like(alphas)
+
+                if batch_size > 1:
+                    expanded_alpha = alphas.reshape([alphas.shape[0], 1, alphas.shape[1]]) \
+                        .repeat([1, batch_size, 1]) \
+                        .reshape([-1, alphas.shape[-1]])
+                else:
+                    expanded_alpha = alphas
+
+                if self.use_prob:
+                    sampled = F.softmax(expanded_alpha / self.gumbel_temperature, dim=-1)
+                elif self.use_sigmoid:
+                    sampled = utils.relaxed_bernoulli_sample(expanded_alpha, self.gumbel_temperature)
+                else:
+                    # gumbel sampling
+                    sampled, _ = utils.gumbel_softmax(expanded_alpha, self.gumbel_temperature,
+                                                      hard=False)
+
+                if self.gumbel_hard:
+                    op_weights = utils.straight_through(sampled)
+                else:
+                    op_weights = sampled
+
+                if batch_size > 1:
+                    sampled = sampled.reshape([-1, batch_size, op_weights.shape[-1]])
+                    op_weights = op_weights.reshape([-1, batch_size, op_weights.shape[-1]])
+
+                op_weights_list.append(op_weights)
+                sampled_list.append(utils.get_numpy(sampled))
+                logits_list.append(utils.get_numpy(alphas))
+
+                stage_conns = []
+                split_op_weights = torch.split(op_weights, self.stage_num_alphas)
+
+                for i_stage in range(self.search_space.stage_num):
+                    stage_conn = self.get_arch.apply(self.search_space, split_op_weights[i_stage], self.device, i_stage)
+                    stage_conns.append(stage_conn)
+
+            rollouts.append(SinkConnectMacroDiffRollout(stage_conns,sampled_list,logits_list,search_space=self.search_space))
+
+        return rollouts
+
+
 
 class GetArchMicro(torch.autograd.Function):
     @staticmethod
@@ -429,7 +509,7 @@ class MicroDenseDiffController(BaseController, nn.Module):
     ]
 
     def __init__(self, search_space, rollout_type, mode="eval",device="cuda",
-                 use_prob=False, gumbel_hard=False, gumbel_temperature=1.0, use_sigmoid=True,
+                 use_prob=False, gumbel_hard=True, gumbel_temperature=1.0, use_sigmoid=True,
                  use_edge_normalization=False,
                  entropy_coeff=0.01, max_grad_norm=None, force_uniform=False,
                  schedule_cfg=None):
@@ -441,6 +521,7 @@ class MicroDenseDiffController(BaseController, nn.Module):
         # sampling
         self.use_prob = use_prob
         self.use_sigmoid = use_sigmoid
+        assert use_prob != use_sigmoid # use_sigmoid should pair with reparameterized sample
         self.gumbel_hard = gumbel_hard
         self.gumbel_temperature = gumbel_temperature
 
@@ -561,12 +642,11 @@ class MicroDenseDiffController(BaseController, nn.Module):
                 ]
             else:
                 arch_list = []
-                # TODO: maybe grad error?
                 for op_weights in op_weights_list:
                     arch = self.get_arch.apply(self.search_space, op_weights, self.device)
                     arch_list.append(arch)
 
-            rollouts.append(DenseMicroRollout(arch_list, search_space=self.search_space))
+            rollouts.append(DenseMicroDiffRollout(arch_list,sampled_list,logits_list,search_space=self.search_space))
         return rollouts
 
     def save(self, path):
@@ -632,7 +712,7 @@ class MicroDenseDiffController(BaseController, nn.Module):
                 prob = utils.softmax(cg_logits)
                 logprob = np.log(prob)
                 if self.gumbel_hard:
-                    inds = np.argmax(utils.get_numpy(vec.op_weights), axis=-1)
+                    inds = np.argmax(utils.get_numpy(vec), axis=-1)
                     cg_logprobs[cg_idx] += np.sum(logprob[range(len(inds)), inds])
                 cg_entros[cg_idx] += -(prob * logprob).sum()
 

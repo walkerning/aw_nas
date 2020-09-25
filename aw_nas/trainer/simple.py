@@ -155,6 +155,7 @@ class SimpleTrainer(BaseTrainer):
         self.controller_scheduler = None
         self.controller_optimizer = None
         if isinstance(self.controller, torch.nn.Module):
+            # TODO: layer2 controller should diff param group, not like this
             self.controller_optimizer = utils.init_optimizer(self.controller.parameters(),
                                                             controller_optimizer)
             self.controller_scheduler = utils.init_scheduler(self.controller_optimizer,
@@ -240,7 +241,10 @@ class SimpleTrainer(BaseTrainer):
             _loss = self.controller.gradient(rollout.get_perf(name="reward"),
                                              return_grads=False,
                                              zero_grads=False)
-            step_loss["_"] += _loss
+            if "layer2" in self.rollout_type:
+                step_loss["_"] += sum(_loss)
+            else:
+                step_loss["_"] += _loss
 
     # ---- APIs ----
     @classmethod

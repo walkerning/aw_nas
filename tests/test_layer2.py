@@ -216,6 +216,47 @@ def test_layer2_weights_manager():
     out = supernet.forward(torch.randn(10, 3, 32, 32).to(device), rollout)
     assert out.shape == torch.Size([10, 10])
 
+def test_layer2_diff_weights_manager():
+    from aw_nas.common import get_search_space
+    from aw_nas.btcs.layer2.diff_weights_manager import  Layer2MacroDiffSupernet
+    from aw_nas.btcs.layer2.controller import Layer2Controller, MacroStagewiseDiffController, MicroDenseDiffController
+
+    search_space = get_search_space("layer2", macro_search_space_cfg={
+        "num_cell_groups": 2,
+        "cell_layout": [0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0],
+        "reduce_cell_groups": [1]
+    }, micro_search_space_cfg={
+        "num_cell_groups": 2,
+        "num_steps": 4
+    })
+
+    macro_controller_cfg = {
+    }
+    micro_controller_cfg = {
+        # "use_edge_normalization": True,
+    }
+    device = torch.device("cuda:3")
+    controller=Layer2Controller(search_space,"layer2",
+                                mode="eval",
+                                device=device,
+                                # macro_controller_type="macro-stagewise-diff",
+                                macro_controller_type="macro-sink-connect-diff",
+                                micro_controller_type="micro-dense-diff",
+                                macro_controller_cfg=macro_controller_cfg,
+                                micro_controller_cfg=micro_controller_cfg,
+                                )
+    rollouts = controller.sample()
+    rollout = rollouts[0]
+
+    supernet = Layer2MacroDiffSupernet(
+        search_space, device
+    )
+
+    out = supernet.forward(torch.randn(10, 3, 32, 32).to(device), rollout)
+    assert out.shape == torch.Size([10, 10])
+    out.sum().backward()
+    print(controller.macro_controller.cg_alphas[0].grad)
+
 def test_tfnas_macro_controller():
     from aw_nas.common import get_search_space
     from aw_nas.btcs.layer2.controller import Layer2Controller, MacroStagewiseDiffController, MicroDenseDiffController
