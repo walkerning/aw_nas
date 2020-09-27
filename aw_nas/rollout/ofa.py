@@ -117,7 +117,12 @@ class MNasNetOFASearchSpace(SearchSpace):
         layers = sum(arch["depth"][1:], 0)
         layer_mutation_prob = mutation_prob / layers
         depth_mutation_prob = mutation_prob / len(arch["depth"])
+        shape_mutation_prob = mutation_prob / len(self.image_size_choice)
         for i, depth in enumerate(arch["depth"][1:], 1):
+            if np.random.random() < shape_mutation_prob:
+                new_s = np.random.choice(self.image_size_choice)
+            new_arch["image_size"] = new_s
+
             width = arch["width"][i]
             kernel = arch["kernel"][i]
             new_depth = depth
@@ -137,26 +142,53 @@ class MNasNetOFASearchSpace(SearchSpace):
                 new_arch["kernel"][-1] += [new_k]
         return MNasNetOFARollout(new_arch, "", self)
 
-    def _single_mutate(self, rollout, depth_mutate_prob=0.5):
+    @staticmethod
+    def _get_another_choice(current, choices):
+        cur_ind = choices.index(current)
+        num_choice = len(choices)
+        offset = np.random.randint(1, num_choice)
+        return choices[(cur_ind + offset) % num_choice]
+
+    def _single_mutate(self, rollout, mutation_prob=None):
         arch = rollout.arch
+        if mutation_prob is None:
+            num_each_arch = [1, len(arch["depth"]) - 1, sum(arch["depth"][1:]),
+                             sum(arch["depth"][1:])]
+            mutation_prob = [n / sum(num_each_arch) for n in num_each_arch]
+
+        mutation_part_choices = []
+        num_imgsize_choice, num_depth_choice, num_width_choice, num_kernel_choice = \
+            len(self.image_size_choice), len(self.depth_choice), len(self.width_choice), \
+            len(self.kernel_choice)
+        if num_imgsize_choice > 1:
+            mutation_part_choices.append("image_size")
+        if num_depth_choice > 1:
+            mutation_part_choices.append("depth")
+        if num_width_choice > 1:
+            mutation_part_choices.append("width")
+        if num_kernel_choice > 1:
+            mutation_part_choices.append("kernel")
+        mutation_part = np.random.choice(mutation_part_choices, p=mutation_prob)
+
         new_arch = copy.deepcopy(arch)
-        mutate_depth_idx = np.random.randint(1, len(arch["depth"]))
-        if np.random.random() < depth_mutate_prob:
-            new_depth = np.random.choice(self.depth_choice)
-            while new_depth == new_arch["depth"][mutate_depth_idx]:
-                new_depth = np.random.choice(self.depth_choice)
-            new_arch["depth"][mutate_depth_idx] = new_depth
+        if mutation_part == "image_size":
+            # cur_ind = self.image_size_choice.index(new_arch["image_size"])
+            # offset = np.random.randint(1, num_imgsize_choice)
+            # new_s = self.image_size_choice[(cur_ind + offset) % num_imgsize_choice]
+            new_arch["image_size"] = self._get_another_choice(
+                new_arch["image_size"], self.image_size_choice)
+        elif mutation_part == "depth":
+            mutate_depth_idx = np.random.randint(1, len(arch["depth"]))
+            new_arch["depth"][mutate_depth_idx] = self._get_another_choice(
+                new_arch["depth"][mutate_depth_idx], self.depth_choice)
         else:
+            mutate_depth_idx = np.random.randint(1, len(arch["depth"]))
             mutate_block_idx = np.random.randint(
-                0, len(arch["width"][mutate_depth_idx]))
-            new_width = np.random.choice(self.width_choice)
-            new_kernel = np.random.choice(self.kernel_choice)
-            while new_width == new_arch["width"][mutate_depth_idx][mutate_block_idx] and \
-                    new_kernel == new_arch["kernel"][mutate_depth_idx][mutate_block_idx]:
-                new_width = np.random.choice(self.width_choice)
-                new_kernel = np.random.choice(self.kernel_choice)
-            new_arch["width"][mutate_depth_idx][mutate_block_idx] = new_width
-            new_arch["kernel"][mutate_depth_idx][mutate_block_idx] = new_kernel
+                0, len(arch[mutation_part][mutate_depth_idx]))
+            new_val = self._get_another_choice(
+                new_arch[mutation_part][mutate_depth_idx][mutate_block_idx],
+                getattr(self, "{}_choice".format(mutation_part)))
+            new_arch[mutation_part][mutate_depth_idx][mutate_block_idx] = new_val
         return MNasNetOFARollout(new_arch, "", self)
 
     def mutate(self, rollout, mutation="single", **kwargs):  # pylint: disable=arguments-differ

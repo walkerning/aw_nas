@@ -362,8 +362,8 @@ class AsyncTrainer(BaseTrainer):
                 finished_rollouts = self.dispatcher.get_finished_rollouts(timeout=self.log_timeout)
                 if not finished_rollouts:
                     num_nofinish += 1
-                    self.logger.info("No rollout finished in the past %d "
-                            "rollouts(s) to be sampled.",
+                    self.logger.info("No rollout finished in the past %d s."
+                            " %d rollouts(s) to be sampled.",
                                      num_nofinish * self.log_timeout,
                                      self._to_issue)
                 else:

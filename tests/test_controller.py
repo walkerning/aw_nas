@@ -322,6 +322,8 @@ def test_population_controller_mutate():
                                    population_size=1,
                                    parent_pool_size=1,
                                    mutate_kwargs={},
+                                   avoid_mutate_repeat=True,
+                                   avoid_mutate_repeat_worst_threshold=1,
                                    eval_sample_strategy="population",
                                    elimination_strategy="regularized")
 
@@ -367,3 +369,127 @@ def test_pareto_evo_controller_remove_non_pareto():
             rollout.set_perf(np.random.random(), "reward")
         controller.step(rollouts)
         assert 0 < len(controller.population)
+
+@pytest.mark.skip(reason="Not necessary")
+def test_pareto_evo_controller_find_opt():
+    import numpy as np
+
+    from aw_nas.controller import ParetoEvoController
+    from aw_nas.common import SearchSpace
+    from aw_nas.rollout import Rollout
+
+    device = "cuda"
+
+    class ToySearchSpace(SearchSpace):
+        NAME = "toy"
+
+        def __init__(self, dimension, choice, schedule_cfg=None):
+            super(ToySearchSpace, self).__init__(schedule_cfg)
+
+            self.dimension = dimension
+            self.choice = choice
+
+        def random_sample(self):
+            return ToyRollout(ToyRollout.random_sample_arch(self.dimension,
+                self.choice), {}, self)
+
+        def genotype(self, arch):
+            return tuple(arch)
+
+        def rollout_from_genotype(self, genotype):
+            return ToyRollout(list(genotype), {}, self)
+
+        def plot_arch(self, genotypes, filename, label, **kwargs):
+            pass
+
+        def distance(self, arch1, arch2):
+            pass
+
+        @classmethod
+        def supported_rollout_types(cls):
+            return ["toy"]
+
+        def mutate(self, rollout):
+            arch = rollout.arch
+            mutate_index = np.random.choice(list(range(len(arch))))
+            mutate_res = np.random.choice(self.choice)
+            while mutate_res == arch[mutate_index]:
+                mutate_res = np.random.choice(self.choice)
+            arch[mutate_index] = mutate_res
+            return ToyRollout(arch, {}, self)
+
+
+    class ToyRollout(Rollout):
+        NAME = "toy"
+
+        def __init__(self, arch, info, search_space, candidate_net=None):
+            super(ToyRollout, self).__init__(arch, info, search_space,
+                    candidate_net)
+            self._genotype = tuple(arch)
+
+        @classmethod
+        def random_sample_arch(cls, dimension, choice):
+            return np.random.choice(choice, size=dimension)
+
+    dimension = 50
+    range_ = 10
+    search_space = ToySearchSpace(dimension, np.arange(-range_, range_, 0.1))
+    
+    def toy_func(x):
+        fx = (x * np.sin(np.sqrt(2 * np.pi * np.abs(x)))).mean(-1)
+        fy = np.sqrt(range_ ** 2 - fx ** 2) - x.mean(-1) / 10
+        return fx, fy
+
+    def evaluate_rollout(rollout):
+        x = np.array(rollout.arch).reshape(1, -1)
+        fx, fy = toy_func(x)
+        fx = float(fx[0])
+        fy = float(fy[0])
+        rollout.set_perf(fx, "reward")
+        rollout.set_perf(fy, "test")
+        return rollout
+
+    x = np.random.choice(np.arange(-range_, range_, 0.1), size=(100000, dimension))
+    fx, fy = toy_func(x)
+    indices = np.argsort(-fx)
+    fx = fx[indices]
+    fy = fy[indices]
+
+    nx = [fx[0]]
+    ny = [fy[0]]
+    for xo, yo in zip(fx[1:], fy[1:]):
+        if yo > ny[-1]:
+            nx += [xo]
+            ny += [yo]
+
+
+    paretos = {}
+    for epochs in [100, 200]:#, 300, 500, 800]:
+        controller = ParetoEvoController(search_space,
+                                     device,
+                                     rollout_type="toy",
+                                     init_population_size=100,
+                                     perf_names=["reward", "test"],
+                                     eval_sample_strategy="all")
+        controller.mode = "train"
+
+        for _ in range(epochs):
+            rollouts = controller.sample(10)
+            for rollout in rollouts:
+                evaluate_rollout(rollout)
+            controller.step(rollouts)
+
+        population = controller.find_pareto_opt()
+        pareto = [tuple(x) for x in population.values()]
+        pareto = sorted(pareto)
+        paretos[epochs] = pareto
+
+    with open("pareto.json", "w") as fw:
+        import json
+        json.dump({"fx":np.array(fx).tolist(), "fy": np.array(fy).tolist(),
+            "nx": nx, "ny": ny, "paretos": paretos}, fw)
+
+
+
+
+

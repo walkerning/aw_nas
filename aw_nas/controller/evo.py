@@ -115,7 +115,7 @@ class EvoController(BaseController):
     def _avoid_repeat_fallback(self, is_mutate=False):
         resample_str_ = "mutate" if is_mutate else "reselect-and-mutate"
         trials = self.avoid_mutate_repeat_worst_threshold \
-                 if is_mutate else self.avoid_repeat_worst_threshold
+            if is_mutate else self.avoid_repeat_worst_threshold
         if self.avoid_repeat_fallback == "raise":
             raise Exception(
                 "Cannot get a new rollout that is not in the population by {} {} trials.".format(
@@ -132,10 +132,11 @@ class EvoController(BaseController):
             self._avoid_repeat_fallback(is_mutate=True)
         return new_rollout
 
-    def _sample_one(self, population_items, population_size):
+    def _sample_one(self, population_items, population_size, prob=None):
         # random select tournament with size `self.parent_pool_size`
         choices = np.random.choice(np.arange(population_size),
-                                   size=self.parent_pool_size, replace=False)
+                                   size=self.parent_pool_size, replace=False,
+                                   p=prob)
         selected_pop = [population_items[i] for i in choices]
         parent_ind = np.argmax([item[1] for item in selected_pop])
         parent_geno = selected_pop[parent_ind][0]
@@ -150,7 +151,7 @@ class EvoController(BaseController):
                 # return n archs with best rewards in the population
                 genotypes, scores = zip(*list(self.population.items()))
                 best_inds = np.argpartition(scores, -n)[-n:]
-                rollouts = [self.search_space.rollout_from_genotype(genotypes[ind])\
+                rollouts = [self.search_space.rollout_from_genotype(genotypes[ind])
                             .set_perf(scores[ind], "reward")
                             for ind in best_inds]
             elif self.eval_sample_strategy == "all":
@@ -210,7 +211,7 @@ class EvoController(BaseController):
     def save(self, path):
         state = {
             "epoch": self.epoch,
-            "population": {str(k):v for k, v in self.population.items()},
+            "population": {str(k): v for k, v in self.population.items()},
             "gt_rollouts": [r.__getstate__() for r in self._gt_rollouts],
             "gt_scores": self._gt_scores
         }
@@ -261,6 +262,8 @@ class ParetoEvoController(BaseController):
                  avoid_repeat_worst_threshold=10,
                  avoid_mutate_repeat_worst_threshold=10,
                  avoid_repeat_fallback="return",
+                 avoid_repeat_from="population",
+                 num_eliminate=10,
                  schedule_cfg=None):
         super(ParetoEvoController, self).__init__(
             search_space, rollout_type, mode, schedule_cfg)
@@ -277,17 +280,22 @@ class ParetoEvoController(BaseController):
         self.avoid_repeat_worst_threshold = avoid_repeat_worst_threshold
         self.avoid_mutate_repeat_worst_threshold = avoid_mutate_repeat_worst_threshold
         self.avoid_repeat_fallback = avoid_repeat_fallback
+        self.avoid_repeat_from = avoid_repeat_from
+        self.num_eliminate = num_eliminate
         expect(self.avoid_repeat_fallback in {"return", "raise"})
+        expect(self.avoid_repeat_from in {"population", "gt_population"})
 
         # after initial random sampling, only pareto front points are saved in the population
         self.population = collections.OrderedDict()
+        self.gt_population = collections.OrderedDict()
+
         # whether or not sampling by mutation from pareto front has started
         self._start_pareto_sample = False
 
     def _avoid_repeat_fallback(self, is_mutate=False):
         resample_str_ = "mutate" if is_mutate else "reselect-and-mutate"
         trials = self.avoid_mutate_repeat_worst_threshold \
-                 if is_mutate else self.avoid_repeat_worst_threshold
+            if is_mutate else self.avoid_repeat_worst_threshold
         if self.avoid_repeat_fallback == "raise":
             raise Exception(
                 "Cannot get a new rollout that is not in the population by {} {} trials.".format(
@@ -304,8 +312,9 @@ class ParetoEvoController(BaseController):
             self._avoid_repeat_fallback(is_mutate=True)
         return new_rollout
 
-    def _sample_one(self, population_items, population_size):
-        choices = np.random.choice(np.arange(population_size), size=1, replace=False)
+    def _sample_one(self, population_items, population_size, prob=None):
+        choices = np.random.choice(np.arange(population_size), size=1,
+                                   replace=False, p=None)
         parent_geno = population_items[choices[0]][0]
         parent_rollout = self.search_space.rollout_from_genotype(parent_geno)
         new_rollout = self._mutate(parent_rollout, **self.mutate_kwargs)
@@ -313,19 +322,21 @@ class ParetoEvoController(BaseController):
 
     def sample(self, n, batch_size=1):
         if self.mode == "eval":
+            pareto_population = self.find_pareto_opt()
             if self.eval_sample_strategy == "all":
                 # return all archs on the pareto curve,
                 # note that number of sampled rollouts does not necessarily equals `n`
-                choices = self.population.items()
-            elif self.eval_sample_strategy == "n" and self.population:
+                choices = self.pareto_population.items()
+            elif self.eval_sample_strategy == "n" and self.pareto_population:
                 # return only `n` random samples on the pareto curve
-                choices = np.random.choice(zip(*list(self.population.items())),
-                                           size=min(n, len(self.population)), replace=False)
-            rollouts = [self.search_space.rollout_from_genotype(geno)\
+                choices = np.random.choice(zip(*list(self.pareto_population.items())),
+                                           size=min(n, len(self.pareto_population)), replace=False)
+            rollouts = [self.search_space.rollout_from_genotype(geno)
                         .set_perfs(dict(zip(self.perf_names, perfs)))
                         for geno, perfs in choices]
             # fill to n rollouts by random samples, note that these rollouts are not evaluated
-            rollouts += [self.search_space.random_sample() for _ in range(n - len(rollouts))]
+            rollouts += [self.search_space.random_sample()
+                         for _ in range(n - len(rollouts))]
             return rollouts
 
         if not self._start_pareto_sample and len(self.population) < self.init_population_size:
@@ -333,17 +344,32 @@ class ParetoEvoController(BaseController):
 
         rollouts = []
         population_items = list(self.population.items())
-        population_size = len(self.population)
+        prob = None
+        if len(population_items) > self.init_population_size:
+            pareto_frontier = self.find_pareto_opt()
+            distances = self._distance_from_pareto(pareto_frontier)
+            indices = np.argsort(distances)
+            indices = indices[:self.init_population_size -
+                              min(int(self.init_population_size / 5), self.num_eliminate)]
+            population_items = [population_items[i] for i in indices]
+            exp = np.exp(-distances[indices])
+            prob = exp / exp.sum()
+        population_size = len(population_items)
+
         for _ in range(n):
             if self.avoid_repeat:
                 for _ in range(self.avoid_repeat_worst_threshold):
-                    new_rollout = self._sample_one(population_items, population_size)
-                    if new_rollout.genotype not in self.population:
+                    new_rollout = self._sample_one(population_items,
+                                                   population_size, prob)
+                    pool = self.population if self.avoid_repeat_from == \
+                        "population" else self.gt_population
+                    if new_rollout.genotype not in pool:
                         break
                 else:
                     self._avoid_repeat_fallback(is_mutate=False)
             else:
-                new_rollout = self._sample_one(population_items, population_size)
+                new_rollout = self._sample_one(population_items,
+                                               population_size, prob)
             rollouts.append(new_rollout)
         return rollouts
 
@@ -357,16 +383,17 @@ class ParetoEvoController(BaseController):
             for rollout in rollouts:
                 self.population[rollout.genotype] = np.array([
                     rollout.get_perf(perf_name) for perf_name in self.perf_names])
-
+                self.gt_population[rollout.genotype] = \
+                    self.population[rollout.genotype]
             if len(self.population) >= self.init_population_size:
                 # finish random sample, start mutation from pareto front
                 self._start_pareto_sample = True
-                self._remove_non_pareto()
         else:
             # only save the pareto front in the population
             for rollout in rollouts:
                 r_perf = np.array([
                     rollout.get_perf(perf_name) for perf_name in self.perf_names])
+                self.gt_population[rollout.genotype] = r_perf
                 for p_perf in self.population.values():
                     if np.all(r_perf < p_perf):
                         break
@@ -375,30 +402,76 @@ class ParetoEvoController(BaseController):
                     self.population[rollout.genotype] = r_perf
         return 0
 
-    def _remove_non_pareto(self):
+    def _euclidean_distance(self, points_a, points_b):
+        """
+        Calculate the distance bewteen N vectors and M vectors respectively
+        The dimension of each vector is K.
+
+        A: shape (N, K)
+        B: shape (M, K)
+
+        A * B^T = C, c_ij = \sum_k {a_ik * b_jk}, i.e. the dot of the ith
+        vector in A and the jth vector in B.
+
+        A_mode_sq: shape (N, 1), i.e. the sqaure of the mode of each vector in A.
+        B_mode_sq: shape (M, 1), i.e. the sqaure of the mode of each vector in B.
+
+        Then repeat them to the same shape:
+        A': shape(N, M), a'_ij = mode(vec_a_i) ** 2
+        B': shape(M, N), b'_ij = mode(vec_b_j) ** 2
+
+        A' + B' - 2 * A * B^T = D: 
+        d_ij = mode(vec_a_i) ** 2 + mode(vec_b_j) ** 2 - 2 * \sum_k {a_ik * b_jk} 
+             = mode(vec_a_i - vec_b_j) ** 2
+        """
+        assert len(points_a.shape) == 2
+        assert len(points_b.shape) == 2
+
+        transpose_b = points_b.T
+        dot = np.dot(points_a, transpose_b)
+
+        a_mode_sq = np.tile(
+            (points_a ** 2).sum(-1, keepdims=True), (1, points_b.shape[0]))
+        b_mode_sq = np.tile((transpose_b ** 2).sum(0, keepdims=True),
+                            (points_a.shape[0], 1))
+
+        distance = np.sqrt(a_mode_sq + b_mode_sq - 2 * dot)
+        return distance
+
+    def _distance_from_pareto(self, pareto):
+        pareto = np.array(sorted(pareto.values(), key=lambda x: tuple(x)))
+        perfs = np.array(list(self.population.values()))
+        distances = self._euclidean_distance(perfs, pareto).min(-1)
+        return distances
+
+    def find_pareto_opt(self):
         pop_keys = list(self.population.keys())
         pop_size = len(pop_keys)
+        population = {k: v for k, v in self.population.items()}
         for ind1 in range(pop_size):
             key1 = pop_keys[ind1]
-            if key1 not in self.population:
+            if key1 not in population:
                 continue
             for ind2 in range(ind1, pop_size):
                 key2 = pop_keys[ind2]
-                if key2 not in self.population:
+                if key2 not in population:
                     continue
-                diff_12 = self.population[key1] - self.population[key2]
+                diff_12 = population[key1] - population[key2]
                 if np.all(diff_12 > 0):
                     # arch 1 is better than arch 2 on all perfs
-                    self.population.pop(key2)
+                    population.pop(key2)
                 elif np.all(diff_12 < 0):
                     # arch 2 is better than arch 1 on all perfs
-                    self.population.pop(key1)
+                    population.pop(key1)
                     break
+        return population
 
     def save(self, path):
         state = {
             "epoch": self.epoch,
             "population": {str(k): v for k, v in self.population.items()},
+            "gt_population": {str(k): v for k, v in
+                              self.gt_population.items()},
             "_start_pareto_sample": self._start_pareto_sample
         }
         torch.save(state, path)
@@ -408,6 +481,8 @@ class ParetoEvoController(BaseController):
         self.epoch = state["epoch"]
         self.population = {genotype_from_str(k, self.search_space): v
                            for k, v in state["population"].items()}
+        self.gt_population = {genotype_from_str(k, self.search_space): v
+                              for k, v in state["gt_population"].items()}
         self._start_pareto_sample = state["_start_pareto_sample"]
 
     def summary(self, rollouts, log=False, log_prefix="", step=None):
