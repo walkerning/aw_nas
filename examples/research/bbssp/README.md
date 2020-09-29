@@ -12,6 +12,8 @@ If you find this work/code helpful, please cite:
 }
 ```
 
+> See [here](https://github.com/patrick22414/ssprofile) for the codes of the search space profiling phase.
+
 ### Black box search space profiling
 
 This repo doesn't include the scripts and codes of black box search space profiling. Instead, we provide several search space designs after profiling and the policy-aware latency LUT for Xilinx DPU.

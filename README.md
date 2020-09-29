@@ -1,5 +1,12 @@
 # aw_nas: A Modularized and Extensible NAS Framework
 
+<p align="middle">
+  <img src="doc/pics/logo_nicsefc.jpg" width="35%" hspace="30" />
+  <img src="doc/pics/logo_novauto.jpg" width="35%" hspace="20" />
+</p>
+
+Maintained by [NICS-EFC Lab](https://nicsefc.ee.tsinghua.edu.cn/) (Tsinghua University) and [Novauto Inc](https://www.novauto.com.cn/) (Beijing China).
+
 ## Introduction
 
 Neural Architecture Search (NAS) has received extensive attention due to its capability to discover neural network architectures in an automated manner. `aw_nas` is a NAS framework with various NAS algorithms implemented in a modularized manner. Currently, `aw_nas` can be used to reproduce the results of many mainstream NAS algorithms, e.g., ENAS, DARTS, SNAS, FBNet, OFA, predictor-based NAS, etc. And we have applied NAS algorithms for various applications & scenarios with `aw_nas`, including NAS for classification, detection, text modeling, hardware fault tolerance, adversarial robustness, hardware inference efficiency, and so on.
@@ -108,7 +115,7 @@ awnas search examples/basic/darts.yaml --gpu 0 --save-every <SAVE_EVERY> --train
 We provide a walk-through of the components and flow [here](./doc/darts_flow.md). Note that this configuration is a little different from the original DARTS in that 1) `entropy_coeff: 0.01`: An entropy regularization
 coefficient of 0.01 is used, which encourage the op distribution to be more close to one-hot; 2) `use_prob: false`: Gumbel-softmax sampling is used, instead of directly using the probability.
 
-**Results Reproduction** For the exact reproduction of the results of various popular methods, see the doc, configuration, and results under [`examples/mloss/`](./example/mloss).
+**Results Reproduction** For the exact reproduction of the results of various popular methods, see the doc, configuration, and results under [`examples/mloss/`](./examples/mloss).
 
 #### Generate sample search config
 To generate a sample configuration file for searching, try ``awnas gen-sample-config`` utility. For example, if you want a sample search configuration for searching on NAS-Bench-101, run
