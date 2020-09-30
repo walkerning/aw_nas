@@ -507,7 +507,7 @@ def get_inf_iterator(iterable, callback):
     return InfIterator(iterable, [callback])
 
 def prepare_data_queues(dataset, queue_cfg_lst, data_type="image", drop_last=False,
-                        shuffle=False, num_workers=2, multiprocess=False, shuffle_indice_file=None):
+                        shuffle=False, shuffle_seed=None, num_workers=2, multiprocess=False, shuffle_indice_file=None):
     """
     Further partition the dataset splits, prepare different data queues.
 
@@ -520,7 +520,12 @@ def prepare_data_queues(dataset, queue_cfg_lst, data_type="image", drop_last=Fal
     same_dset_mapping = dataset.same_data_split_mapping()
     dset_sizes = {n: len(d) for n, d in six.iteritems(dset_splits)}
     dset_indices = {n: list(range(size)) for n, size in dset_sizes.items()}
+    # save cur np random seed state and apply data seed only for shuffling data
+    # then restore seed for the rest of the process
     if shuffle:
+        assert shuffle_seed is not None
+        np_random_state = np.random.get_state()
+        np.random.seed(shuffle_seed)
         [np.random.shuffle(indices) for indices in dset_indices.values()]
         if shuffle_indice_file:
             if os.path.exists(shuffle_indice_file):
@@ -533,6 +538,7 @@ def prepare_data_queues(dataset, queue_cfg_lst, data_type="image", drop_last=Fal
                     yaml.dump(dset_indices, w_f)
                 _getLogger("aw_nas.torch_utils").info(
                     "Dump dataset split indices to %s", shuffle_indice_file)
+        np.random.set_state(np_random_state)
 
     used_portions = {n: 0. for n in dset_splits}
     queues = []
@@ -696,8 +702,20 @@ def get_numpy(arr):
         arr = np.array(arr)
     return arr
 
-def count_parameters(model):
-    return sum(p.nelement() for name, p in model.named_parameters() if "auxiliary" not in name)
+def count_parameters(model, count_binary=False):
+    params = 0
+    bi_params = 0
+    for name, p in model.named_parameters():
+        if "auxiliary" not in name:
+            if not count_binary:
+                params += p.nelement()
+            else:
+                if "cells" in name: # FIXME: not sure how to count
+                    bi_params += p.nelement()
+                else:
+                    params += p.nelement()
+    return np.array([params, bi_params])   # FIXME: dirty return mode, should fix later
+    # return sum(p.nelement() for name, p in model.named_parameters() if "auxiliary" not in name)
 
 def _to_device(data, device):
     if isinstance(data, torch.Tensor):

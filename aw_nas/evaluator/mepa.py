@@ -301,6 +301,7 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
             mepa_as_surrogate=False,
             shuffle_data_before_split=False,  # by default not shuffle data before train-val splito
             shuffle_indice_file=None,
+            shuffle_data_before_split_seed=None,
             workers_per_queue=2,
             # only work for differentiable controller now
             rollout_batch_size=1,
@@ -407,6 +408,7 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
         self.workers_per_queue = workers_per_queue
         self.shuffle_data_before_split = shuffle_data_before_split
         self.shuffle_indice_file = shuffle_indice_file
+        self.shuffle_data_before_split_seed = shuffle_data_before_split_seed
         self.use_maml_plus = use_maml_plus
         self.high_order = high_order
         self.learn_per_weight_step_lr = learn_per_weight_step_lr
@@ -1238,7 +1240,7 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
             # init criterions according to weights manager's rollout type
             rollout_type = self.weights_manager.rollout_type
 
-        if rollout_type == "differentiable":
+        if "differentiable" in rollout_type:
             # NOTE: only handle differentiable rollout differently
             self._reward_func = partial(self.objective.get_loss,
                                         add_controller_regularization=True,
@@ -1370,6 +1372,7 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
                                         data_type=self._data_type,
                                         drop_last=self.rollout_batch_size > 1,
                                         shuffle=self.shuffle_data_before_split,
+                                        shuffle_seed=self.shuffle_data_before_split_seed,
                                         num_workers=self.workers_per_queue,
                                         multiprocess=self.multiprocess,
                                         shuffle_indice_file=self.shuffle_indice_file)

@@ -241,10 +241,8 @@ class SimpleTrainer(BaseTrainer):
             _loss = self.controller.gradient(rollout.get_perf(name="reward"),
                                              return_grads=False,
                                              zero_grads=False)
-            if "layer2" in self.rollout_type:
-                step_loss["_"] += sum(_loss)
-            else:
-                step_loss["_"] += _loss
+
+            step_loss["_"] += _loss
 
     # ---- APIs ----
     @classmethod

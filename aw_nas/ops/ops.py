@@ -78,6 +78,8 @@ PRIMITVE_FACTORY = {
         C, C_out, 5, stride, 4, 2, affine=affine),
     "conv_7x1_1x7" : conv_7x1_1x7,
 
+    "bn_conv_relu_1x1": lambda C, C_out, stride, affine: BNConvReLU(C, C_out,
+                                                                    1, stride, 0, affine=affine),
     "nor_conv_1x1" : lambda C, C_out, stride, affine: ReLUConvBN(C, C_out,
                                                                      1, stride, 0, affine=affine),
     "nor_conv_3x3" : lambda C, C_out, stride, affine: ReLUConvBN(C, C_out,
@@ -115,6 +117,18 @@ PRIMITVE_FACTORY = {
         nn.BatchNorm2d(C_out),
         nn.ReLU(inplace=True),
     ),
+    "imagenet_stem1": lambda C, C_out, stride, affine: nn.Sequential(
+        nn.Conv2d(3, C_out // 2, kernel_size=3, stride=2, padding=1, bias=False),
+        nn.BatchNorm2d(C_out // 2),
+        nn.ReLU(inplace=True),
+        nn.Conv2d(C_out // 2, C_out, 3, stride=2, padding=1, bias=False),
+        nn.BatchNorm2d(C_out),
+        nn.ReLU(inplace=True),
+        nn.Conv2d(C_out, C_out, 3, stride=2, padding=1, bias=False),
+        nn.BatchNorm2d(C_out),
+        nn.ReLU(inplace=True),
+    ),
+
     "NB201ResidualBlock": lambda C, C_out, stride, affine: NB201ResidualBlock(C, C_out, stride,
                                                                    affine=affine),
     "se_module": lambda C, C_out, stride, affine, reduction=4: SEModule(C, reduction),
@@ -204,6 +218,29 @@ class ConvBNReLU(nn.Module):
             self.op = nn.Sequential(
                 nn.Conv2d(C_in, C_out, kernel_size, stride=stride, padding=padding, bias=False),
                 nn.BatchNorm2d(C_out, affine=affine)
+            )
+
+    def forward(self, x):
+        return self.op(x)
+
+    def forward_one_step(self, context=None, inputs=None):
+        return self.op.forward_one_step(context, inputs)
+
+
+class BNConvReLU(nn.Module):
+
+    def __init__(self, C_in, C_out, kernel_size, stride, padding, affine=True, relu=True):
+        super(BNConvReLU, self).__init__()
+        if relu:
+            self.op = nn.Sequential(
+                nn.BatchNorm2d(C_in, affine=affine),
+                nn.Conv2d(C_in, C_out, kernel_size, stride=stride, padding=padding, bias=False),
+                nn.ReLU(inplace=False)
+            )
+        else:
+            self.op = nn.Sequential(
+                nn.BatchNorm2d(C_in, affine=affine),
+                nn.Conv2d(C_in, C_out, kernel_size, stride=stride, padding=padding, bias=False),
             )
 
     def forward(self, x):
@@ -370,7 +407,6 @@ class Zero(nn.Module):
         if self.stride == 1:
             return x.mul(0.)
         return x[:, :, ::self.stride, ::self.stride].mul(0.)
-
 
 class inspectBlock(torch.nn.Module):
     def __init__(self, C_in, C_out, stride, affine=True):

@@ -137,8 +137,8 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
             if load_state_dict is not None:
                 self._load_state_dict(load_state_dict)
 
-            self.logger.info("param size = %f M",
-                             utils.count_parameters(self.model)/1.e6)
+            self.logger.info("param size = {} M".format( \
+                             utils.count_parameters(self.model, count_binary=False)/1.e6))
             self._parallelize()
 
         self.save_every = save_every
@@ -206,6 +206,10 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
     def train(self):
         if len(self.gpus) >= 2:
             self._forward_once_for_flops(self.model)
+        # save the model.log
+        if self.train_dir is not None:
+            with open(os.path.join(self.train_dir, "model.log"),"w") as f:
+                f.write(str(self.model))
         for epoch in range(self.last_epoch+1, self.epochs+1):
             self.epoch = epoch
             self.on_epoch_start(epoch)

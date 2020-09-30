@@ -35,21 +35,25 @@ def test_micro_dense_ss(tmp_path, genotype_str):
     {
         "num_cell_groups": 2,
         "cell_layout": [0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0],
+        "width_choice": [0.25, 0.5, 0.75, 1.0],
         "reduce_cell_groups": [1]
     },
     {
         "num_cell_groups": 3,
         "cell_layout": [0, 1, 2, 0, 1, 0, 2, 0, 0, 1, 0],
+        "width_choice": [0.25, 0.5, 0.75, 1.0],
         "reduce_cell_groups": [2]
     },
     {
         "num_cell_groups": 2,
         "cell_layout": [1, 1, 1, 0, 1, 0, 1, 0, 0, 1, 0],
+        "width_choice": [0.25, 0.5, 0.75, 1.0],
         "reduce_cell_groups": [1]
     },
     {
         "num_cell_groups": 2,
         "cell_layout": [1, 1, 1, 0, 1, 0, 1, 0, 0, 1, 1, 0],
+        "width_choice": [0.25, 0.5, 0.75, 1.0],
         "reduce_cell_groups": [1]
     }
 ])
@@ -74,6 +78,7 @@ def test_layer2_ss(tmp_path):
     ss = get_search_space("layer2", macro_search_space_cfg={
         "num_cell_groups": 2,
         "cell_layout": [0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0],
+        "width_choice": [0.25, 0.5, 0.75, 1.0],
         "reduce_cell_groups": [1]
     }, micro_search_space_cfg={
         "num_cell_groups": 2,
@@ -96,16 +101,17 @@ def test_layer2_ss(tmp_path):
     print("Plot save to path: ", path)
 
 @pytest.mark.parametrize("genotype_str", [
-#    None,
-    "(StagewiseMacroGenotype(stage_0='num_node~4+|0|+|0|1|+|2|', stage_1='num_node~4+|0|+|0|+|1|2|', stage_2='num_node~4+|0|+|1|+|2|'), DenseMicroGenotype(cell_0='init_node~1+|sep_conv_3x3~0|+||+|sep_conv_3x3~0|skip_connect~1|sep_conv_3x3~2|+|skip_connect~0|sep_conv_3x3~0|skip_connect~1|skip_connect~2|skip_connect~3|sep_conv_3x3~3|', cell_1='init_node~1+|skip_connect~0|+||+|sep_conv_3x3~0|sep_conv_3x3~1|+|skip_connect~0|skip_connect~2|skip_connect~3|'))"
+    # "(StagewiseMacroGenotype(width='0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5', stage_0='num_node~4+|0|+|1|+|2|', stage_1='num_node~4+|0|+||+|1|', stage_2='num_node~4+|0|+|1|+|2|'), DenseMicroGenotype(cell_0='init_node~1+|sep_conv_3x3~0|+||+|sep_conv_3x3~0|skip_connect~1|sep_conv_3x3~2|+|skip_connect~0|sep_conv_3x3~0|skip_connect~1|skip_connect~2|skip_connect~3|sep_conv_3x3~3|', cell_1='init_node~1+|skip_connect~0|+||+|sep_conv_3x3~0|sep_conv_3x3~1|+|skip_connect~0|skip_connect~2|skip_connect~3|'))"
+    "(StagewiseMacroGenotype(width='0.5,0.5,0.5,0.25,0.25,0.25,1.0,1.0', stage_0='num_node~4+|0|+|1|+|2|', stage_1='num_node~4+|0|+||+|1|', stage_2='num_node~4+|0|+|1|+|2|'), DenseMicroGenotype(cell_0='init_node~1+|sep_conv_3x3~0|+||+|sep_conv_3x3~0|skip_connect~1|sep_conv_3x3~2|+|skip_connect~0|sep_conv_3x3~0|skip_connect~1|skip_connect~2|skip_connect~3|sep_conv_3x3~3|', cell_1='init_node~1+|skip_connect~0|+||+|sep_conv_3x3~0|sep_conv_3x3~1|+|skip_connect~0|skip_connect~2|skip_connect~3|'))"
 ])
 def test_layer2_final_model(genotype_str, tmp_path):
     from aw_nas.common import get_search_space, rollout_from_genotype_str
-    from aw_nas.btcs.layer2.final_model import MacroStagewiseFinalModel
+    from aw_nas.btcs.layer2.final_model import MacroSinkConnectFinalModel
 
     ss = get_search_space("layer2", macro_search_space_cfg={
         "num_cell_groups": 2,
         "cell_layout": [0, 0, 1, 0, 0, 1, 0, 0],
+        "width_choice": [0.25, 0.5, 0.75, 1.0],
         "reduce_cell_groups": [1]
     }, micro_search_space_cfg={
         "num_cell_groups": 2,
@@ -116,11 +122,11 @@ def test_layer2_final_model(genotype_str, tmp_path):
     else:
         rollout = rollout_from_genotype_str(genotype_str, ss)
 
-    final_model = MacroStagewiseFinalModel(
+    final_model = MacroSinkConnectFinalModel(
         ss, "cuda", str(rollout.genotype),
         micro_model_type="micro-dense-model",
         micro_model_cfg={
-            "output_process_op": "nor_conv_1x1"
+            "process_op_type": "nor_conv_1x1"
         },
         init_channels=12, use_stem="conv_bn_3x3")
     data = _cnn_data(device="cuda", batch_size=2)
@@ -129,10 +135,11 @@ def test_layer2_final_model(genotype_str, tmp_path):
 
 def test_layer2_controller():
     from aw_nas.common import get_search_space
-    from aw_nas.btcs.layer2.controller import Layer2Controller, MacroStagewiseDiffController, MicroDenseDiffController
+    from aw_nas.btcs.layer2.controller import Layer2DiffController, Layer2Optimizer, MacroStagewiseDiffController, MicroDenseDiffController
     ss = get_search_space("layer2", macro_search_space_cfg={
         "num_cell_groups": 2,
         "cell_layout": [0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0],
+        "width_choice": [0.25, 0.5, 0.75, 1.],
         "reduce_cell_groups": [1]
     }, micro_search_space_cfg={
         "num_cell_groups": 2,
@@ -144,7 +151,7 @@ def test_layer2_controller():
     micro_controller_cfg = {
         # "use_edge_normalization": True,
     }
-    controller=Layer2Controller(ss,"layer2",
+    controller=Layer2DiffController(ss,"layer2",
                                 mode="eval",
                                 macro_controller_type="macro-stagewise-diff",
                                 micro_controller_type="micro-dense-diff",
@@ -166,7 +173,8 @@ def test_layer2_controller():
             "lr": 0.0005,
         }
     }
-    controller_opt = utils.init_optimizer(controller.parameters(), controller_opt_cfg)
+    controller_opt = Layer2Optimizer(controller.parameters(), **controller_opt_cfg)
+    # controller_opt = utils.init_optimizer(controller.parameters(), controller_opt_cfg)
 
     # test backward
     rand_x = torch.rand(rollouts[0].macro.arch[0].shape).cuda()
@@ -186,6 +194,7 @@ def test_layer2_weights_manager():
     search_space = get_search_space("layer2", macro_search_space_cfg={
         "num_cell_groups": 2,
         "cell_layout": [0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0],
+        "width_choice": [0.25, 0.5, 0.75, 1.],
         "reduce_cell_groups": [1]
     }, micro_search_space_cfg={
         "num_cell_groups": 2,
@@ -219,11 +228,12 @@ def test_layer2_weights_manager():
 def test_layer2_diff_weights_manager():
     from aw_nas.common import get_search_space
     from aw_nas.btcs.layer2.diff_weights_manager import  Layer2MacroDiffSupernet
-    from aw_nas.btcs.layer2.controller import Layer2Controller, MacroStagewiseDiffController, MicroDenseDiffController
+    from aw_nas.btcs.layer2.controller import Layer2DiffController, MacroStagewiseDiffController, MicroDenseDiffController
 
     search_space = get_search_space("layer2", macro_search_space_cfg={
         "num_cell_groups": 2,
         "cell_layout": [0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0],
+        "width_choice": [0.25, 0.5, 0.75, 1.],
         "reduce_cell_groups": [1]
     }, micro_search_space_cfg={
         "num_cell_groups": 2,
@@ -236,7 +246,7 @@ def test_layer2_diff_weights_manager():
         # "use_edge_normalization": True,
     }
     device = torch.device("cuda:3")
-    controller=Layer2Controller(search_space,"layer2",
+    controller=Layer2DiffController(search_space,"layer2",
                                 mode="eval",
                                 device=device,
                                 # macro_controller_type="macro-stagewise-diff",
@@ -259,10 +269,11 @@ def test_layer2_diff_weights_manager():
 
 def test_tfnas_macro_controller():
     from aw_nas.common import get_search_space
-    from aw_nas.btcs.layer2.controller import Layer2Controller, MacroStagewiseDiffController, MicroDenseDiffController
+    from aw_nas.btcs.layer2.controller import Layer2DiffController, MacroStagewiseDiffController, MicroDenseDiffController
     ss = get_search_space("layer2", macro_search_space_cfg={
         "num_cell_groups": 2,
         "cell_layout": [0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0],
+        "width_choice": [0.25, 0.5, 0.75, 1.],
         "reduce_cell_groups": [1]
     }, micro_search_space_cfg={
         "num_cell_groups": 2,
@@ -275,7 +286,7 @@ def test_tfnas_macro_controller():
     micro_controller_cfg = {
         # "use_edge_normalization": True,
     }
-    controller=Layer2Controller(ss,"layer2",
+    controller=Layer2DiffController(ss,"layer2",
                                 mode="eval",
                                 macro_controller_type="macro-sink-connect-diff",
                                 micro_controller_type="micro-dense-diff",

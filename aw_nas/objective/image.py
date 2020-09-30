@@ -9,8 +9,8 @@ from aw_nas.objective.base import BaseObjective
 class ClassificationObjective(BaseObjective):
     NAME = "classification"
 
-    def __init__(self, search_space, label_smooth=None):
-        super(ClassificationObjective, self).__init__(search_space)
+    def __init__(self, search_space, label_smooth=None, schedule_cfg=None):
+        super(ClassificationObjective, self).__init__(search_space, schedule_cfg=schedule_cfg)
         self.label_smooth = label_smooth
         self._criterion = nn.CrossEntropyLoss() if not self.label_smooth \
                           else CrossEntropyLabelSmooth(self.label_smooth)
@@ -42,7 +42,54 @@ class ClassificationObjective(BaseObjective):
         """
         return self._criterion(outputs, targets)
 
+
+
+class FLOPsRegClassificationObjective(ClassificationObjective):
+    NAME = "classification-with-flops-reg"
+
+    SCHEDULABLE_ATTRS = ["reg_lambda"]
+
+    def __init__(self, search_space, label_smooth=None, reg_lambda=0., \
+                 flops_budget = 5.e8, flops_penalty_cfg={"a": 0, "b": 1},
+                 schedule_cfg=None):
+        super(FLOPsRegClassificationObjective, self).__init__(search_space, schedule_cfg=schedule_cfg)
+        self.reg_lambda = reg_lambda
+        self.flops_budget = float(flops_budget) # FIXME: yaml load 1.e-5 as string
+        self.flops_penalty_cfg = flops_penalty_cfg
+        self.flops = 0.
+        self.flops_reg = 1.0
+
+    def get_loss(self, inputs, outputs, targets, cand_net,
+                 add_controller_regularization=True, add_evaluator_regularization=True):
+        """
+        Get the cross entropy loss *tensor*, optionally add regluarization loss.
+
+        Args:
+            outputs: logits
+            targets: labels
+        """
+        # add flops regularization here
+        if add_controller_regularization:
+            self.flops = cand_net.total_flops
+            if cand_net.total_flops < self.flops_budget and self.flops_penalty_cfg["a"] == 0:
+                self.flops_reg = -1.
+                return self._criterion(outputs, targets)
+            else:
+                self.flops_reg = (cand_net.total_flops / self.flops_budget) \
+                            **(self.flops_penalty_cfg["a"] if cand_net.total_flops < self.flops_budget\
+                               else self.flops_penalty_cfg["b"])
+                # self.logger.info("Cur Supernet :{:.9e}, Budget: {:.3e}, FLOPS-reg-rate {:.2}".format(self.flops, self.flops_budget, self.flops_reg))
+                return self._criterion(outputs, targets)*self.flops_reg
+        else:
+            return self._criterion(outputs, targets)
+
+    def on_epoch_start(self, epoch):
+        super(FLOPsRegClassificationObjective, self).on_epoch_start(epoch)
+        self.logger.info("On Epoch {}, Cur Supernet :{:.3e}, Budget: {:.3e}, FLOPS-reg-rate {:.6}".format(epoch, self.flops, self.flops_budget, self.flops_reg))
+
+
 class CrossEntropyLabelSmooth(nn.Module):
+
     def __init__(self, epsilon):
         super(CrossEntropyLabelSmooth, self).__init__()
         self.epsilon = epsilon

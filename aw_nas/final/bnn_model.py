@@ -19,7 +19,7 @@ class BNNGenotypeModel(CNNGenotypeModel):
                 self.total_flops += 2* inputs[0].size(1) * outputs.size(1) * \
                                     module.kernel_size[0] * module.kernel_size[1] * \
                                     outputs.size(2) * outputs.size(3) / module.groups
-            elif isinstance(module, ops.XNORConv2d):
+            elif isinstance(module, ops.BinaryConv2d):
                 # 1-bit conv
                 self.bi_flops += 2* inputs[0].size(1) * outputs.size(1) * \
                                     module.kernel_size * module.kernel_size * \

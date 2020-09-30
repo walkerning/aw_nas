@@ -29,6 +29,7 @@ class BaseTrainer(Component):
         self.is_setup = False
         self.epoch = 1
         self.save_every = None
+        self.save_controller_every = None
         self.train_dir = None
         self.interleave_report_every = None
 
@@ -111,8 +112,13 @@ class BaseTrainer(Component):
             # final saving
             dir_ = utils.makedir(os.path.join(self.train_dir, "final"))
             torch.save(self.controller, os.path.join(dir_, "controller.pt"))
+            rank = os.environ.get("LOCAL_RANK")
+            if rank is None or rank == '0':
+                self.controller.save(os.path.join(dir_, "controller"))
             try:
                 torch.save(self.evaluator, os.path.join(dir_, "evaluator.pt"))
+                if rank is None or rank == '0':
+                    self.evaluator.save(os.path.join(dir_, "evaluator"))
             except pickle.PicklingError as e:
                 self.logger.warning("Final saving: torch.save(evaluator) fail, fallback to call "
                                     "`evaluator.save`: %s", e)
@@ -121,13 +127,19 @@ class BaseTrainer(Component):
 
     def maybe_save(self):
         rank = os.environ.get("LOCAL_RANK")
-        if self.save_every is not None and self.train_dir and self.epoch % self.save_every == 0:
-            if rank is None or rank == '0':
-                self.controller.save(self._save_path("controller"))
-                self.evaluator.save(self._save_path("evaluator"))
-                self.save(self._save_path("trainer"))
-                self.logger.info("Epoch %3d: Save all checkpoints to directory %s",
-                                self.epoch, self._save_path())
+        if self.save_every is not None and self.train_dir:
+            assert self.save_controller_every is not None # when save-eevery is not None, save-controller every should also not be None, since its default value should be save-every
+            if self.epoch % self.save_every == 0:
+                if rank is None or rank == '0':
+                    self.controller.save(self._save_path("controller"))
+                    self.evaluator.save(self._save_path("evaluator"))
+                    self.save(self._save_path("trainer"))
+                    self.logger.info("Epoch %3d: Save all checkpoints to directory %s",
+                                    self.epoch, self._save_path())
+            elif self.epoch % self.save_controller_every == 0:
+                    self.controller.save(self._save_path("controller"))
+                    self.logger.info("Epoch %3d: Save Controller to directory %s",
+                                    self.epoch, self._save_path())
 
     def _save_path(self, name=""):
         if self.train_dir is None:
@@ -135,7 +147,7 @@ class BaseTrainer(Component):
         dir_ = utils.makedir(os.path.join(self.train_dir, str(self.epoch)))
         return os.path.join(dir_, name)
 
-    def setup(self, load=None, save_every=None, train_dir=None, writer=None, load_components=None,
+    def setup(self, load=None, save_every=None, save_controller_every=None,train_dir=None, writer=None, load_components=None,
               interleave_report_every=None):
         """
         Setup the scaffold: saving/loading/visualization settings.
@@ -171,6 +183,7 @@ class BaseTrainer(Component):
                     self.logger.error("Trainer not loaded: %s", e)
 
         self.save_every = save_every
+        self.save_controller_every = save_controller_every
         self.train_dir = utils.makedir(train_dir) if train_dir is not None else train_dir
         if writer is not None:
             self.setup_writer(writer.get_sub_writer("trainer"))

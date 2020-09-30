@@ -6,7 +6,6 @@ from aw_nas.btcs.layer2.search_space import *
 from aw_nas.weights_manager.base import BaseWeightsManager, CandidateNet
 
 
-# TODO
 class Layer2CandidateNet(CandidateNet):
     def __init__(self, supernet, rollout, eval_no_grad):
         super().__init__(eval_no_grad)
@@ -30,30 +29,35 @@ class Layer2CandidateNet(CandidateNet):
 class Layer2MacroSupernet(BaseWeightsManager, nn.Module):
     NAME = "layer2_supernet"
 
-    def __init__(self,
-                 search_space,  # type: Layer2SearchSpace
-                 device,
-                 rollout_type="layer2",
-                 init_channels=16,
-                 # classifier
-                 num_classes=10,
-                 dropout_rate=0.0,
-                 max_grad_norm=None,
-                 # stem
-                 use_stem="conv_bn_3x3",
-                 stem_stride=1,
-                 stem_affine=True,
-                 stem_multiplier=1,
-                 # candidate
-                 candidate_eval_no_grad=True,
-                 # schedule
-                 schedule_cfg=None,
-                 ):
+    def __init__(
+        self,
+        search_space,  # type: Layer2SearchSpace
+        device,
+        rollout_type="layer2",
+        init_channels=16,
+        # classifier
+        num_classes=10,
+        dropout_rate=0.0,
+        max_grad_norm=None,
+        # stem
+        use_stem="conv_bn_3x3",
+        stem_stride=1,
+        stem_affine=True,
+        stem_multiplier=1,
+        # candidate
+        candidate_eval_no_grad=True,
+        # schedule
+        schedule_cfg=None,
+    ):
         super().__init__(search_space, device, rollout_type, schedule_cfg)
         nn.Module.__init__(self)
 
-        self.macro_search_space = search_space.macro_search_space  # type: StagewiseMacroSearchSpace
-        self.micro_search_space = search_space.micro_search_space  # type: DenseMicroSearchSpace
+        self.macro_search_space = (
+            search_space.macro_search_space
+        )  # type: StagewiseMacroSearchSpace
+        self.micro_search_space = (
+            search_space.micro_search_space
+        )  # type: DenseMicroSearchSpace
 
         self.num_cell_groups = self.macro_search_space.num_cell_groups
         self.cell_layout = self.macro_search_space.cell_layout
@@ -104,7 +108,6 @@ class Layer2MacroSupernet(BaseWeightsManager, nn.Module):
                     num_steps=self.micro_search_space.num_steps,
                     num_init_nodes=self.micro_search_space.num_init_nodes,
                     output_op=self.micro_search_space.concat_op,
-                    # TODO: these should be in micro_search_space
                     postprocess_op="conv_1x1",
                     cell_shortcut=True,
                     cell_shortcut_op="skip_connect",
@@ -113,7 +116,6 @@ class Layer2MacroSupernet(BaseWeightsManager, nn.Module):
 
             prev_num_channels = num_channels
 
-
         # make pooling and classifier
         self.pooling = nn.AdaptiveAvgPool2d((1, 1))
         self.dropout = nn.Dropout(dropout_rate) if dropout_rate else nn.Identity()
@@ -121,10 +123,11 @@ class Layer2MacroSupernet(BaseWeightsManager, nn.Module):
 
         self.to(self.device)
 
-    def forward(self,
-                inputs,
-                rollout,  # type: Layer2Rollout
-                ):
+    def forward(
+        self,
+        inputs,
+        rollout,  # type: Layer2Rollout
+    ):
         macro_rollout = rollout.macro  # type: StagewiseMacroRollout
         micro_rollout = rollout.micro  # type: DenseMicroRollout
 
@@ -174,7 +177,7 @@ class Layer2MacroSupernet(BaseWeightsManager, nn.Module):
         self.to(device)
 
     def step(self, gradients, optimizer):
-        self.zero_grad() # clear all gradients
+        self.zero_grad()  # clear all gradients
         named_params = dict(self.named_parameters())
         for k, grad in gradients:
             named_params[k].grad = grad
@@ -185,10 +188,7 @@ class Layer2MacroSupernet(BaseWeightsManager, nn.Module):
         optimizer.step()
 
     def save(self, path):
-        torch.save(
-            {"epoch": self.epoch, "state_dict": self.state_dict()},
-            path
-        )
+        torch.save({"epoch": self.epoch, "state_dict": self.state_dict()}, path)
 
     def load(self, path):
         checkpoint = torch.load(path, map_location=torch.device("cpu"))
@@ -205,19 +205,20 @@ class Layer2MacroSupernet(BaseWeightsManager, nn.Module):
 
 
 class Layer2MicroCell(nn.Module):
-    def __init__(self,
-                 in_channels,
-                 out_channels,
-                 stride,
-                 affine,
-                 primitives,
-                 num_steps,
-                 num_init_nodes,
-                 output_op="concat",
-                 postprocess_op="conv_1x1",
-                 cell_shortcut=False,
-                 cell_shortcut_op="skip_connect",
-                 ):
+    def __init__(
+        self,
+        in_channels,
+        out_channels,
+        stride,
+        affine,
+        primitives,
+        num_steps,
+        num_init_nodes,
+        output_op="concat",
+        postprocess_op="conv_1x1",
+        cell_shortcut=False,
+        cell_shortcut_op="skip_connect",
+    ):
         super().__init__()
 
         self.out_channels = out_channels
@@ -234,14 +235,24 @@ class Layer2MicroCell(nn.Module):
             for i in range(self.num_nodes):
                 if j > i:
                     if i < self.num_init_nodes:
-                        self.edges.append(Layer2MicroEdge(primitives, in_channels, out_channels, stride, affine))
+                        self.edges.append(
+                            Layer2MicroEdge(
+                                primitives, in_channels, out_channels, stride, affine
+                            )
+                        )
                     else:
-                        self.edges.append(Layer2MicroEdge(primitives, out_channels, out_channels, 1, affine))
+                        self.edges.append(
+                            Layer2MicroEdge(
+                                primitives, out_channels, out_channels, 1, affine
+                            )
+                        )
                 else:
                     self.edges.append(None)
 
         if cell_shortcut and cell_shortcut_op != "none":
-            self.shortcut = ops.get_op(cell_shortcut_op)(in_channels, out_channels, stride, affine)
+            self.shortcut = ops.get_op(cell_shortcut_op)(
+                in_channels, out_channels, stride, affine
+            )
         else:
             self.shortcut = None
 
@@ -274,11 +285,17 @@ class Layer2MicroCell(nn.Module):
                 node_outputs.append(sum(edge_outputs))
             elif self.output_op == "concat":
                 # append fake outputs if required by concat
-                node_outputs.append(torch.zeros(
-                    n, self.out_channels, h // self.stride, w // self.stride, device=inputs.device
-                ))
+                node_outputs.append(
+                    torch.zeros(
+                        n,
+                        self.out_channels,
+                        h // self.stride,
+                        w // self.stride,
+                        device=inputs.device,
+                    )
+                )
 
-        node_outputs = node_outputs[self.num_init_nodes:]
+        node_outputs = node_outputs[self.num_init_nodes :]
         if len(node_outputs) == 0:
             # no node outputs (including fake outputs) in this cell
             out = 0
@@ -315,6 +332,8 @@ class Layer2MicroEdge(nn.Module):
         if len(outputs) != 0:
             return sum(outputs)
         else:
-            raise RuntimeError("Edge module does not handle the case where no op is "
-                               "used. It should be handled in Cell and Edge.forward "
-                               "should not be called")
+            raise RuntimeError(
+                "Edge module does not handle the case where no op is "
+                "used. It should be handled in Cell and Edge.forward "
+                "should not be called"
+            )

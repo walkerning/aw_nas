@@ -154,6 +154,9 @@ def main(local_rank):
               help="the directory to load checkpoint")
 @click.option("--save-every", default=None, type=int,
               help="the number of epochs to save checkpoint every")
+@click.option("--save-controller-every", default=None, type=int,
+              help="the number of epochs to save controller checkpoints every")
+
 @click.option("--interleave-report-every", default=50, type=int,
               help="the number of interleave steps to report every, "
               "only work in interleave training mode")
@@ -164,7 +167,7 @@ def main(local_rank):
               "need `tensorboard` extra, `pip install aw_nas[tensorboard]`")
 @click.option("--develop", default=False, type=bool, is_flag=True,
               help="in develop mode, will copy the `aw_nas` source files into train_dir for backup")
-def search(cfg_file, gpu, seed, load, save_every, interleave_report_every,
+def search(cfg_file, gpu, seed, load, save_every, save_controller_every, interleave_report_every,
            train_dir, vis_dir, develop):
     # check dependency and initialize visualization writer
     if vis_dir:
@@ -226,7 +229,8 @@ def search(cfg_file, gpu, seed, load, save_every, interleave_report_every,
     trainer = _init_components_from_cfg(cfg, device)[-1]
 
     # setup trainer and train
-    trainer.setup(load, save_every, train_dir, writer=writer,
+    trainer.setup(load, save_every, save_controller_every if save_controller_every is not None else save_every,
+                  train_dir, writer=writer,
                   interleave_report_every=interleave_report_every)
     trainer.train()
 
@@ -367,7 +371,9 @@ def mpsearch(cfg_file, seed, load, save_every, interleave_report_every,
     # setup trainer and train
     if local_rank != 0:
         save_every = None
-    trainer.setup(load, save_every, train_dir, writer=writer,
+        save_controller_every = None
+    trainer.setup(load, save_every, save_controller_every if save_controller_every is not None else save_every,
+                  train_dir, writer=writer,
                   interleave_report_every=interleave_report_every)
     trainer.train()
 
