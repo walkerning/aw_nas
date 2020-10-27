@@ -178,7 +178,8 @@ def test_supernet_candidate_gradient_virtual(test_id, super_net):
     c_buffers = dict(cand_net.named_buffers())
     # test `gradient`, `begin_virtual`
     w_prev = {k: v.clone() for k, v in six.iteritems(c_params)}
-    buffer_prev = {k: v.clone() for k, v in six.iteritems(c_buffers)}
+    buffer_prev = {k: v.clone() for k, v in six.iteritems(c_buffers)
+                   if "num_batches_tracked" not in k} # mean/var
     visited_c_params = dict(cand_net.active_named_members("parameters", check_visited=True))
     with cand_net.begin_virtual():
         grads = cand_net.gradient(data, mode="train")
@@ -201,7 +202,7 @@ def test_supernet_candidate_gradient_virtual(test_id, super_net):
 
     for n in c_params:
         assert (w_prev[n] - c_params[n]).abs().mean().item() < EPS
-    for n in c_buffers:
+    for n in buffer_prev:
         assert (buffer_prev[n] - c_buffers[n]).abs().float().mean().item() < EPS
 
 @pytest.mark.parametrize("super_net", [{
@@ -239,7 +240,8 @@ def test_supernet_specify_Cinout(super_net):
     assert logits.shape[-1] == 10
 
 @pytest.mark.parametrize("super_net", [{
-    "gpus": [0, 1]
+    "gpus": [0, 1],
+    "dataparallel": True
 }], indirect=["super_net"])
 def test_supernet_data_parallel_forward(super_net):
     # test forward
@@ -251,7 +253,8 @@ def test_supernet_data_parallel_forward(super_net):
     assert logits.shape == (batch_size, 10)
 
 @pytest.mark.parametrize("super_net", [{
-    "gpus": [0, 1]
+    "gpus": [0, 1],
+    "dataparallel": True
 }], indirect=["super_net"])
 def test_supernet_data_parallel_gradient(super_net):
     cand_net = _supernet_sample_cand(super_net)

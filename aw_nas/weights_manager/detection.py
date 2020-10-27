@@ -18,11 +18,12 @@ from aw_nas.weights_manager.base import BaseWeightsManager, CandidateNet
 from aw_nas.weights_manager.detection_header import DetectionHeader
 
 try:
-    from aw_nas.utils.SynchronizedBatchNormPyTorch.sync_batchnorm import (
-        convert_model as convert_sync_bn,
-    )
+    from torch.nn import SyncBatchNorm
+    convert_sync_bn = SyncBatchNorm.convert_sync_batchnorm
 except ImportError:
-    def convert_sync_bn(m): return m
+    utils.getLogger("weights_manager.detection").warn(
+        "Import convert_sync_bn failed! SyncBatchNorm might not work!")
+    convert_sync_bn = lambda m: m
 
 __all__ = ["DetectionBackboneSupernet"]
 

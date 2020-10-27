@@ -1,4 +1,4 @@
-# requirements
+# requirements for awnas<=0.4.1
 
 Click==7.0
 graphviz==0.10.1

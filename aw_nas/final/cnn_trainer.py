@@ -16,10 +16,11 @@ from aw_nas.utils import DistributedDataParallel
 from aw_nas.utils.torch_utils import calib_bn
 
 try:
-    from aw_nas.utils.SynchronizedBatchNormPyTorch.sync_batchnorm import (
-        convert_model as convert_sync_bn,
-    )
+    from torch.nn import SyncBatchNorm
+    convert_sync_bn = SyncBatchNorm.convert_sync_batchnorm
 except ImportError:
+    utils.getLogger("cnn_trainer").warn(
+        "Import convert_sync_bn failed! SyncBatchNorm might not work!")
     convert_sync_bn = lambda m: m
 
 def _warmup_update_lr(optimizer, epoch, init_lr, warmup_epochs):

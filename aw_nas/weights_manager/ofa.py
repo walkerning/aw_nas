@@ -10,16 +10,17 @@ from aw_nas.common import assert_rollout_type
 from aw_nas.ops import *
 from aw_nas.utils import data_parallel
 from aw_nas.utils.common_utils import make_divisible
-from aw_nas.utils.exception import expect, ConfigException
+from aw_nas.utils.exception import expect
 from aw_nas.utils import DistributedDataParallel
 from aw_nas.weights_manager.base import BaseWeightsManager, CandidateNet
 from aw_nas.weights_manager.ofa_backbone import BaseBackboneArch
 
 try:
-    from aw_nas.utils.SynchronizedBatchNormPyTorch.sync_batchnorm import (
-        convert_model as convert_sync_bn,
-    )
+    from torch.nn import SyncBatchNorm
+    convert_sync_bn = SyncBatchNorm.convert_sync_batchnorm
 except ImportError:
+    utils.getLogger("weights_manager.ofa").warn(
+        "Import convert_sync_bn failed! SyncBatchNorm might not work!")
     convert_sync_bn = lambda m: m
 
 __all__ = ["OFACandidateNet", "OFASupernet"]

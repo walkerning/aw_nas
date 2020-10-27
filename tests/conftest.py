@@ -1,5 +1,6 @@
 import os
 import pytest
+import torch
 
 class MockUnderlyWriter(object):
     def add_scalar(self, tag, value):
@@ -18,10 +19,14 @@ def writer():
 def super_net(request):
     cfg = getattr(request, "param", {})
     scfg = cfg.pop("search_space_cfg", {})
+    is_dp = cfg.pop("dataparallel", False)
     from aw_nas.common import get_search_space
     from aw_nas.weights_manager import SuperNet
     search_space = get_search_space(cls="cnn", **scfg)
     device = "cuda"
+    if is_dp and int(torch.__version__.split(".")[1]) > 2:
+        # For torch>1.2.0, this candidate_member_mask is not supported when work will data parallel
+        cfg["candidate_member_mask"] = False
     net = SuperNet(search_space, device, **cfg)
     return net
 

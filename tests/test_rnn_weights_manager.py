@@ -122,14 +122,16 @@ def test_rnn_supernet_candidate_gradient_virtual(rnn_super_net):
     c_buffers = dict(cand_net.named_buffers())
     # test `gradient`, `begin_virtual`
     w_prev = {k: v.clone() for k, v in six.iteritems(c_params)}
-    buffer_prev = {k: v.clone() for k, v in six.iteritems(c_buffers)}
+    buffer_prev = {k: v.clone() for k, v in six.iteritems(c_buffers)
+                   if "num_batches_tracked" not in k} # mean/var
 
     data = _rnn_data(time_steps, batch_size, _num_tokens)
 
     with cand_net.begin_virtual():
         grads = cand_net.gradient(data, mode="train", hiddens=hiddens, criterion=_rnn_criterion)
         assert len(grads) == len(c_params)
-        optimizer = torch.optim.SGD(cand_net.parameters(), lr=lr)
+        optimizer = torch.optim.SGD(cand_net.parameters(), lr=lr, momentum=0.)
+        # it seems momentum=0. is required for this test to pass torch>1.4.0
         optimizer.step()
         for n, grad in grads:
             assert (w_prev[n] - grad * lr - c_params[n]).abs().mean().item() < EPS
@@ -145,7 +147,7 @@ def test_rnn_supernet_candidate_gradient_virtual(rnn_super_net):
     # check parameters/buffers is back
     for n in c_params:
         assert (w_prev[n] - c_params[n]).abs().mean().item() < EPS
-    for n in c_buffers:
+    for n in buffer_prev:
         assert (buffer_prev[n] - c_buffers[n]).abs().float().mean().item() < EPS
 
 # ---- End test rnn_super_net ----
