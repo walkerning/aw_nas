@@ -1,5 +1,5 @@
 #pylint: disable=unused-import,wildcard-import,unused-wildcard-import
-from aw_nas.utils.log import logger
+from aw_nas.utils.log import *
 from aw_nas.utils.torch_utils import *
 from aw_nas.utils.common_utils import *
 from aw_nas.utils.registry import *

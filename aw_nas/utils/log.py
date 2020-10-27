@@ -5,6 +5,8 @@ import os
 import sys
 import logging
 
+__all__ = ["logger", "getLogger"]
+
 # by default, log level is logging.INFO
 LEVEL = "info"
 if "AWNAS_LOG_LEVEL" in os.environ:
@@ -25,3 +27,6 @@ def addFile(self, filename):
 
 # logger.__class__.addFile = addFile
 logging.Logger.addFile = addFile
+
+def getLogger(name):
+    return logger.getChild(name)

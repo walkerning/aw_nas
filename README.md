@@ -5,7 +5,7 @@
   <img src="doc/pics/logo_novauto.jpg" width="35%" hspace="20" />
 </p>
 
-Maintained by [NICS-EFC Lab](https://nicsefc.ee.tsinghua.edu.cn/) (Tsinghua University) and [Novauto Inc](https://www.novauto.com.cn/) (Beijing China).
+Maintained by [NICS-EFC Lab](https://nicsefc.ee.tsinghua.edu.cn/) (Tsinghua University) and [Novauto Technology Co. Ltd.](https://www.novauto.com.cn/) (Beijing China).
 
 ## Introduction
 

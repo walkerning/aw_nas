@@ -205,17 +205,18 @@ class ARFlopsObjective(AdversarialRobustnessObjective):
 
     def get_perfs(self, inputs, outputs, targets, cand_net):
         inputs_adv = self._gen_adv(inputs, outputs, targets, cand_net)
+        if hasattr(cand_net, "super_net"):
+            # clear the flops statistics
+            cand_net.super_net.reset_flops()
+        # the forward hooks will calculate the flops statistics
         outputs_adv = cand_net(inputs_adv)
+        if isinstance(cand_net, nn.DataParallel):
+            flops = cand_net.module.total_flops
+        else:
+            flops = cand_net.super_net.total_flops if hasattr(cand_net, "super_net") else \
+                (cand_net.module.total_flops if isinstance(cand_net, DistributedDataParallel) \
+                 else cand_net.total_flops)
 
-        # flops
-        cand_net_mod = cand_net.module\
-                       if isinstance(cand_net, (nn.DataParallel, DistributedDataParallel))\
-                          else cand_net
-        if hasattr(cand_net_mod, "super_net"):
-            cand_net_mod.super_net.reset_flops()
-
-        flops = cand_net_mod.super_net.total_flops if hasattr(cand_net_mod, "super_net") \
-                else cand_net.total_flops
         return float(accuracy(outputs, targets)[0]) / 100, \
                float(accuracy(outputs_adv, targets)[0]) / 100, flops
 

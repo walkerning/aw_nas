@@ -9,7 +9,7 @@ def _cnn_data(device="cuda", batch_size=2):
 
 
 def test_ss():
-    from aw_nas.common import get_search_space
+    from aw_nas.common import get_search_space, genotype_from_str
     ss = get_search_space(
         "dense_rob", cell_layout=[0, 0, 1, 0, 0, 1, 0, 0],
         reduce_cell_groups=[1]
@@ -18,6 +18,9 @@ def test_ss():
     print(rollout.genotype)
     rollout_rec = ss.rollout_from_genotype(rollout.genotype)
 
+    genotype_str = str(rollout.genotype)
+    genotype_rec = genotype_from_str(genotype_str, ss)
+    assert genotype_rec == rollout.genotype
 
 def test_ss_plot(tmp_path):
     from aw_nas.common import get_search_space, plot_genotype
