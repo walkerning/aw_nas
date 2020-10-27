@@ -3,7 +3,7 @@
 Adversarial robustness objective, and corresponding weights_manager.
 Copyright (c) 2019 Xuefei Ning, Junbo Zhao
 """
-#pylint: disable=missing-docstring,invalid-name,no-self-use
+# pylint: disable=missing-docstring,invalid-name,no-self-use
 
 import sys
 import weakref
@@ -11,8 +11,8 @@ import functools
 import contextlib
 from collections import OrderedDict
 import os
-
 import yaml
+
 import numpy as np
 import torch
 from torch import nn
@@ -28,6 +28,14 @@ from aw_nas.common import get_search_space
 from aw_nas.final.base import FinalModel
 from aw_nas.utils import DistributedDataParallel
 
+try:
+    import foolbox as fb
+except ImportError:
+    utils.getLogger("robustness plugin").warn(
+        "Cannot import foolbox. You should install FOOLBOX toolbox for running distance attacks!"
+    )
+
+
 # ---- different types of Adversaries ----
 class PgdAdvGenerator(object):
     def __init__(self, epsilon, n_step, step_size, rand_init, mean, std):
@@ -38,7 +46,7 @@ class PgdAdvGenerator(object):
         self.step_size = step_size
         self.mean = torch.reshape(torch.tensor(mean), (3, 1, 1))
         self.std = torch.reshape(torch.tensor(std), (3, 1, 1))
-        self.step_size = (step_size / self.std)
+        self.step_size = step_size / self.std
 
     def generate_adv(self, inputs, outputs, targets, net):
         self.mean = self.mean.to(inputs.device)
@@ -56,7 +64,6 @@ class PgdAdvGenerator(object):
 
         # Re-adjust pixel values to [0,1]
         inputs_clone = inputs.data.clone() * self.std + self.mean
-        # inputs.data = inputs * self.std + self.mean
 
         for _ in range(self.n_step):
             out = net(inputs_pgd)
@@ -67,7 +74,9 @@ class PgdAdvGenerator(object):
             # adjust to be within [-epsilon, epsilon]
             # Re-adjust pixel values to [0,1]
             inputs_pgd.data = inputs_pgd.data * self.std + self.mean
-            eta = torch.clamp(inputs_pgd.data - inputs_clone, -self.epsilon, self.epsilon)
+            eta = torch.clamp(
+                inputs_pgd.data - inputs_clone, -self.epsilon, self.epsilon
+            )
             inputs_pgd.data = inputs_clone + eta
             inputs_pgd.data = torch.clamp(inputs_pgd.data, 0.0, 1.0)
             # Re-re-adjust pixel values
@@ -79,33 +88,195 @@ class PgdAdvGenerator(object):
 
 
 Adversary = {
-    "FGSM": \
-    (lambda epsilon, n_step, step_size, rand_init, mean, std:
-     PgdAdvGenerator(epsilon, 1, epsilon, rand_init, mean, std)),
+    "FGSM": (
+        lambda epsilon, n_step, step_size, rand_init, mean, std: PgdAdvGenerator(
+            epsilon, 1, epsilon, False, mean, std
+        )
+    ),
     "PGD": PgdAdvGenerator,
 }
 
+
+class DistanceAdversary(object):
+    def __init__(self, adversary_type, mean, std, bounds=(0, 1), num_classes=10):
+        self.adversary_type = adversary_type
+        self.preprocessing = dict(mean=mean, std=std, axis=-3)
+        self.bounds = bounds
+        self.num_classes = num_classes
+        self.mean = torch.reshape(torch.tensor(mean), (3, 1, 1))
+        self.std = torch.reshape(torch.tensor(std), (3, 1, 1))
+
+    def generate_adv(self, inputs, outputs, targets, net):
+        net.eval()
+        inputs_clone = inputs.data.clone() * self.std.to(inputs.device) + self.mean.to(
+            inputs.device
+        )
+        fmodel = fb.models.PyTorchModel(
+            net,
+            bounds=self.bounds,
+            preprocessing=self.preprocessing,
+            num_classes=self.num_classes,
+            device=inputs.device,
+        )
+        adversary = getattr(fb.attacks, self.adversary_type)(fmodel)
+        adv_examples = adversary(
+            inputs_clone.cpu().numpy(), targets.cpu().numpy(), unpack=False
+        )
+        return adv_examples
+
+
 # ---- Different types of objectives ----
+class AdversarialDistanceObjective(BaseObjective):
+    NAME = "adversarial_distance_objective"
+    SCHEDULABLE_ATTRS = []
+
+    def __init__(
+        self,
+        search_space,
+        # adversarial
+        adversary_type,
+        mean=None,
+        std=None,
+        bounds=(0, 1),
+        num_classes=10,
+        adv_loss_coeff=0.0,
+        median_distance_coeff=0.5,
+        as_controller_regularization=False,
+        as_evaluator_regularization=False,
+        schedule_cfg=None,
+    ):
+        super(AdversarialDistanceObjective, self).__init__(search_space, schedule_cfg)
+
+        expect(
+            mean is not None and std is not None,
+            "Must explicitly specify mean and std used in the data augmentation",
+            ConfigException,
+        )
+        self.adversary = DistanceAdversary(
+            adversary_type, mean, std, bounds, num_classes
+        )
+        self.adv_loss_coeff = adv_loss_coeff
+        self.median_distance_coeff = median_distance_coeff
+        self.mean_distance_coeff = 1 - median_distance_coeff
+        self.as_controller_regularization = as_controller_regularization
+        self.as_evaluator_regularization = as_evaluator_regularization
+
+        if self.adv_loss_coeff > 0:
+            expect(
+                self.as_controller_regularization or self.as_evaluator_regularization,
+                "When `adv_loss_coeff` > 0, you should either use this adversarial loss"
+                " as controller regularization or as evaluator regularization, or both. "
+                "By setting `as_controller_regularization` and `as_evaluator_regularization`.",
+                ConfigException,
+            )
+
+    @classmethod
+    def supported_data_types(cls):
+        return ["image"]
+
+    def perf_names(self):
+        return ["acc_clean", "acc_adv", "mean_distance", "median_distance"]
+
+    def get_perfs(self, inputs, outputs, targets, cand_net):
+        adv_examples = self._gen_adv(inputs, outputs, targets, cand_net)
+        adv_classes = np.asarray([adv.adversarial_class for adv in adv_examples])
+        adv_distance = np.asarray([adv.distance.value for adv in adv_examples])
+        return (
+            float(accuracy(outputs, targets)[0]) / 100,
+            np.sum(adv_classes == targets.cpu().numpy()) / len(inputs),
+            1e10 * adv_distance,
+            1e10 * adv_distance,
+        )
+
+    def _gen_adv(self, inputs, outputs, targets, cand_net):
+        return self.adversary.generate_adv(inputs, outputs, targets, cand_net)
+
+    def get_reward(self, inputs, outputs, targets, cand_net):
+        perfs = self.get_perfs(inputs, outputs, targets, cand_net)
+        return self.mean_distance_coeff * np.mean(
+            perfs[2]
+        ) + self.median_distance_coeff * np.median(perfs[3])
+
+    def get_loss(
+        self,
+        inputs,
+        outputs,
+        targets,
+        cand_net,
+        add_controller_regularization=True,
+        add_evaluator_regularization=True,
+    ):
+        """
+        Get the cross entropy loss *tensor*, optionally add regluarization loss.
+        Args:
+            inputs: data inputs
+            outputs: logits
+            targets: labels
+        """
+        loss = nn.CrossEntropyLoss()(outputs, targets)
+        if self.adv_loss_coeff > 0 and (
+            (add_controller_regularization and self.as_controller_regularization)
+            or (add_evaluator_regularization and self.as_evaluator_regularization)
+        ):
+            adv_examples = self._gen_adv(inputs, outputs, targets, cand_net)
+            inputs_adv = torch.tensor(
+                [torch.from_numpy(adv.perturbed) for adv in adv_examples]
+            )
+            outputs_adv = cand_net(inputs_adv)
+            ce_loss_adv = nn.CrossEntropyLoss()(outputs_adv, targets)
+            loss = (1 - self.adv_loss_coeff) * loss + self.adv_loss_coeff * ce_loss_adv
+        return loss
+
+    def aggregate_distance(self, distance_perfs, _type):
+        all_distances = []
+        for distances in distance_perfs:
+            all_distances.extend(distances.tolist())
+        all_distances = np.array(all_distances)
+        if _type == "mean_distance":
+            return np.mean(all_distances)
+        elif _type == "median_distance":
+            return np.median(all_distances)
+
+    def aggregate_fn(self, name, is_training=False):
+        if "distance" in name:
+            return lambda perfs: self.aggregate_distance(perfs, name)
+        else:
+            return lambda perfs: np.mean(perfs)
+
+
 class AdversarialRobustnessObjective(BaseObjective):
     NAME = "adversarial_robustness_objective"
     SCHEDULABLE_ATTRS = []
 
-    def __init__(self, search_space,
-                 # adversarial
-                 epsilon=0.031, n_step=7, step_size=0.0078, rand_init=False,
-                 mean=None, std=None, adversary_type="PGD",
-                 # loss & reward
-                 adv_loss_coeff=0., adv_reward_coeff=0.,
-                 as_controller_regularization=False, as_evaluator_regularization=False,
-                 schedule_cfg=None):
+    def __init__(
+        self,
+        search_space,
+        # adversarial
+        epsilon=0.031,
+        n_step=7,
+        step_size=0.0078,
+        rand_init=False,
+        mean=None,
+        std=None,
+        adversary_type="PGD",
+        # loss & reward
+        adv_loss_coeff=0.0,
+        adv_reward_coeff=0.0,
+        as_controller_regularization=False,
+        as_evaluator_regularization=False,
+        schedule_cfg=None,
+    ):
         super(AdversarialRobustnessObjective, self).__init__(search_space, schedule_cfg)
 
         # adversarial generator
-        expect(mean is not None and std is not None,
-               "Must explicitly specify mean and std used in the data augmentation",
-               ConfigException)
+        expect(
+            mean is not None and std is not None,
+            "Must explicitly specify mean and std used in the data augmentation",
+            ConfigException,
+        )
         self.adv_generator = Adversary[adversary_type](
-            epsilon, n_step, step_size, rand_init, mean, std)
+            epsilon, n_step, step_size, rand_init, mean, std
+        )
         self.adv_reward_coeff = adv_reward_coeff
         self.adv_loss_coeff = adv_loss_coeff
         self.as_controller_regularization = as_controller_regularization
@@ -113,11 +284,13 @@ class AdversarialRobustnessObjective(BaseObjective):
         self.cache_hit = 0
         self.cache_miss = 0
         if self.adv_loss_coeff > 0:
-            expect(self.as_controller_regularization or self.as_evaluator_regularization,
-                   "When `adv_loss_coeff` > 0, you should either use this adversarial loss"
-                   " as controller regularization or as evaluator regularization, or both. "
-                   "By setting `as_controller_regularization` and `as_evaluator_regularization`.",
-                   ConfigException)
+            expect(
+                self.as_controller_regularization or self.as_evaluator_regularization,
+                "When `adv_loss_coeff` > 0, you should either use this adversarial loss"
+                " as controller regularization or as evaluator regularization, or both. "
+                "By setting `as_controller_regularization` and `as_evaluator_regularization`.",
+                ConfigException,
+            )
 
     @classmethod
     def supported_data_types(cls):
@@ -133,11 +306,20 @@ class AdversarialRobustnessObjective(BaseObjective):
     def get_perfs(self, inputs, outputs, targets, cand_net):
         inputs_adv = self._gen_adv(inputs, outputs, targets, cand_net)
         outputs_adv = cand_net(inputs_adv)
-        return float(accuracy(outputs, targets)[0]) / 100, \
-               float(accuracy(outputs_adv, targets)[0]) / 100
+        return (
+            float(accuracy(outputs, targets)[0]) / 100,
+            float(accuracy(outputs_adv, targets)[0]) / 100,
+        )
 
-    def get_loss(self, inputs, outputs, targets, cand_net,
-                 add_controller_regularization=True, add_evaluator_regularization=True):
+    def get_loss(
+        self,
+        inputs,
+        outputs,
+        targets,
+        cand_net,
+        add_controller_regularization=True,
+        add_evaluator_regularization=True,
+    ):
         """
         Get the cross entropy loss *tensor*, optionally add regluarization loss.
         Args:
@@ -146,9 +328,10 @@ class AdversarialRobustnessObjective(BaseObjective):
             targets: labels
         """
         loss = nn.CrossEntropyLoss()(outputs, targets)
-        if self.adv_loss_coeff > 0 and \
-           ((add_controller_regularization and self.as_controller_regularization) or \
-            (add_evaluator_regularization and self.as_evaluator_regularization)):
+        if self.adv_loss_coeff > 0 and (
+            (add_controller_regularization and self.as_controller_regularization)
+            or (add_evaluator_regularization and self.as_evaluator_regularization)
+        ):
             inputs_adv = self._gen_adv(inputs, outputs, targets, cand_net)
             outputs_adv = cand_net(inputs_adv)
             ce_loss_adv = nn.CrossEntropyLoss()(outputs_adv, targets)
@@ -157,7 +340,9 @@ class AdversarialRobustnessObjective(BaseObjective):
 
     def on_epoch_end(self, epoch):
         super(AdversarialRobustnessObjective, self).on_epoch_end(epoch)
-        self.logger.info("Adversarial cache hit/miss : %d/%d", self.cache_hit, self.cache_miss)
+        self.logger.info(
+            "Adversarial cache hit/miss : %d/%d", self.cache_hit, self.cache_miss
+        )
         self.cache_miss = 0
         self.cache_hit = 0
 
@@ -213,30 +398,61 @@ class ARFlopsObjective(AdversarialRobustnessObjective):
         if isinstance(cand_net, nn.DataParallel):
             flops = cand_net.module.total_flops
         else:
-            flops = cand_net.super_net.total_flops if hasattr(cand_net, "super_net") else \
-                (cand_net.module.total_flops if isinstance(cand_net, DistributedDataParallel) \
-                 else cand_net.total_flops)
+            flops = (
+                cand_net.super_net.total_flops
+                if hasattr(cand_net, "super_net")
+                else (
+                    cand_net.module.total_flops
+                    if isinstance(cand_net, DistributedDataParallel)
+                    else cand_net.total_flops
+                )
+            )
 
-        return float(accuracy(outputs, targets)[0]) / 100, \
-               float(accuracy(outputs_adv, targets)[0]) / 100, flops
+        return (
+            float(accuracy(outputs, targets)[0]) / 100,
+            float(accuracy(outputs_adv, targets)[0]) / 100,
+            flops,
+        )
 
 
 class BlackAdversarialRobustnessObjective(AdversarialRobustnessObjective):
     NAME = "black_adversarial_robustness_objective"
     SCHEDULABLE_ATTRS = []
 
-    def __init__(self, search_space, source_model_path, source_model_device,
-                 source_model_cfg=None, epsilon=0.031, n_step=100,
-                 step_size=0.0078, rand_init=True,
-                 mean=None, std=None, adversary_type="PGD",
-                 adv_loss_coeff=0., as_controller_regularization=False,
-                 as_evaluator_regularization=False,
-                 adv_reward_coeff=0., schedule_cfg=None):
+    def __init__(
+        self,
+        search_space,
+        source_model_path,
+        source_model_device,
+        source_model_cfg=None,
+        epsilon=0.031,
+        n_step=100,
+        step_size=0.0078,
+        rand_init=True,
+        mean=None,
+        std=None,
+        adversary_type="PGD",
+        adv_loss_coeff=0.0,
+        as_controller_regularization=False,
+        as_evaluator_regularization=False,
+        adv_reward_coeff=0.0,
+        schedule_cfg=None,
+    ):
         super(BlackAdversarialRobustnessObjective, self).__init__(
-            search_space, epsilon, n_step, step_size,
-            rand_init, mean, std, adversary_type,
-            adv_loss_coeff, as_controller_regularization, as_evaluator_regularization,
-            adv_reward_coeff, schedule_cfg)
+            search_space,
+            epsilon,
+            n_step,
+            step_size,
+            rand_init,
+            mean,
+            std,
+            adversary_type,
+            adv_loss_coeff,
+            as_controller_regularization,
+            as_evaluator_regularization,
+            adv_reward_coeff,
+            schedule_cfg,
+        )
 
         # load the substitute model
         self.load_model(source_model_path, source_model_device, source_model_cfg)
@@ -246,16 +462,20 @@ class BlackAdversarialRobustnessObjective(AdversarialRobustnessObjective):
     def load_model(self, path, device, source_model_cfg=None):
         model_path = os.path.join(path, "model.pt") if os.path.isdir(path) else path
         if os.path.exists(model_path):
-            self.source_model = torch.load(model_path, map_location=torch.device("cpu")).to(device)
+            self.source_model = torch.load(
+                model_path, map_location=torch.device("cpu")
+            ).to(device)
         else:
             model_path = os.path.join(path, "model_state.pt")
-            with open(source_model_cfg, 'r') as f:
+            with open(source_model_cfg, "r") as f:
                 cfg = yaml.load(f)
             ss = get_search_space(cfg["search_space_type"], **cfg["search_space_cfg"])
             self.source_model = FinalModel.get_class_(cfg["final_model_type"])(
-                ss, device, **cfg["final_model_cfg"])
+                ss, device, **cfg["final_model_cfg"]
+            )
             self.source_model.load_state_dict(
-                torch.load(model_path, map_location=torch.device("cpu")))
+                torch.load(model_path, map_location=torch.device("cpu"))
+            )
             self.source_model = self.source_model.to(device)
         self.source_model.eval()
 
@@ -263,15 +483,22 @@ class BlackAdversarialRobustnessObjective(AdversarialRobustnessObjective):
         inputs_adv = self._gen_adv(inputs, outputs, targets, cand_net)
         outputs_adv = cand_net(inputs_adv)
         self._adv_total += len(inputs_adv)
-        self._adv_correct += float(accuracy(outputs_adv, targets)[0]) / 100 * len(inputs_adv)
+        self._adv_correct += (
+            float(accuracy(outputs_adv, targets)[0]) / 100 * len(inputs_adv)
+        )
         print("Acc: {}".format(self._adv_correct / self._adv_total))
         sys.stdout.flush()
-        return float(accuracy(outputs, targets)[0]) / 100, \
-               float(accuracy(outputs_adv, targets)[0]) / 100
+        return (
+            float(accuracy(outputs, targets)[0]) / 100,
+            float(accuracy(outputs_adv, targets)[0]) / 100,
+        )
 
     def _gen_adv(self, inputs, outputs, targets, cand_net=None):
-        inputs_adv = self.adv_generator.generate_adv(inputs, outputs, targets, self.source_model)
+        inputs_adv = self.adv_generator.generate_adv(
+            inputs, outputs, targets, self.source_model
+        )
         return inputs_adv, targets
+
 
 class _Cache(OrderedDict):
     def __init__(self, *args, **kwargs):
@@ -285,6 +512,7 @@ class _Cache(OrderedDict):
         if self.buffer_size is not None:
             while len(self) > self.buffer_size:
                 self.popitem(last=False)
+
 
 class CacheAdvCandidateNet(SubCandidateNet):
     def __init__(self, *args, **kwargs):
@@ -317,8 +545,15 @@ class CacheAdvCandidateNet(SubCandidateNet):
 
         self.clear_cache()
 
-    def train_queue(self, queue, optimizer, criterion=lambda i, l, t: nn.CrossEntropyLoss()(l, t),
-                    eval_criterions=None, steps=1, **kwargs):
+    def train_queue(
+        self,
+        queue,
+        optimizer,
+        criterion=lambda i, l, t: nn.CrossEntropyLoss()(l, t),
+        eval_criterions=None,
+        steps=1,
+        **kwargs
+    ):
         assert steps > 0
         self._set_mode("train")
 
@@ -330,7 +565,9 @@ class CacheAdvCandidateNet(SubCandidateNet):
             outputs = self.forward_data(*data, **kwargs)
             loss = criterion(data[0], outputs, targets)
             if eval_criterions:
-                ans = utils.flatten_list([c(data[0], outputs, targets) for c in eval_criterions])
+                ans = utils.flatten_list(
+                    [c(data[0], outputs, targets) for c in eval_criterions]
+                )
                 if average_ans is None:
                     average_ans = ans
                 else:
@@ -344,6 +581,7 @@ class CacheAdvCandidateNet(SubCandidateNet):
             return [s / steps for s in average_ans]
         return []
 
+
 class CacheAdvSuperNet(SuperNet):
     NAME = "adv_supernet"
 
@@ -353,18 +591,22 @@ class CacheAdvSuperNet(SuperNet):
         if self.candidate_eval_no_grad:
             self.logger.warning(
                 "candidate_eval_no_grad for CacheAdvSuperNet should be set to `false` (not {}), "
-                "automatically changed to `false`".format(self.candidate_eval_no_grad))
+                "automatically changed to `false`".format(self.candidate_eval_no_grad)
+            )
         self.candidate_eval_no_grad = False
         self.assembled = 0
         self.candidate_map = weakref.WeakValueDictionary()
 
     def assemble_candidate(self, rollout):
         cand_net = CacheAdvCandidateNet(
-            self, rollout, gpus=self.gpus,
+            self,
+            rollout,
+            gpus=self.gpus,
             member_mask=self.candidate_member_mask,
             cache_named_members=self.candidate_cache_named_members,
             virtual_parameter_only=self.candidate_virtual_parameter_only,
-            eval_no_grad=self.candidate_eval_no_grad)
+            eval_no_grad=self.candidate_eval_no_grad,
+        )
         self.candidate_map[self.assembled] = cand_net
         self.assembled += 1
         return cand_net
@@ -390,6 +632,7 @@ class CacheAdvSuperNet(SuperNet):
         state = super(CacheAdvSuperNet, self).__getstate__()
         del state["candidate_map"]
         return state
+
 
 class CacheAdvDiffCandidateNet(DiffSubCandidateNet):
     def __init__(self, *args, **kwargs):
@@ -422,14 +665,16 @@ class CacheAdvDiffCandidateNet(DiffSubCandidateNet):
 
         self.clear_cache()
 
-    def train_queue(self,
-                    queue,
-                    optimizer,
-                    criterion=lambda i, l, t: nn.CrossEntropyLoss()(l, t),
-                    eval_criterions=None,
-                    steps=1,
-                    aggregate_fns=None,
-                    **kwargs):
+    def train_queue(
+        self,
+        queue,
+        optimizer,
+        criterion=lambda i, l, t: nn.CrossEntropyLoss()(l, t),
+        eval_criterions=None,
+        steps=1,
+        aggregate_fns=None,
+        **kwargs
+    ):
         assert steps > 0
 
         self._set_mode("train")
@@ -443,7 +688,8 @@ class CacheAdvDiffCandidateNet(DiffSubCandidateNet):
             loss = criterion(data[0], outputs, targets)
             if eval_criterions:
                 ans = utils.flatten_list(
-                    [c(data[0], outputs, targets) for c in eval_criterions])
+                    [c(data[0], outputs, targets) for c in eval_criterions]
+                )
                 aggr_ans.append(ans)
             self.zero_grad()
             loss.backward()
@@ -454,12 +700,12 @@ class CacheAdvDiffCandidateNet(DiffSubCandidateNet):
             aggr_ans = np.asarray(aggr_ans).transpose()
             if aggregate_fns is None:
                 # by default, aggregate batch rewards with MEAN
-                aggregate_fns = [lambda perfs: np.mean(perfs) if len(perfs) > 0 else 0.]\
-                                * len(aggr_ans)
-            return [
-                aggr_fn(ans) for aggr_fn, ans in zip(aggregate_fns, aggr_ans)
-            ]
+                aggregate_fns = [
+                    lambda perfs: np.mean(perfs) if len(perfs) > 0 else 0.0
+                ] * len(aggr_ans)
+            return [aggr_fn(ans) for aggr_fn, ans in zip(aggregate_fns, aggr_ans)]
         return []
+
 
 class CacheAdvDiffSuperNet(DiffSuperNet):
     NAME = "adv_diff_supernet"
@@ -470,16 +716,20 @@ class CacheAdvDiffSuperNet(DiffSuperNet):
         if self.candidate_eval_no_grad:
             self.logger.warning(
                 "candidate_eval_no_grad for CacheAdvSuperNet should be set to `false` (not {}), "
-                "automatically changed to `false`".format(self.candidate_eval_no_grad))
+                "automatically changed to `false`".format(self.candidate_eval_no_grad)
+            )
         self.candidate_eval_no_grad = False
         self.assembled = 0
         self.candidate_map = weakref.WeakValueDictionary()
 
     def assemble_candidate(self, rollout):
         cand_net = CacheAdvDiffCandidateNet(
-            self, rollout, gpus=self.gpus,
+            self,
+            rollout,
+            gpus=self.gpus,
             virtual_parameter_only=self.candidate_virtual_parameter_only,
-            eval_no_grad=self.candidate_eval_no_grad)
+            eval_no_grad=self.candidate_eval_no_grad,
+        )
         self.candidate_map[self.assembled] = cand_net
         self.assembled += 1
         return cand_net
@@ -509,6 +759,10 @@ class CacheAdvDiffSuperNet(DiffSuperNet):
 
 class AdversarialRobustnessPlugin(AwnasPlugin):
     NAME = "adversarial_robustness"
-    objective_list = [AdversarialRobustnessObjective, ARFlopsObjective,
-                      BlackAdversarialRobustnessObjective]
+    objective_list = [
+        AdversarialRobustnessObjective,
+        ARFlopsObjective,
+        BlackAdversarialRobustnessObjective,
+        AdversarialDistanceObjective,
+    ]
     weights_manager_list = [CacheAdvSuperNet, CacheAdvDiffSuperNet]
