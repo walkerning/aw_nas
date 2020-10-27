@@ -1,7 +1,9 @@
 #pylint: disable-all
 import os
+
 import numpy as np
 import torch
+import pytest
 
 def _cnn_data(device="cuda", batch_size=2):
     return (torch.rand(batch_size, 3, 28, 28, dtype=torch.float, device=device),
@@ -21,6 +23,20 @@ def test_ss():
     genotype_str = str(rollout.genotype)
     genotype_rec = genotype_from_str(genotype_str, ss)
     assert genotype_rec == rollout.genotype
+
+    # test msrobnet-1560M and its search space
+    ss = get_search_space(
+        "dense_rob", num_cell_groups=8, num_init_nodes=2,
+        cell_layout=[0, 1, 2, 3, 4, 5, 6, 7], reduce_cell_groups=[2, 5],
+        num_steps=4, primitives=["none", "skip_connect", "sep_conv_3x3", "ResSepConv"])
+
+    genotype_str = "DenseRobGenotype(normal_0='init_node~2+|skip_connect~0|sep_conv_3x3~1|+|none~0|skip_connect~1|skip_connect~2|+|none~0|sep_conv_3x3~1|ResSepConv~2|skip_connect~3|+|skip_connect~0|sep_conv_3x3~1|sep_conv_3x3~2|sep_conv_3x3~3|sep_conv_3x3~4|', normal_1='init_node~2+|ResSepConv~0|sep_conv_3x3~1|+|none~0|sep_conv_3x3~1|skip_connect~2|+|ResSepConv~0|ResSepConv~1|ResSepConv~2|none~3|+|none~0|skip_connect~1|sep_conv_3x3~2|sep_conv_3x3~3|skip_connect~4|', reduce_2='init_node~2+|ResSepConv~0|skip_connect~1|+|sep_conv_3x3~0|none~1|none~2|+|skip_connect~0|ResSepConv~1|sep_conv_3x3~2|none~3|+|ResSepConv~0|skip_connect~1|ResSepConv~2|none~3|skip_connect~4|', normal_3='init_node~2+|skip_connect~0|skip_connect~1|+|ResSepConv~0|none~1|ResSepConv~2|+|ResSepConv~0|none~1|ResSepConv~2|skip_connect~3|+|none~0|sep_conv_3x3~1|none~2|skip_connect~3|sep_conv_3x3~4|', normal_4='init_node~2+|ResSepConv~0|sep_conv_3x3~1|+|skip_connect~0|skip_connect~1|none~2|+|sep_conv_3x3~0|skip_connect~1|sep_conv_3x3~2|sep_conv_3x3~3|+|ResSepConv~0|ResSepConv~1|none~2|skip_connect~3|sep_conv_3x3~4|', reduce_5='init_node~2+|sep_conv_3x3~0|sep_conv_3x3~1|+|ResSepConv~0|sep_conv_3x3~1|ResSepConv~2|+|none~0|sep_conv_3x3~1|ResSepConv~2|sep_conv_3x3~3|+|ResSepConv~0|skip_connect~1|skip_connect~2|skip_connect~3|sep_conv_3x3~4|', normal_6='init_node~2+|none~0|ResSepConv~1|+|none~0|sep_conv_3x3~1|ResSepConv~2|+|skip_connect~0|ResSepConv~1|ResSepConv~2|none~3|+|ResSepConv~0|skip_connect~1|ResSepConv~2|none~3|sep_conv_3x3~4|', normal_7='init_node~2+|none~0|none~1|+|none~0|ResSepConv~1|none~2|+|sep_conv_3x3~0|skip_connect~1|ResSepConv~2|none~3|+|ResSepConv~0|skip_connect~1|skip_connect~2|none~3|ResSepConv~4|')"
+    rec_genotype = genotype_from_str(genotype_str, ss)
+
+    # test a genotype does not fit for this search space
+    with pytest.raises(TypeError):
+        genotype_str = "DenseRobGenotype(normal_0='init_node~1+|sep_conv_3x3~0|+|skip_connect~0|none~1|+|sep_conv_3x3~0|sep_conv_3x3~1|skip_connect~2|+|skip_connect~0|skip_connect~1|sep_conv_3x3~2|none~3|', reduce_1='init_node~1+|none~0|+|none~0|sep_conv_3x3~1|+|none~0|none~1|sep_conv_3x3~2|+|sep_conv_3x3~0|none~1|none~2|none~3|', normal_2='init_node~1+|sep_conv_3x3~0|+|sep_conv_3x3~0|skip_connect~1|+|skip_connect~0|none~1|skip_connect~2|+|skip_connect~0|sep_conv_3x3~1|sep_conv_3x3~2|skip_connect~3|', reduce_3='init_node~1+|skip_connect~0|+|skip_connect~0|skip_connect~1|+|none~0|sep_conv_3x3~1|sep_conv_3x3~2|+|skip_connect~0|skip_connect~1|sep_conv_3x3~2|skip_connect~3|', normal_4='init_node~1+|sep_conv_3x3~0|+|skip_connect~0|skip_connect~1|+|skip_connect~0|sep_conv_3x3~1|sep_conv_3x3~2|+|sep_conv_3x3~0|none~1|skip_connect~2|skip_connect~3|')"
+        rec_genotype = genotype_from_str(genotype_str, ss)
 
 def test_ss_plot(tmp_path):
     from aw_nas.common import get_search_space, plot_genotype
