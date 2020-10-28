@@ -106,6 +106,18 @@ class EvoController(BaseController):
         self._gt_rollouts = []
         self._gt_scores = []
 
+    def reinit(self):
+        """
+        Clear controller population.
+
+        e.g., Used by predictor-based controller to clean the inner controller's population
+        between multiple iterations
+        """
+        self.logger.info("Reinit called. Clear the population.")
+        self.set_init_population([], perf_name=None)
+        self._gt_rollouts = []
+        self._gt_scores = []
+
     def set_init_population(self, rollout_list, perf_name):
         # clear the current population
         self.population = collections.OrderedDict()
@@ -165,7 +177,7 @@ class EvoController(BaseController):
 
         # if population size does no reach preset `self.population_size`, just random sample
         if len(self.population) < self.population_size:
-            self.logger.info("Population not full, random sample {}".format(n))
+            self.logger.debug("Population not full, random sample {}".format(n))
             return [self.search_space.random_sample() for _ in range(n)]
 
         population_items = list(self.population.items())
@@ -190,8 +202,8 @@ class EvoController(BaseController):
             self.population[rollout.genotype] = rollout.get_perf(perf_name)
 
         if len(self.population) > self.population_size:
+            to_eliminate_num = len(self.population) - self.population_size
             if self.elimination_strategy == "regularized":
-                to_eliminate_num = len(self.population) - self.population_size
                 # eliminate according to age (Regularized Evolution)
                 for key in list(self.population.keys())[:to_eliminate_num]:
                     self.population.pop(key)

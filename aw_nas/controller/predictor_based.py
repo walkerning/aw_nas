@@ -303,7 +303,18 @@ class PredictorBasedController(BaseController):
             # random init
             if self.inner_iter_random_init \
                and hasattr(self.inner_controller, "reinit"):
-                self.inner_controller.reinit()
+                if i_iter > 1:
+                    # might use gt rollouts as the init population if `inner_random_init=true`
+                    # so, do not call reinit when i_iter == 1
+                    if (not isinstance(self.inner_iter_random_init, int)) or \
+                       self.inner_iter_random_init == 1 or \
+                       i_iter % self.inner_iter_random_init == 1:
+                        # if `inner_iter_random_init` is a integer
+                        # only reinit every `inner_iter_random_init` iterations.
+                        # `inner_iter_random_init==True` is the same as `inner_iter_random_init==1`,
+                        # and means that every iter (besides iter 1) would call `reinit`
+                        self.inner_controller.reinit()
+
 
             new_per_step_meter = utils.AverageMeter()
 
@@ -451,7 +462,9 @@ class PredictorBasedController(BaseController):
             pickle.dump(self.gt_rollouts, f)
         if self.inner_controller is not None:
             self.inner_controller.save("{}_controller".format(path))
-        self.model.save("{}_predictor".format(path))
+        if self.is_predictor_trained:
+            # only save when the predictor is trained
+            self.model.save("{}_predictor".format(path))
 
     def load(self, path):
         # load the evaled rollouts, predictor, controller

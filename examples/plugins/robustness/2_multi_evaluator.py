@@ -28,7 +28,7 @@ class BaseMultiShotEvaluator(BaseEvaluator):
         sub_evaluators=[],
         schedule_cfg=None,
     ):
-        super(MultiShotEvaluator, self).__init__(
+        super(BaseMultiShotEvaluator, self).__init__(
             dataset, weights_manager, objective, rollout_type, schedule_cfg=schedule_cfg
         )
         self.sub_evaluator_cfgs = sub_evaluators
@@ -87,8 +87,12 @@ class BaseMultiShotEvaluator(BaseEvaluator):
         r_comb_perfs = [
             self._combine_multi_perfs(r_perfs) for r_perfs in zip(*sub_eva_perfs)
         ]
+        for i, rollout in enumerate(rollouts):
+            rollout.multi_perf = [copy.deepcopy(sub_eva_perfs[j][i]) for j in range(self.num_sub_evaluators)]
         for rollout, r_comb_perf in zip(rollouts, r_comb_perfs):
-            rollout.perf = r_comb_perf
+            # use update instead of assignment, to keep track of the `predicted_score` field
+            # that is set by predictor-based controller
+            rollout.update(r_comb_perf)
         return rollouts
 
     def update_rollouts(self, rollouts):
@@ -130,7 +134,7 @@ class MultiEvaluator(BaseMultiShotEvaluator):
         rollout_type,
         sub_evaluators=[],
         target_flops=1500.0e6,
-        fit_function_type="ilog2",
+        fit_function_type="log_power",
         schedule_cfg=None,
     ):
         super(MultiEvaluator, self).__init__(
