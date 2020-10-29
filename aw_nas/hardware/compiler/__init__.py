@@ -1,6 +1,6 @@
-from aw_nas.utils import logger as _logger
+from aw_nas.utils import getLogger
 
-_LOGGER = _logger.getChild("hardware.compiler")
+_LOGGER = getLogger("hardware.compiler")
 
 try:
     from aw_nas.hardware.compiler import dpu

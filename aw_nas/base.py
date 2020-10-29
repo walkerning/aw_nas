@@ -7,7 +7,7 @@ import yaml
 
 from aw_nas import utils
 from aw_nas.utils import RegistryMeta
-from aw_nas.utils import logger as _logger
+from aw_nas.utils import getLogger
 from aw_nas.utils.vis_utils import WrapWriter
 from aw_nas.utils.exception import expect, ConfigException
 
@@ -41,7 +41,7 @@ class Component(object):
     @property
     def logger(self):
         if self._logger is None:
-            self._logger = _logger.getChild(self.__class__.__name__)
+            self._logger = getLogger(self.__class__.__name__)
         return self._logger
 
     def __getstate__(self):

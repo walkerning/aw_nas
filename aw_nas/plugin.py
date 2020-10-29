@@ -8,9 +8,9 @@ from collections import defaultdict
 
 from aw_nas.utils.exception import PluginException
 from aw_nas.utils.common_utils import get_awnas_dir
-from aw_nas.utils import logger as _logger
+from aw_nas.utils import getLogger
 
-LOGGER = _logger.getChild("plugin")
+LOGGER = getLogger("plugin")
 
 plugins = []
 plugin_modules = defaultdict(list)

@@ -6,12 +6,11 @@ import numpy as np
 
 from aw_nas.hardware.base import BaseHardwareObjectiveModel, MixinProfilingSearchSpace
 from aw_nas.hardware.utils import Prim
-
-from aw_nas.utils import logger as _logger
+from aw_nas.utils import getLogger
 from aw_nas.utils import make_divisible
 from aw_nas.rollout.ofa import MNasNetOFASearchSpace
 
-logger = _logger.getChild("ofa_obj")
+logger = getLogger("ofa_obj")
 
 
 class OFAMixinProfilingSearchSpace(MNasNetOFASearchSpace,

@@ -22,7 +22,7 @@ import torch
 
 from aw_nas.utils.registry import RegistryMeta
 from aw_nas.utils.exception import expect, ConfigException
-from aw_nas.utils.log import logger as _logger
+from aw_nas.utils.log import getLogger
 
 _HOME_DIR = os.environ.get("AWNAS_HOME", os.path.expanduser("~/awnas"))
 
@@ -163,7 +163,7 @@ class Ticker(object):
         self.name = name
         self.total_time = 0.
         self.cur_time = time.time()
-        self.logger = _logger.getChild("ticker_{}".format(name))
+        self.logger = getLogger("ticker_{}".format(name))
 
     def tick(self, message=""):
         cur_time = time.time()
@@ -311,7 +311,7 @@ def component_sample_config_str(comp_name, prefix, filter_funcs=None, cfg_name=N
             # some plugin class might be wrongly implemented, check here
             import traceback
             traceback.print_exc()
-            _logger.getChild("utils")\
+            getLogger("utils")\
                    .warning("Skip %s: %s(%s) as exception occurs in checking. %s: %s",
                             comp_name, type_name, cls, e.__class__.__name__, str(e))
         if is_skip:

@@ -360,6 +360,7 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
             objs.update(loss.item(), n)
             top1.update(prec1.item(), n)
             top5.update(prec5.item(), n)
+            del loss
 
             if step % self.report_every == 0:
                 self.logger.info("train %03d %.3f; %.2f%%; %.2f%%",
@@ -391,6 +392,7 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                 objs.update(loss.item(), n)
                 top1.update(prec1.item(), n)
                 top5.update(prec5.item(), n)
+                del loss
 
                 if step % self.report_every == 0:
                     self.logger.info("valid %03d %e %f %f %s", step, objs.avg, top1.avg, top5.avg,

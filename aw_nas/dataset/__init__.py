@@ -1,6 +1,7 @@
 #pylint: disable=unused-import
-from aw_nas.utils import logger as _logger
-_LOGGER = _logger.getChild("dataset")
+
+from aw_nas.utils import getLogger
+_LOGGER = getLogger("dataset")
 
 from aw_nas.dataset.base import BaseDataset
 from aw_nas.dataset import cifar10

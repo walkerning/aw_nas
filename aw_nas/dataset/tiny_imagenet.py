@@ -31,6 +31,7 @@ class TinyImagenet(BaseDataset):
         else:
             train_transform = transforms.Compose([
                 # transforms.RandomCrop(64, padding=4),
+                # random crop, resize->tarin_crop_size
                 transforms.RandomResizedCrop(train_crop_size),
                 transforms.RandomHorizontalFlip(),
                 transforms.ColorJitter(
@@ -45,7 +46,7 @@ class TinyImagenet(BaseDataset):
             train_transform.transforms.append(Cutout(self.cutout))
 
         test_transform = transforms.Compose([
-            transforms.Resize(test_crop_size + 16),
+            transforms.Resize(test_crop_size + 8),
             transforms.CenterCrop(test_crop_size),
             transforms.ToTensor(),
             transforms.Normalize(mean, std),
