@@ -10,7 +10,7 @@ import re
 import sys
 import random
 import shutil
-import pprint
+import pickle
 import functools
 
 import click
@@ -551,7 +551,9 @@ def sample(load, out_file, n, save_plot, gpu, seed, dump_mode, prob_thresh, uniq
               "Only tested for CNN now.")
 @click.option("--steps", default=None, type=int,
               help="number of batches to eval for each arch, default to be the whole derive queue.")
-def eval_arch(cfg_file, arch_file, load, gpu, seed, save_plot, save_state_dict, steps):
+@click.option("--dump-rollouts", default=None, type=str,
+              help="dump evaluated rollouts to path")
+def eval_arch(cfg_file, arch_file, load, gpu, seed, save_plot, save_state_dict, steps, dump_rollouts):
     setproctitle.setproctitle("awnas-eval-arch config: {}; arch_file: {}; load: {}; cwd: {}"\
                               .format(cfg_file, arch_file, load, os.getcwd()))
 
@@ -609,9 +611,13 @@ def eval_arch(cfg_file, arch_file, load, gpu, seed, save_plot, save_state_dict, 
                 label="Derive {}; Reward {:.3f}".format(i, r.get_perf(name="reward"))
             )
         print("Finish test {}/{}\r".format(i+1, num_r), end="")
-    for i, r in enumerate(rollouts):
         LOGGER.info("Arch %3d: %s", i, "; ".join(
             ["{}: {:.3f}".format(n, v) for n, v in r.perf.items()]))
+
+    if dump_rollouts is not None:
+        LOGGER.info("Dump the evaluated rollouts into file %s", dump_rollouts)
+        with open(dump_rollouts, "wb") as f:
+            pickle.dump(rollouts, f)
 
 
 @main.command(help="Derive architectures.")
@@ -670,6 +676,7 @@ def derive(cfg_file, load, out_file, n, save_plot, test, steps, gpu, seed, dump_
     if not test:
         controller_path = os.path.join(load, "controller")
         controller.load(controller_path)
+        controller.set_mode("eval")
         rollouts = controller.sample(n)
         with open(out_file, "w") as of:
             for i, r in enumerate(rollouts):
@@ -679,6 +686,10 @@ def derive(cfg_file, load, out_file, n, save_plot, test, steps, gpu, seed, dump_
                         label="Derive {}".format(i)
                     )
                 of.write("# ---- Arch {} ----\n".format(i))
+                if r.perf:
+                    of.write("# Perfs: {}\n".format(", ".join(
+                        ["{}: {:.4f}".format(perf_name, value)
+                         for perf_name, value in r.perf.items()])))
                 _dump(r, dump_mode, of)
                 of.write("\n")
     else:
@@ -693,7 +704,7 @@ def derive(cfg_file, load, out_file, n, save_plot, test, steps, gpu, seed, dump_
         else:
             rollouts = trainer.derive(n, steps)
         accs = [r.get_perf() for r in rollouts]
-        idxes = np.argsort(accs)[::-1]
+        idxes = np.argsort(accs)[::-1] # sorted according to the`reward` value
         with open(out_file, "w") as of:
             for i, idx in enumerate(idxes):
                 rollout = rollouts[idx]
@@ -703,6 +714,10 @@ def derive(cfg_file, load, out_file, n, save_plot, test, steps, gpu, seed, dump_
                         label="Derive {}; Reward {:.3f}".format(i, rollout.get_perf())
                     )
                 of.write("# ---- Arch {} (Reward {}) ----\n".format(i, rollout.get_perf()))
+                if rollout.perf:
+                    of.write("# Perfs: {}\n".format(", ".join(
+                        ["{}: {:.4f}".format(perf_name, value)
+                         for perf_name, value in rollout.perf.items()])))
                 _dump(rollout, dump_mode, of)
                 of.write("\n")
 

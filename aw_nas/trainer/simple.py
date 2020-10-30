@@ -43,6 +43,7 @@ class SimpleTrainer(BaseTrainer):
 
     def __init__(self, #pylint: disable=dangerous-default-value
                  controller, evaluator, rollout_type="discrete",
+                 is_differentiable=False,
                  epochs=200, test_every=10,
 
                  # optimizer and scheduler
@@ -84,9 +85,18 @@ class SimpleTrainer(BaseTrainer):
                    self.rollout_type, self.controller.rollout_type,
                    self.evaluator.rollout_type), ConfigException)
 
+        # A fix for backward compatability of old configuration files
+        if rollout_type == "differentiable":
+            is_differentiable = True
+
+        if "differentiable" in rollout_type and not is_differentiable:
+            self.logger.warn("The `rollout_type` \"%s\" contains \"differentiable\", "
+                             "however, `is_differentiable` is set to False. "
+                             "Maybe the configuration is mismatched?", rollout_type)
         # configurations
         self.epochs = epochs
         self.test_every = test_every
+        self.is_differentiable = is_differentiable
 
         self.controller_samples = controller_samples
         self.derive_samples = derive_samples
@@ -179,7 +189,8 @@ class SimpleTrainer(BaseTrainer):
                   end="")
 
             rollouts = self.controller.sample(self.controller_samples, self.rollout_batch_size)
-            if self.rollout_type == "differentiable":
+            # if self.rollout_type == "differentiable":
+            if self.is_differentiable:
                 self.controller.zero_grad()
 
             step_loss = {"_": 0.}
@@ -189,7 +200,8 @@ class SimpleTrainer(BaseTrainer):
                                                             step_loss=step_loss))
             self.evaluator.update_rollouts(rollouts)
 
-            if self.rollout_type == "differentiable":
+            # if self.rollout_type == "differentiable":
+            if self.is_differentiable:
                 # differntiable rollout (controller is optimized using differentiable relaxation)
                 # adjust lr and call step_current_gradients
                 # (update using the accumulated gradients)
@@ -222,7 +234,7 @@ class SimpleTrainer(BaseTrainer):
         return controller_loss, rollout_stat_meters.avgs(), controller_stat_meters.avgs()
 
     def _backward_rollout_to_controller(self, rollout, step_loss):
-        if self.rollout_type == "differentiable":
+        if self.is_differentiable:
             # backward
             _loss = self.controller.gradient(rollout.get_perf(name="reward"),
                                              return_grads=False,
