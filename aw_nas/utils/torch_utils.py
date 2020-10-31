@@ -420,6 +420,9 @@ class DenseGraphSimpleOpEdgeFlow(nn.Module):
         if self.residual_only is None:
             res_output = support
         else:
+            # residual only the first `self.residual_only` nodes
+            # since there would be not inputs for the input nodes,
+            # residual must be added to their output
             res_output = torch.cat(
                 (support[:, :self.residual_only, :],
                  torch.zeros([support.shape[0], support.shape[1] - self.residual_only,

@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from aw_nas.utils.exception import expect
 from aw_nas.utils import DenseGraphSimpleOpEdgeFlow
 from aw_nas.evaluator.arch_network import ArchEmbedder
 
@@ -44,6 +45,9 @@ class DenseRobGATESEmbedder(ArchEmbedder):
         self.vertices = self.search_space._num_nodes
         self.num_op_choices = self.search_space.num_op_choices
         self.none_op_ind = self.search_space.primitives.index("none")
+        expect(self.none_op_ind == 0,
+               "DenseGraphSimpleOpEdgeFlow assume `none` to be the first primitive, "
+               "if it exists. Or the codes need to be changed to mask the none op")
         self.num_cell_groups = self.search_space.num_cell_groups
         self.num_init_nodes = self.search_space.num_init_nodes
 
