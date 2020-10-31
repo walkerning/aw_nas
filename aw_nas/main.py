@@ -25,7 +25,7 @@ import aw_nas
 from aw_nas.dataset import AVAIL_DATA_TYPES
 from aw_nas import utils, BaseRollout
 from aw_nas.common import rollout_from_genotype_str
-from aw_nas.utils.common_utils import _OrderedCommandGroup
+from aw_nas.utils.common_utils import _OrderedCommandGroup, _dump, _dump_with_perf
 from aw_nas.utils.vis_utils import WrapWriter
 from aw_nas.utils import RegistryMeta
 from aw_nas.utils import logger as _logger
@@ -256,7 +256,8 @@ def mpsearch(cfg_file, seed, load, save_every, interleave_report_every,
     # set gpu
     _set_gpu(local_rank)
     device = torch.cuda.current_device()
-    torch.distributed.init_process_group(backend="nccl", rank=int(os.environ["RANK"]), world_size=int(os.environ["WORLD_SIZE"]))
+    torch.distributed.init_process_group(backend="nccl", rank=int(os.environ["RANK"]),
+                                         world_size=int(os.environ["WORLD_SIZE"]))
 
     if vis_dir and local_rank == 0:
         vis_dir = utils.makedir(vis_dir, remove=True)
@@ -370,13 +371,6 @@ def mpsearch(cfg_file, seed, load, save_every, interleave_report_every,
                   interleave_report_every=interleave_report_every)
     trainer.train()
 
-def _dump(rollout, dump_mode, of):
-    if dump_mode == "list":
-        yaml.safe_dump([list(rollout.genotype._asdict().values())], of)
-    elif dump_mode == "str":
-        yaml.safe_dump([str(rollout.genotype)], of)
-    else:
-        raise Exception("Unexpected dump_mode: {}".format(dump_mode))
 
 @main.command(help="Random sample architectures.")
 @click.argument("cfg_file", required=True, type=str)
@@ -411,14 +405,12 @@ def random_sample(cfg_file, out_file, n, gpu, seed, dump_mode, unique):
     with open(cfg_file, "r") as f:
         cfg = yaml.safe_load(f)
 
-    res = _init_components_from_cfg(cfg, device, evaluator_only=True)
-    ss = res[0]
-    
+    ss = _init_component(cfg, "search_space")
     sampled = 0
     ignored = 0
     rollouts = []
     genotypes = []
-            
+
     while sampled < n:
         if unique:
             r = ss.random_sample()
@@ -437,12 +429,14 @@ def random_sample(cfg_file, out_file, n, gpu, seed, dump_mode, unique):
             r = ss.random_sample()
             rollouts.append(r)
             genotypes.append(r.genotype)
+            sampled += 1
 
     with open(out_file, "w") as of:
         for i, r in enumerate(rollouts):
-            of.write("# ---- Arch {} ----\n".format(i))
-            _dump(r, dump_mode, of)
-            of.write("\n")
+            _dump_with_perf(r, dump_mode, of, index=i)
+            # of.write("# ---- Arch {} ----\n".format(i))
+            # _dump(r, dump_mode, of)
+            # of.write("\n")
 
 
 @main.command(help="Sample architectures, pickle loading controller directly.")
@@ -553,7 +547,8 @@ def sample(load, out_file, n, save_plot, gpu, seed, dump_mode, prob_thresh, uniq
               help="number of batches to eval for each arch, default to be the whole derive queue.")
 @click.option("--dump-rollouts", default=None, type=str,
               help="dump evaluated rollouts to path")
-def eval_arch(cfg_file, arch_file, load, gpu, seed, save_plot, save_state_dict, steps, dump_rollouts):
+def eval_arch(cfg_file, arch_file, load, gpu, seed, save_plot, save_state_dict, steps,
+              dump_rollouts):
     setproctitle.setproctitle("awnas-eval-arch config: {}; arch_file: {}; load: {}; cwd: {}"\
                               .format(cfg_file, arch_file, load, os.getcwd()))
 
@@ -597,7 +592,7 @@ def eval_arch(cfg_file, arch_file, load, gpu, seed, save_plot, save_state_dict, 
     num_r = len(rollouts)
 
     for i, r in enumerate(rollouts):
-        evaluator.evaluate_rollouts([r], is_training=False,
+        evaluator.evaluate_rollouts([rollouts[0]], is_training=False,
                                     eval_batches=steps,
                                     return_candidate_net=save_state_dict)[0]
         if save_state_dict is not None:
@@ -612,7 +607,7 @@ def eval_arch(cfg_file, arch_file, load, gpu, seed, save_plot, save_state_dict, 
             )
         print("Finish test {}/{}\r".format(i+1, num_r), end="")
         LOGGER.info("Arch %3d: %s", i, "; ".join(
-            ["{}: {:.3f}".format(n, v) for n, v in r.perf.items()]))
+            ["{}: {:.3f}".format(n, v) for n, v in rollouts[0].perf.items()]))
 
     if dump_rollouts is not None:
         LOGGER.info("Dump the evaluated rollouts into file %s", dump_rollouts)
@@ -685,13 +680,14 @@ def derive(cfg_file, load, out_file, n, save_plot, test, steps, gpu, seed, dump_
                         filename=os.path.join(save_plot, str(i)),
                         label="Derive {}".format(i)
                     )
-                of.write("# ---- Arch {} ----\n".format(i))
-                if r.perf:
-                    of.write("# Perfs: {}\n".format(", ".join(
-                        ["{}: {:.4f}".format(perf_name, value)
-                         for perf_name, value in r.perf.items()])))
-                _dump(r, dump_mode, of)
-                of.write("\n")
+                _dump_with_perf(r, dump_mode, of, index=i)
+                # of.write("# ---- Arch {} ----\n".format(i))
+                # if r.perf:
+                #     of.write("# Perfs: {}\n".format(", ".join(
+                #         ["{}: {:.4f}".format(perf_name, value)
+                #          for perf_name, value in r.perf.items()])))
+                # _dump(r, dump_mode, of)
+                # of.write("\n")
     else:
         trainer = _init_components_from_cfg(cfg, device)[-1]#, from_controller=True,
                                             #search_space=search_space, controller=controller)[-1]
@@ -713,13 +709,14 @@ def derive(cfg_file, load, out_file, n, save_plot, test, steps, gpu, seed, dump_
                         filename=os.path.join(save_plot, str(i)),
                         label="Derive {}; Reward {:.3f}".format(i, rollout.get_perf())
                     )
-                of.write("# ---- Arch {} (Reward {}) ----\n".format(i, rollout.get_perf()))
-                if rollout.perf:
-                    of.write("# Perfs: {}\n".format(", ".join(
-                        ["{}: {:.4f}".format(perf_name, value)
-                         for perf_name, value in rollout.perf.items()])))
-                _dump(rollout, dump_mode, of)
-                of.write("\n")
+                _dump_with_perf(rollout, dump_mode, of, index=i)
+                # of.write("# ---- Arch {} (Reward {}) ----\n".format(i, rollout.get_perf()))
+                # if rollout.perf:
+                #     of.write("# Perfs: {}\n".format(", ".join(
+                #         ["{}: {:.4f}".format(perf_name, value)
+                #          for perf_name, value in rollout.perf.items()])))
+                # _dump(rollout, dump_mode, of)
+                # of.write("\n")
 
 
 # ---- Multiprocess Train, Test using final_trainer ----

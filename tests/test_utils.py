@@ -136,3 +136,27 @@ def test_registered_supported_rollouts():
         def plot_arch(self, *args, **kwargs):
             pass
     assert "a_fake_rollout" in simple_trainer_cls.all_supported_rollout_types()
+
+def test_derive_and_parse_derive():
+    import io
+
+    import numpy as np
+
+    from aw_nas.utils.common_utils import _parse_derive_file, _dump_with_perf
+    from aw_nas.common import get_search_space
+
+    output_f = io.StringIO()
+    ss = get_search_space("cnn")
+    rollouts = [ss.random_sample() for _ in range(6)]
+    for rollout in rollouts[:4]:
+        rollout.perf = {"reward": np.random.rand(), "other_perf": np.random.rand()}
+    for i, rollout in enumerate(rollouts[:3]):
+        _dump_with_perf(rollout, "str", output_f, index=i)
+    for rollout in rollouts[3:]:
+        _dump_with_perf(rollout, "str", output_f)
+
+    input_f = io.StringIO(output_f.getvalue())
+    dct = _parse_derive_file(input_f)
+    assert len(dct) == 4 # only 4 rollouts have performance information
+    print(dct)
+

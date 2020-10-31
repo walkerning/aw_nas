@@ -7,16 +7,17 @@ from __future__ import print_function
 from __future__ import division
 
 import os
+import contextlib
+import subprocess
 from functools import partial
 from collections import OrderedDict
 
 import imageio
-import yaml
-
 import numpy as np
 import torch
 
 from aw_nas import utils
+from aw_nas.utils.common_utils import _dump_with_perf, _parse_derive_file
 from aw_nas.trainer.base import BaseTrainer
 from aw_nas.utils.exception import expect, ConfigException
 
@@ -381,12 +382,36 @@ class SimpleTrainer(BaseTrainer):
                          "BEST (in reward): %.5f (mean: %.5f); Performance: %s",
                          self.epoch, self.derive_samples, rewards[idx], mean_rew,
                          "; ".join(["{}: {} (mean {:.5f})".format(
-                             n, "{:.5f}".format(other_perfs[n][idx]) if other_perfs[n][idx] is not None else None,
-                             np.mean([perf for perf in other_perfs[n] if perf is not None])) for n in rollouts[0].perf]))
+                             n, "{:.5f}".format(other_perfs[n][idx])
+                             if other_perfs[n][idx] is not None else None,
+                             np.mean([perf for perf in other_perfs[n] if perf is not None]))
+                                    for n in rollouts[0].perf]))
         self.logger.info("Saved this arch to %s.\nGenotype: %s",
                          save_path, rollouts[idx].genotype)
         self.controller.summary(rollouts, log=True, log_prefix="Rollouts Info: ", step=self.epoch)
         return rollouts
+
+    @contextlib.contextmanager
+    def _open_derive_out_file(self, derive_out_file):
+        """
+        On entering: open the file named `derive_out_file` if it is not None and exists,
+                     and yield the derived results read from the file with the file (write mode).
+        On exiting: close the file.
+        """
+        if derive_out_file is None:
+            yield None, {}
+        else:
+            if os.path.exists(derive_out_file):
+                # load the saved derived results from out_file
+                self.logger.info("Backup the original file {dfile} into {dfile}.tmp".format(
+                    dfile=derive_out_file))
+                subprocess.check_call("cp {} {}".format(
+                    derive_out_file, derive_out_file + ".tmp"), shell=True)
+                with open(derive_out_file) as r_f:
+                    save_dict = _parse_derive_file(r_f)
+                out_f = open(derive_out_file, "w")
+                yield out_f, save_dict
+                out_f.close()
 
     def derive(self, n, steps=None, out_file=None):
         # # some scheduled value will be used in test too, e.g. surrogate_lr, gumbel temperature...
@@ -395,43 +420,18 @@ class SimpleTrainer(BaseTrainer):
         with self.controller.begin_mode("eval"):
             rollouts = self.controller.sample(n)
             save_dict = {}
-            if out_file:
-                if os.path.exists(out_file):
-                    fin = open(out_file)
-                    lines = fin.readlines()
-                    reward = None
-                    arch = ""
-                    for i in range(len(lines)):
-                        if lines[i].find("Arch") != -1 and lines[i].find("Reward") != -1:
-                            reward = float(lines[i][lines[i].find("Reward")+7:lines[i].find(")")])
-                        elif lines[i].startswith("-"):
-                            arch = lines[i]
-                        else:
-                            if lines[i] == "\n":
-                                arch = yaml.load(arch)[0]
-                                save_dict[arch] = reward
-                            else:
-                                arch += lines[i]
-                    fin.close()
-                    os.system("cp {} {}".format(out_file, out_file+".tmp"))
-                fo = open(out_file, 'w')
-            for i_sample in range(len(rollouts)):
-                if out_file and str(rollouts[i_sample].genotype) in save_dict.keys():
-                    fo.write("# ---- Arch {} (Reward {}) ----\n".format(i_sample, save_dict[str(rollouts[i_sample].genotype)]))
-                    yaml.safe_dump([str(rollouts[i_sample].genotype)], fo)
-                    fo.write("\n")
-                    rollouts[i_sample].set_perf(save_dict[str(rollouts[i_sample].genotype)])
-                    continue
-                rollouts[i_sample] = self.evaluator.evaluate_rollouts([rollouts[i_sample]],
-                                                                      is_training=False,
-                                                                      eval_batches=steps)[0]
-                print("Finish test {}/{}\r".format(i_sample+1, n), end="")
-                if out_file:
-                    fo.write("# ---- Arch {} (Reward {}) ----\n".format(i_sample, rollouts[i_sample].get_perf()))
-                    yaml.safe_dump([str(rollouts[i_sample].genotype)], fo)
-                    fo.write("\n")
-            if out_file:
-                fo.close()
+            with self._open_derive_out_file(out_file) as (out_f, save_dict):
+                for i_sample, rollout in enumerate(rollouts):
+                    if str(rollout.genotype) in save_dict:
+                        _dump_with_perf(rollout, "str", out_f, index=i_sample)
+                        rollout.set_perf(save_dict[str(rollout.genotype)])
+                        continue
+                    rollout = self.evaluator.evaluate_rollouts([rollout],
+                                                               is_training=False,
+                                                               eval_batches=steps)[0]
+                    print("Finish test {}/{}\r".format(i_sample+1, n), end="")
+                    if out_f is not None:
+                        _dump_with_perf(rollout, "str", out_f, index=i_sample)
         return rollouts
 
     def save(self, path):
