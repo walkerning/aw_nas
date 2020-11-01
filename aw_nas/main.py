@@ -592,7 +592,7 @@ def eval_arch(cfg_file, arch_file, load, gpu, seed, save_plot, save_state_dict, 
     num_r = len(rollouts)
 
     for i, r in enumerate(rollouts):
-        evaluator.evaluate_rollouts([rollouts[0]], is_training=False,
+        evaluator.evaluate_rollouts([r], is_training=False,
                                     eval_batches=steps,
                                     return_candidate_net=save_state_dict)[0]
         if save_state_dict is not None:
@@ -607,7 +607,7 @@ def eval_arch(cfg_file, arch_file, load, gpu, seed, save_plot, save_state_dict, 
             )
         print("Finish test {}/{}\r".format(i+1, num_r), end="")
         LOGGER.info("Arch %3d: %s", i, "; ".join(
-            ["{}: {:.3f}".format(n, v) for n, v in rollouts[0].perf.items()]))
+            ["{}: {:.3f}".format(n, v) for n, v in r.perf.items()]))
 
     if dump_rollouts is not None:
         LOGGER.info("Dump the evaluated rollouts into file %s", dump_rollouts)

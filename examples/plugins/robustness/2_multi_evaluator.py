@@ -61,7 +61,7 @@ class BaseMultiShotEvaluator(BaseEvaluator):
     def supported_rollout_types(cls):
         # just return all possible rollout types
         # since this is a hyper-evaluator
-        return BaseRollout.all_classes_()
+        return list(BaseRollout.all_classes_().keys())
 
     def evaluate_rollouts(
         self,
@@ -92,7 +92,7 @@ class BaseMultiShotEvaluator(BaseEvaluator):
         for rollout, r_comb_perf in zip(rollouts, r_comb_perfs):
             # use update instead of assignment, to keep track of the `predicted_score` field
             # that is set by predictor-based controller
-            rollout.update(r_comb_perf)
+            rollout.perf.update(r_comb_perf)
         return rollouts
 
     def update_rollouts(self, rollouts):
@@ -207,7 +207,8 @@ class MultiEvaluator(BaseMultiShotEvaluator):
         )
         return res
 
-    def fit(self, func, flops, rewards, target_flops):
+    @staticmethod
+    def fit(func, flops, rewards, target_flops):
         popt, _ = curve_fit(
             func,
             flops,

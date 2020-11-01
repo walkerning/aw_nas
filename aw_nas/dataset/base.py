@@ -22,6 +22,20 @@ class BaseDataset(Component):
             relative_dir = self.NAME #pylint: disable=no-member
         self.data_dir = os.path.join(base_dir, relative_dir)
 
+    def same_data_split_mapping(self):
+        """
+        If different transforms are used for the same split of data.
+        The resulting Dataset will be saved as multiple keys.
+        Use `same_data_split_mapping` to map the equivalent relation.
+
+        For example, `return {"train_testTransform": "train"}` means
+        "train_testTransform" split use the same data as "train",
+        and they should use the same set of randomly sampled indices.
+
+        The default implementation is a commonly-used mapping.
+        """
+        return {"train_testTransform": "train"}
+
     @abc.abstractmethod
     def splits(self):
         """

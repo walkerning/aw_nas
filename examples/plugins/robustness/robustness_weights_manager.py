@@ -607,14 +607,29 @@ class RobCandidateNet(CandidateNet):
             # check `calib_bn_num` first
             calib_num = 0
             calib_data = []
+            calib_batch = 0
             while calib_num < self.calib_bn_num:
+                if calib_batch == steps:
+                    utils.getLogger("robustness plugin.{}".format(self.__class__.__name__)).warn(
+                        "steps (%d) reached, true calib bn num (%d)", calib_num, steps)
+                    break
                 calib_data.append(next(queue))
                 calib_num += len(calib_data[-1][1])
+                calib_batch += 1
             self.calib_bn(calib_data)
         elif self.calib_bn_batch > 0:
+            if self.calib_bn_batch > steps:
+                utils.getLogger("robustness plugin.{}".format(self.__class__.__name__)).warn(
+                    "eval steps (%d) < `calib_bn_batch` (%d). Only use %d batches.",
+                    steps, self.calib_bn_steps, steps)
+                calib_bn_batch = steps
+            else:
+                calib_bn_batch = self.calib_bn_batch
             # check `calib_bn_batch` then
-            calib_data = [next(queue) for _ in range(self.calib_bn_batch)]
+            calib_data = [next(queue) for _ in range(calib_bn_batch)]
             self.calib_bn(calib_data)
+        else:
+            calib_data = []
 
         self._set_mode("eval") # Use eval mode after BN calibration
 

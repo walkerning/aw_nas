@@ -68,6 +68,11 @@ def _reload_plugins():
                     continue
                 LOGGER.debug("Importing plugin module %s", filepath)
                 # normalize root path as namespace
+                # TODO: use the abspath or the relative path to `AWNAS_HOME/plugins`?
+                # abspath CONs: others cannot easily use the dumped components
+                # relpath CONs: cannot easily find the code that produce the results,
+                #  since they all create the same namespace.
+                #  Maybe this complexity/compatability should be handled by the plugin itself
                 namespace = "_".join([re.sub(norm_pattern, "__", root), mod_name])
 
                 m = imp.load_source(namespace, filepath)

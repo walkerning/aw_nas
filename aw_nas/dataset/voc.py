@@ -209,6 +209,9 @@ class VOC(BaseDataset):
                                                test_transform,
                                                is_test=True)
 
+    def same_data_split_mapping(self):
+        return {"train_testTransform": "train"}
+
     def splits(self):
         return self.datasets
 
