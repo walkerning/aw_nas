@@ -32,7 +32,7 @@ try:
     import foolbox as fb
 except ImportError:
     utils.getLogger("robustness plugin").warn(
-        "Cannot import foolbox. You should install FOOLBOX toolbox for running distance attacks!"
+        "Cannot import foolbox. You should install FOOLBOX toolbox (version 2.4.0) for running distance attacks!"
     )
 
 
@@ -110,8 +110,9 @@ Adversary = {
 
 
 class DistanceAdversary(object):
-    def __init__(self, adversary_type, mean, std, bounds=(0, 1), num_classes=10):
+    def __init__(self, adversary_type, distance_type, mean, std, bounds=(0, 1), num_classes=10):
         self.adversary_type = adversary_type
+        self.distance_type = distance_type
         self.preprocessing = dict(mean=mean, std=std, axis=-3)
         self.bounds = bounds
         self.num_classes = num_classes
@@ -143,7 +144,8 @@ class DistanceAdversary(object):
             num_classes=self.num_classes,
             device=inputs.device,
         )
-        adversary = getattr(fb.attacks, self.adversary_type)(fmodel)
+        distance_criterion = getattr(fb.distances, self.distance_type)
+        adversary = getattr(fb.attacks, self.adversary_type)(fmodel, distance=distance_criterion)
         adv_examples = adversary(
             inputs_clone.cpu().numpy(), targets.cpu().numpy(), unpack=False
         )
@@ -163,6 +165,7 @@ class AdversarialDistanceObjective(BaseObjective):
         search_space,
         # adversarial
         adversary_type,
+        distance_type,
         mean=None,
         std=None,
         bounds=(0, 1),
@@ -183,14 +186,15 @@ class AdversarialDistanceObjective(BaseObjective):
         self.mean = torch.reshape(torch.tensor(mean), (3, 1, 1))
         self.std = torch.reshape(torch.tensor(std), (3, 1, 1))
         self.adversary = DistanceAdversary(
-            adversary_type, mean, std, bounds, num_classes
+            adversary_type, distance_type, mean, std, bounds, num_classes
         )
         self.adv_loss_coeff = adv_loss_coeff
         self.median_distance_coeff = median_distance_coeff
         self.mean_distance_coeff = 1 - median_distance_coeff
         self.as_controller_regularization = as_controller_regularization
         self.as_evaluator_regularization = as_evaluator_regularization
-
+        self.cache_hit = 0
+        self.cache_miss = 0
         if self.adv_loss_coeff > 0:
             expect(
                 self.as_controller_regularization or self.as_evaluator_regularization,
@@ -221,7 +225,15 @@ class AdversarialDistanceObjective(BaseObjective):
         )
 
     def _gen_adv(self, inputs, outputs, targets, cand_net):
-        return self.adversary.generate_adv(inputs, outputs, targets, cand_net)
+        # NOTE: tightly-coupled with CacheAdvCandidateNet
+        if hasattr(cand_net, "cached_advs") and inputs in cand_net.cached_advs:
+            self.cache_hit += 1
+            return cand_net.cached_advs[inputs]
+        self.cache_miss += 1
+        inputs_adv = self.adversary.generate_adv(inputs, outputs, targets, cand_net)
+        if hasattr(cand_net, "cached_advs"):
+            cand_net.cached_advs[inputs] = inputs_adv
+        return inputs_adv
 
     def get_reward(self, inputs, outputs, targets, cand_net):
         perfs = self.get_perfs(inputs, outputs, targets, cand_net)
