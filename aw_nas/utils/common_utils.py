@@ -2,6 +2,8 @@
 #pylint: disable=attribute-defined-outside-init
 
 import os
+import re
+import io
 import sys
 import time
 import copy
@@ -14,6 +16,7 @@ from collections import OrderedDict, namedtuple
 from contextlib import contextmanager
 
 import six
+import yaml
 import click
 import numpy as np
 import scipy
@@ -22,9 +25,9 @@ import torch
 
 from aw_nas.utils.registry import RegistryMeta
 from aw_nas.utils.exception import expect, ConfigException
-from aw_nas.utils.log import logger as _logger
+from aw_nas.utils.log import getLogger
 
-_HOME_DIR = os.environ.get("AWNAS_HOME", os.path.expanduser("~/awnas"))
+_HOME_DIR = os.path.abspath(os.path.expanduser(os.environ.get("AWNAS_HOME", "~/awnas")))
 
 class Context(object):
     def __init__(self, num_init_nodes, num_layers, use_stem=True,
@@ -163,7 +166,7 @@ class Ticker(object):
         self.name = name
         self.total_time = 0.
         self.cur_time = time.time()
-        self.logger = _logger.getChild("ticker_{}".format(name))
+        self.logger = getLogger("ticker_{}".format(name))
 
     def tick(self, message=""):
         cur_time = time.time()
@@ -311,7 +314,7 @@ def component_sample_config_str(comp_name, prefix, filter_funcs=None, cfg_name=N
             # some plugin class might be wrongly implemented, check here
             import traceback
             traceback.print_exc()
-            _logger.getChild("utils")\
+            getLogger("utils")\
                    .warning("Skip %s: %s(%s) as exception occurs in checking. %s: %s",
                             comp_name, type_name, cls, e.__class__.__name__, str(e))
         if is_skip:
@@ -329,6 +332,45 @@ def component_sample_config_str(comp_name, prefix, filter_funcs=None, cfg_name=N
 
     all_text += prefix + "## ---- End Component {} ----\n".format(cfg_name)
     return all_text
+
+# text utils for deriving
+def _dump_with_perf(rollout, dump_mode, of, index=None):
+    reward = rollout.get_perf()
+    index_str = " Arch {}".format(index) if index is not None else ""
+    reward_str = " (Reward {})".format(reward) if reward is not None else ""
+    of.write("# ----{}{} ----\n".format(index_str, reward_str))
+    if rollout.perf:
+        of.write("# Perfs: {}\n".format(", ".join(
+            ["{}: {:.4f}".format(perf_name, value)
+             for perf_name, value in rollout.perf.items()])))
+    _dump(rollout, dump_mode, of)
+
+def _parse_derive_file(input_f):
+    content = input_f.read()
+    regexp_iter = re.finditer(r"# ----(?P<archid> Arch \d+)?"
+                              r"( \(Reward (?P<reward>[0-9.]+)\))? ----\n"
+                              r"(?P<perfstr># Perfs: [^\n]+\n)?\n*- (?P<genotype>[^#]+)",
+                              content)
+
+    genotype_perf_dict = {}
+    for match in regexp_iter:
+        genotype = yaml.load(io.StringIO(match.group("genotype")))
+        if match.group("perfstr"):
+            # all perfs are dumped
+            perf_patterns = re.findall(r"(\w+): ([0-9.]+)[,\n]", match.group("perfstr"))
+            genotype_perf_dict[genotype] = {k: float(v) for k, v in perf_patterns}
+        elif match.group("reward"):
+            # reward is dumped
+            genotype_perf_dict[genotype] = {"reward": float(match.group("reward"))}
+    return genotype_perf_dict
+
+def _dump(rollout, dump_mode, of):
+    if dump_mode == "list":
+        yaml.safe_dump([list(rollout.genotype._asdict().values())], of)
+    elif dump_mode == "str":
+        yaml.safe_dump([str(rollout.genotype)], of)
+    else:
+        raise Exception("Unexpected dump_mode: {}".format(dump_mode))
 
 
 ## --- schedule utils ---

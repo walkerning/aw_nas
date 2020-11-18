@@ -1,8 +1,69 @@
 from __future__ import print_function
+
+import os
 import pytest
 import numpy as np
 from aw_nas.common import get_search_space
 
+
+@pytest.mark.parametrize("case", [
+    {"search_space_type": "cnn",
+     "search_space_cfg": {},
+     "controller_type": "evo",
+     "controller_cfg": {"rollout_type": "discrete"}},
+    {"search_space_type": "cnn",
+     "search_space_cfg": {},
+     "controller_type": "pareto-evo",
+     "controller_cfg": {"rollout_type": "discrete"}},
+    {"search_space_type": "cnn",
+     "search_space_cfg": {},
+     "controller_type": "rl"},
+    # {"search_space_type": "cnn",
+    #  "search_space_cfg": {},
+    #  "controller_type": "differentiable"},
+    {"search_space_type": "cnn",
+     "search_space_cfg": {},
+     "controller_type": "predictor-based",
+     "controller_cfg": {
+         "rollout_type": "discrete",
+         "inner_controller_type": "evo",
+         "inner_controller_cfg": {"rollout_type": "discrete"},
+         "arch_network_type": "pointwise_comparator",
+         "arch_network_cfg": {},
+         "begin_train_num": 100 # do not train
+     }}
+])
+def test_controllers_save(case, tmp_path):
+    import io
+    import torch
+    from torch import nn
+
+    from aw_nas.controller.base import BaseController
+    ss = get_search_space(case["search_space_type"], **case["search_space_cfg"])
+    controller = BaseController.get_class_(case["controller_type"])(
+        ss, "cuda", **case.get("controller_cfg", {}))
+    controller.set_mode("train")
+    controller.on_epoch_start(1)
+    rollouts = controller.sample(n=3)
+    [r.set_perf(np.random.rand(1)) for r in rollouts]
+
+    if isinstance(controller, nn.Module):
+        optimizer = torch.optim.SGD(controller.parameters(), lr=0.1)
+    else:
+        optimizer = None
+    controller.step(rollouts, optimizer=optimizer, perf_name="reward")
+
+    # try calling save/load (used when calling `trainer.final_save()`)
+    buffer_ = io.BytesIO()
+    controller.save(os.path.join(tmp_path, "cont"))
+    buffer_.seek(0)
+    controller.load(os.path.join(tmp_path, "cont"))
+
+    # try calling torch.save (used when calling `trainer.final_save()`)
+    buffer_ = io.BytesIO()
+    torch.save(controller, buffer_)
+    buffer_.seek(0)
+    torch.load(buffer_)
 
 # ---- test controller rl ----
 def test_rl_controller():
@@ -351,7 +412,6 @@ def test_population_controller_mutate():
         new_rollout = controller.sample(1)[0]
         assert str(rollouts[0].genotype) != str(new_rollout.genotype)
 
-
 def test_pareto_evo_controller_remove_non_pareto():
     from aw_nas.controller import ParetoEvoController
     device = "cuda"
@@ -488,8 +548,4 @@ def test_pareto_evo_controller_find_opt():
         import json
         json.dump({"fx":np.array(fx).tolist(), "fy": np.array(fy).tolist(),
             "nx": nx, "ny": ny, "paretos": paretos}, fw)
-
-
-
-
 

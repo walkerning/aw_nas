@@ -1,8 +1,10 @@
+import os
 import copy
 import math
 from contextlib import contextmanager
 
 import six
+import yaml
 import numpy as np
 import torch
 from torch import optim, nn
@@ -13,6 +15,7 @@ from torch.optim.lr_scheduler import _LRScheduler
 from torch.utils.data.distributed import DistributedSampler
 
 from aw_nas.utils.common_utils import AverageMeter
+from aw_nas.utils.log import getLogger as _getLogger
 from aw_nas.utils.exception import expect
 from aw_nas.utils.lr_scheduler import get_scheduler_cls
 
@@ -420,6 +423,9 @@ class DenseGraphSimpleOpEdgeFlow(nn.Module):
         if self.residual_only is None:
             res_output = support
         else:
+            # residual only the first `self.residual_only` nodes
+            # since there would be not inputs for the input nodes,
+            # residual must be added to their output
             res_output = torch.cat(
                 (support[:, :self.residual_only, :],
                  torch.zeros([support.shape[0], support.shape[1] - self.residual_only,
@@ -494,8 +500,8 @@ class InfIterator(six.Iterator):
 def get_inf_iterator(iterable, callback):
     return InfIterator(iterable, [callback])
 
-def prepare_data_queues(splits, queue_cfg_lst, data_type="image", drop_last=False,
-                        shuffle=False, num_workers=2, multiprocess=False):
+def prepare_data_queues(dataset, queue_cfg_lst, data_type="image", drop_last=False,
+                        shuffle=False, num_workers=2, multiprocess=False, shuffle_indice_file=None):
     """
     Further partition the dataset splits, prepare different data queues.
 
@@ -504,12 +510,25 @@ def prepare_data_queues(splits, queue_cfg_lst, data_type="image", drop_last=Fals
     """
     expect(data_type in {"image", "sequence"})
 
-    dset_splits = splits
+    dset_splits = dataset.splits()
+    same_dset_mapping = dataset.same_data_split_mapping()
     dset_sizes = {n: len(d) for n, d in six.iteritems(dset_splits)}
     dset_indices = {n: list(range(size)) for n, size in dset_sizes.items()}
     if shuffle:
         [np.random.shuffle(indices) for indices in dset_indices.values()]
-    used_portions = {n: 0. for n in splits}
+        if shuffle_indice_file:
+            if os.path.exists(shuffle_indice_file):
+                with open(shuffle_indice_file, "r") as r_f:
+                    dset_indices = yaml.load(r_f)
+                _getLogger("aw_nas.torch_utils").info(
+                    "Load dataset split indices from %s", shuffle_indice_file)
+            else:
+                with open(shuffle_indice_file, "w") as w_f:
+                    yaml.dump(dset_indices, w_f)
+                _getLogger("aw_nas.torch_utils").info(
+                    "Dump dataset split indices to %s", shuffle_indice_file)
+
+    used_portions = {n: 0. for n in dset_splits}
     queues = []
     for cfg in queue_cfg_lst: # all the queues interleave sub-dataset
         batch_size = cfg["batch_size"]
@@ -523,32 +542,47 @@ def prepare_data_queues(splits, queue_cfg_lst, data_type="image", drop_last=Fals
             continue
 
         used_portion = used_portions[split]
-        indices = dset_indices[split]
+        indices = dset_indices[same_dset_mapping.get(split, split)]
         size = dset_sizes[split]
         d_kwargs = getattr(dset_splits[split], "kwargs", {})
         if isinstance(portion, (list, tuple)) and len(portion) == 2:
             ranges = int(size * portion[0]), int(size * portion[1])
-            used_portions[split] = portion[1]
+            # do not accumulate `used_portions` with range portion specification
+            # used_portions[split] = portion[1]
         elif isinstance(portion, float) and 0. <= portion <= 1.:
             ranges = int(size * used_portion), int(size *(used_portion + portion))
             used_portions[split] += portion
         else:
-            raise ValueError("Except portion to be a float between 0~1 or a list like [left, right], got {} instead.".format(portion))
+            raise ValueError("Except portion to be a float between 0~1 or a list like ["
+                             "left, right], got {} instead.".format(portion))
         subset_indices = indices[ranges[0]: ranges[1]]
         if data_type == "image":
+            shuffle_queue = other_kwargs.get("shuffle", True)
+            no_distributed_sampler = other_kwargs.pop("no_distributed_sampler", False)
+            # by default, use shuffle=True for each queue in the search process
+            # can be overrided use kwargs
             kwargs = {
                 "batch_size": batch_size,
                 "pin_memory": True,
                 "num_workers": num_workers,
-                "sampler": torch.utils.data.SubsetRandomSampler(subset_indices) \
-                        if not multiprocess else CustomDistributedSampler(split, subset_indices),
                 "drop_last": drop_last,
                 "timeout": 0,
             }
+            if not shuffle_queue:
+                # choose a subset of the dataset, and do not shuffle
+                dataset_split = torch.utils.data.Subset(dset_splits[split], subset_indices)
+                if multiprocess and not no_distributed_sampler:
+                    # for multiprocess (distributed) and no-shuffle data queue
+                    kwargs["sampler"] = DistributedSampler(dataset_split, shuffle=False)
+            else:
+                # use subset random samplers
+                dataset_split = dset_splits[split]
+                kwargs["sampler"] = torch.utils.data.SubsetRandomSampler(subset_indices) \
+                                    if not multiprocess or no_distributed_sampler else \
+                                       CustomDistributedSampler(split, subset_indices)
             kwargs.update(d_kwargs) # first update dataset-specific kwargs
             kwargs.update(other_kwargs) # then update queue-specific kwargs
-            queue = get_inf_iterator(torch.utils.data.DataLoader(
-                dset_splits[split], **kwargs), callback)
+            queue = get_inf_iterator(torch.utils.data.DataLoader(dataset_split, **kwargs), callback)
         else: # data_type == "sequence"
             expect("bptt_steps" in cfg)
             bptt_steps = cfg["bptt_steps"]

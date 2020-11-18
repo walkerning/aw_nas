@@ -170,9 +170,9 @@ class DetectionFinalTrainer(CNNFinalTrainer):  #pylint: disable=too-many-instanc
                                               model)
                 perfs = self._perf_func(inputs, predictions, targets, model)
                 all_perfs.append(perfs)
-                objective_perfs.update(dict(zip(self._perf_names, perfs)))
-                losses_obj.update(losses)
                 n = inputs.size(0)
+                objective_perfs.update(dict(zip(self._perf_names, perfs)), n=n)
+                losses_obj.update(losses, n=n)
                 top1.update(prec1.item(), n)
                 top5.update(prec5.item(), n)
 

@@ -5,9 +5,9 @@ import pickle
 import numpy as np
 
 from aw_nas.objective.detection_utils.base import Metrics
-from aw_nas.utils import logger as _logger
+from aw_nas.utils import getLogger
 
-_LOGGER = _logger.getChild("det.metrics")
+_LOGGER = getLogger("det.metrics")
 
 try:
     from pycocotools.coco import COCO

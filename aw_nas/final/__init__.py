@@ -1,6 +1,7 @@
 #pylint: disable=unused-import
-from aw_nas.utils import logger as _logger
-_LOGGER = _logger.getChild("final")
+
+from aw_nas.utils import getLogger
+_LOGGER = getLogger("final")
 
 from .cnn_trainer import CNNFinalTrainer
 from .cnn_model import CNNGenotypeModel

@@ -972,8 +972,8 @@ except ImportError as e:
     class RandomForest(ArchNetwork, nn.Module):
         NAME = "random_forest"
         def __new__(cls, *args, **kwargs):
-            from aw_nas.utils import logger as _logger
-            _logger.getChild("arch_network").error(
+            from aw_nas.utils import getLogger
+            getLogger("arch_network").error(
                 ("RandomForest arch network cannot be used: Cannot import module sklearn: {}".format(imp_exception)))
             raise Exception()
 

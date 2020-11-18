@@ -185,7 +185,8 @@ class RobSharedNet(BaseWeightsManager, nn.Module):
         stem_stride=1,
         stem_affine=True,
         candidate_eval_no_grad=False,  # need grad in eval to craft adv examples
-        calib_bn_batch=0,
+            calib_bn_batch=0,
+            calib_bn_num=0
     ):
         super(RobSharedNet, self).__init__(search_space, device, rollout_type)
 
@@ -216,8 +217,13 @@ class RobSharedNet(BaseWeightsManager, nn.Module):
 
         self._num_init = self.search_space.num_init_nodes
         self._num_layers = self.search_space.num_layers
+        self._cell_layout = self.search_space.cell_layout
 
         self.calib_bn_batch = calib_bn_batch
+        self.calib_bn_num = calib_bn_num
+        if self.calib_bn_num > 0 and self.calib_bn_batch > 0:
+            self.logger.warn("`calib_bn_num` and `calib_bn_batch` set simultaneously, "
+                             "will use `calib_bn_num` only")
 
         ## initialize sub modules
         if not self.use_stem:
@@ -349,6 +355,7 @@ class RobSharedNet(BaseWeightsManager, nn.Module):
             gpus=self.gpus,
             eval_no_grad=self.candidate_eval_no_grad,
             calib_bn_batch=self.calib_bn_batch,
+            calib_bn_num=self.calib_bn_num
         )
         # keep record of candidate networks that are not GCed, and call their `clear_cache`
         self.candidate_map[self.assembled] = cand_net
@@ -382,8 +389,8 @@ class RobSharedNet(BaseWeightsManager, nn.Module):
             states = stemed
         states = [states] * self._num_init
 
-        for layer_idx, cell in enumerate(self.cells):
-            o_states = cell(states, genotype[layer_idx], **kwargs)
+        for cg_idx, cell in zip(self._cell_layout, self.cells):
+            o_states = cell(states, genotype[cg_idx], **kwargs)
             states.append(o_states)
             states = states[1:]
 
@@ -444,6 +451,7 @@ class RobCandidateNet(CandidateNet):
         cache_named_members=False,
         eval_no_grad=True,
         calib_bn_batch=0,
+            calib_bn_num=0,
     ):
         super(RobCandidateNet, self).__init__(eval_no_grad=eval_no_grad)
         self.super_net = super_net
@@ -461,6 +469,7 @@ class RobCandidateNet(CandidateNet):
         self.cached_advs = _Cache([], buffer_size=3)
 
         self.calib_bn_batch = calib_bn_batch
+        self.calib_bn_num = calib_bn_num
 
     def clear_cache(self):
         self.cached_advs.clear()
@@ -594,17 +603,41 @@ class RobCandidateNet(CandidateNet):
                    aggregate_fns=None,
                    **kwargs):
         # BN running statistics calibration
-        if self.calib_bn_batch > 0:
-            calib_data = [next(queue) for _ in range(self.calib_bn_batch)]
+        if self.calib_bn_num > 0:
+            # check `calib_bn_num` first
+            calib_num = 0
+            calib_data = []
+            calib_batch = 0
+            while calib_num < self.calib_bn_num:
+                if calib_batch == steps:
+                    utils.getLogger("robustness plugin.{}".format(self.__class__.__name__)).warn(
+                        "steps (%d) reached, true calib bn num (%d)", calib_num, steps)
+                    break
+                calib_data.append(next(queue))
+                calib_num += len(calib_data[-1][1])
+                calib_batch += 1
             self.calib_bn(calib_data)
+        elif self.calib_bn_batch > 0:
+            if self.calib_bn_batch > steps:
+                utils.getLogger("robustness plugin.{}".format(self.__class__.__name__)).warn(
+                    "eval steps (%d) < `calib_bn_batch` (%d). Only use %d batches.",
+                    steps, self.calib_bn_steps, steps)
+                calib_bn_batch = steps
+            else:
+                calib_bn_batch = self.calib_bn_batch
+            # check `calib_bn_batch` then
+            calib_data = [next(queue) for _ in range(calib_bn_batch)]
+            self.calib_bn(calib_data)
+        else:
+            calib_data = []
 
-        self._set_mode(mode)
+        self._set_mode("eval") # Use eval mode after BN calibration
 
         aggr_ans = []
         context = torch.no_grad if self.eval_no_grad else nullcontext
         with context():
             for i in range(steps):
-                if i < self.calib_bn_batch:
+                if i < len(calib_data):# self.calib_bn_batch:
                     data = calib_data[i]
                 else:
                     data = next(queue)
@@ -613,7 +646,11 @@ class RobCandidateNet(CandidateNet):
                 ans = utils.flatten_list(
                     [c(data[0], outputs, data[1]) for c in criterions])
                 aggr_ans.append(ans)
+                del outputs
+                print("\reva step {}/{} ".format(i, steps), end="", flush=True)
+
         aggr_ans = np.asarray(aggr_ans).transpose()
+
         if aggregate_fns is None:
             # by default, aggregate batch rewards with MEAN
             aggregate_fns = [lambda perfs: np.mean(perfs) if len(perfs) > 0 else 0.]\

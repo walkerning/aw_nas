@@ -106,6 +106,18 @@ class EvoController(BaseController):
         self._gt_rollouts = []
         self._gt_scores = []
 
+    def reinit(self):
+        """
+        Clear controller population.
+
+        e.g., Used by predictor-based controller to clean the inner controller's population
+        between multiple iterations
+        """
+        self.logger.info("Reinit called. Clear the population.")
+        self.set_init_population([], perf_name=None)
+        self._gt_rollouts = []
+        self._gt_scores = []
+
     def set_init_population(self, rollout_list, perf_name):
         # clear the current population
         self.population = collections.OrderedDict()
@@ -165,7 +177,7 @@ class EvoController(BaseController):
 
         # if population size does no reach preset `self.population_size`, just random sample
         if len(self.population) < self.population_size:
-            self.logger.info("Population not full, random sample {}".format(n))
+            self.logger.debug("Population not full, random sample {}".format(n))
             return [self.search_space.random_sample() for _ in range(n)]
 
         population_items = list(self.population.items())
@@ -190,8 +202,8 @@ class EvoController(BaseController):
             self.population[rollout.genotype] = rollout.get_perf(perf_name)
 
         if len(self.population) > self.population_size:
+            to_eliminate_num = len(self.population) - self.population_size
             if self.elimination_strategy == "regularized":
-                to_eliminate_num = len(self.population) - self.population_size
                 # eliminate according to age (Regularized Evolution)
                 for key in list(self.population.keys())[:to_eliminate_num]:
                     self.population.pop(key)
@@ -226,9 +238,31 @@ class EvoController(BaseController):
         self._gt_rollouts = []
         for r in state["gt_rollouts"]:
             rollout = self.search_space.random_sample()
-            rollout.__setstate__(r)
+            if hasattr(rollout, "__setstate__"):
+                rollout.__setstate__(r)
+            else:
+                rollout.__dict__.update(r)
             self._gt_rollouts.append(rollout)
         self._gt_scores = state["gt_scores"]
+
+    def __getstate__(self):
+        state = super(EvoController, self).__getstate__()
+        state["population"] = {str(k): v for k, v in state["population"].items()}
+        state["gt_rollouts"] = [r.__getstate__() for r in state["_gt_rollouts"]]
+        return state
+
+    def __setstate__(self, state):
+        super(EvoController, self).__setstate__(state)
+        self.population = {genotype_from_str(k, self.search_space): v
+                           for k, v in state["population"].items()}
+        self._gt_rollouts = []
+        for r in state["gt_rollouts"]:
+            rollout = self.search_space.random_sample()
+            if hasattr(rollout, "__setstate__"):
+                rollout.__setstate__(r)
+            else:
+                rollout.__dict__.update(r)
+            self._gt_rollouts.append(rollout)
 
     def summary(self, rollouts, log=False, log_prefix="", step=None):
         pass
@@ -314,7 +348,7 @@ class ParetoEvoController(BaseController):
 
     def _sample_one(self, population_items, population_size, prob=None):
         choices = np.random.choice(np.arange(population_size), size=1,
-                                   replace=False, p=None)
+                                   replace=False, p=prob)
         parent_geno = population_items[choices[0]][0]
         parent_rollout = self.search_space.rollout_from_genotype(parent_geno)
         new_rollout = self._mutate(parent_rollout, **self.mutate_kwargs)
@@ -322,15 +356,15 @@ class ParetoEvoController(BaseController):
 
     def sample(self, n, batch_size=1):
         if self.mode == "eval":
-            pareto_population = self.find_pareto_opt()
+            self.pareto_frontier = self.find_pareto_opt()
             if self.eval_sample_strategy == "all":
                 # return all archs on the pareto curve,
                 # note that number of sampled rollouts does not necessarily equals `n`
-                choices = self.pareto_population.items()
-            elif self.eval_sample_strategy == "n" and self.pareto_population:
+                choices = self.pareto_frontier.items()
+            elif self.eval_sample_strategy == "n" and self.pareto_frontier:
                 # return only `n` random samples on the pareto curve
-                choices = np.random.choice(zip(*list(self.pareto_population.items())),
-                                           size=min(n, len(self.pareto_population)), replace=False)
+                choices = np.random.choice(zip(*list(self.pareto_frontier.items())),
+                                           size=min(n, len(self.pareto_frontier)), replace=False)
             rollouts = [self.search_space.rollout_from_genotype(geno)
                         .set_perfs(dict(zip(self.perf_names, perfs)))
                         for geno, perfs in choices]
@@ -345,15 +379,20 @@ class ParetoEvoController(BaseController):
         rollouts = []
         population_items = list(self.population.items())
         prob = None
-        if len(population_items) > self.init_population_size:
-            pareto_frontier = self.find_pareto_opt()
-            distances = self._distance_from_pareto(pareto_frontier)
-            indices = np.argsort(distances)
-            indices = indices[:self.init_population_size -
-                              min(int(self.init_population_size / 5), self.num_eliminate)]
-            population_items = [population_items[i] for i in indices]
-            exp = np.exp(-distances[indices])
-            prob = exp / exp.sum()
+
+        # FIXME: This logic is messed up... fix it!!!!!!
+        # (FURTHUR) And use a data structure to maintain the pareto front?
+        # if len(self.population) > self.init_population_size:
+        #     pareto_frontier = self.find_pareto_opt()
+        #     distances = self._distance_from_pareto(pareto_frontier)
+        #     to_eliminate_num = len(self.population) - self.init_population_size
+        #     indices = np.argpartition(distances, to_eliminate_num)[:to_eliminate_num]
+        #     indices = np.argsort(distances)
+        #     indices = indices[:self.init_population_size -
+        #                       min(int(self.init_population_size / 5), self.num_eliminate)]
+        #     population_items = [population_items[i] for i in indices]
+        #     exp = np.exp(-distances[indices])
+        #     prob = exp / exp.sum()
         population_size = len(population_items)
 
         for _ in range(n):
@@ -484,6 +523,19 @@ class ParetoEvoController(BaseController):
         self.gt_population = {genotype_from_str(k, self.search_space): v
                               for k, v in state["gt_population"].items()}
         self._start_pareto_sample = state["_start_pareto_sample"]
+
+    def __getstate__(self):
+        state = super(ParetoEvoController, self).__getstate__()
+        state["population"] = {str(k): v for k, v in state["population"].items()}
+        state["gt_population"] = {str(k): v for k, v in state["gt_population"].items()}
+        return state
+
+    def __setstate__(self, state):
+        super(ParetoEvoController, self).__setstate__(state)
+        self.population = {genotype_from_str(k, self.search_space): v
+                           for k, v in state["population"].items()}
+        self.gt_population = {genotype_from_str(k, self.search_space): v
+                              for k, v in state["gt_population"].items()}
 
     def summary(self, rollouts, log=False, log_prefix="", step=None):
         pass

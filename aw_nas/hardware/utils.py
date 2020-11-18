@@ -12,8 +12,8 @@ import yaml
 try:
     from sklearn import linear_model
 except ImportError as e:
-    from aw_nas.utils import logger as _logger
-    _logger.getChild("hardware").warn(
+    from aw_nas.utils import getLogger
+    getLogger("hardware").warn(
         ("Cannot import module hardware.utils: {}\n"
          "Should install scikit-learn to make some hardware-related"
          " functionalities work").format(e))

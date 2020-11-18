@@ -2,6 +2,7 @@
 
 import sys
 import math
+import copy
 from functools import partial
 from collections import defaultdict, OrderedDict
 
@@ -299,6 +300,7 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
             data_portion=(0.1, 0.4, 0.5),
             mepa_as_surrogate=False,
             shuffle_data_before_split=False,  # by default not shuffle data before train-val splito
+            shuffle_indice_file=None,
             workers_per_queue=2,
             # only work for differentiable controller now
             rollout_batch_size=1,
@@ -404,6 +406,7 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
         self.data_portion = data_portion
         self.workers_per_queue = workers_per_queue
         self.shuffle_data_before_split = shuffle_data_before_split
+        self.shuffle_indice_file = shuffle_indice_file
         self.use_maml_plus = use_maml_plus
         self.high_order = high_order
         self.learn_per_weight_step_lr = learn_per_weight_step_lr
@@ -427,7 +430,7 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
         # initialize optimizers and schedulers
         # do some checks
         expect(
-            len(data_portion) == 3, "`data_portion` should have length 3.",
+            len(data_portion) in {3, 4}, "`data_portion` should have length 3/4.",
             ConfigException)
         # if self.mepa_surrogate_steps == 0 and self.controller_surrogate_steps == 0:
         #     expect(data_portion[0] == 0,
@@ -550,9 +553,14 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
                           callback=None):
         """
         Args:
-            is_training: If true, only use one data batch from controller queue to evalaute.
+            is_training: If true, only use one data batch from controller/derive queue to evaluate
+                (this behavior can be override by `evaluate_with_whole_queue` cfg).
                 Otherwise, use the whole controller queue (or `portion` of controller queue if
                 `portion` is specified).
+                * is_training=True: use `controller_queue`,
+                                     the reward will be used to update controller.
+                * is_training=False: use `derive_queue`, called by `trainer.derive`,
+                                     usually, should not use random data aug.
             portion (float): Has effect only when `is_training==False`. If specified, evaluate
                 on this `portion` of data of the controller queue.
             eval_batches (float): Has effect only when `is_training==False`. If specified, ignore
@@ -572,17 +580,20 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
         else:
             eval_rollouts = rollouts
 
-        if not self.controller_queue or len(self.controller_queue) == 0:
+        # controller_queue (for updating controller) or derive_queue (for testing rollouts only)
+        data_queue = self.controller_queue if is_training else self.derive_queue
+        hid_kwargs = self.c_hid_kwargs if is_training else self.d_hid_kwargs
+        if not data_queue or not len(data_queue):
             return rollouts
 
-        if is_training and not self.evaluate_with_whole_queue:  # the returned reward will be used for training controller
-            # get one data batch from controller queue
-            cont_data = next(self.controller_queue)
+        if is_training and not self.evaluate_with_whole_queue:
+            # get one data batch from controller/derive queue
+            cont_data = next(data_queue)
             cont_data = utils.to_device(cont_data, self.device)
 
             # prepare forward keyword arguments for candidate network
             _reward_kwargs = {k: v for k, v in self._reward_kwargs.items()}
-            _reward_kwargs.update(self.c_hid_kwargs)
+            _reward_kwargs.update(hid_kwargs)
 
             if isinstance(self.controller_surrogate_steps, (tuple, list)):
                 # random sample from the range
@@ -617,7 +628,7 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
             if eval_batches is not None:
                 eval_steps = eval_batches
             else:
-                eval_steps = len(self.controller_queue)
+                eval_steps = len(data_queue)
                 if portion is not None:
                     expect(0.0 < portion < 1.0)
                     eval_steps = int(portion * eval_steps)
@@ -641,14 +652,14 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
                     for name in self._all_perf_names
                 ]
                 eval_func = lambda: cand_net.eval_queue(
-                    self.controller_queue,
+                    data_queue,
                     criterions=criterions,
                     steps=eval_steps,
                     # NOTE: In parameter-sharing evaluation, let's keep using train-mode BN!!!
                     mode="train",
                     # if test, differentiable rollout does not need to set detach_arch=True too
                     aggregate_fns=aggregate_fns,
-                    **self.c_hid_kwargs)
+                    **hid_kwargs)
                 res = self._run_surrogate_steps(eval_func,
                                                 cand_net,
                                                 self.derive_surrogate_steps,
@@ -819,7 +830,7 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
             # scheduler step is 0-based, epoch of aw_nas components is 1-based
             if isinstance(self.mepa_scheduler,
                           torch.optim.lr_scheduler.ReduceLROnPlateau):
-                if len(self.plateau_scheduler_loss) > 0:
+                if self.plateau_scheduler_loss:
                     self._scheduler_step(np.mean(self.plateau_scheduler_loss),
                                          log=True)
                     self.plateau_scheduler_loss = []
@@ -1269,11 +1280,13 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
                 "portion": p[1] if isinstance(p, (list, tuple)) else p,
                 "kwargs":
                 p[2] if isinstance(p, (list, tuple)) and len(p) > 2 else {},
-                "batch_size": self.batch_size
+                "batch_size": self.batch_size # this can be override by p[2]
             } for p in data_portion]
+            # image data, do not need to record hidden for each data queue
             self.s_hid_kwargs = {}
             self.c_hid_kwargs = {}
             self.m_hid_kwargs = {}
+            self.d_hid_kwargs = {}
         else:  # "sequence"
             # initialize hidden
             self.surrogate_hiddens = self.weights_manager.init_hidden(
@@ -1282,10 +1295,12 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
                 self.batch_size)
             self.controller_hiddens = self.weights_manager.init_hidden(
                 self.batch_size)
+            self.derive_hiddens = self.weights_manager.init_hidden(
+                self.batch_size)
 
             self.hiddens_resetter = [
                 self._get_hiddens_resetter(n)
-                for n in ["surrogate", "mepa", "controller"]
+                for n in ["surrogate", "mepa", "controller", "derive"]
             ]
             queue_cfgs = []
             for callback, portion in zip(self.hiddens_resetter, data_portion):
@@ -1298,7 +1313,7 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
                                              (list, tuple)) else portion,
                     "kwargs":
                     portion[2]
-                    if isinstance(p, (list, tuple)) and len(p) > 2 else {},
+                    if isinstance(portion, (list, tuple)) and len(portion) > 2 else {},
                     "batch_size":
                     self.batch_size,
                     "bptt_steps":
@@ -1309,30 +1324,70 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
             self.s_hid_kwargs = {"hiddens": self.surrogate_hiddens}
             self.c_hid_kwargs = {"hiddens": self.controller_hiddens}
             self.m_hid_kwargs = {"hiddens": self.mepa_hiddens}
+            self.d_hid_kwargs = {"hiddens": self.derive_hiddens}
             self._dataset_related_attrs += [
-                "surrogate_hiddens", "mepa_hiddens", "controller_hiddens"
+                "surrogate_hiddens", "mepa_hiddens", "controller_hiddens", "derive_hiddens"
             ]
 
-        self.surrogate_queue, self.mepa_queue, self.controller_queue\
-            = utils.prepare_data_queues(self.dataset.splits(), queue_cfgs,
+        if len(queue_cfgs) == 3:
+            self.logger.warn(
+                "We suggest explictly specifiying the configuration for "
+                "derive_queue. For example, by adding a 4th item \"- "
+                "[train_testTransform, [0.8, 1.0], {shuffle: false}]\""
+                "into the `data_portion` configuration field")
+            # (Backward cfg compatability) if configuration for derive_queue is not specified,
+            # use controller queue, and if controller queue split name is train,
+            # will try add "_testTransform" suffix
+            derive_queue_cfg = copy.deepcopy(queue_cfgs[-1])
+            cont_queue_split = queue_cfgs[-1]["split"]
+            if isinstance(queue_cfgs[-1]["portion"], float):
+                # calculate derive portion as a range
+                start_portion = sum(
+                    [queue_cfg["portion"] for queue_cfg in queue_cfgs[:-1]
+                     if isinstance(queue_cfg["portion"], float) and \
+                     queue_cfg["split"] == cont_queue_split])
+                derive_portion = [start_portion, queue_cfgs[-1]["portion"] + start_portion]
+            derive_queue_cfg["portion"] = derive_portion
+            derive_queue_cfg["kwargs"]["shuffle"] = False # do not shuffle
+            # do not use distributed sampler
+            derive_queue_cfg["kwargs"]["no_distributed_sampler"] = False
+
+            if cont_queue_split == "train":
+                # try change split "train" to "train_testTransform"
+                if "train_testTransform" in self.dataset.splits():
+                    derive_queue_cfg["split"] = "train_testTransform"
+            self.logger.info("The configuration for derive_queue is not specified, "
+                             "will use split `%s` and set `shuffle=False`/`multiprocess=False`,"
+                                 " other cfgs is the same as those of controller_queue.",
+                             derive_queue_cfg["split"])
+            queue_cfgs.append(derive_queue_cfg)
+
+        self.logger.info("Data queue configurations:\n\t%s", "\n\t".join(
+            ["{}: {}".format(queue_name, queue_cfg) for queue_name, queue_cfg in zip(
+                ["surrogate", "mepa", "controller", "derive"], queue_cfgs)]))
+        self.surrogate_queue, self.mepa_queue, self.controller_queue, self.derive_queue\
+            = utils.prepare_data_queues(self.dataset, queue_cfgs,
                                         data_type=self._data_type,
                                         drop_last=self.rollout_batch_size > 1,
                                         shuffle=self.shuffle_data_before_split,
                                         num_workers=self.workers_per_queue,
-                                        multiprocess=self.multiprocess)
+                                        multiprocess=self.multiprocess,
+                                        shuffle_indice_file=self.shuffle_indice_file)
+
         if mepa_as_surrogate:
             # use mepa data queue as surrogate data queue
             self.surrogate_queue = self.mepa_queue
-        len_surrogate = len(self.surrogate_queue) * self.batch_size \
+        len_surrogate = len(self.surrogate_queue) * self.surrogate_queue.batch_size \
                         if self.surrogate_queue else 0
         self.logger.info(
-            "Data sizes: surrogate: %s; controller: %d; mepa: %d;",
+            "Data sizes: surrogate: %s; controller: %d; mepa: %d; derive: %d",
             str(len_surrogate) if not mepa_as_surrogate else "(mepa queue)",
-            len(self.controller_queue) * self.batch_size,
-            len(self.mepa_queue) * self.batch_size)
+            len(self.controller_queue) * self.controller_queue.batch_size,
+            len(self.mepa_queue) * self.mepa_queue.batch_size,
+            len(self.derive_queue) * self.derive_queue.batch_size)
         self._dataset_related_attrs += [
-            "surrogate_queue", "mepa_queue", "controller_queue",
-            "s_hid_kwargs", "c_hid_kwargs", "m_hid_kwargs"
+            "surrogate_queue", "mepa_queue", "controller_queue", "derive_queue",
+            "s_hid_kwargs", "c_hid_kwargs", "m_hid_kwargs", "d_hid_kwargs"
         ]
 
     def _eval_reward_func(self, data, cand_net, criterions, rollout, callback,

@@ -5,11 +5,11 @@
 import abc
 import collections
 
-from aw_nas.utils import logger as _logger
+from aw_nas.utils import getLogger
 
 __all__ = ["RegistryMeta", "RegistryError"]
 
-LOGGER = _logger.getChild("registry")
+LOGGER = getLogger("registry")
 
 class RegistryError(Exception):
     pass

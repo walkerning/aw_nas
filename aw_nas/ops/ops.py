@@ -111,7 +111,11 @@ PRIMITVE_FACTORY = {
         nn.Conv2d(C_out // 2, C_out, 3, stride=2, padding=1, bias=False),
         nn.BatchNorm2d(C_out)
     ),
-
+    "imagenet_stem0_7x7": lambda C, C_out, stride, affine: nn.Sequential(
+        nn.Conv2d(C, C_out, kernel_size=7, stride=2, padding=3, bias=False),
+        nn.BatchNorm2d(C_out),
+        nn.ReLU(inplace=True),
+    ),
     "NB201ResidualBlock": lambda C, C_out, stride, affine: NB201ResidualBlock(C, C_out, stride,
                                                                    affine=affine),
     "se_module": lambda C, C_out, stride, affine, reduction=4: SEModule(C, reduction),

@@ -17,7 +17,7 @@ from aw_nas.utils import expect
 from aw_nas.base import Component
 from aw_nas.rollout.base import BaseRollout
 from aw_nas.common import get_genotype_substr, genotype_from_str, ConfigTemplate
-from aw_nas.utils import logger as _logger
+from aw_nas.utils import getLogger
 
 class ModelRecord(object):
     def __init__(self, genotype, config, search_space,
@@ -210,7 +210,7 @@ class Population(Component):
             cfg_template_file = os.path.join(dirs[0], "template.yaml")
         with open(cfg_template_file, "r") as cfg_f:
             cfg_template = ConfigTemplate(yaml.safe_load(cfg_f))
-        _logger.getChild("population").info("Read the template config from %s", cfg_template_file)
+        getLogger("population").info("Read the template config from %s", cfg_template_file)
         model_records = collections.OrderedDict()
         if search_space is None:
             # assume can parse search space from config template
@@ -227,7 +227,7 @@ class Population(Component):
                 expect(index not in model_records,
                        "There are duplicate index: {}. rename or soft-link the files".format(index))
                 model_records[index] = ModelRecord.init_from_file(fname, search_space)
-        _logger.getChild("population").info("Parsed %d directories, total %d model records loaded.",
+        getLogger("population").info("Parsed %d directories, total %d model records loaded.",
                                             len(dirs), len(model_records))
         return Population(search_space, model_records, cfg_template)
 

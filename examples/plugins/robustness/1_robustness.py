@@ -32,16 +32,20 @@ try:
     import foolbox as fb
 except ImportError:
     utils.getLogger("robustness plugin").warn(
-        "Cannot import foolbox. You should install FOOLBOX toolbox for running distance attacks!"
+        "Cannot import foolbox. You should install FOOLBOX toolbox (version 2.4.0) for running distance attacks!"
     )
 
 
 # ---- different types of Adversaries ----
 class PgdAdvGenerator(object):
-    def __init__(self, epsilon, n_step, step_size, rand_init, mean, std):
+    def __init__(
+        self, epsilon, n_step, step_size, rand_init, mean, std, use_eval_mode=False
+    ):
         self.epsilon = epsilon
         self.n_step = n_step
         self.rand_init = rand_init
+        # if use_eval_mode is not set, the generation process won't change the mode
+        self.use_eval_mode = use_eval_mode
         self.criterion = nn.CrossEntropyLoss()
         self.step_size = step_size
         self.mean = torch.reshape(torch.tensor(mean), (3, 1, 1))
@@ -49,6 +53,12 @@ class PgdAdvGenerator(object):
         self.step_size = step_size / self.std
 
     def generate_adv(self, inputs, outputs, targets, net):
+        if self.use_eval_mode:
+            # assume net is an nn.Module
+            is_training_stored = net.training
+            net.eval()
+        else:
+            is_training_stored = False
         self.mean = self.mean.to(inputs.device)
         self.std = self.std.to(inputs.device)
         self.step_size = self.step_size.to(inputs.device)
@@ -84,22 +94,25 @@ class PgdAdvGenerator(object):
 
         # Re-re-adjust pixel values
         net.zero_grad()
+
+        if is_training_stored:  # restore the mode
+            net.train()
         return inputs_pgd.data
 
 
 Adversary = {
-    "FGSM": (
-        lambda epsilon, n_step, step_size, rand_init, mean, std: PgdAdvGenerator(
-            epsilon, 1, epsilon, False, mean, std
-        )
-    ),
+    "FGSM":
+        lambda epsilon, n_step, step_size, rand_init, mean, std, use_eval_mode: PgdAdvGenerator(
+            epsilon, 1, epsilon, False, mean, std, use_eval_mode
+        ),
     "PGD": PgdAdvGenerator,
 }
 
 
 class DistanceAdversary(object):
-    def __init__(self, adversary_type, mean, std, bounds=(0, 1), num_classes=10):
+    def __init__(self, adversary_type, distance_type, mean, std, bounds=(0, 1), num_classes=10):
         self.adversary_type = adversary_type
+        self.distance_type = distance_type
         self.preprocessing = dict(mean=mean, std=std, axis=-3)
         self.bounds = bounds
         self.num_classes = num_classes
@@ -107,6 +120,19 @@ class DistanceAdversary(object):
         self.std = torch.reshape(torch.tensor(std), (3, 1, 1))
 
     def generate_adv(self, inputs, outputs, targets, net):
+        # Note that, foolbox attacks must use eval mode,
+        # since they craft adversarial examples by feeding pictures one by one
+        is_training_stored = net.training
+        # if net.training:
+        #     is_training_stored = True
+        #     utils.getLogger("robustness plugin.DistanceAdversary").warn(
+        #         "The net is in training mode, we'll set it to eval mode temporarily."
+        #         " Because Foolbox attacks must use eval mode, "
+        #         " as they craft adversarial examples by feeding pictures one by one."
+        #     )
+        # else:
+        #     is_training_stored = False
+
         net.eval()
         inputs_clone = inputs.data.clone() * self.std.to(inputs.device) + self.mean.to(
             inputs.device
@@ -118,10 +144,14 @@ class DistanceAdversary(object):
             num_classes=self.num_classes,
             device=inputs.device,
         )
-        adversary = getattr(fb.attacks, self.adversary_type)(fmodel)
+        distance_criterion = getattr(fb.distances, self.distance_type)
+        adversary = getattr(fb.attacks, self.adversary_type)(fmodel, distance=distance_criterion)
         adv_examples = adversary(
             inputs_clone.cpu().numpy(), targets.cpu().numpy(), unpack=False
         )
+
+        if is_training_stored:  # restore the mode
+            net.train()
         return adv_examples
 
 
@@ -135,6 +165,7 @@ class AdversarialDistanceObjective(BaseObjective):
         search_space,
         # adversarial
         adversary_type,
+        distance_type,
         mean=None,
         std=None,
         bounds=(0, 1),
@@ -152,15 +183,18 @@ class AdversarialDistanceObjective(BaseObjective):
             "Must explicitly specify mean and std used in the data augmentation",
             ConfigException,
         )
+        self.mean = torch.reshape(torch.tensor(mean), (3, 1, 1))
+        self.std = torch.reshape(torch.tensor(std), (3, 1, 1))
         self.adversary = DistanceAdversary(
-            adversary_type, mean, std, bounds, num_classes
+            adversary_type, distance_type, mean, std, bounds, num_classes
         )
         self.adv_loss_coeff = adv_loss_coeff
         self.median_distance_coeff = median_distance_coeff
         self.mean_distance_coeff = 1 - median_distance_coeff
         self.as_controller_regularization = as_controller_regularization
         self.as_evaluator_regularization = as_evaluator_regularization
-
+        self.cache_hit = 0
+        self.cache_miss = 0
         if self.adv_loss_coeff > 0:
             expect(
                 self.as_controller_regularization or self.as_evaluator_regularization,
@@ -181,6 +215,8 @@ class AdversarialDistanceObjective(BaseObjective):
         adv_examples = self._gen_adv(inputs, outputs, targets, cand_net)
         adv_classes = np.asarray([adv.adversarial_class for adv in adv_examples])
         adv_distance = np.asarray([adv.distance.value for adv in adv_examples])
+        # NOTE: if there is any chance the adv example will be forwarded again,
+        # should convert the adv examples from [0,1] to the normalized domain by (.-mean)/std
         return (
             float(accuracy(outputs, targets)[0]) / 100,
             np.sum(adv_classes == targets.cpu().numpy()) / len(inputs),
@@ -189,7 +225,15 @@ class AdversarialDistanceObjective(BaseObjective):
         )
 
     def _gen_adv(self, inputs, outputs, targets, cand_net):
-        return self.adversary.generate_adv(inputs, outputs, targets, cand_net)
+        # NOTE: tightly-coupled with CacheAdvCandidateNet
+        if hasattr(cand_net, "cached_advs") and inputs in cand_net.cached_advs:
+            self.cache_hit += 1
+            return cand_net.cached_advs[inputs]
+        self.cache_miss += 1
+        inputs_adv = self.adversary.generate_adv(inputs, outputs, targets, cand_net)
+        if hasattr(cand_net, "cached_advs"):
+            cand_net.cached_advs[inputs] = inputs_adv
+        return inputs_adv
 
     def get_reward(self, inputs, outputs, targets, cand_net):
         perfs = self.get_perfs(inputs, outputs, targets, cand_net)
@@ -219,9 +263,9 @@ class AdversarialDistanceObjective(BaseObjective):
             or (add_evaluator_regularization and self.as_evaluator_regularization)
         ):
             adv_examples = self._gen_adv(inputs, outputs, targets, cand_net)
-            inputs_adv = torch.tensor(
-                [torch.from_numpy(adv.perturbed) for adv in adv_examples]
-            )
+            inputs_adv = inputs.new(np.stack([adv.perturbed for adv in adv_examples]))
+            # convert the adv examples from [0,1] to the normalized domain by (.-mean)/std
+            inputs_adv = (inputs_adv - self.mean.to(inputs.device)) / self.std.to(inputs.device)
             outputs_adv = cand_net(inputs_adv)
             ce_loss_adv = nn.CrossEntropyLoss()(outputs_adv, targets)
             loss = (1 - self.adv_loss_coeff) * loss + self.adv_loss_coeff * ce_loss_adv
@@ -232,8 +276,17 @@ class AdversarialDistanceObjective(BaseObjective):
         for distances in distance_perfs:
             all_distances.extend(distances.tolist())
         all_distances = np.array(all_distances)
+
         if _type == "mean_distance":
+            # For few times, Foolbox will fail to attack successfully.
+            # And the returned distance will be`inf`.
+            # Without loss of generality, we assign them to the maximum value
+            # that isn't `inf`, when calculating the mean distance.
+            inf_to_zero = all_distances.copy()
+            inf_to_zero[np.isinf(all_distances)] = 0
+            all_distances[np.isinf(all_distances)] = inf_to_zero.max()
             return np.mean(all_distances)
+
         elif _type == "median_distance":
             return np.median(all_distances)
 
@@ -264,6 +317,7 @@ class AdversarialRobustnessObjective(BaseObjective):
         adv_reward_coeff=0.0,
         as_controller_regularization=False,
         as_evaluator_regularization=False,
+        use_eval_mode=False,
         schedule_cfg=None,
     ):
         super(AdversarialRobustnessObjective, self).__init__(search_space, schedule_cfg)
@@ -275,7 +329,7 @@ class AdversarialRobustnessObjective(BaseObjective):
             ConfigException,
         )
         self.adv_generator = Adversary[adversary_type](
-            epsilon, n_step, step_size, rand_init, mean, std
+            epsilon, n_step, step_size, rand_init, mean, std, use_eval_mode
         )
         self.adv_reward_coeff = adv_reward_coeff
         self.adv_loss_coeff = adv_loss_coeff

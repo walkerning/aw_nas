@@ -2,8 +2,8 @@
 Built-in tight coupled NAS flows.
 """
 
-from aw_nas.utils import logger as _logger
-_LOGGER = _logger.getChild("btc")
+from aw_nas.utils import getLogger
+_LOGGER = getLogger("btc")
 
 try:
     from aw_nas.btcs import nasbench_101

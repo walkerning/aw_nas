@@ -120,6 +120,7 @@ class PredictorBasedController(BaseController):
                      "train_valid_split": None,
                      "n_cross_valid": None,
                  },
+                 training_on_load=False, # force retraining on load
                  schedule_cfg=None):
         super(PredictorBasedController, self).__init__(
             search_space, rollout_type, mode, schedule_cfg)
@@ -145,6 +146,7 @@ class PredictorBasedController(BaseController):
         self.min_inner_sample_ratio = min_inner_sample_ratio
         self.predict_batch_size = predict_batch_size
         self.begin_train_num = begin_train_num
+        self.training_on_load = training_on_load
 
         # initialize the inner controller
         inner_controller_cfg = inner_controller_cfg or {}
@@ -154,17 +156,17 @@ class PredictorBasedController(BaseController):
                    "If specified, inner_controller's `rollout_type` must match "
                    "the outer `rollout_type`",
                    ConfigException)
-            inner_controller_cfg.pop("rollout_type")
-            inner_controller_cfg.pop("mode")
+            inner_controller_cfg.pop("rollout_type", None)
+            inner_controller_cfg.pop("mode", None)
 
         self.inner_controller_type = inner_controller_type
         self.inner_controller_cfg = inner_controller_cfg
-        if not self.inner_controller_reinit:
-            self.inner_controller = BaseController.get_class_(self.inner_controller_type)(
-                self.search_space, self.device,
-                rollout_type=self.rollout_type, **self.inner_controller_cfg)
-        else:
-            self.inner_controller = None
+        # if not self.inner_controller_reinit:
+        self.inner_controller = BaseController.get_class_(self.inner_controller_type)(
+            self.search_space, self.device,
+            rollout_type=self.rollout_type, **self.inner_controller_cfg)
+        # else:
+        #     self.inner_controller = None
         # Currently, we do not use controller with parameters to be optimized (e.g. RL-learned RNN)
         self.inner_cont_optimizer = None
 
@@ -214,10 +216,6 @@ class PredictorBasedController(BaseController):
     def sample(self, n=1, batch_size=1):
         """Sample architectures based on the current predictor"""
 
-        if not self.is_predictor_trained:
-            # if predictor is not trained, random sample from search space
-            return [self.search_space.random_sample() for _ in range(n)]
-
         if self.mode == "eval":
             # return the best n rollouts that are evaluted by ground-truth evaluator
             self.logger.info("Return the best {} rollouts in the population".format(n))
@@ -228,6 +226,10 @@ class PredictorBasedController(BaseController):
             #     *[(r, r.get_perf("reward")) for rs in self.gt_rollouts for r in rs])
             # best_inds = np.argpartition(all_scores, -n)[-n:]
             return [all_rollouts[ind] for ind in best_inds]
+
+        if not self.is_predictor_trained:
+            # if predictor is not trained, random sample from search space
+            return [self.search_space.random_sample() for _ in range(n)]
 
         if n % self.inner_sample_n != 0:
             self.logger.warn("samle number %d cannot be divided by inner_sample_n %d",
@@ -303,7 +305,18 @@ class PredictorBasedController(BaseController):
             # random init
             if self.inner_iter_random_init \
                and hasattr(self.inner_controller, "reinit"):
-                self.inner_controller.reinit()
+                if i_iter > 1:
+                    # might use gt rollouts as the init population if `inner_random_init=true`
+                    # so, do not call reinit when i_iter == 1
+                    if (not isinstance(self.inner_iter_random_init, int)) or \
+                       self.inner_iter_random_init == 1 or \
+                       i_iter % self.inner_iter_random_init == 1:
+                        # if `inner_iter_random_init` is a integer
+                        # only reinit every `inner_iter_random_init` iterations.
+                        # `inner_iter_random_init==True` is the same as `inner_iter_random_init==1`,
+                        # and means that every iter (besides iter 1) would call `reinit`
+                        self.inner_controller.reinit()
+
 
             new_per_step_meter = utils.AverageMeter()
 
@@ -387,9 +400,12 @@ class PredictorBasedController(BaseController):
     def step(self, rollouts, optimizer, perf_name):
         """Train the predictor, using the ground-truth evaluations"""
         self.gt_rollouts.append(rollouts)
+        if perf_name != "reward":
+            # set an attribute to each rollout
+            [setattr(r, "gt_perf_name", perf_name) for r in rollouts]
+
         new_archs, new_perfs = zip(*[(r.arch, r.get_perf(perf_name)) for r in rollouts])
         self.gt_arch_scores.append(list(zip(self._pad_archs(new_archs), new_perfs)))
-        gt_arch_scores = copy.deepcopy(self.gt_arch_scores)
 
         self.num_gt_rollouts += len(rollouts)
         if self.num_gt_rollouts < self.begin_train_num:
@@ -397,6 +413,9 @@ class PredictorBasedController(BaseController):
                              self.num_gt_rollouts, self.begin_train_num)
             return 0
 
+        return self.prepare_data_and_train_predictor()
+
+    def prepare_data_and_train_predictor(self):
         # *TODO*: different ways of utilizing multi-stage data
         # weight? finetune with smaller lr? multi-stage sampling?
 
@@ -406,6 +425,7 @@ class PredictorBasedController(BaseController):
         #     valid_data, batch_size=self.predictor_train_cfg["batch_size"],
         #     shuffle=True, pin_memory=True, num_workers=self.predictor_train_cfg["num_workers"],
         #     collate_fn=lambda items: list(zip(*items)))
+        gt_arch_scores = copy.deepcopy(self.gt_arch_scores)
         tv_split = self.predictor_train_cfg.get("train_valid_split", None)
 
         if tv_split is not None and tv_split < 1:
@@ -428,7 +448,7 @@ class PredictorBasedController(BaseController):
         # construct the train loader
         all_train_data = sum(train_arch_scores, []) # *TODO*: other methods to use multi-stage data
         self.logger.info("Number of data: train {} val {}".format(
-            len(all_train_data), len(all_val_data)))
+            len(all_train_data), len(all_val_data) if val_loader is not None else 0))
         train_loader = DataLoader(
             ArchDataset(all_train_data), batch_size=self.predictor_train_cfg["batch_size"],
             shuffle=True, pin_memory=True, num_workers=self.predictor_train_cfg["num_workers"],
@@ -451,7 +471,9 @@ class PredictorBasedController(BaseController):
             pickle.dump(self.gt_rollouts, f)
         if self.inner_controller is not None:
             self.inner_controller.save("{}_controller".format(path))
-        self.model.save("{}_predictor".format(path))
+        if self.is_predictor_trained:
+            # only save when the predictor is trained
+            self.model.save("{}_predictor".format(path))
 
     def load(self, path):
         # load the evaled rollouts, predictor, controller
@@ -460,8 +482,9 @@ class PredictorBasedController(BaseController):
             with open(rollout_path, "rb") as f:
                 self.gt_rollouts = pickle.load(f)
             for rollouts in self.gt_rollouts:
-                # FIXME: save the perf_name, or save the gt_arch_scores ?
-                archs, perfs = zip(*[(r.arch, r.get_perf("reward")) for r in rollouts])
+                # save the perf_name instead of the gt_arch_scores
+                archs, perfs = zip(*[(r.arch, r.get_perf(getattr(r, "gt_perf_name", "reward")))
+                                     for r in rollouts])
                 self.gt_arch_scores.append(list(zip(self._pad_archs(archs), perfs)))
             self.num_gt_rollouts = sum([len(rollouts) for rollouts in self.gt_rollouts])
 
@@ -472,6 +495,12 @@ class PredictorBasedController(BaseController):
         predictor_path = "{}_predictor".format(path)
         if os.path.exists(predictor_path):
             self.model.load(predictor_path)
+            self.is_predictor_trained = True
+        if self.training_on_load:
+            self.logger.info(("`training_on_load` set, re-training a predictor."
+                              " Current number of gt rollouts: %d. `begin_train_num`: %d"),
+                             self.num_gt_rollouts, self.begin_train_num)
+            self.prepare_data_and_train_predictor()
             self.is_predictor_trained = True
 
     @classmethod

@@ -31,10 +31,15 @@ class Cifar10(BaseDataset):
         self.datasets = {}
         self.datasets["train"] = datasets.CIFAR10(root=self.data_dir, train=True,
                                                   download=True, transform=train_transform)
+        self.datasets["train_testTransform"] = datasets.CIFAR10(
+            root=self.data_dir, train=True, download=True, transform=test_transform)
         # temp for debug...
         # self.datasets["train"].data = self.datasets["train"].data[:1024]
         self.datasets["test"] = datasets.CIFAR10(root=self.data_dir, train=False,
                                                  download=True, transform=test_transform)
+
+    def same_data_split_mapping(self):
+        return {"train_testTransform": "train"}
 
     def splits(self):
         return self.datasets

@@ -16,7 +16,6 @@ import click
 import aw_nas
 from aw_nas import utils
 from aw_nas.common import get_search_space
-from aw_nas.utils import logger as _logger
 from aw_nas.utils.exception import expect
 from aw_nas.utils.common_utils import _OrderedCommandGroup
 from aw_nas.hardware.utils import assemble_profiling_nets, iterate, sample_networks
@@ -25,7 +24,7 @@ from aw_nas.hardware.base import BaseHardwareCompiler, MixinProfilingSearchSpace
 # patch click.option to show the default values
 click.option = functools.partial(click.option, show_default=True)
 
-LOGGER = _logger.getChild("main_hw")
+LOGGER = utils.getLogger("main_hw")
 
 
 @click.group(
