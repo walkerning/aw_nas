@@ -375,6 +375,7 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
         top1 = utils.AverageMeter()
         top5 = utils.AverageMeter()
         objective_perfs = utils.OrderedStats()
+        all_perfs = []
         model.eval()
 
         context = torch.no_grad if self.eval_no_grad else nullcontext
@@ -386,20 +387,32 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                 logits = model(inputs)
                 loss = criterion(logits, target)
                 perfs = self._perf_func(inputs, logits, target, model)
+                all_perfs.append(perfs)
                 prec1, prec5 = utils.accuracy(logits, target, topk=(1, 5))
                 n = inputs.size(0)
-                objective_perfs.update(dict(zip(self._perf_names, perfs)), n=n)
+                # objective_perfs.update(dict(zip(self._perf_names, perfs)), n=n)
                 objs.update(loss.item(), n)
                 top1.update(prec1.item(), n)
                 top5.update(prec5.item(), n)
                 del loss
-
                 if step % self.report_every == 0:
+                    all_perfs_by_name = list(zip(*all_perfs))
+                    # support use objective aggregate fn, for stat method other than mean
+                    # e.g., adversarial distance median; detection mAP (see det_trainer.py)
+                    obj_perfs = {
+                        k: self.objective.aggregate_fn(k, False)(v)
+                        for k, v in zip(self._perf_names, all_perfs_by_name)
+                    }
                     self.logger.info("valid %03d %e %f %f %s", step, objs.avg, top1.avg, top5.avg,
                                      "; ".join(["{}: {:.3f}".format(perf_n, v) \
-                                                for perf_n, v in objective_perfs.avgs().items()]))
-
-        return top1.avg, objs.avg, objective_perfs.avgs()
+                                                # for perf_n, v in objective_perfs.avgs().items()]))
+                                                for perf_n, v in obj_perfs.items()]))
+        all_perfs_by_name = list(zip(*all_perfs))
+        obj_perfs = {
+            k: self.objective.aggregate_fn(k, False)(v)
+            for k, v in zip(self._perf_names, all_perfs_by_name)
+        }
+        return top1.avg, objs.avg, obj_perfs
 
 
     def on_epoch_start(self, epoch):

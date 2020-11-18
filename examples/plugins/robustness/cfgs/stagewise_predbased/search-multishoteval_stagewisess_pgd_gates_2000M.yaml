@@ -1,0 +1,629 @@
+# Config for Predictor-based Stagewise Multi-shot NAS
+rollout_type: dense_rob
+## ---- Component search_space ----
+# ---- Type dense_rob ----
+search_space_type: dense_rob
+search_space_cfg:
+  cell_layout:
+  - 0
+  - 0
+  - 1
+  - 2
+  - 2
+  - 1
+  - 3
+  - 3
+  concat_nodes: null
+  concat_op: concat
+  loose_end: false
+  num_cell_groups: 4
+  num_init_nodes: 2
+  num_steps: 4
+  primitives:
+  - none
+  - skip_connect
+  - sep_conv_3x3
+  - ResSepConv
+  reduce_cell_groups:
+  - 1
+# ---- End Type dense_rob ----
+## ---- End Component search_space ----
+
+## ---- Component dataset ----
+# ---- Type cifar10 ----
+dataset_type: cifar10
+dataset_cfg:
+  # Schedulable attributes: 
+  cutout: null
+# ---- End Type cifar10 ----
+## ---- End Component dataset ----
+
+## ---- Component controller ----
+# ---- Type predictor-based ----
+## ---- Component controller ----
+# ---- Type predictor-based ----
+controller_type: predictor-based
+controller_cfg:
+  # Schedulable attributes:
+  training_on_load: true
+  mode: eval
+  inner_controller_type: evo
+  inner_controller_cfg:
+    population_size: 20
+    parent_pool_size: 5
+    elimination_strategy: perf
+    eval_sample_strategy: all
+  arch_network_type: pointwise_comparator
+  arch_network_cfg:
+    arch_embedder_cfg:
+       op_embedding_dim: 48
+       node_embedding_dim: 48
+       hid_dim: 48
+       gcn_out_dims: [32, 32, 32, 32]
+       share_op_attention: false
+       use_bn: false
+       use_final_only: false
+       share_self_op_emb: false
+       dropout: 0.
+    arch_embedder_type: denserob-gates
+    compare_loss_type: margin_linear
+    compare_margin: 0.1
+    mlp_dropout: 0.1
+    mlp_hiddens: [256, 256, 256]
+    optimizer: {lr: 0.001, type: Adam}
+    scheduler: null
+  inner_sample_n: 1
+  inner_samples: 1
+  inner_steps: 50
+  inner_report_freq: 10
+  predict_batch_size: 50
+  inner_random_init: true # try false with perf
+  inner_iter_random_init: false
+  begin_train_num: 200
+  predictor_train_cfg:
+    batch_size: 50
+    compare: true
+    compare_threshold: 0.0
+    epochs: 100
+    max_compare_ratio: 4.0
+    n_cross_valid: null
+    num_workers: 2
+    report_freq: 50
+    train_valid_split: 0.9
+  schedule_cfg: null
+
+evaluator_type: multi_shot_evaluator
+evaluator_cfg:
+  rollout_type: dense_rob
+  target_flops: 2000000000
+  fit_function_type: log_power
+  sub_evaluators:
+  - sub_weights_manager_type: dense_rob_wm
+    sub_weights_manager_cfg:
+      # Schedulable attributes:
+      calib_bn_num: 640
+      rollout_type: dense_rob
+      gpus: []
+      num_classes: 10
+      init_channels: 12
+      stem_multiplier: 3
+      max_grad_norm: 5.0
+      drop_rate: 0.1
+      drop_out_rate: 0.1
+      use_stem: conv_bn_3x3
+      stem_stride: 1
+      stem_affine: true
+      candidate_eval_no_grad: false
+    sub_evaluator_type: mepa
+    ckpt_path: /home/foxfi/projects/aw_nas_clones/aw_nas_dev/robnas_1028/evaluator_12
+    sub_evaluator_cfg:
+      # Schedulable attributes: controller_surrogate_steps, mepa_surrogate_steps, mepa_samples
+      rollout_type: dense_rob
+      batch_size: 176
+      mepa_optimizer: null
+      mepa_scheduler: null
+      mepa_samples: 1
+      data_portion:
+      - 0.0
+      - 0.8
+      - [train_testTransform, [0.8, 0.9], {shuffle: false}]
+      - [train_testTransform, [0.8, 0.9], {shuffle: false}]
+      shuffle_indice_file: /home/foxfi/projects/aw_nas_clones/aw_nas_dev/robnas_1028/indices.yaml
+      shuffle_data_before_split: true
+      evaluate_with_whole_queue: true # evaluate each rollout on the whole valid queue (0.2)
+
+      # cfg items below are of no use
+      controller_surrogate_steps: 0
+      mepa_surrogate_steps: 0
+      derive_surrogate_steps: null
+      surrogate_optimizer: null
+      surrogate_scheduler: null
+      schedule_every_batch: false
+      load_optimizer: true
+      load_scheduler: true
+      strict_load_weights_manager: true
+      use_maml_plus: false
+      high_order: false
+      learn_per_weight_step_lr: false
+      use_multi_step_loss: false
+      multi_step_loss_epochs: 10
+      multi_step_loss_start: null
+      surrogate_lr_optimizer: null
+      surrogate_lr_scheduler: null
+      report_inner_diagnostics: false
+      report_cont_data_diagnostics: false
+      update_mepa_surrogate_steps: null
+      disable_step_current: true
+      use_same_surrogate_data: false
+      mepa_as_surrogate: false
+      workers_per_queue: 2
+      schedule_cfg: null
+  - sub_weights_manager_type: dense_rob_wm
+    sub_weights_manager_cfg:
+      # Schedulable attributes:
+      calib_bn_num: 640
+      rollout_type: dense_rob
+      gpus: []
+      num_classes: 10
+      init_channels: 24
+      stem_multiplier: 3
+      max_grad_norm: 5.0
+      drop_rate: 0.1
+      drop_out_rate: 0.1
+      use_stem: conv_bn_3x3
+      stem_stride: 1
+      stem_affine: true
+      candidate_eval_no_grad: false
+    sub_evaluator_type: mepa
+    ckpt_path: /home/foxfi/projects/aw_nas_clones/aw_nas_dev/robnas_1028/evaluator_24
+    sub_evaluator_cfg:
+      # Schedulable attributes: controller_surrogate_steps, mepa_surrogate_steps, mepa_samples
+      rollout_type: dense_rob
+      batch_size: 88
+      mepa_optimizer: null
+      mepa_scheduler: null
+      mepa_samples: 1
+      data_portion:
+      - 0.0
+      - 0.8
+      - [train_testTransform, [0.8, 0.9], {shuffle: false}]
+      - [train_testTransform, [0.8, 0.9], {shuffle: false}]
+      shuffle_indice_file: /home/foxfi/projects/aw_nas_clones/aw_nas_dev/robnas_1028/indices.yaml
+      shuffle_data_before_split: true
+      evaluate_with_whole_queue: true # evaluate each rollout on the whole valid queue (0.2)
+
+      # cfg items below are of no use
+      controller_surrogate_steps: 0
+      mepa_surrogate_steps: 0
+      derive_surrogate_steps: null
+      surrogate_optimizer: null
+      surrogate_scheduler: null
+      schedule_every_batch: false
+      load_optimizer: true
+      load_scheduler: true
+      strict_load_weights_manager: true
+      use_maml_plus: false
+      high_order: false
+      learn_per_weight_step_lr: false
+      use_multi_step_loss: false
+      multi_step_loss_epochs: 10
+      multi_step_loss_start: null
+      surrogate_lr_optimizer: null
+      surrogate_lr_scheduler: null
+      report_inner_diagnostics: false
+      report_cont_data_diagnostics: false
+      update_mepa_surrogate_steps: null
+      disable_step_current: true
+      use_same_surrogate_data: false
+      mepa_as_surrogate: false
+      workers_per_queue: 2
+      schedule_cfg: null
+  - sub_weights_manager_type: dense_rob_wm
+    sub_weights_manager_cfg:
+      # Schedulable attributes:
+      calib_bn_num: 640
+      rollout_type: dense_rob
+      gpus: []
+      num_classes: 10
+      init_channels: 30
+      stem_multiplier: 3
+      max_grad_norm: 5.0
+      drop_rate: 0.1
+      drop_out_rate: 0.1
+      use_stem: conv_bn_3x3
+      stem_stride: 1
+      stem_affine: true
+      candidate_eval_no_grad: false
+    sub_evaluator_type: mepa
+    ckpt_path: /home/foxfi/projects/aw_nas_clones/aw_nas_dev/robnas_1028/evaluator_30
+    sub_evaluator_cfg:
+      # Schedulable attributes: controller_surrogate_steps, mepa_surrogate_steps, mepa_samples
+      rollout_type: dense_rob
+      batch_size: 56
+      mepa_optimizer: null
+      mepa_scheduler: null
+      mepa_samples: 1
+      data_portion:
+      - 0.0
+      - 0.8
+      - [train_testTransform, [0.8, 0.9], {shuffle: false}]
+      - [train_testTransform, [0.8, 0.9], {shuffle: false}]
+      shuffle_indice_file: /home/foxfi/projects/aw_nas_clones/aw_nas_dev/robnas_1028/indices.yaml
+      shuffle_data_before_split: true
+      evaluate_with_whole_queue: true # evaluate each rollout on the whole valid queue (0.2)
+
+      # cfg items below are of no use
+      controller_surrogate_steps: 0
+      mepa_surrogate_steps: 0
+      derive_surrogate_steps: null
+      surrogate_optimizer: null
+      surrogate_scheduler: null
+      schedule_every_batch: false
+      load_optimizer: true
+      load_scheduler: true
+      strict_load_weights_manager: true
+      use_maml_plus: false
+      high_order: false
+      learn_per_weight_step_lr: false
+      use_multi_step_loss: false
+      multi_step_loss_epochs: 10
+      multi_step_loss_start: null
+      surrogate_lr_optimizer: null
+      surrogate_lr_scheduler: null
+      report_inner_diagnostics: false
+      report_cont_data_diagnostics: false
+      update_mepa_surrogate_steps: null
+      disable_step_current: true
+      use_same_surrogate_data: false
+      mepa_as_surrogate: false
+      workers_per_queue: 2
+      schedule_cfg: null
+  - sub_weights_manager_type: dense_rob_wm
+    sub_weights_manager_cfg:
+      # Schedulable attributes:
+      calib_bn_num: 640
+      rollout_type: dense_rob
+      gpus: []
+      num_classes: 10
+      init_channels: 36
+      stem_multiplier: 3
+      max_grad_norm: 5.0
+      drop_rate: 0.1
+      drop_out_rate: 0.1
+      use_stem: conv_bn_3x3
+      stem_stride: 1
+      stem_affine: true
+      candidate_eval_no_grad: false
+    sub_evaluator_type: mepa
+    ckpt_path: /home/foxfi/projects/aw_nas_clones/aw_nas_dev/robnas_1028/evaluator_36
+    sub_evaluator_cfg:
+      # Schedulable attributes: controller_surrogate_steps, mepa_surrogate_steps, mepa_samples
+      rollout_type: dense_rob
+      batch_size: 56
+      mepa_optimizer: null
+      mepa_scheduler: null
+      mepa_samples: 1
+      data_portion:
+      - 0.0
+      - 0.8
+      - [train_testTransform, [0.8, 0.9], {shuffle: false}]
+      - [train_testTransform, [0.8, 0.9], {shuffle: false}]
+      shuffle_indice_file: /home/foxfi/projects/aw_nas_clones/aw_nas_dev/robnas_1028/indices.yaml
+      shuffle_data_before_split: true
+      evaluate_with_whole_queue: true # evaluate each rollout on the whole valid queue (0.2)
+
+      # cfg items below are of no use
+      controller_surrogate_steps: 0
+      mepa_surrogate_steps: 0
+      derive_surrogate_steps: null
+      surrogate_optimizer: null
+      surrogate_scheduler: null
+      schedule_every_batch: false
+      load_optimizer: true
+      load_scheduler: true
+      strict_load_weights_manager: true
+      use_maml_plus: false
+      high_order: false
+      learn_per_weight_step_lr: false
+      use_multi_step_loss: false
+      multi_step_loss_epochs: 10
+      multi_step_loss_start: null
+      surrogate_lr_optimizer: null
+      surrogate_lr_scheduler: null
+      report_inner_diagnostics: false
+      report_cont_data_diagnostics: false
+      update_mepa_surrogate_steps: null
+      disable_step_current: true
+      use_same_surrogate_data: false
+      mepa_as_surrogate: false
+      workers_per_queue: 2
+      schedule_cfg: null
+  - sub_weights_manager_type: dense_rob_wm
+    sub_weights_manager_cfg:
+      calib_bn_num: 640
+      # Schedulable attributes: 
+      rollout_type: dense_rob
+      gpus: []
+      num_classes: 10
+      init_channels: 40
+      stem_multiplier: 3
+      max_grad_norm: 5.0
+      drop_rate: 0.1
+      drop_out_rate: 0.1
+      use_stem: conv_bn_3x3
+      stem_stride: 1
+      stem_affine: true
+      candidate_eval_no_grad: false
+    sub_evaluator_type: mepa
+    ckpt_path: /home/foxfi/projects/aw_nas_clones/aw_nas_dev/robnas_1028/evaluator_40
+    sub_evaluator_cfg:
+      # Schedulable attributes: controller_surrogate_steps, mepa_surrogate_steps, mepa_samples
+      rollout_type: dense_rob
+      batch_size: 48
+      mepa_optimizer: null
+      mepa_scheduler: null
+      mepa_samples: 1
+      data_portion:
+      - 0.0
+      - 0.8
+      - [train_testTransform, [0.8, 0.9], {shuffle: false}]
+      - [train_testTransform, [0.8, 0.9], {shuffle: false}]
+      shuffle_indice_file: /home/foxfi/projects/aw_nas_clones/aw_nas_dev/robnas_1028/indices.yaml
+      shuffle_data_before_split: true
+      evaluate_with_whole_queue: true # evaluate each rollout on the whole valid queue (0.2)
+
+      # cfg items below are of no use
+      controller_surrogate_steps: 0
+      mepa_surrogate_steps: 0
+      derive_surrogate_steps: null
+      surrogate_optimizer: null
+      surrogate_scheduler: null
+      schedule_every_batch: false
+      load_optimizer: true
+      load_scheduler: true
+      strict_load_weights_manager: true
+      use_maml_plus: false
+      high_order: false
+      learn_per_weight_step_lr: false
+      use_multi_step_loss: false
+      multi_step_loss_epochs: 10
+      multi_step_loss_start: null
+      surrogate_lr_optimizer: null
+      surrogate_lr_scheduler: null
+      report_inner_diagnostics: false
+      report_cont_data_diagnostics: false
+      update_mepa_surrogate_steps: null
+      disable_step_current: true
+      use_same_surrogate_data: false
+      mepa_as_surrogate: false
+      workers_per_queue: 2
+      schedule_cfg: null
+  - sub_weights_manager_type: dense_rob_wm
+    sub_weights_manager_cfg:
+      calib_bn_num: 640
+      # Schedulable attributes: 
+      rollout_type: dense_rob
+      gpus: []
+      num_classes: 10
+      init_channels: 44
+      stem_multiplier: 3
+      max_grad_norm: 5.0
+      drop_rate: 0.1
+      drop_out_rate: 0.1
+      use_stem: conv_bn_3x3
+      stem_stride: 1
+      stem_affine: true
+      candidate_eval_no_grad: false
+    sub_evaluator_type: mepa
+    ckpt_path: /home/foxfi/projects/aw_nas_clones/aw_nas_dev/robnas_1028/evaluator_44
+    sub_evaluator_cfg:
+      # Schedulable attributes: controller_surrogate_steps, mepa_surrogate_steps, mepa_samples
+      rollout_type: dense_rob
+      batch_size: 48
+      mepa_optimizer: null
+      mepa_scheduler: null
+      mepa_samples: 1
+      data_portion:
+      - 0.0
+      - 0.8
+      - [train_testTransform, [0.8, 0.9], {shuffle: false}]
+      - [train_testTransform, [0.8, 0.9], {shuffle: false}]
+      shuffle_indice_file: /home/foxfi/projects/aw_nas_clones/aw_nas_dev/robnas_1028/indices.yaml
+      shuffle_data_before_split: true
+      evaluate_with_whole_queue: true # evaluate each rollout on the whole valid queue (0.2)
+
+      # cfg items below are of no use
+      controller_surrogate_steps: 0
+      mepa_surrogate_steps: 0
+      derive_surrogate_steps: null
+      surrogate_optimizer: null
+      surrogate_scheduler: null
+      schedule_every_batch: false
+      load_optimizer: true
+      load_scheduler: true
+      strict_load_weights_manager: true
+      use_maml_plus: false
+      high_order: false
+      learn_per_weight_step_lr: false
+      use_multi_step_loss: false
+      multi_step_loss_epochs: 10
+      multi_step_loss_start: null
+      surrogate_lr_optimizer: null
+      surrogate_lr_scheduler: null
+      report_inner_diagnostics: false
+      report_cont_data_diagnostics: false
+      update_mepa_surrogate_steps: null
+      disable_step_current: true
+      use_same_surrogate_data: false
+      mepa_as_surrogate: false
+      workers_per_queue: 2
+      schedule_cfg: null
+  - sub_weights_manager_type: dense_rob_wm
+    sub_weights_manager_cfg:
+      # Schedulable attributes:
+      calib_bn_num: 640
+      rollout_type: dense_rob
+      gpus: []
+      num_classes: 10
+      init_channels: 54
+      stem_multiplier: 3
+      max_grad_norm: 5.0
+      drop_rate: 0.1
+      drop_out_rate: 0.1
+      use_stem: conv_bn_3x3
+      stem_stride: 1
+      stem_affine: true
+      candidate_eval_no_grad: false
+    sub_evaluator_type: mepa
+    ckpt_path: /home/foxfi/projects/aw_nas_clones/aw_nas_dev/robnas_1028/evaluator_54
+    sub_evaluator_cfg:
+      # Schedulable attributes: controller_surrogate_steps, mepa_surrogate_steps, mepa_samples
+      rollout_type: dense_rob
+      batch_size: 40
+      mepa_optimizer: null
+      mepa_scheduler: null
+      mepa_samples: 1
+      data_portion:
+      - 0.0
+      - 0.8
+      - [train_testTransform, [0.8, 0.9], {shuffle: false}]
+      - [train_testTransform, [0.8, 0.9], {shuffle: false}]
+      shuffle_indice_file: /home/foxfi/projects/aw_nas_clones/aw_nas_dev/robnas_1028/indices.yaml
+      shuffle_data_before_split: true
+      evaluate_with_whole_queue: true # evaluate each rollout on the whole valid queue (0.2)
+
+      # cfg items below are of no use
+      controller_surrogate_steps: 0
+      mepa_surrogate_steps: 0
+      derive_surrogate_steps: null
+      surrogate_optimizer: null
+      surrogate_scheduler: null
+      schedule_every_batch: false
+      load_optimizer: true
+      load_scheduler: true
+      strict_load_weights_manager: true
+      use_maml_plus: false
+      high_order: false
+      learn_per_weight_step_lr: false
+      use_multi_step_loss: false
+      multi_step_loss_epochs: 10
+      multi_step_loss_start: null
+      surrogate_lr_optimizer: null
+      surrogate_lr_scheduler: null
+      report_inner_diagnostics: false
+      report_cont_data_diagnostics: false
+      update_mepa_surrogate_steps: null
+      disable_step_current: true
+      use_same_surrogate_data: false
+      mepa_as_surrogate: false
+      workers_per_queue: 2
+      schedule_cfg: null
+  - sub_weights_manager_type: dense_rob_wm
+    sub_weights_manager_cfg:
+      # Schedulable attributes:
+      calib_bn_num: 640
+      rollout_type: dense_rob
+      gpus: []
+      num_classes: 10
+      init_channels: 64
+      stem_multiplier: 3
+      max_grad_norm: 5.0
+      drop_rate: 0.1
+      drop_out_rate: 0.1
+      use_stem: conv_bn_3x3
+      stem_stride: 1
+      stem_affine: true
+      candidate_eval_no_grad: false
+    sub_evaluator_type: mepa
+    ckpt_path: /home/foxfi/projects/aw_nas_clones/aw_nas_dev/robnas_1028/evaluator_64
+    sub_evaluator_cfg:
+      # Schedulable attributes: controller_surrogate_steps, mepa_surrogate_steps, mepa_samples
+      rollout_type: dense_rob
+      batch_size: 32
+      mepa_optimizer: null
+      mepa_scheduler: null
+      mepa_samples: 1
+      data_portion:
+      - 0.0
+      - 0.8
+      - [train_testTransform, [0.8, 0.9], {shuffle: false}]
+      - [train_testTransform, [0.8, 0.9], {shuffle: false}]
+      shuffle_indice_file: /home/foxfi/projects/aw_nas_clones/aw_nas_dev/robnas_1028/indices.yaml
+      shuffle_data_before_split: true
+      evaluate_with_whole_queue: true # evaluate each rollout on the whole valid queue (0.2)
+
+      # cfg items below are of no use
+      controller_surrogate_steps: 0
+      mepa_surrogate_steps: 0
+      derive_surrogate_steps: null
+      surrogate_optimizer: null
+      surrogate_scheduler: null
+      schedule_every_batch: false
+      load_optimizer: true
+      load_scheduler: true
+      strict_load_weights_manager: true
+      use_maml_plus: false
+      high_order: false
+      learn_per_weight_step_lr: false
+      use_multi_step_loss: false
+      multi_step_loss_epochs: 10
+      multi_step_loss_start: null
+      surrogate_lr_optimizer: null
+      surrogate_lr_scheduler: null
+      report_inner_diagnostics: false
+      report_cont_data_diagnostics: false
+      update_mepa_surrogate_steps: null
+      disable_step_current: true
+      use_same_surrogate_data: false
+      mepa_as_surrogate: false
+      workers_per_queue: 2
+      schedule_cfg: null
+
+
+## ---- End Component controller ----
+
+## ---- Component weights_manager ----
+# ---- Type stub ----
+weights_manager_type: dense_rob_wm
+weights_manager_cfg: {}
+# ---- End Type stub ----
+## ---- End Component weights_manager ----
+
+## ---- Component objective ----
+objective_type: adversarial_robustness_flops
+objective_cfg:
+  # Schedulable attributes: 
+  epsilon: 0.03137254901960784
+  n_step: 7
+  step_size: 0.00784313725490196
+  mean: [0.49139968, 0.48215827, 0.44653124]
+  std: [0.24703233, 0.24348505, 0.26158768]
+  rand_init: true
+  adv_loss_coeff: 0.5
+  as_controller_regularization: false
+  as_evaluator_regularization: true
+  adv_reward_coeff: 0.5
+  schedule_cfg: null
+## ---- End Component objective ----
+
+## ---- Component trainer ----
+# ---- Type simple ----
+trainer_type: simple
+trainer_cfg:
+  # Schedulable attributes: controller_samples, derive_samples
+  rollout_type: dense_rob
+  epochs: 8
+  test_every: 4
+  controller_optimizer: null
+  controller_scheduler: null
+  controller_samples: 50
+  derive_samples: 8
+  rollout_batch_size: 1
+  evaluator_steps: 0
+  controller_steps: 1
+  controller_train_every: 1
+  controller_train_begin: 1
+  interleave_controller_every: null
+  schedule_cfg: null
+# ---- End Type simple ----
+## ---- End Component trainer ----
