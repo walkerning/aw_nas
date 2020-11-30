@@ -30,7 +30,7 @@ The interface between these components is somehow well-defined. We use a class `
 
 ![NAS framework](doc/pics/framework.pdf)
 
-Here is a graphical illustration of the [NAS flow and corresponding method calls](doc/pics/flow.pdf).
+Here is a graphical illustration of the [NAS flow and corresponding method calls](doc/pics/flow.pdf). And here is [a brief technical summary](doc/awnas.pdf) of `aw_nas`, including some reproducing results and descriptions on hardware cost prediction models.
 
 
 ## Install
