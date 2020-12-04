@@ -254,8 +254,8 @@ class DiffController(BaseController, nn.Module):
     def step(self, rollouts, optimizer, perf_name):  # very memory inefficient
         self.zero_grad()
         losses = [r.get_perf(perf_name) for r in rollouts]
-        optimizer.step()
         [l.backward() for l in losses]
+        optimizer.step()
         return np.mean([l.detach().cpu().numpy() for l in losses])
 
     def summary(self, rollouts, log=False, log_prefix="", step=None):

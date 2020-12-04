@@ -175,7 +175,7 @@ We use this codebase to finish the following researches
 * Xuefei Ning, Guangjun Ge, Wenshuo Li, Zhenhua Zhu, Yin Zheng, Xiaoming Chen, Zhen Gao, Yu Wang, and Huazhong Yang, FTT-NAS: Discovering Fault-Tolerant Neural Architecture, in https://arxiv.org/abs/2003.10375, 2020.
 * Xuefei Ning, Yin Zheng, Tianchen Zhao, Yu Wang, Huazhong Yang, A Generic Graph-based Neural Architecture Encoding Scheme for Predictor-based NAS, in ECCV 2020, https://arxiv.org/abs/2004.01899
 * Xuefei Ning*, Wenshuo Li*, Zixuan Zhou*, Tianchen Zhao, Yin Zheng, Shuang Liang, Huazhong Yang, Yu Wang, A Surgery of the Neural Architecture Evaluators, in https://arxiv.org/abs/2008.03064
-* Xuefei Ning*, Junbo Zhao*, Wenshuo Li, Huazhong Yang, Yu Wang, Multi-shot NAS for Discovering Adversarially Robust Convolutional Neural Architectures.
+* Xuefei Ning*, Junbo Zhao*, Wenshuo Li, Tianchen Zhao, Huazhong Yang, Yu Wang, Multi-shot NAS for Discovering Adversarially Robust Convolutional Neural Architectures at Targeted Capacities.
 
 
 See the sub-directories under `examples/research/` for more details.
