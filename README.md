@@ -176,6 +176,7 @@ We use this codebase to finish the following researches
 * Xuefei Ning, Yin Zheng, Tianchen Zhao, Yu Wang, Huazhong Yang, A Generic Graph-based Neural Architecture Encoding Scheme for Predictor-based NAS, in ECCV 2020, https://arxiv.org/abs/2004.01899
 * Xuefei Ning*, Wenshuo Li*, Zixuan Zhou*, Tianchen Zhao, Yin Zheng, Shuang Liang, Huazhong Yang, Yu Wang, A Surgery of the Neural Architecture Evaluators, in https://arxiv.org/abs/2008.03064
 * Xuefei Ning*, Junbo Zhao*, Wenshuo Li, Tianchen Zhao, Huazhong Yang, Yu Wang, Multi-shot NAS for Discovering Adversarially Robust Convolutional Neural Architectures at Targeted Capacities.
+* Tianchen Zhao*, Xuefei Ning*, Songyi Yang, Shuang Liang, Peng Lei, Jianfei Chen, Huazhong Yang, Yu Wang, BARS: Joint Search of Cell Topology and Layout for Accurate and Efficient Binary ARchitectures, in https://arxiv.org/abs/2011.10804, 2020.
 
 
 See the sub-directories under `examples/research/` for more details.
