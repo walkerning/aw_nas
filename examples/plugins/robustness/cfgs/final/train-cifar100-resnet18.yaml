@@ -1,0 +1,111 @@
+# param:     1000 M
+# flops:     3.93 M
+# clean acc: 93.8%
+
+## ---- Component search_space ----
+# ---- Type cnn ----
+search_space_type: cnn
+search_space_cfg:
+  # Schedulable attributes: 
+  cell_layout: [0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2]
+  num_cell_groups: 3
+  num_init_nodes: 1
+  num_layers: 62
+  num_node_inputs: 1
+  num_steps: 1
+  reduce_cell_groups:
+  - 1
+  shared_primitives: # this is not used
+  - none
+ 
+# ---- End Type cnn ----
+## ---- End Component search_space ----
+
+## ---- Component dataset ----
+# ---- Type cifar10 ----
+dataset_type: cifar100
+dataset_cfg:
+  # Schedulable attributes: 
+  cutout: null
+# ---- End Type cifar10 ----
+## ---- End Component dataset ----
+
+## ---- Component final_model ----
+# ---- Type cnn_genotype ----
+final_model_type: cnn_final_model
+final_model_cfg:
+  # Schedulable attributes: dropout_path_rate
+  genotypes: "normal_0=[('dense_block', 0, 1)], reduce_1=[('dense_reduce_block', 0, 1)], normal_2=[('bn_relu', 0, 1)]"
+  auxiliary_cfg: null
+  auxiliary_head: false
+  layer_channels: [48, 72, 96, 120, 144, 168, 192, 96, 120, 144, 168, 192, 216, 240, 264, 288, 312, 336, 360, 384, 192, 216, 240, 264, 288, 312, 336, 360, 384, 408, 432, 456, 480, 504, 528, 552, 576, 600, 624, 648, 672, 696, 720, 744, 768, 384, 408, 432, 456, 480, 504, 528, 552, 576, 600, 624, 648, 672, 696, 720, 744, 768, 768]
+  dropout_path_rate: 0.0
+  dropout_rate: 0.0
+  init_channels: 48
+  num_classes: 100
+  cell_use_preprocess: false
+  schedule_cfg: null
+  stem_multiplier: 1
+  use_stem: conv_3x3
+  stem_stride: 1
+  stem_affine: true
+# ---- End Type cnn_genotype ----
+## ---- End Component final_model ----
+
+## ---- Component final_trainer ----
+# ---- Type cnn_trainer ----
+final_trainer_type: cnn_trainer
+final_trainer_cfg:
+  # Schedulable attributes: 
+  add_regularization: false
+  auxiliary_head: false
+  auxiliary_weight: 0.0
+  batch_size: 48
+  epochs: 110
+  eval_no_grad: false
+  grad_clip: 5.0
+  learning_rate: 0.10
+  momentum: 0.9
+  multiprocess: false
+  no_bias_decay: false
+  optimizer_kwargs: null
+  optimizer_scheduler:
+    gamma: 0.1
+    milestones:
+    - 99
+    - 104
+    type: MultiStepLR
+  optimizer_type: SGD
+  save_as_state_dict: true
+  schedule_cfg: null
+  warmup_epochs: 0
+  weight_decay: 0.0005
+  workers_per_queue: 2
+# ---- End Type cnn_trainer ----
+## ---- End Component final_trainer ----
+
+## ---- Component objective ----
+# ---- Type adversarial_robustness_objective ----
+objective_type: adversarial_robustness_objective
+objective_cfg:
+  # schedule_cfg:
+  adversary_type: PGD
+  adv_loss_coeff: 1.0
+  adv_reward_coeff: 0.5
+  as_controller_regularization: true
+  as_evaluator_regularization: true
+  epsilon: 0.03137254901960784
+  mean:
+  - 0.5070751592371322
+  - 0.4865488733149497
+  - 0.44091784336703466
+  n_step: 7
+  rand_init: true
+  schedule_cfg: null
+  std:
+  - 0.26733428587924063
+  - 0.25643846291708833
+  - 0.27615047132568393
+  step_size: 0.00784313725490196
+  use_eval_mode: true
+  label_smooth: 0.2

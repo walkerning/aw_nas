@@ -1,4 +1,8 @@
+# Config of Adversarial Training Supernet of Multi-shot NAS
+# By running configuration file, a 24-channel supernet with cellwise search space can be trained
+ 
 rollout_type: dense_rob
+
 ## ---- Component search_space ----
 # ---- Type dense_rob ----
 search_space_type: dense_rob
@@ -47,7 +51,6 @@ controller_cfg: {}
 # ---- Type mepa ----
 evaluator_type: mepa
 evaluator_cfg:
-  # Schedulable attributes: controller_surrogate_steps, mepa_surrogate_steps, mepa_samples
   rollout_type: dense_rob
   batch_size: 64
   mepa_optimizer:
@@ -65,7 +68,6 @@ evaluator_cfg:
   - 0.8
   - 0.2
   shuffle_data_before_split: false
-
   # cfg items below are of no use
   controller_surrogate_steps: 0
   mepa_surrogate_steps: 0
@@ -103,8 +105,8 @@ weights_manager_cfg:
   rollout_type: dense_rob
   gpus: []
   num_classes: 10
-  init_channels: 24
-  stem_multiplier: 1
+  init_channels: 24  # By modifying this, you can train supernets with different init channel number
+  stem_multiplier: 3
   max_grad_norm: 5.0
   drop_rate: 0.1
   drop_out_rate: 0.1
@@ -119,12 +121,13 @@ weights_manager_cfg:
 # ---- Type adversarial_robustness_objective ----
 objective_type: adversarial_robustness_objective
 objective_cfg:
-  # Schedulable attributes: 
-  epsilon: 0.03
+  # Schedulable attributes:
+  adversary_type: PGD 
+  epsilon: 0.03137254901960784
   n_step: 7
-  step_size: 0.0078
-  rand_init: false
-  adv_loss_coeff: 0.5
+  step_size: 0.00784313725490196
+  rand_init: true
+  adv_loss_coeff: 1.0
   as_controller_regularization: false
   as_evaluator_regularization: true
   adv_reward_coeff: 0.5

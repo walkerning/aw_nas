@@ -378,9 +378,11 @@ class SimpleTrainer(BaseTrainer):
             fnames = rollouts[idx].plot_arch(save_path, label="epoch {}".format(self.epoch))
             if not self.writer.is_none() and fnames is not None:
                 for cg_n, fname in fnames:
-                    image = imageio.imread(fname)
-                    self.writer.add_image("genotypes/{}".format(cg_n), image, self.epoch,
-                                          dataformats="HWC")
+                    try:
+                        image = imageio.imread(fname)
+                        self.writer.add_image("genotypes/{}".format(cg_n), image, self.epoch, dataformats="HWC")
+                    except:
+                        pass
 
         self.logger.info("TEST Epoch %3d: Among %d sampled archs: "
                          "BEST (in reward): %.5f (mean: %.5f); Performance: %s",

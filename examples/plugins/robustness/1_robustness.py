@@ -27,6 +27,7 @@ from aw_nas.utils.exception import expect, ConfigException
 from aw_nas.common import get_search_space
 from aw_nas.final.base import FinalModel
 from aw_nas.utils import DistributedDataParallel
+from aw_nas.objective.image import CrossEntropyLabelSmooth
 
 try:
     import foolbox as fb
@@ -123,16 +124,6 @@ class DistanceAdversary(object):
         # Note that, foolbox attacks must use eval mode,
         # since they craft adversarial examples by feeding pictures one by one
         is_training_stored = net.training
-        # if net.training:
-        #     is_training_stored = True
-        #     utils.getLogger("robustness plugin.DistanceAdversary").warn(
-        #         "The net is in training mode, we'll set it to eval mode temporarily."
-        #         " Because Foolbox attacks must use eval mode, "
-        #         " as they craft adversarial examples by feeding pictures one by one."
-        #     )
-        # else:
-        #     is_training_stored = False
-
         net.eval()
         inputs_clone = inputs.data.clone() * self.std.to(inputs.device) + self.mean.to(
             inputs.device
@@ -318,6 +309,7 @@ class AdversarialRobustnessObjective(BaseObjective):
         as_controller_regularization=False,
         as_evaluator_regularization=False,
         use_eval_mode=False,
+        label_smooth=None,
         schedule_cfg=None,
     ):
         super(AdversarialRobustnessObjective, self).__init__(search_space, schedule_cfg)
@@ -333,6 +325,9 @@ class AdversarialRobustnessObjective(BaseObjective):
         )
         self.adv_reward_coeff = adv_reward_coeff
         self.adv_loss_coeff = adv_loss_coeff
+        self.label_smooth = label_smooth
+        self._criterion = nn.CrossEntropyLoss() if not self.label_smooth \
+                          else CrossEntropyLabelSmooth(self.label_smooth)
         self.as_controller_regularization = as_controller_regularization
         self.as_evaluator_regularization = as_evaluator_regularization
         self.cache_hit = 0
@@ -381,14 +376,14 @@ class AdversarialRobustnessObjective(BaseObjective):
             outputs: logits
             targets: labels
         """
-        loss = nn.CrossEntropyLoss()(outputs, targets)
+        loss = self._criterion(outputs, targets)
         if self.adv_loss_coeff > 0 and (
             (add_controller_regularization and self.as_controller_regularization)
             or (add_evaluator_regularization and self.as_evaluator_regularization)
         ):
             inputs_adv = self._gen_adv(inputs, outputs, targets, cand_net)
             outputs_adv = cand_net(inputs_adv)
-            ce_loss_adv = nn.CrossEntropyLoss()(outputs_adv, targets)
+            ce_loss_adv = self._criterion(outputs_adv, targets)
             loss = (1 - self.adv_loss_coeff) * loss + self.adv_loss_coeff * ce_loss_adv
         return loss
 
@@ -508,40 +503,32 @@ class BlackAdversarialRobustnessObjective(AdversarialRobustnessObjective):
             schedule_cfg,
         )
 
-        # load the substitute model
-        self.load_model(source_model_path, source_model_device, source_model_cfg)
-        # temp counter
-        self._adv_total, self._adv_correct = 0, 0
+        self.model_path = source_model_path
+        self.device = torch.device(source_model_device)
+        self.cfg_path = source_model_cfg
 
-    def load_model(self, path, device, source_model_cfg=None):
-        model_path = os.path.join(path, "model.pt") if os.path.isdir(path) else path
-        if os.path.exists(model_path):
-            self.source_model = torch.load(
-                model_path, map_location=torch.device("cpu")
-            ).to(device)
+        # load the substitute model
+        assert(os.path.exists(self.model_path)), "No available model at {}".format(self.model_path)
+        if os.path.isdir(self.model_path):
+            self.model_path = os.path.join(self.model_path, "model.pt") if os.path.exists(os.path.join(self.model_path, "model.pt")) else os.path.join(self.model_path, "model_state.pt")
+        if self.model_path.endswith("model.pt"):
+            self.source_model = torch.load(self.model_path, map_location=torch.device("cpu")).to(self.device)
         else:
-            model_path = os.path.join(path, "model_state.pt")
-            with open(source_model_cfg, "r") as f:
+            with open(self.cfg_path, "r") as f:
                 cfg = yaml.load(f)
             ss = get_search_space(cfg["search_space_type"], **cfg["search_space_cfg"])
             self.source_model = FinalModel.get_class_(cfg["final_model_type"])(
-                ss, device, **cfg["final_model_cfg"]
+                ss, self.device, **cfg["final_model_cfg"]
             )
             self.source_model.load_state_dict(
-                torch.load(model_path, map_location=torch.device("cpu"))
+                torch.load(self.model_path, map_location=torch.device("cpu"))
             )
-            self.source_model = self.source_model.to(device)
+            self.source_model = self.source_model.to(self.device)
         self.source_model.eval()
 
     def get_perfs(self, inputs, outputs, targets, cand_net):
         inputs_adv = self._gen_adv(inputs, outputs, targets, cand_net)
         outputs_adv = cand_net(inputs_adv)
-        self._adv_total += len(inputs_adv)
-        self._adv_correct += (
-            float(accuracy(outputs_adv, targets)[0]) / 100 * len(inputs_adv)
-        )
-        print("Acc: {}".format(self._adv_correct / self._adv_total))
-        sys.stdout.flush()
         return (
             float(accuracy(outputs, targets)[0]) / 100,
             float(accuracy(outputs_adv, targets)[0]) / 100,
@@ -551,7 +538,7 @@ class BlackAdversarialRobustnessObjective(AdversarialRobustnessObjective):
         inputs_adv = self.adv_generator.generate_adv(
             inputs, outputs, targets, self.source_model
         )
-        return inputs_adv, targets
+        return inputs_adv
 
 
 class _Cache(OrderedDict):

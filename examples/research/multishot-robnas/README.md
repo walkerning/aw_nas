@@ -1,6 +1,15 @@
 ## Multi-shot NAS for Discovering Adversarially Robust Convolutional Neural Architectures at Targeted Capacities
+--------
 
-Paper will be on arXiv soon.
+If you find this work/code helpful, please cite:
+```
+@article{ning2020multi,
+  title={Multi-shot NAS for Discovering Adversarially Robust Convolutional Neural Architectures at Targeted Capacities},
+  author={Ning, Xuefei and Zhao, Junbo and Li, Wenshuo and Zhao, Tianchen and Yang, Huazhong and Wang, Yu},
+  journal={arXiv preprint arXiv:2012.11835},
+  year={2020}
+}
+```
 
 The adversarial robustness plugin is in `../../plugins/robustness/`. There are several python files and `cfgs` dir under this directory. The python files are:
 
@@ -11,6 +20,8 @@ The adversarial robustness plugin is in `../../plugins/robustness/`. There are s
 * `2_multi_evaluator.py`: The multi-shot evaluator that uses interpolation to estimate reward at a targeted capacity.
 * `robustness_arch_embedder.py`: LSTM/GATES topology encoder.
 * `test_distance_attack.py`: Run distance attacks on trained final models. Generate appropriate test configurations and run `awnas test`.
+* `test_acc_attack.py`: Run PGD/FGSM attacks on trained final models. Generate appropriate test configurations and run `awnas test`.
+* `test_black_attack.py`: Run blackbox PGD/FGSM attacks on trained final models. Generate appropriate test configurations and run `awnas test`.
 * `test_rob_ss.py`: A unit test script that will not be ignored by awnas plugin mechanism. However, one can run `pytest -x test_rob_ss.py` to conduct some unit testing.
 
 
@@ -31,8 +42,17 @@ export AWNAS_HOME=`readlink -f my_workspace/awnas` # a relative path to your lat
 
 After these soft linking and environment setting, `awnas` will load plugins from `my_workspace/awnas/plugins` instead of `${HOME}/awnas/plugins`.
 
-### Run predictor-based search
+### Run supernet adversarial training
+As described in our paper, the first step of our working flow is adversarially training several supernets with different initial channel numbers. 
 
+We provide an example configuration file to adversarially train a supernet with initial channel number 24 using seven-step PGD at `../../plugins/robustness/cfgs/example_supernet_training.yaml`. 
+
+By simply modifying the `init_channels` defined in  `weights_manager_cfg`, the supernet with specified initial channel numbers can be trained.
+
+To run the training process, simply run `bash run_cfg.sh ../../plugins/robustness/cfgs/example_supernet_training.yaml`. The logs and results are saved under directory `results_search/<exp_name>` by default, and `<exp_name>` will be the file-extension-stripped basename of the configuration file by default (in this case `example_supernet_training`). Check the `run_cfg.sh` script for details.
+
+----
+### Run predictor-based search
 As described in our paper, although the FGSM attack is not suitable for the adversarial training phase, it makes a reasonable proxy objective of using PGD attack during the search phase. And the predictor-based search is conducted in the stagewise search space, and thanks to several evaluation proxies (objective proxy: PGD-FGSM, dataset proxy: half validation data queue) and the better exploration (smaller search space, and better predictor-based search strategy), we regard the predictor-based search flow to be more effective.
 
 We provide sample predictor-based search configuration files (on stagewise search space) at `../../plugins/robustness/cfgs/stagewise_predbased/search-*.yaml`. The configuration file name contains information of different NAS components:
@@ -63,6 +83,24 @@ The `test_pred.py` script is a predictor diagnostic script. You can also check t
 * The cellwise search space is too large for a predictor to make good predictions out of just 200 initial architectures (50x4). This is also one of the reasons why we choose a stagewise search space in the accelerated search flow. Fortunately, we can still reuse the K trained supernets, since the stagewise search space is a sub-search-space of the cellwise one.
 * The graph-based (GATES) encoder is indeed more suitable for topological search spaces (e.g., our search space) than the LSTM encoder (All defined in `robustness_archembedder.py`).
 
-### Run final training
+----
+### Run final model adversarial training
+We provide several example configuration files to adversarially train models using seven-step PGD at `../../plugins/robustness/cfgs/final/train-*.yaml`. 
+* `train-cifar100-resnet18.yaml`:
+  * Model: ResNet18
+  * Dataset: CIFAR-100
+* `train-cifar10-MSRobNet-1000.yaml`
+  * Model: MSRobNet-1000
+  * Dataset: CIFAR-10
 
-To run a final adversarial training, use the `run_final_cfg.sh` script. For example, run `bash run_final_cfg.sh ../../plugins/robustness/cfgs/stagewise_predbased/final_ms2000_predbased.yaml`.
+Other example configuration files are uploaded [here](https://cloud.tsinghua.edu.cn/d/e94e4e3760004da9a141/). And some of the checkpoints are uploaded [here](https://cloud.tsinghua.edu.cn/d/2c174606b5fd431c84c0/).
+
+To run a final adversarial training, use the `run_final_cfg.sh` script. For example, run `bash run_final_cfg.sh ../../plugins/robustness/cfgs/final/train-cifar10-MSRobNet-1000.yaml`. The logs and results are saved under directory `results_search/<exp_name>` by default, and `<exp_name>` will be the file-extension-stripped basename of the configuration file by default (in this case, `train-cifar10-MSRobNet-1000`). Check the `run_final_cfg.sh` script for details.
+
+----
+### Run final model testing
+* We provide convenient scripts `../../plugins/robustness/test_acc_attack.py` for testing final models with PGD/FGSM attack.
+* We provide convenient scripts `../../plugins/robustness/test_distance_attack.py` for testing final models with the distance attack. 
+* We provide convenient scripts `../../plugins/robustness/test_black_attack.py` for testing final models with blackbox attack.
+
+Run `python ../../plugins/robustness/test_*_attack.py --help` for details.
