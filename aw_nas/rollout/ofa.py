@@ -104,6 +104,7 @@ class MNasNetOFASearchSpace(SearchSpace):
         image_size = genotype[0]
         return image_size, depth, width, kernel
 
+    @classmethod
     def supported_rollout_types(self):
         return ["ofa"]
 

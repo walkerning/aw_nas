@@ -9,6 +9,7 @@ import random
 import pickle
 import itertools
 import collections
+from typing import List, Optional, NamedTuple
 from collections import defaultdict, OrderedDict
 
 import six
@@ -25,7 +26,13 @@ from aw_nas.rollout.base import BaseRollout
 from aw_nas.evaluator.base import BaseEvaluator
 from aw_nas.controller.base import BaseController
 from aw_nas.evaluator.arch_network import ArchEmbedder
-from aw_nas.utils import DenseGraphSimpleOpEdgeFlow, DenseGraphConvolution, data_parallel, use_params
+from aw_nas.utils import (
+    DenseGraphSimpleOpEdgeFlow,
+    DenseGraphConvolution,
+    data_parallel,
+    use_params,
+    softmax,
+)
 from aw_nas.weights_manager.base import BaseWeightsManager, CandidateNet
 from aw_nas.final.base import FinalModel
 
@@ -35,24 +42,32 @@ VERTICES = 4
 class NasBench201SearchSpace(SearchSpace):
     NAME = "nasbench-201"
 
-    def __init__(self, num_layers=17, vertices=4, load_nasbench=True, ops_choices=(
+    def __init__(
+        self,
+        num_layers=17,
+        vertices=4,
+        load_nasbench=True,
+        ops_choices=(
             "none",
             "skip_connect",
             "nor_conv_1x1",
             "nor_conv_3x3",
-            "avg_pool_3x3")
-            ):
+            "avg_pool_3x3",
+        ),
+    ):
         super(NasBench201SearchSpace, self).__init__()
 
         self.ops_choices = ops_choices
-        self.ops_choice_to_idx = {choice: i for i, choice in enumerate(self.ops_choices)}
+        self.ops_choice_to_idx = {
+            choice: i for i, choice in enumerate(self.ops_choices)
+        }
 
         self.load_nasbench = load_nasbench
         self.num_vertices = vertices
         self.num_layers = num_layers
         self.none_op_ind = self.ops_choices.index("none")
         self.num_possible_edges = self.num_vertices * (self.num_vertices - 1) // 2
-        self.num_op_choices = len(self.ops_choices) # 5
+        self.num_op_choices = len(self.ops_choices)  # 5
         self.num_ops = self.num_vertices * (self.num_vertices - 1) // 2
         self.idx = np.tril_indices(self.num_vertices, k=-1)
         self.genotype_type = str
@@ -76,9 +91,7 @@ class NasBench201SearchSpace(SearchSpace):
 
     # ---- APIs ----
     def random_sample(self):
-        return NasBench201Rollout(
-            self.random_sample_arch(),
-            search_space=self)
+        return NasBench201Rollout(self.random_sample_arch(), search_space=self)
 
     def genotype(self, arch):
         # return the corresponding ModelSpec
@@ -92,21 +105,31 @@ class NasBench201SearchSpace(SearchSpace):
         matrix = self.str2matrix(genotypes)
 
         from graphviz import Digraph
+
         graph = Digraph(
             format=plot_format,
             # https://stackoverflow.com/questions/4714262/graphviz-dot-captions
-            body=["label=\"{l}\"".format(l=label),
-                  "labelloc=top", "labeljust=left"],
+            body=['label="{l}"'.format(l=label), "labelloc=top", "labeljust=left"],
             edge_attr=dict(fontsize="20", fontname="times"),
-            node_attr=dict(style="filled", shape="rect",
-                           align="center", fontsize="20",
-                           height="0.5", width="0.5",
-                           penwidth="2", fontname="times"),
-            engine="dot")
+            node_attr=dict(
+                style="filled",
+                shape="rect",
+                align="center",
+                fontsize="20",
+                height="0.5",
+                width="0.5",
+                penwidth="2",
+                fontname="times",
+            ),
+            engine="dot",
+        )
         graph.body.extend(["rankdir=LR"])
         graph.node(str(0), fillcolor="darkseagreen2")
         graph.node(str(self.num_vertices - 1), fillcolor="palegoldenrod")
-        [graph.node(str(i), fillcolor="lightblue") for i in range(1, self.num_vertices-1)]
+        [
+            graph.node(str(i), fillcolor="lightblue")
+            for i in range(1, self.num_vertices - 1)
+        ]
 
         for to_, from_ in zip(*self.idx):
             op_name = self.ops_choices[int(matrix[to_, from_])]
@@ -124,9 +147,9 @@ class NasBench201SearchSpace(SearchSpace):
 
     @classmethod
     def supported_rollout_types(cls):
-        return ["nasbench-201"]
+        return ["nasbench-201", "nasbench-201-differentiable"]
 
-    def mutate(self, rollout): #pylint: disable=arguments-differ
+    def mutate(self, rollout):  # pylint: disable=arguments-differ
         rand_ind = np.random.randint(0, self.idx[0].shape[0])
         neighbor_choice = np.random.randint(0, self.num_op_choices)
         arch_mat = rollout.arch
@@ -140,9 +163,18 @@ class NasBench201SearchSpace(SearchSpace):
     def matrix2str(self, arch):
         node_strs = []
         for i_node in range(1, self.num_vertices):
-            node_strs.append("|" + "|".join(["{}~{}".format(
-                self.ops_choices[int(arch[i_node, i_input])], i_input)
-                                             for i_input in range(0, i_node)]) + "|")
+            node_strs.append(
+                "|"
+                + "|".join(
+                    [
+                        "{}~{}".format(
+                            self.ops_choices[int(arch[i_node, i_input])], i_input
+                        )
+                        for i_input in range(0, i_node)
+                    ]
+                )
+                + "|"
+            )
         return "+".join(node_strs)
 
     def str2matrix(self, str_):
@@ -159,7 +191,9 @@ class NasBench201SearchSpace(SearchSpace):
 
     def _init_nasbench(self):
         # the arch -> performances dataset
-        self.base_dir = os.path.join(utils.get_awnas_dir("AWNAS_DATA", "data"), "nasbench-201")
+        self.base_dir = os.path.join(
+            utils.get_awnas_dir("AWNAS_DATA", "data"), "nasbench-201"
+        )
         self.api = API(os.path.join(self.base_dir, "NAS-Bench-201-v1_0-e61699.pth"))
 
     def op_to_idx(self, ops):
@@ -168,7 +202,8 @@ class NasBench201SearchSpace(SearchSpace):
     def random_sample_arch(self):
         arch = np.zeros((self.num_vertices, self.num_vertices))
         arch[np.tril_indices(self.num_vertices, k=-1)] = np.random.randint(
-            low=0, high=self.num_op_choices, size=self.num_ops)
+            low=0, high=self.num_op_choices, size=self.num_ops
+        )
         return arch
 
     def batch_rollouts(self, batch_size, shuffle=True, max_num=None):
@@ -180,8 +215,12 @@ class NasBench201SearchSpace(SearchSpace):
         ind = 0
         while ind < len_:
             end_ind = min(len_, ind + batch_size)
-            yield [NasBench201Rollout(matrix=self.api.str2matrix(self.api.arch(r_ind)),
-                                      search_space=self) for r_ind in indexes[ind:end_ind]]
+            yield [
+                NasBench201Rollout(
+                    matrix=self.api.str2matrix(self.api.arch(r_ind)), search_space=self
+                )
+                for r_ind in indexes[ind:end_ind]
+            ]
             ind = end_ind
 
 
@@ -202,8 +241,8 @@ class NasBench201Rollout(BaseRollout):
 
     def plot_arch(self, filename, label="", edge_labels=None):
         return self.search_space.plot_arch(
-            self.genotype, filename,
-            label=label, edge_labels=edge_labels)
+            self.genotype, filename, label=label, edge_labels=edge_labels
+        )
 
     @property
     def genotype(self):
@@ -212,19 +251,147 @@ class NasBench201Rollout(BaseRollout):
         return self._genotype
 
     def __repr__(self):
-        return "NasBench201Rollout(matrix={arch}, perf={perf})"\
-            .format(arch=self.arch, perf=self.perf)
+        return "NasBench201Rollout(matrix={arch}, perf={perf})".format(
+            arch=self.arch, perf=self.perf
+        )
+
+
+try:  # Python >= 3.6
+
+    class DiffArch(NamedTuple):
+        op_weights: torch.Tensor
+        edge_norms: Optional[torch.Tensor] = None
+
+
+except (SyntaxError, TypeError):
+    DiffArch = NamedTuple(
+        "DiffArch",
+        [("op_weights", torch.Tensor), ("edge_norms", Optional[torch.Tensor])],
+    )
+
+
+class NasBench201DiffRollout(BaseRollout):
+    NAME = "nasbench-201-differentiable"
+    supported_components = [
+        ("controller", "nasbench-201-gcn-differentiable"),
+        ("evaluator", "mepa"),
+        ("trainer", "simple"),
+    ]
+
+    def __init__(
+        self, arch: List[DiffArch], sampled, logits, search_space, candidate_net=None
+    ):
+        super(NasBench201DiffRollout, self).__init__()
+
+        self.arch = arch
+        self.sampled = sampled
+        self.logits = logits
+        self.search_space = search_space
+        self.candidate_net = candidate_net
+
+        self._genotype = None
+        self._discretized_arch = None
+        self._edge_probs = None
+
+    def set_candidate_net(self, c_net):
+        self.candidate_net = c_net
+
+    def plot_arch(self, filename, label="", edge_labels=None):
+        if edge_labels is None:
+            edge_labels = self.discretized_arch_and_prob[1]
+        return self.search_space.plot_arch(
+            self.genotype, filename, label=label, edge_labels=edge_labels
+        )
+
+    def genotype_list(self):
+        return list(self.genotype._asdict().items())
+
+    def parse(self, weights):
+
+        probs = softmax(self.logits)
+        start = 0
+        n = 1
+        num_steps = self.search_space.num_vertices
+        arch = [[], []]
+        edge_prob = []
+        for _ in range(1, num_steps):
+            end = start + n
+            w = weights[start:end]
+            prob = probs[start:end]
+            edges = sorted(range(n), key=lambda x: -max(w[x]))
+            arch[0] += edges
+            op_lst = [np.argmax(w[edge]) for edge in edges]
+            edge_prob += [
+                "{:.3f}".format(prob[edge][op_id]) for edge, op_id in zip(edges, op_lst)
+            ]
+            arch[1] += op_lst
+            n += 1
+            start = end
+
+        num = self.search_space.num_vertices
+        archs = [[0 for i in range(num)] for i in range(num)]
+        p = 0
+        for i in range(1, num):
+            for j in range(i):
+                archs[i][arch[0][p]] = arch[1][p]
+                p += 1
+
+        return np.array(archs), edge_prob
+
+    @property
+    def discretized_arch_and_prob(self):
+        if self._discretized_arch is None:
+            if self.arch[0].edge_norms is None:
+                weights = self.sampled
+            else:
+                edge_norms = utils.get_numpy(self.arch.edge_norms)
+                weights = utils.get_numpy(self.sampled) * edge_norms
+
+            self._discretized_arch, self._edge_probs = self.parse(weights)
+
+        return self._discretized_arch, self._edge_probs
+
+    @property
+    def genotype(self):
+        if self._genotype is None:
+            self._genotype = self.search_space.genotype(
+                self.discretized_arch_and_prob[0]
+            )
+        return self._genotype
+
+    def __repr__(self):
+        return (
+            "NasBench201DiffRollout(search_space={sn}, arch={arch}, "
+            "candidate_net={cn}, perf={perf})"
+        ).format(
+            sn=self.search_space.NAME,
+            arch=self.arch,
+            cn=self.candidate_net,
+            perf=self.perf,
+        )
 
 
 class NasBench201RSController(BaseController):
     NAME = "nasbench-201-rs"
 
-    def __init__(self, search_space, device, rollout_type="nasbench-201", mode="eval",
-                 check_valid=True, avoid_repeat=False, fair=False, deiso=False, op_type=0,
-                 pickle_file="", text_file="",
-                 schedule_cfg=None):
+    def __init__(
+        self,
+        search_space,
+        device,
+        rollout_type="nasbench-201",
+        mode="eval",
+        check_valid=True,
+        avoid_repeat=False,
+        fair=False,
+        deiso=False,
+        op_type=0,
+        pickle_file="",
+        text_file="",
+        schedule_cfg=None,
+    ):
         super(NasBench201RSController, self).__init__(
-            search_space, rollout_type, mode, schedule_cfg)
+            search_space, rollout_type, mode, schedule_cfg
+        )
 
         # get the infinite iterator of the model matrix and ops
         self.mode = mode
@@ -268,7 +435,12 @@ class NasBench201RSController(BaseController):
                     valid_output.append(from_)
         for input_ in valid_input:
             for output_ in valid_output:
-                if self.search_space.ops_choices[int(arch[output_][input_])].find("conv") != -1:
+                if (
+                    self.search_space.ops_choices[int(arch[output_][input_])].find(
+                        "conv"
+                    )
+                    != -1
+                ):
                     valid_arch = True
         return valid_arch
 
@@ -279,17 +451,25 @@ class NasBench201RSController(BaseController):
                 assert n == self.arch_num
                 for i in range(n):
                     line = self.lines[i].strip()
-                    rollouts.append(NasBench201Rollout(self.search_space.str2matrix(line),
-                                                       self.search_space))
+                    rollouts.append(
+                        NasBench201Rollout(
+                            self.search_space.str2matrix(line), self.search_space
+                        )
+                    )
             elif self.pickle_file:
                 for line in self.lines:
                     rollouts.append(NasBench201Rollout(line[0], self.search_space))
             else:
                 indexes = np.random.choice(np.arange(15625), size=n, replace=False)
                 for i in indexes:
-                    rollouts.append(NasBench201Rollout(
-                        self.search_space.api.str2matrix(
-                            self.search_space.api.query_by_index(i).arch_str), self.search_space))
+                    rollouts.append(
+                        NasBench201Rollout(
+                            self.search_space.api.str2matrix(
+                                self.search_space.api.query_by_index(i).arch_str
+                            ),
+                            self.search_space,
+                        )
+                    )
             return rollouts
         if self.fair:
             assert n == self.num_op_choices
@@ -312,7 +492,9 @@ class NasBench201RSController(BaseController):
                     new_rollout = self.random_sample_nonisom()
                 elif self.pickle_file:
                     new_rollout = NasBench201Rollout(
-                        self.lines[np.random.randint(0, len(self.lines))][0], self.search_space)
+                        self.lines[np.random.randint(0, len(self.lines))][0],
+                        self.search_space,
+                    )
                 else:
                     new_rollout = self.search_space.random_sample()
                 if self.check_valid_arch(new_rollout.arch) or not self.check_valid:
@@ -344,14 +526,275 @@ class NasBench201RSController(BaseController):
         pass
 
 
+class GCN(nn.Module):
+    def __init__(self, num_vertices, layers, size):
+        super(GCN, self).__init__()
+
+        self.gcns = []
+        for i in range(layers):
+            self.gcns.append(
+                DenseGraphConvolution(
+                    in_features=size,
+                    out_features=size,
+                    plus_I=False,
+                    normalize=False,
+                    bias=False,
+                )
+            )
+        self.gcns = nn.ModuleList(self.gcns)
+
+        self.layers = layers
+        self.num_vertices = num_vertices
+
+    def forward(self, x):
+        adj = np.zeros((self.num_vertices, self.num_vertices), dtype=np.float32)
+        for i in range(self.num_vertices):
+            for j in range(i):
+                adj[j][i] = 1.0 / (j + 1)
+        adj = (torch.from_numpy(adj) + torch.eye(self.num_vertices, dtype=torch.float32)).cuda()
+
+        out = x
+        for i in range(self.layers):
+            out = self.gcns[i](out, adj)
+            if i != self.layers - 1:
+                out = F.relu(out)
+
+        return out
+
+
+class MLP(nn.Module):
+    def __init__(self, num_vertices, layers, size):
+        super(MLP, self).__init__()
+
+        self.num_vertices = num_vertices
+        self.net = []
+        for i in range(1, layers + 1):
+            self.net.append(nn.Linear(size[i - 1], size[i]))
+
+        self.net = nn.ModuleList(self.net)
+        self.layers = layers
+
+    def forward_single(self, x):
+        out = x
+        for i in range(self.layers):
+            out = self.net[i](out)
+            if i != self.layers - 1:
+                out = F.relu(out)
+
+        return out
+
+    def forward(self, x):
+        prob = []
+        for i in range(self.num_vertices):
+            for j in range(i):
+                out = self.forward_single(torch.cat([x[j], x[i]]))
+                prob.append(out)
+        return prob
+
+
+class NasBench201GcnController(BaseController, nn.Module):
+    """
+    Implementation following Neural Graph Embedding for Neural Architecture Search, AAAI 2020
+    """
+
+    NAME = "nasbench-201-gcn-differentiable"
+
+    def __init__(
+        self,
+        search_space,
+        device="cuda",
+        mode="val",
+        rollout_type="nasbench-201-differentiable",
+        embed_size=10,
+        gcn_layers=5,
+        mlp_layers=3,
+        mlp_size=[15, 10],
+        use_prob=False,
+        gumbel_hard=False,
+        gumbel_temp=1.0,
+        use_edge_norm=False,
+        entropy_coeff=0.01,
+        max_grad_norm=None,
+        force_uniform=False,
+        inspect_hessian_every=-1,
+        schedule_cfg=None,
+    ):
+
+        super(NasBench201GcnController, self).__init__(
+            search_space, rollout_type, mode, schedule_cfg
+        )
+        nn.Module.__init__(self)
+
+        self.num_vertices = self.search_space.num_vertices
+        self.embed_size = embed_size
+        self.node_embed = nn.Parameter(
+            1e-3 * torch.randn(self.num_vertices, self.embed_size)
+        )
+        self.gcn_layers = gcn_layers
+        self.mlp_layers = mlp_layers
+        self.mlp_size = (
+            [self.embed_size * 2] + mlp_size + [self.search_space.num_op_choices]
+        )
+        self.gcn = GCN(self.num_vertices, self.gcn_layers, self.embed_size)
+        self.mlp = MLP(self.num_vertices, self.mlp_layers, self.mlp_size)
+        self.prob = None
+
+        self.use_prob = use_prob
+        self.gumbel_hard = gumbel_hard
+        self.gumbel_temp = gumbel_temp
+
+        self.use_edge_norm = use_edge_norm
+
+        self.entropy_coeff = entropy_coeff
+        self.max_grad_norm = max_grad_norm
+        self.force_uniform = force_uniform
+
+        self.inspect_hessian_every = inspect_hessian_every
+        self.inspect_hessian = False
+
+        self.device = device
+        self.mode = mode
+        self.set_device(device)
+        self.set_mode(mode)
+
+    def on_epoch_start(self, epoch):
+        super(NasBench201GcnController, self).on_epoch_start(epoch)
+        if self.inspect_hessian_every >= 0 and epoch % self.inspect_hessian_every == 0:
+            self.inspect_hessian = True
+
+    def set_mode(self, mode):
+        self.mode = mode
+
+    def set_device(self, device):
+        self.device = device
+        self.to(torch.device(device))
+
+    def get_prob(self):
+        prob = self.gcn(self.node_embed)
+        prob = self.mlp(prob)
+        return prob
+
+    def forward(self, n=1):
+        return self.sample(n=n)
+
+    def sample(self, n=1, batch_size=None):
+        assert batch_size is None or batch_size == 1, "Do not support sample batch size for now"
+        self.probs = self.get_prob()
+        rollouts = []
+        for _ in range(n):
+            op_weights_list = []
+            sampled_list = []
+            logits_list = []
+
+            for prob in self.probs:
+                if self.force_uniform:
+                    prob = torch.zeros_like(prob)
+
+                if self.use_prob:
+                    sampled = F.softmax(prob / self.gumbel_temp, dim=-1)
+                else:
+                    sampled, _ = utils.gumbel_softmax(
+                        prob, self.gumbel_temp, hard=False
+                    )
+
+                if self.gumbel_hard:
+                    op_weights = utils.straight_through(sampled)
+                else:
+                    op_weights = sampled
+
+                op_weights_list.append(op_weights)
+                sampled_list.append(utils.get_numpy(sampled))
+                logits_list.append(utils.get_numpy(prob))
+
+            arch_list = [
+                DiffArch(op_weights=op_weights, edge_norms=None)
+                for op_weights in op_weights_list
+            ]
+
+            rollouts.append(
+                NasBench201DiffRollout(
+                    arch_list, sampled_list, logits_list, self.search_space
+                )
+            )
+
+        return rollouts
+
+    def save(self, path):
+        torch.save({"epoch": self.epoch, "state_dict": self.state_dict()}, path)
+        self.logger.info("Saved controller network to %s", path)
+
+    def load(self, path):
+        checkpoint = torch.load(path, map_location=torch.device("cpu"))
+        self.load_state_dict(checkpoint["state_dict"])
+        self.on_epoch_start(checkpoint["epoch"])
+        self.logger.info("Loaded controller network from %s", path)
+
+    def _entropy_loss(self):
+        if self.entropy_coeff is not None:
+            probs = [F.softmax(prob, dim=-1) for prob in self.probs]
+            return self.entropy_coeff * sum(
+                -(torch.log(prob) * prob).sum() for prob in probs
+            )
+        return 0
+
+    def gradient(self, loss, return_grads=True, zero_grads=True):
+        if zero_grads:
+            self.zero_grad()
+
+        _loss = loss + self._entropy_loss()
+        _loss.backward()
+        if return_grads:
+            return utils.get_numpy(_loss), [
+                (k, v.grad.clone()) for k, v in self.named_parameters()
+            ]
+        return utils.get_numpy(_loss)
+
+    def step_current_gradient(self, optimizer):
+        if self.max_grad_norm is not None:
+            torch.nn.utils.clip_grad_norm_(self.parameters(), self.max_grad_norm)
+        optimizer.step()
+
+    def step_gradient(self, gradients, optimizer):
+        self.zero_grad()
+        named_params = dict(self.named_parameters())
+        for k, grad in gradients:
+            named_params[k].grad = grad
+
+        if self.max_grad_norm is not None:
+            torch.nn.utls.clip_grad_norm_(self.parameters(), self.max_grad_norm)
+
+        optimizer.step()
+
+    def step(self, rollouts, optimizer=None, perf_name="reward"):
+        self.zero_grad()
+        losses = [r.get_perf(perf_name) for r in rollouts]
+        [l.backward() for l in losses]
+        optimizer.step()
+        return np.mean([l.detach().cpu().numpy() for l in losses])
+
+    def summary(self, rollouts, log=False, log_prefix="", step=None):
+        return None
+
+    @classmethod
+    def supported_rollout_types(cls):
+        return ["nasbench-201-differentiable"]
+
+
 class NasBench201EvoController(BaseController):
     NAME = "nasbench-201-evo"
 
-    def __init__(self, search_space, device, rollout_type="nasbench-201", mode="eval",
-                 population_nums=100,
-                 schedule_cfg=None):
+    def __init__(
+        self,
+        search_space,
+        device,
+        rollout_type="nasbench-201",
+        mode="eval",
+        population_nums=100,
+        schedule_cfg=None,
+    ):
         super(NasBench201EvoController, self).__init__(
-            search_space, rollout_type, mode, schedule_cfg)
+            search_space, rollout_type, mode, schedule_cfg
+        )
 
         # get the infinite iterator of the model matrix and ops
         self.mode = mode
@@ -361,20 +804,36 @@ class NasBench201EvoController(BaseController):
         self.population = collections.OrderedDict()
         self.num_arch = len(self.search_space.api)
         population_ind = np.random.choice(
-            np.arange(self.num_arch), size=self.population_nums, replace=False)
+            np.arange(self.num_arch), size=self.population_nums, replace=False
+        )
         for i in range(self.population_nums):
             arch_res = self.search_space.api.query_by_index(population_ind[i])
-            accs = np.mean([res.eval_acc1es["ori-test@199"]
-                            for res in arch_res.query("cifar10").values()]) / 100.
+            accs = (
+                np.mean(
+                    [
+                        res.eval_acc1es["ori-test@199"]
+                        for res in arch_res.query("cifar10").values()
+                    ]
+                )
+                / 100.0
+            )
             self.population[arch_res.arch_str] = accs
 
     def reinit(self):
         population_ind = np.random.choice(
-            np.arange(self.num_arch), size=self.population_nums, replace=False)
+            np.arange(self.num_arch), size=self.population_nums, replace=False
+        )
         for i in range(self.population_nums):
             arch_res = self.search_space.api.query_by_index(population_ind[i])
-            accs = np.mean([res.eval_acc1es["ori-test@199"]
-                            for res in arch_res.query("cifar10").values()]) / 100.
+            accs = (
+                np.mean(
+                    [
+                        res.eval_acc1es["ori-test@199"]
+                        for res in arch_res.query("cifar10").values()
+                    ]
+                )
+                / 100.0
+            )
             self.population[arch_res.arch_str] = accs
 
     def set_init_population(self, rollout_list, perf_name):
@@ -389,8 +848,12 @@ class NasBench201EvoController(BaseController):
         if self.mode == "eval":
             best_sets = []
             for n_r in range(n):
-                best_sets.append(NasBench201Rollout(
-                    self.search_space.api.str2matrix(new_archs[n_r][0]), self.search_space))
+                best_sets.append(
+                    NasBench201Rollout(
+                        self.search_space.api.str2matrix(new_archs[n_r][0]),
+                        self.search_space,
+                    )
+                )
             return best_sets
         rollouts = []
         for n_r in range(n):
@@ -399,12 +862,21 @@ class NasBench201EvoController(BaseController):
                 rand_ind = np.random.randint(0, self.search_space.idx[0].shape[0])
                 neighbor_choice = np.random.randint(0, self.search_space.num_op_choices)
                 arch_mat = self.search_space.api.str2matrix(new_archs[n_r][0])
-                while neighbor_choice == arch_mat[self.search_space.idx[0][rand_ind],\
-                         self.search_space.idx[1][rand_ind]]:
-                    neighbor_choice = np.random.randint(0, self.search_space.num_op_choices)
+                while (
+                    neighbor_choice
+                    == arch_mat[
+                        self.search_space.idx[0][rand_ind],
+                        self.search_space.idx[1][rand_ind],
+                    ]
+                ):
+                    neighbor_choice = np.random.randint(
+                        0, self.search_space.num_op_choices
+                    )
                 new_choice = copy.deepcopy(arch_mat)
-                new_choice[self.search_space.idx[0][rand_ind], self.search_space.idx[1][rand_ind]]\
-                    = neighbor_choice
+                new_choice[
+                    self.search_space.idx[0][rand_ind],
+                    self.search_space.idx[1][rand_ind],
+                ] = neighbor_choice
                 try_times += 1
                 if self.search_space.genotype(new_choice) not in self.population.keys():
                     break
@@ -441,15 +913,22 @@ class NasBench201EvoController(BaseController):
         pass
 
 
-
 class NasBench201SAController(BaseController):
     NAME = "nasbench-201-sa"
 
-    def __init__(self, search_space, device, rollout_type="nasbench-201", mode="eval",
-                 temperature=1000, anneal_coeff=0.98,
-                 schedule_cfg=None):
+    def __init__(
+        self,
+        search_space,
+        device,
+        rollout_type="nasbench-201",
+        mode="eval",
+        temperature=1000,
+        anneal_coeff=0.98,
+        schedule_cfg=None,
+    ):
         super(NasBench201SAController, self).__init__(
-            search_space, rollout_type, mode, schedule_cfg)
+            search_space, rollout_type, mode, schedule_cfg
+        )
 
         # get the infinite iterator of the model matrix and ops
         self.num_vertices = self.search_space.num_vertices
@@ -471,8 +950,11 @@ class NasBench201SAController(BaseController):
         best_rollout = rollout_list[np.argmax(perf_list)]
         self.cur_solution = best_rollout.arch
         self.cur_perf = best_rollout.get_perf(perf_name)
-        self.logger.info("Set the initialization rollout: {}; perf: {}".format(
-            best_rollout, self.cur_perf))
+        self.logger.info(
+            "Set the initialization rollout: {}; perf: {}".format(
+                best_rollout, self.cur_perf
+            )
+        )
 
     def sample(self, n, batch_size=None):
         assert batch_size is None
@@ -484,12 +966,18 @@ class NasBench201SAController(BaseController):
         for n_r in range(n):
             rand_ind = np.random.randint(0, self.search_space.idx[0].shape[0])
             neighbor_choice = np.random.randint(0, self.search_space.num_op_choices)
-            while neighbor_choice == self.cur_solution[self.search_space.idx[0][rand_ind],\
-                     self.search_space.idx[1][rand_ind]]:
+            while (
+                neighbor_choice
+                == self.cur_solution[
+                    self.search_space.idx[0][rand_ind],
+                    self.search_space.idx[1][rand_ind],
+                ]
+            ):
                 neighbor_choice = np.random.randint(0, self.search_space.num_op_choices)
             new_choice = copy.deepcopy(self.cur_solution)
-            new_choice[self.search_space.idx[0][rand_ind], self.search_space.idx[1][rand_ind]] \
-                = neighbor_choice
+            new_choice[
+                self.search_space.idx[0][rand_ind], self.search_space.idx[1][rand_ind]
+            ] = neighbor_choice
             rollouts.append(NasBench201Rollout(new_choice, self.search_space))
         return rollouts
 
@@ -533,12 +1021,18 @@ class NasBench201SAController(BaseController):
 class NasBench201_LineGraphEmbedder(ArchEmbedder):
     NAME = "nb201-linegcn"
 
-    def __init__(self, search_space, op_embedding_dim=48, hid_dim=96,
-                 gcn_out_dims=[128, 128], dropout=0.,
-                 gcn_kwargs=None,
-                 use_bn=False,
-                 use_cat=False,
-                 schedule_cfg=None):
+    def __init__(
+        self,
+        search_space,
+        op_embedding_dim=48,
+        hid_dim=96,
+        gcn_out_dims=[128, 128],
+        dropout=0.0,
+        gcn_kwargs=None,
+        use_bn=False,
+        use_cat=False,
+        schedule_cfg=None,
+    ):
         super(NasBench201_LineGraphEmbedder, self).__init__(schedule_cfg)
 
         self.search_space = search_space
@@ -573,15 +1067,24 @@ class NasBench201_LineGraphEmbedder(ArchEmbedder):
         self.out_dim = in_dim * (1 if not self.use_cat else 6)
 
         adj = torch.tensor(
-            np.array([[0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0],
-                      [1, 0, 0, 0, 0, 0], [1, 0, 0, 0, 0, 0], [0, 1, 0, 1, 0, 0]],
-                     dtype=np.float32))
+            np.array(
+                [
+                    [0, 0, 0, 0, 0, 0],
+                    [0, 0, 0, 0, 0, 0],
+                    [0, 0, 0, 0, 0, 0],
+                    [1, 0, 0, 0, 0, 0],
+                    [1, 0, 0, 0, 0, 0],
+                    [0, 1, 0, 1, 0, 0],
+                ],
+                dtype=np.float32,
+            )
+        )
         self.register_buffer("adj", adj)
         self.idx = list(zip(*[[1, 0], [2, 0], [3, 0], [2, 1], [3, 1], [3, 2]]))
 
     def embed_and_transform_arch(self, archs):
         op_inds = self.op_emb.weight.new([arch[self.idx] for arch in archs]).long()
-        embs = self.op_emb(op_inds) # batch_size x 6 x op_embedding_dim
+        embs = self.op_emb(op_inds)  # batch_size x 6 x op_embedding_dim
         b_size = embs.shape[0]
         x = self.x_hidden(embs)
         adjs = self.adj.unsqueeze(0).repeat([b_size, 1, 1])
@@ -601,9 +1104,16 @@ class NasBench201_LineGraphEmbedder(ArchEmbedder):
 class NasBench201_LSTMSeqEmbedder(ArchEmbedder):
     NAME = "nb201-lstm"
 
-    def __init__(self, search_space, num_hid=100, emb_hid=100, num_layers=1,
-                 use_mean=False, use_hid=False,
-                 schedule_cfg=None):
+    def __init__(
+        self,
+        search_space,
+        num_hid=100,
+        emb_hid=100,
+        num_layers=1,
+        use_mean=False,
+        use_hid=False,
+        schedule_cfg=None,
+    ):
         super(NasBench201_LSTMSeqEmbedder, self).__init__(schedule_cfg)
 
         self.search_space = search_space
@@ -615,9 +1125,12 @@ class NasBench201_LSTMSeqEmbedder(ArchEmbedder):
 
         self.op_emb = nn.Embedding(self.search_space.num_op_choices, self.emb_hid)
 
-        self.rnn = nn.LSTM(input_size=self.emb_hid,
-                           hidden_size=self.num_hid, num_layers=self.num_layers,
-                           batch_first=True)
+        self.rnn = nn.LSTM(
+            input_size=self.emb_hid,
+            hidden_size=self.num_hid,
+            num_layers=self.num_layers,
+            batch_first=True,
+        )
 
         self.out_dim = num_hid
         self._tril_indices = np.tril_indices(self.search_space.num_vertices, k=-1)
@@ -659,14 +1172,21 @@ class NasBench201_SimpleSeqEmbedder(ArchEmbedder):
 class NasBench201FlowArchEmbedder(ArchEmbedder):
     NAME = "nb201-flow"
 
-    def __init__(self, search_space, op_embedding_dim=48,
-                 node_embedding_dim=48, hid_dim=96, gcn_out_dims=[128, 128],
-                 share_op_attention=False,
-                 gcn_kwargs=None,
-                 use_bn=False,
-                 use_final_only=False,
-                 share_self_op_emb=False,
-                 dropout=0., schedule_cfg=None):
+    def __init__(
+        self,
+        search_space,
+        op_embedding_dim=48,
+        node_embedding_dim=48,
+        hid_dim=96,
+        gcn_out_dims=[128, 128],
+        share_op_attention=False,
+        gcn_kwargs=None,
+        use_bn=False,
+        use_final_only=False,
+        share_self_op_emb=False,
+        dropout=0.0,
+        schedule_cfg=None,
+    ):
         super(NasBench201FlowArchEmbedder, self).__init__(schedule_cfg)
 
         self.search_space = search_space
@@ -688,21 +1208,24 @@ class NasBench201FlowArchEmbedder(ArchEmbedder):
         self.input_node_emb = nn.Embedding(1, self.node_embedding_dim)
         # Maybe separate output node?
         self.other_node_emb = nn.Parameter(
-            torch.zeros(1, self.node_embedding_dim),
-            requires_grad=False)
+            torch.zeros(1, self.node_embedding_dim), requires_grad=False
+        )
 
         # the last embedding is the output op emb
         self.op_emb = nn.Embedding(self.num_op_choices, self.op_embedding_dim)
         if self.share_self_op_emb:
-            self.self_op_emb = nn.Parameter(torch.FloatTensor(self.op_embedding_dim).normal_())
+            self.self_op_emb = nn.Parameter(
+                torch.FloatTensor(self.op_embedding_dim).normal_()
+            )
         else:
             self.self_op_emb = None
 
         self.x_hidden = nn.Linear(self.node_embedding_dim, self.hid_dim)
 
         if self.share_op_attention:
-            assert len(np.unique(self.gcn_out_dims)) == 1, \
-                "If share op attention, all the gcn-flow layers should have the same dimension"
+            assert (
+                len(np.unique(self.gcn_out_dims)) == 1
+            ), "If share op attention, all the gcn-flow layers should have the same dimension"
             self.op_attention = nn.Linear(self.op_embedding_dim, self.gcn_out_dims[0])
 
         # init graph convolutions
@@ -710,9 +1233,15 @@ class NasBench201FlowArchEmbedder(ArchEmbedder):
         self.bns = []
         in_dim = self.hid_dim
         for dim in self.gcn_out_dims:
-            self.gcns.append(DenseGraphSimpleOpEdgeFlow(
-                in_dim, dim, self.op_embedding_dim if not self.share_op_attention else dim,
-                has_attention=not self.share_op_attention, **(gcn_kwargs or {})))
+            self.gcns.append(
+                DenseGraphSimpleOpEdgeFlow(
+                    in_dim,
+                    dim,
+                    self.op_embedding_dim if not self.share_op_attention else dim,
+                    has_attention=not self.share_op_attention,
+                    **(gcn_kwargs or {})
+                )
+            )
             in_dim = dim
             if self.use_bn:
                 self.bns.append(nn.BatchNorm1d(self.vertices))
@@ -724,12 +1253,15 @@ class NasBench201FlowArchEmbedder(ArchEmbedder):
 
     def embed_and_transform_arch(self, archs):
         adjs = self.op_emb.weight.new(archs).long()
-        op_embs = self.op_emb(adjs) # (batch_size, vertices, vertices, op_emb_dim)
+        op_embs = self.op_emb(adjs)  # (batch_size, vertices, vertices, op_emb_dim)
         b_size = op_embs.shape[0]
         node_embs = torch.cat(
-            (self.input_node_emb.weight.unsqueeze(0).repeat([b_size, 1, 1]),
-             self.other_node_emb.unsqueeze(0).repeat([b_size, self.vertices - 1, 1])),
-            dim=1)
+            (
+                self.input_node_emb.weight.unsqueeze(0).repeat([b_size, 1, 1]),
+                self.other_node_emb.unsqueeze(0).repeat([b_size, self.vertices - 1, 1]),
+            ),
+            dim=1,
+        )
         x = self.x_hidden(node_embs)
         # x: (batch_size, vertices, hid_dim)
         return adjs, x, op_embs
@@ -744,7 +1276,9 @@ class NasBench201FlowArchEmbedder(ArchEmbedder):
             y = gcn(y, adjs, op_embs, self_op_emb=self.self_op_emb)
             if self.use_bn:
                 shape_y = y.shape
-                y = self.bns[i_layer](y.reshape(shape_y[0], -1, shape_y[-1])).reshape(shape_y)
+                y = self.bns[i_layer](y.reshape(shape_y[0], -1, shape_y[-1])).reshape(
+                    shape_y
+                )
             if i_layer != self.num_gcn_layers - 1:
                 y = F.relu(y)
             y = F.dropout(y, self.dropout, training=self.training)
@@ -753,19 +1287,26 @@ class NasBench201FlowArchEmbedder(ArchEmbedder):
             # only use the output node's info embedding as the embedding
             y = y[:, -1, :]
         else:
-            y = y[:, 1:, :] # do not keep the inputs node embedding
-            y = torch.mean(y, dim=1) # average across nodes (bs, god)
+            y = y[:, 1:, :]  # do not keep the inputs node embedding
+            y = torch.mean(y, dim=1)  # average across nodes (bs, god)
         return y
 
 
 class NasBench201Evaluator(BaseEvaluator):
     NAME = "nasbench-201"
 
-    def __init__(self, dataset, weights_manager, objective, rollout_type="nasbench-201",
-                 sample_query=True,
-                 schedule_cfg=None):
+    def __init__(
+        self,
+        dataset,
+        weights_manager,
+        objective,
+        rollout_type="nasbench-201",
+        sample_query=True,
+        schedule_cfg=None,
+    ):
         super(NasBench201Evaluator, self).__init__(
-            dataset, weights_manager, objective, rollout_type)
+            dataset, weights_manager, objective, rollout_type
+        )
 
         self.sample_query = sample_query
 
@@ -784,8 +1325,15 @@ class NasBench201Evaluator(BaseEvaluator):
     def suggested_evaluator_steps_per_epoch(self):
         return None
 
-    def evaluate_rollouts(self, rollouts, is_training=False, portion=None, eval_batches=None,
-                          return_candidate_net=False, callback=None):
+    def evaluate_rollouts(
+        self,
+        rollouts,
+        is_training=False,
+        portion=None,
+        eval_batches=None,
+        return_candidate_net=False,
+        callback=None,
+    ):
         if self.rollout_type == "compare":
             eval_rollouts = sum([[r.rollout_1, r.rollout_2] for r in rollouts], [])
         else:
@@ -800,29 +1348,43 @@ class NasBench201Evaluator(BaseEvaluator):
             if self.sample_query:
                 # use one run with random seed as the reward
                 sampled_index = random.randint(0, len(results) - 1)
-                reward = (results[sampled_index].eval_acc1es["x-valid@199"]) / 100.
+                reward = (results[sampled_index].eval_acc1es["x-valid@199"]) / 100.0
             else:
-                reward = np.mean(
-                    [res.eval_acc1es["x-valid@199"] for res in results]) / 100.
+                reward = (
+                    np.mean([res.eval_acc1es["x-valid@199"] for res in results]) / 100.0
+                )
             rollout.set_perf(reward, name="reward")
-            rollout.set_perf(np.mean(
-                [res.eval_acc1es["ori-test@199"] for res in results]) / 100.,
-                             name="partial_test_acc")
-            rollout.set_perf(np.mean(
-                [res.eval_acc1es["ori-test@199"]
-                 for res in query_res.query("cifar10").values()]) / 100., name="test_acc")
+            rollout.set_perf(
+                np.mean([res.eval_acc1es["ori-test@199"] for res in results]) / 100.0,
+                name="partial_test_acc",
+            )
+            rollout.set_perf(
+                np.mean(
+                    [
+                        res.eval_acc1es["ori-test@199"]
+                        for res in query_res.query("cifar10").values()
+                    ]
+                )
+                / 100.0,
+                name="test_acc",
+            )
 
         if self.rollout_type == "compare":
             num_r = len(rollouts)
             for i_rollout in range(num_r):
-                diff = eval_rollouts[2 * i_rollout + 1].perf["reward"] - \
-                       eval_rollouts[2 * i_rollout].perf["reward"]
+                diff = (
+                    eval_rollouts[2 * i_rollout + 1].perf["reward"]
+                    - eval_rollouts[2 * i_rollout].perf["reward"]
+                )
                 better = diff > 0
-                rollouts[i_rollout].set_perfs(collections.OrderedDict(
-                    [
-                        ("compare_result", better),
-                        ("diff", diff),
-                    ]))
+                rollouts[i_rollout].set_perfs(
+                    collections.OrderedDict(
+                        [
+                            ("compare_result", better),
+                            ("diff", diff),
+                        ]
+                    )
+                )
         return rollouts
 
     # ---- APIs that is not necessary ----
@@ -839,8 +1401,69 @@ class NasBench201Evaluator(BaseEvaluator):
         pass
 
 
+class NB201DiffSharedCell(nn.Module):
+    def __init__(
+        self, op_cls, search_space, layer_index, num_channels, num_out_channels, stride
+    ):
+        super(NB201DiffSharedCell, self).__init__()
+        self.search_space = search_space
+        self.stride = stride
+        self.is_reduce = stride != 1
+        self.num_channels = num_channels
+        self.num_out_channels = num_out_channels
+        self.layer_index = layer_index
+
+        self._vertices = self.search_space.num_vertices
+        self._primitives = self.search_space.ops_choices
+
+        self.edges = defaultdict(dict)
+        self.edge_mod = torch.nn.Module()  # a stub wrapping module of all the edges
+        for from_ in range(self._vertices):
+            for to_ in range(from_ + 1, self._vertices):
+                self.edges[from_][to_] = op_cls(
+                    self.num_channels,
+                    self.num_out_channels,
+                    stride=self.stride,
+                    primitives=self._primitives,
+                )
+                self.edge_mod.add_module(
+                    "f_{}_t_{}".format(from_, to_), self.edges[from_][to_]
+                )
+        self._edge_name_pattern = re.compile("f_([0-9]+)_t_([0-9]+)")
+
+    def on_replicate(self):
+        # Although this edges is easy to understand, when paralleized,
+        # the reference relationship between `self.edge` and modules under `self.edge_mod`
+        # will not get updated automatically.
+
+        # So, after each replicate, we should initialize a new edges dict
+        # and update the reference manually.
+        self.edges = defaultdict(dict)
+        for edge_name, edge_mod in six.iteritems(self.edge_mod._modules):
+            from_, to_ = self._edge_name_pattern.match(edge_name).groups()
+            self.edges[int(from_)][int(to_)] = edge_mod
+
+    def forward(self, inputs, genotype):
+        states_ = [inputs]
+        geno_ind = 0
+        for to_ in range(1, self.search_space.num_vertices):
+            out = torch.zeros(inputs.shape).to(inputs.device)
+            for from_ in range(to_):
+                for op in range(self.search_space.num_op_choices):
+                    out = (
+                        out
+                        + self.edges[from_][to_](states_[from_], op)
+                        * genotype[geno_ind][0][op]
+                    )
+                geno_ind += 1
+            states_.append(out)
+        return states_[-1]
+
+
 class NB201SharedCell(nn.Module):
-    def __init__(self, op_cls, search_space, layer_index, num_channels, num_out_channels, stride):
+    def __init__(
+        self, op_cls, search_space, layer_index, num_channels, num_out_channels, stride
+    ):
         super(NB201SharedCell, self).__init__()
         self.search_space = search_space
         self.stride = stride
@@ -853,12 +1476,18 @@ class NB201SharedCell(nn.Module):
         self._primitives = self.search_space.ops_choices
 
         self.edges = defaultdict(dict)
-        self.edge_mod = torch.nn.Module() # a stub wrapping module of all the edges
+        self.edge_mod = torch.nn.Module()  # a stub wrapping module of all the edges
         for from_ in range(self._vertices):
             for to_ in range(from_ + 1, self._vertices):
-                self.edges[from_][to_] = op_cls(self.num_channels, self.num_out_channels,
-                                                stride=self.stride, primitives=self._primitives)
-                self.edge_mod.add_module("f_{}_t_{}".format(from_, to_), self.edges[from_][to_])
+                self.edges[from_][to_] = op_cls(
+                    self.num_channels,
+                    self.num_out_channels,
+                    stride=self.stride,
+                    primitives=self._primitives,
+                )
+                self.edge_mod.add_module(
+                    "f_{}_t_{}".format(from_, to_), self.edges[from_][to_]
+                )
         self._edge_name_pattern = re.compile("f_([0-9]+)_t_([0-9]+)")
 
     def on_replicate(self):
@@ -890,21 +1519,25 @@ class NB201SharedCell(nn.Module):
             state_ = torch.zeros(inputs.shape).to(inputs.device)
             for from_ in range(to_):
                 if from_ in valid_input and to_ in valid_output:
-                    out = self.edges[from_][to_](states_[from_], int(genotype[to_][from_]))
+                    out = self.edges[from_][to_](
+                        states_[from_], int(genotype[to_][from_])
+                    )
                     state_ = state_ + out
             states_.append(state_)
         return states_[-1]
 
-    def sub_named_members(self, genotype,
-                          prefix="", member="parameters", check_visited=False):
+    def sub_named_members(
+        self, genotype, prefix="", member="parameters", check_visited=False
+    ):
         prefix = prefix + ("." if prefix else "")
         for from_ in range(self._vertices):
             for to_ in range(from_ + 1, self._vertices):
                 edge_share_op = self.edges[from_][to_]
                 for n, v in edge_share_op.sub_named_members(
-                          int(genotype[to_][from_]),
-                          prefix=prefix + "edge_mod.f_{}_t_{}".format(from_, to_),
-                          member=member):
+                    int(genotype[to_][from_]),
+                    prefix=prefix + "edge_mod.f_{}_t_{}".format(from_, to_),
+                    member=member,
+                ):
                     yield n, v
 
 
@@ -927,14 +1560,22 @@ class NB201SharedOp(nn.Module):
 
     def sub_named_members(self, op_type, prefix="", member="parameters"):
         prefix = prefix + ("." if prefix else "")
-        for n, v in getattr(self.p_ops[op_type], "named_" + member)(prefix="{}p_ops.{}"\
-                                  .format(prefix, op_type)):
+        for n, v in getattr(self.p_ops[op_type], "named_" + member)(
+            prefix="{}p_ops.{}".format(prefix, op_type)
+        ):
             yield n, v
 
-class NB201CandidateNet(CandidateNet):
 
-    def __init__(self, super_net, rollout, member_mask, gpus=tuple(), cache_named_members=False,
-                 eval_no_grad=True):
+class NB201CandidateNet(CandidateNet):
+    def __init__(
+        self,
+        super_net,
+        rollout,
+        member_mask,
+        gpus=tuple(),
+        cache_named_members=False,
+        eval_no_grad=True,
+    ):
         super(NB201CandidateNet, self).__init__(eval_no_grad=eval_no_grad)
         self.super_net = super_net
         self._device = self.super_net.device
@@ -959,42 +1600,67 @@ class NB201CandidateNet(CandidateNet):
     def get_device(self):
         return self._device
 
-    def _forward(self, inputs):
-        return self.super_net.forward(inputs, self.genotype_arch)
+    def _forward(self, inputs, **kwargs):
+        detach_arch = kwargs.get("detach_arch", False)
+        if detach_arch:
+            arch = [
+                DiffArch(op_weights=op_weights.detach(), edge_norms=None)
+                for op_weights, edge_norms in self.genotype_arch
+            ]
+        else:
+            arch = self.genotype_arch
+        return self.super_net.forward(inputs, arch)
 
-    def forward(self, inputs, single=False): #pylint: disable=arguments-differ
+    def forward(self, inputs, single=False, **kwargs):  # pylint: disable=arguments-differ
         if single or not self.gpus or len(self.gpus) == 1:
-            return self._forward(inputs)
+            return self._forward(inputs, **kwargs)
         # return data_parallel(self.super_net, (inputs, self.genotypes_grouped), self.gpus)
-        return data_parallel(self, (inputs,), self.gpus, module_kwargs={"single": True})
+        module_kwargs = {"single": True}
+        module_kwargs.update(kwargs)
+        return data_parallel(self, (inputs,), self.gpus, module_kwargs=module_kwargs)
 
-    def _forward_with_params(self, inputs, params, **kwargs): #pylint: disable=arguments-differ
+    def _forward_with_params(
+        self, inputs, params, **kwargs
+    ):  # pylint: disable=arguments-differ
         with use_params(self.super_net, params):
             return self.forward(inputs, **kwargs)
 
     def plot_arch(self):
         return self.super_net.search_space.plot_arch(
-            self.genotype, "./nb201_search", "nb201_search")
+            self.genotype, "./nb201_search", "nb201_search"
+        )
 
-    def named_parameters(self, prefix="", recurse=True): #pylint: disable=arguments-differ
+    def named_parameters(
+        self, prefix="", recurse=True
+    ):  # pylint: disable=arguments-differ
+        if isinstance(self.super_net, NB201DiffSharedNet):
+            # return all named parameters
+            return self.super_net.named_parameters()
+
         if self.member_mask:
             if self.cache_named_members:
                 # use cached members
                 if self._cached_np is None:
                     self._cached_np = []
-                    for n, v in self.active_named_members(member="parameters", prefix=""):
+                    for n, v in self.active_named_members(
+                        member="parameters", prefix=""
+                    ):
                         self._cached_np.append((n, v))
                 prefix = prefix + ("." if prefix else "")
                 for n, v in self._cached_np:
                     yield prefix + n, v
             else:
-                for n, v in self.active_named_members(member="parameters", prefix=prefix):
+                for n, v in self.active_named_members(
+                    member="parameters", prefix=prefix
+                ):
                     yield n, v
         else:
             for n, v in self.super_net.named_parameters(prefix=prefix):
                 yield n, v
 
-    def named_buffers(self, prefix="", recurse=True): #pylint: disable=arguments-differ
+    def named_buffers(
+        self, prefix="", recurse=True
+    ):  # pylint: disable=arguments-differ
         if self.member_mask:
             if self.cache_named_members:
                 if self._cached_nb is None:
@@ -1011,7 +1677,9 @@ class NB201CandidateNet(CandidateNet):
             for n, v in self.super_net.named_buffers(prefix=prefix):
                 yield n, v
 
-    def active_named_members(self, member, prefix="", recurse=True, check_visited=False):
+    def active_named_members(
+        self, member, prefix="", recurse=True, check_visited=False
+    ):
         """
         Get the generator of name-member pairs active
         in this candidate network. Always recursive.
@@ -1022,40 +1690,51 @@ class NB201CandidateNet(CandidateNet):
         # `named_parameters` (with memo) will only return 'encoder.weight'. For possible future
         # weight sharing, use memo to keep the consistency with the builtin `named_parameters`.
         memo = set()
-        for n, v in self.super_net.sub_named_members(self.genotype_arch,
-                                                     prefix=prefix,
-                                                     member=member,
-                                                     check_visited=check_visited):
+        for n, v in self.super_net.sub_named_members(
+            self.genotype_arch,
+            prefix=prefix,
+            member=member,
+            check_visited=check_visited,
+        ):
             if v in memo:
                 continue
             memo.add(v)
             yield n, v
 
-    def state_dict(self, destination=None, prefix='', keep_vars=False):
+    def state_dict(self, destination=None, prefix="", keep_vars=False):
         member_lst = []
-        for n, v in itertools.chain(self.active_named_members(member="parameters", prefix=""),
-                                    self.active_named_members(member="buffers", prefix="")):
+        for n, v in itertools.chain(
+            self.active_named_members(member="parameters", prefix=""),
+            self.active_named_members(member="buffers", prefix=""),
+        ):
             member_lst.append((n, v))
         state_dict = OrderedDict(member_lst)
         return state_dict
 
 
-class NB201SharedNet(BaseWeightsManager, nn.Module):
-
-    NAME = "nasbench-201"
-
-    def __init__(self, search_space, device, rollout_type="nasbench-201",
-                 gpus=tuple(),
-                 num_classes=10, init_channels=16, stem_multiplier=1,
-                 max_grad_norm=5.0, dropout_rate=0.1,
-                 use_stem="conv_bn_3x3", stem_stride=1, stem_affine=True,
-                 candidate_member_mask=True, candidate_cache_named_members=False,
-                 candidate_eval_no_grad=True):
-        super(NB201SharedNet, self).__init__(search_space, device, rollout_type)
+class BaseNB201SharedNet(BaseWeightsManager, nn.Module):
+    def __init__(
+        self,
+        search_space,
+        device,
+        cell_cls,
+        op_cls,
+        rollout_type="nasbench-201",
+        gpus=tuple(),
+        num_classes=10,
+        init_channels=16,
+        stem_multiplier=1,
+        max_grad_norm=5.0,
+        dropout_rate=0.1,
+        use_stem="conv_bn_3x3",
+        stem_stride=1,
+        stem_affine=True,
+        candidate_member_mask=True,
+        candidate_cache_named_members=False,
+        candidate_eval_no_grad=True,
+    ):
+        super(BaseNB201SharedNet, self).__init__(search_space, device, rollout_type)
         nn.Module.__init__(self)
-
-        cell_cls = NB201SharedCell
-        op_cls = NB201SharedOp
 
         # optionally data parallelism in SharedNet
         self.gpus = gpus
@@ -1085,17 +1764,23 @@ class NB201SharedNet(BaseWeightsManager, nn.Module):
             c_stem = self.stem_multiplier * self.init_channels
             for i, stem_type in enumerate(self.use_stem):
                 c_in = 3 if i == 0 else c_stem
-                self.stems.append(ops.get_op(stem_type)(
-                    c_in, c_stem, stride=stem_stride, affine=stem_affine))
+                self.stems.append(
+                    ops.get_op(stem_type)(
+                        c_in, c_stem, stride=stem_stride, affine=stem_affine
+                    )
+                )
             self.stems = nn.ModuleList(self.stems)
         else:
             c_stem = self.stem_multiplier * self.init_channels
-            self.stem = ops.get_op(self.use_stem)(3, c_stem,
-                                                  stride=stem_stride, affine=stem_affine)
+            self.stem = ops.get_op(self.use_stem)(
+                3, c_stem, stride=stem_stride, affine=stem_affine
+            )
 
         self.cells = nn.ModuleList()
         num_channels = self.init_channels
-        strides = [2 if self._is_reduce(i_layer) else 1 for i_layer in range(self._num_layers)]
+        strides = [
+            2 if self._is_reduce(i_layer) else 1 for i_layer in range(self._num_layers)
+        ]
 
         for i_layer, stride in enumerate(strides):
             _num_channels = num_channels if i_layer != 0 else c_stem
@@ -1106,17 +1791,22 @@ class NB201SharedNet(BaseWeightsManager, nn.Module):
             # "whenever stride/2, channelx2 and mapping with preprocess operations" assumption
             _num_out_channels = num_channels
             if stride == 1:
-                cell = cell_cls(op_cls,
-                            self.search_space,
-                            layer_index=i_layer,
-                            num_channels=_num_channels,
-                            num_out_channels=_num_out_channels,
-                            stride=stride)
+                cell = cell_cls(
+                    op_cls,
+                    self.search_space,
+                    layer_index=i_layer,
+                    num_channels=_num_channels,
+                    num_out_channels=_num_out_channels,
+                    stride=stride,
+                )
             else:
-                cell = ops.get_op("NB201ResidualBlock")(_num_channels, _num_out_channels,
-                                                 stride=2, affine=True)
+                cell = ops.get_op("NB201ResidualBlock")(
+                    _num_channels, _num_out_channels, stride=2, affine=True
+                )
             self.cells.append(cell)
-        self.lastact = nn.Sequential(nn.BatchNorm2d(num_channels), nn.ReLU(inplace=True))
+        self.lastact = nn.Sequential(
+            nn.BatchNorm2d(num_channels), nn.ReLU(inplace=True)
+        )
         self.global_pooling = nn.AdaptiveAvgPool2d(1)
         if self.dropout_rate and self.dropout_rate > 0:
             self.dropout = nn.Dropout(p=self.dropout_rate)
@@ -1143,17 +1833,23 @@ class NB201SharedNet(BaseWeightsManager, nn.Module):
     def _hook_intermediate_feature(self, module, inputs, outputs):
         if not self._flops_calculated:
             if isinstance(module, nn.Conv2d):
-                self.total_flops += inputs[0].size(1) * outputs.size(1) * \
-                                    module.kernel_size[0] * module.kernel_size[1] * \
-                                    inputs[0].size(2) * inputs[0].size(3) / \
-                                    (module.stride[0] * module.stride[1] * module.groups)
+                self.total_flops += (
+                    inputs[0].size(1)
+                    * outputs.size(1)
+                    * module.kernel_size[0]
+                    * module.kernel_size[1]
+                    * inputs[0].size(2)
+                    * inputs[0].size(3)
+                    / (module.stride[0] * module.stride[1] * module.groups)
+                )
             elif isinstance(module, nn.Linear):
                 self.total_flops += inputs[0].size(1) * outputs.size(1)
         else:
             pass
 
-    def sub_named_members(self, genotype,
-                          prefix="", member="parameters", check_visited=False):
+    def sub_named_members(
+        self, genotype, prefix="", member="parameters", check_visited=False
+    ):
         prefix = prefix + ("." if prefix else "")
 
         # the common modules that will be forwarded by every candidate
@@ -1161,36 +1857,44 @@ class NB201SharedNet(BaseWeightsManager, nn.Module):
             if mod_name == "cells":
                 continue
             _func = getattr(mod, "named_" + member)
-            for n, v in _func(prefix=prefix+mod_name):
+            for n, v in _func(prefix=prefix + mod_name):
                 yield n, v
 
         for cell_idx, cell in enumerate(self.cells):
-            for n, v in cell.sub_named_members(genotype,
-                                               prefix=prefix + "cells.{}".format(cell_idx),
-                                               member=member,
-                                               check_visited=check_visited):
+            for n, v in cell.sub_named_members(
+                genotype,
+                prefix=prefix + "cells.{}".format(cell_idx),
+                member=member,
+                check_visited=check_visited,
+            ):
                 yield n, v
 
     # ---- APIs ----
     def assemble_candidate(self, rollout):
-        return NB201CandidateNet(self, rollout,
-                               gpus=self.gpus,
-                               member_mask=self.candidate_member_mask,
-                               cache_named_members=self.candidate_cache_named_members,
-                               eval_no_grad=self.candidate_eval_no_grad)
+        return NB201CandidateNet(
+            self,
+            rollout,
+            gpus=self.gpus,
+            member_mask=self.candidate_member_mask,
+            cache_named_members=self.candidate_cache_named_members,
+            eval_no_grad=self.candidate_eval_no_grad,
+        )
 
     @classmethod
     def supported_rollout_types(cls):
-        return ["nasbench-201"]
+        return ["nasbench-201", "nasbench-201-differentiable"]
 
     def _is_reduce(self, layer_idx):
-        return layer_idx in [(self._num_layers + 1) // 3 - 1, (self._num_layers + 1) * 2 // 3 - 1]
+        return layer_idx in [
+            (self._num_layers + 1) // 3 - 1,
+            (self._num_layers + 1) * 2 // 3 - 1,
+        ]
 
     def set_device(self, device):
         self.device = device
         self.to(device)
 
-    def forward(self, inputs, genotype, **kwargs): #pylint: disable=arguments-differ
+    def forward(self, inputs, genotype, **kwargs):  # pylint: disable=arguments-differ
         if not self.use_stem:
             states = inputs
         elif isinstance(self.use_stem, (list, tuple)):
@@ -1215,7 +1919,7 @@ class NB201SharedNet(BaseWeightsManager, nn.Module):
         optimizer.step()
 
     def step(self, gradients, optimizer):
-        self.zero_grad() # clear all gradients
+        self.zero_grad()  # clear all gradients
         named_params = dict(self.named_parameters())
         for k, grad in gradients:
             named_params[k].grad = grad
@@ -1226,8 +1930,7 @@ class NB201SharedNet(BaseWeightsManager, nn.Module):
         optimizer.step()
 
     def save(self, path):
-        torch.save({"epoch": self.epoch,
-                    "state_dict": self.state_dict()}, path)
+        torch.save({"epoch": self.epoch, "state_dict": self.state_dict()}, path)
 
     def load(self, path):
         checkpoint = torch.load(path, map_location=torch.device("cpu"))
@@ -1239,16 +1942,110 @@ class NB201SharedNet(BaseWeightsManager, nn.Module):
         return ["image"]
 
 
+class NB201SharedNet(BaseNB201SharedNet):
+    NAME = "nasbench-201"
+
+    def __init__(
+        self,
+        search_space,
+        device,
+        rollout_type="nasbench-201",
+        gpus=tuple(),
+        num_classes=10,
+        init_channels=16,
+        stem_multiplier=1,
+        max_grad_norm=5.0,
+        dropout_rate=0.1,
+        use_stem="conv_bn_3x3",
+        stem_stride=1,
+        stem_affine=True,
+        candidate_member_mask=True,
+        candidate_cache_named_members=False,
+        candidate_eval_no_grad=True,
+    ):
+        super(NB201SharedNet, self).__init__(
+            search_space,
+            device,
+            cell_cls=NB201SharedCell,
+            op_cls=NB201SharedOp,
+            rollout_type=rollout_type,
+            gpus=gpus,
+            num_classes=num_classes,
+            init_channels=init_channels,
+            stem_multiplier=stem_multiplier,
+            max_grad_norm=max_grad_norm,
+            dropout_rate=dropout_rate,
+            use_stem=use_stem,
+            stem_stride=stem_stride,
+            stem_affine=stem_affine,
+            candidate_member_mask=candidate_member_mask,
+            candidate_cache_named_members=candidate_cache_named_members,
+            candidate_eval_no_grad=candidate_eval_no_grad,
+        )
+
+
+class NB201DiffSharedNet(BaseNB201SharedNet):
+    NAME = "nasbench-201-diff-supernet"
+
+    def __init__(
+        self,
+        search_space,
+        device,
+        rollout_type="nasbench-201-differentiable",
+        gpus=tuple(),
+        num_classes=10,
+        init_channels=16,
+        stem_multiplier=1,
+        max_grad_norm=5.0,
+        dropout_rate=0.1,
+        use_stem="conv_bn_3x3",
+        stem_stride=1,
+        stem_affine=True,
+        candidate_member_mask=True,
+        candidate_cache_named_members=False,
+        candidate_eval_no_grad=True,
+    ):
+        super(NB201DiffSharedNet, self).__init__(
+            search_space,
+            device,
+            cell_cls=NB201DiffSharedCell,
+            op_cls=NB201SharedOp,
+            rollout_type=rollout_type,
+            gpus=gpus,
+            num_classes=num_classes,
+            init_channels=init_channels,
+            stem_multiplier=stem_multiplier,
+            max_grad_norm=max_grad_norm,
+            dropout_rate=dropout_rate,
+            use_stem=use_stem,
+            stem_stride=stem_stride,
+            stem_affine=stem_affine,
+            candidate_member_mask=candidate_member_mask,
+            candidate_cache_named_members=candidate_cache_named_members,
+            candidate_eval_no_grad=candidate_eval_no_grad,
+        )
+
+
 class NB201GenotypeModel(FinalModel):
     NAME = "nb201_final_model"
 
     SCHEDULABLE_ATTRS = ["dropout_path_rate"]
 
-    def __init__(self, search_space, device, genotypes,
-                 num_classes=10, init_channels=36, stem_multiplier=1,
-                 dropout_rate=0.1, dropout_path_rate=0.2,
-                 use_stem="conv_bn_3x3", stem_stride=1, stem_affine=True,
-                 schedule_cfg=None):
+    def __init__(
+        self,
+        search_space,
+        device,
+        genotypes,
+        num_classes=10,
+        init_channels=36,
+        stem_multiplier=1,
+        dropout_rate=0.1,
+        dropout_path_rate=0.2,
+        use_stem="conv_bn_3x3",
+        stem_stride=1,
+        stem_affine=True,
+        schedule_cfg=None,
+    ):
         super(NB201GenotypeModel, self).__init__(schedule_cfg)
 
         self.search_space = search_space
@@ -1278,43 +2075,53 @@ class NB201GenotypeModel(FinalModel):
             c_stem = self.stem_multiplier * self.init_channels
             for i, stem_type in enumerate(self.use_stem):
                 c_in = 3 if i == 0 else c_stem
-                self.stems.append(ops.get_op(stem_type)(
-                    c_in, c_stem, stride=stem_stride, affine=stem_affine))
+                self.stems.append(
+                    ops.get_op(stem_type)(
+                        c_in, c_stem, stride=stem_stride, affine=stem_affine
+                    )
+                )
             self.stems = nn.ModuleList(self.stems)
         else:
             c_stem = self.stem_multiplier * self.init_channels
-            self.stem = ops.get_op(self.use_stem)(3, c_stem,
-                                                  stride=stem_stride, affine=stem_affine)
+            self.stem = ops.get_op(self.use_stem)(
+                3, c_stem, stride=stem_stride, affine=stem_affine
+            )
 
         self.cells = nn.ModuleList()
         num_channels = self.init_channels
-        strides = [2 if self._is_reduce(i_layer) else 1 for i_layer in range(self._num_layers)]
+        strides = [
+            2 if self._is_reduce(i_layer) else 1 for i_layer in range(self._num_layers)
+        ]
         for i_layer, stride in enumerate(strides):
             _num_channels = num_channels if i_layer != 0 else c_stem
             if stride > 1:
                 num_channels *= stride
             _num_out_channels = num_channels
             if stride == 1:
-                cell = NB201GenotypeCell(self.search_space,
-                                   self.genotype_arch,
-                                   layer_index=i_layer,
-                                   num_channels=_num_channels,
-                                   num_out_channels=_num_out_channels,
-                                   stride=stride)
+                cell = NB201GenotypeCell(
+                    self.search_space,
+                    self.genotype_arch,
+                    layer_index=i_layer,
+                    num_channels=_num_channels,
+                    num_out_channels=_num_out_channels,
+                    stride=stride,
+                )
             else:
                 cell = ops.get_op("NB201ResidualBlock")(
-                    _num_channels, _num_out_channels, stride=2, affine=True)
+                    _num_channels, _num_out_channels, stride=2, affine=True
+                )
             # TODO: support specify concat explicitly
             self.cells.append(cell)
 
-        self.lastact = nn.Sequential(nn.BatchNorm2d(num_channels), nn.ReLU(inplace=True))
+        self.lastact = nn.Sequential(
+            nn.BatchNorm2d(num_channels), nn.ReLU(inplace=True)
+        )
         self.global_pooling = nn.AdaptiveAvgPool2d(1)
         if self.dropout_rate and self.dropout_rate > 0:
             self.dropout = nn.Dropout(p=self.dropout_rate)
         else:
             self.dropout = ops.Identity()
-        self.classifier = nn.Linear(num_channels,
-                                    self.num_classes)
+        self.classifier = nn.Linear(num_channels, self.num_classes)
         self.to(self.device)
 
         # for flops calculation
@@ -1329,15 +2136,22 @@ class NB201GenotypeModel(FinalModel):
     def _hook_intermediate_feature(self, module, inputs, outputs):
         if not self._flops_calculated:
             if isinstance(module, nn.Conv2d):
-                self.total_flops += 2* inputs[0].size(1) * outputs.size(1) * \
-                                    module.kernel_size[0] * module.kernel_size[1] * \
-                                    outputs.size(2) * outputs.size(3) / module.groups
+                self.total_flops += (
+                    2
+                    * inputs[0].size(1)
+                    * outputs.size(1)
+                    * module.kernel_size[0]
+                    * module.kernel_size[1]
+                    * outputs.size(2)
+                    * outputs.size(3)
+                    / module.groups
+                )
             elif isinstance(module, nn.Linear):
                 self.total_flops += 2 * inputs[0].size(1) * outputs.size(1)
         else:
             pass
 
-    def forward(self, inputs): #pylint: disable=arguments-differ
+    def forward(self, inputs):  # pylint: disable=arguments-differ
         if not self.use_stem:
             states = inputs
         elif isinstance(self.use_stem, (list, tuple)):
@@ -1358,7 +2172,7 @@ class NB201GenotypeModel(FinalModel):
         logits = self.classifier(out.view(out.size(0), -1))
 
         if not self._flops_calculated:
-            self.logger.info("FLOPS: flops num = %d M", self.total_flops/1.e6)
+            self.logger.info("FLOPS: flops num = %d M", self.total_flops / 1.0e6)
             self._flops_calculated = True
 
         return logits
@@ -1368,11 +2182,22 @@ class NB201GenotypeModel(FinalModel):
         return ["image"]
 
     def _is_reduce(self, layer_idx):
-        return layer_idx in [(self._num_layers + 1) // 3 - 1, (self._num_layers + 1) * 2 // 3 - 1]
+        return layer_idx in [
+            (self._num_layers + 1) // 3 - 1,
+            (self._num_layers + 1) * 2 // 3 - 1,
+        ]
 
 
 class NB201GenotypeCell(nn.Module):
-    def __init__(self, search_space, genotype_arch, layer_index, num_channels, num_out_channels, stride):
+    def __init__(
+        self,
+        search_space,
+        genotype_arch,
+        layer_index,
+        num_channels,
+        num_out_channels,
+        stride,
+    ):
         super(NB201GenotypeCell, self).__init__()
         self.search_space = search_space
         self.arch = genotype_arch
@@ -1386,20 +2211,28 @@ class NB201GenotypeCell(nn.Module):
         self._primitives = self.search_space.ops_choices
 
         self.edges = defaultdict(dict)
-        self.edge_mod = torch.nn.Module() # a stub wrapping module of all the edges
+        self.edge_mod = torch.nn.Module()  # a stub wrapping module of all the edges
         for from_ in range(self._vertices):
             for to_ in range(from_ + 1, self._vertices):
-                self.edges[from_][to_] = ops.get_op(self._primitives[int(self.arch[to_][from_])])(
-                    self.num_channels, self.num_out_channels, stride=self.stride, affine=False)
+                self.edges[from_][to_] = ops.get_op(
+                    self._primitives[int(self.arch[to_][from_])]
+                )(
+                    self.num_channels,
+                    self.num_out_channels,
+                    stride=self.stride,
+                    affine=False,
+                )
 
-                self.edge_mod.add_module("f_{}_t_{}".format(from_, to_), self.edges[from_][to_])
+                self.edge_mod.add_module(
+                    "f_{}_t_{}".format(from_, to_), self.edges[from_][to_]
+                )
         self._edge_name_pattern = re.compile("f_([0-9]+)_t_([0-9]+)")
 
-    def forward(self, inputs, dropout_path_rate): #pylint: disable=arguments-differ
+    def forward(self, inputs, dropout_path_rate):  # pylint: disable=arguments-differ
         states = [inputs]
 
         for to_ in range(1, self._vertices):
-            state_to_ = 0.
+            state_to_ = 0.0
             for from_ in range(to_):
                 op = self.edges[from_][to_]
                 out = op(states[from_])

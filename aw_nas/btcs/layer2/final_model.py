@@ -210,13 +210,7 @@ class MicroDenseCell(FinalModel):
                     if self.training and dropout_path_rate > 0:
                         if not isinstance(op_, ops.Identity):
                             out = utils.drop_path(out, dropout_path_rate)
-                    try:
-                        state_to_ = state_to_ + out
-                    except:
-                        import ipdb
-
-                        ipdb.set_trace()
-                        pass
+                    state_to_ = state_to_ + out
             states.append(state_to_)
         """
         (Maybe not so elegant)

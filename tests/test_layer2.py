@@ -216,7 +216,7 @@ def test_layer2_weights_manager():
     rollout.macro.arch = macro_arch
     rollout.micro.arch = micro_arch
 
-    device = torch.device("cuda:3")
+    device = torch.device("cuda")
 
     supernet = Layer2MacroSupernet(
         search_space, device
@@ -245,7 +245,7 @@ def test_layer2_diff_weights_manager():
     micro_controller_cfg = {
         # "use_edge_normalization": True,
     }
-    device = torch.device("cuda:3")
+    device = torch.device("cuda")
     controller=Layer2DiffController(search_space,"layer2",
                                 mode="eval",
                                 device=device,

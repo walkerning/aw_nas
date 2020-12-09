@@ -23,7 +23,7 @@ from torch.backends import cudnn
 
 import aw_nas
 from aw_nas.dataset import AVAIL_DATA_TYPES
-from aw_nas import utils, BaseRollout
+from aw_nas import btcs, utils, BaseRollout
 from aw_nas.common import rollout_from_genotype_str
 from aw_nas.utils.common_utils import _OrderedCommandGroup, _dump, _dump_with_perf
 from aw_nas.utils.vis_utils import WrapWriter
@@ -997,10 +997,10 @@ def gen_sample_config(out_file, data_type, rollout_type):
                 elif comp_name in {"evaluator", "weights_manager", "objective"}:
                     filter_funcs.append(lambda cls: data_type in cls.supported_data_types())
             if rollout_type is not None:
-                if comp_name in {"search_space", "controller", "weights_manager",
-                                 "evaluator", "trainer"}:
+                if comp_name in {"controller", "weights_manager", "evaluator", "trainer"}:
                     filter_funcs.append(lambda cls: rollout_type in cls.all_supported_rollout_types())
-
+                elif comp_name in {"search_space"}:
+                    filter_funcs.append(lambda cls: rollout_type in cls.supported_rollout_types())
             out_f.write(utils.component_sample_config_str(comp_name, prefix="# ",
                                                           filter_funcs=filter_funcs))
             out_f.write("\n")

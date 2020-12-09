@@ -2,6 +2,7 @@ import os
 import pytest
 import numpy as np
 import torch
+from torch import optim
 
 AWNAS_TEST_NASBENCH = os.environ.get("AWNAS_TEST_NASBENCH", None)
 
@@ -222,3 +223,35 @@ def test_mutate_and_evo():
         controller.eval_sample_strategy = "all"
         eval_rollouts = controller.sample(2)
         print("eval sample (all): ", [r.perf["reward"] for r in eval_rollouts])
+
+@pytest.mark.skipif(
+        not AWNAS_TEST_NASBENCH, reason="do not test the nasbench-201 BTC by default")
+def test_gcn_controller_gcn_mlp():
+    from aw_nas.btcs.nasbench_201 import GCN
+    from aw_nas.btcs.nasbench_201 import MLP
+    gcn = GCN(4, 3, 10).cuda()
+    mlp = MLP(4, 3, [20, 15, 10, 5]).cuda()
+    x = torch.randn(4, 10).cuda()
+    out = mlp(gcn(x))
+    print(out)
+
+
+@pytest.mark.skipif(
+        not AWNAS_TEST_NASBENCH, reason="do not test the nasbench-201 BTC bu default")
+def test_gcn_controller(tmp_path):
+    from aw_nas.btcs.nasbench_201 import NasBench201GcnController, NasBench201DiffRollout, NB201DiffSharedNet, NB201CandidateNet
+    from aw_nas.common import get_search_space
+    search_space = get_search_space(cls="nasbench-201", load_nasbench=False)
+    controller = NasBench201GcnController(search_space)
+    rollouts = controller.sample(n=1)
+    rollouts[0].plot_arch(os.path.join(str(tmp_path), "nb201_diff_rollout"))
+
+    supernet = NB201DiffSharedNet(search_space, device="cuda")
+    cand_net = supernet.assemble_candidate(rollouts[0])
+    inputs = torch.randn((2, 3, 3, 3), dtype=torch.float32).to(torch.device("cuda"))
+    outputs = cand_net(inputs)
+    loss = outputs.sum()
+    loss.backward()
+    optimizer = optim.SGD(controller.parameters(), lr=0.001, momentum=0.9)
+    controller.step(rollouts, optimizer)
+

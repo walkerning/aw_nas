@@ -1349,7 +1349,7 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
                      if isinstance(queue_cfg["portion"], float) and \
                      queue_cfg["split"] == cont_queue_split])
                 derive_portion = [start_portion, queue_cfgs[-1]["portion"] + start_portion]
-            derive_queue_cfg["portion"] = derive_portion
+                derive_queue_cfg["portion"] = derive_portion
             derive_queue_cfg["kwargs"]["shuffle"] = False # do not shuffle
             # do not use distributed sampler
             derive_queue_cfg["kwargs"]["no_distributed_sampler"] = False

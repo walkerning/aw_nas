@@ -91,9 +91,11 @@ class SimpleTrainer(BaseTrainer):
             is_differentiable = True
 
         if "differentiable" in rollout_type and not is_differentiable:
+            is_differentiable = True
             self.logger.warn("The `rollout_type` \"%s\" contains \"differentiable\", "
                              "however, `is_differentiable` is set to False. "
-                             "Maybe the configuration is mismatched?", rollout_type)
+                             "Maybe the configuration is mismatched? "
+                             "Automatically set `is_differentiable` to True", rollout_type)
         # configurations
         self.epochs = epochs
         self.test_every = test_every

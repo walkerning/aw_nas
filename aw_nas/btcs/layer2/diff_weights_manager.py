@@ -319,12 +319,7 @@ class Layer2MacroDiffSupernet(BaseWeightsManager, nn.Module):
                 else:
                     states[to] = cell_input  # the final output state
 
-        try:
-            assert states[-1] is not None
-        except AssertionError:
-            import ipdb
-
-            ipdb.set_trace()
+        assert states[-1] is not None
 
         out = self.pooling(states[-1]).squeeze()
         out = self.dropout(out)
