@@ -6,7 +6,7 @@ search_space_type: ssd_ofa
 search_space_cfg:
   num_cell_groups: [1, 4, 4, 4, 4, 4]
   expansions: [1, 6, 6, 6, 6, 6]
-  image_size_choice: [300, 192]
+  image_size_choice: [300]
   head_width_choice: [0.5]
   num_head: 4
   schedule_cfg:

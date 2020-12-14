@@ -2,15 +2,22 @@ mixin_search_space_type: ofa_mixin
 mixin_search_space_cfg:
   fixed_primitives: null
 
-profiling_primitive_cfg:
+
+# hardware compiler type: dpu/xavier ..
+hardware_compiler_type: xavier
+
+prof_prims_cfg:
   sample: null # or int
   as_dict: true # if set false, the return value is a namedtuple
-  spatial_size: 112
-  base_channels: [16, 16, 24, 32, 64, 96, 160, 320, 1280]
+  spatial_size: 300
+  base_channels: [16, 16, 24, 32, 64, 96, 160, 960, 1280]
   mult_ratio: 1.
   strides: [1, 2, 2, 2, 1, 2]
-  acts: ["relu", "relu", "relu", "h_swish", "h_swish", "h_swish"]
+  acts: ["relu6", "relu6", "relu6", "h_swish", "h_swish", "h_swish"]
+  #acts: ["relu6", "relu6", "relu6", "relu6", "relu6", "relu6"]
   use_ses: [false, false, true, false, true, true]
+  #use_ses: [ false, false, false, false, false, false ]  
+  stem_stride: 2
   primitive_type: 'mobilenet_v3_block'
   
 
@@ -21,7 +28,7 @@ hwobjmodel_cfg:
 
 
 profiling_net_cfg:
-  image_size: 224
+  image_size: 300
   max_layers: 20
   base_cfg_template:
     rollout_type: general

@@ -26,21 +26,22 @@ class BaseHardwareCompiler(Component):
         self,
         prof_result_file,
         prof_prim_file,
-        prim_to_ops,
+        prim_to_ops_file,
+        result_dir,
         perf_fn=None,
         perf_names=("latency",),
     ):
         pass
 
 
-class BaseHardwareObjectiveModel(Component):
-    REGISTRY = "hardware_obj_model"
+class BaseHardwarePerformanceModel(Component):
+    REGISTRY = "hardware_perfmodel"
 
-    def __init__(self, mixin_search_space, preprocessors, perf_name, schedule_cfg):
-        super(BaseHardwareObjectiveModel, self).__init__(schedule_cfg)
+    def __init__(self, mixin_search_space, *, perf_name, preprocessors, schedule_cfg=None):
+        super().__init__(schedule_cfg)
         self.mixin_search_space = mixin_search_space
-        self.preprocessor = Preprocessor(preprocessors)
         self.perf_name = perf_name
+        self.preprocessor = Preprocessor(preprocessors)
 
     def train(self, prof_nets):
         """
@@ -77,10 +78,10 @@ class MixinProfilingSearchSpace(SearchSpace):
 
     @abc.abstractmethod
     def parse_profiling_primitives(
-        self, prof_prims, prof_prims_cfg, hwobjmodel_type, hwobjmodel_cfg
+        self, prof_prims, prof_prims_cfg, hardware_perfmodel_type, hardware_perfmodel_cfg
     ):
-        model = BaseHardwareObjectiveModel.get_class_(hwobjmodel_type)(
-            prof_prims, prof_prims_cfg, **hwobjmodel_cfg
+        model = BaseHardwarePerformanceModel.get_class_(hardware_perfmodel_type)(
+            prof_prims, prof_prims_cfg, **hardware_perfmodel_cfg
         )
         return model
 

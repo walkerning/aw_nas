@@ -216,4 +216,3 @@ class DetectionObjective(BaseObjective):
             [soft_losses.update(soft_loss(outputs, soft_target, indices,
                 normalizer)) for soft_loss in self.soft_losses]
         return {**hard_losses, **soft_losses}
-

@@ -5,12 +5,18 @@ from inspect import signature
 import os
 import pickle
 from collections import namedtuple
+import random
+import torch
+import torch.nn as nn
+import torch.nn.utils.rnn as rnn_utils
+from torch import optim
 
 import numpy as np
 import yaml
 
 try:
     from sklearn import linear_model
+    from sklearn.neural_network import MLPRegressor
 except ImportError as e:
     from aw_nas.utils import getLogger
     getLogger("hardware").warn(
@@ -19,8 +25,11 @@ except ImportError as e:
          " functionalities work").format(e))
 
 
-from aw_nas.hardware.base import (BaseHardwareObjectiveModel,
-                                  MixinProfilingSearchSpace, Preprocessor)
+from aw_nas.hardware.base import (
+    BaseHardwarePerformanceModel,
+    MixinProfilingSearchSpace,
+    Preprocessor
+)
 from aw_nas.ops import get_op
 
 Prim_ = namedtuple(
@@ -77,7 +86,7 @@ class Prim(Prim_):
         return origin_dict
 
     def __getnewargs_ex__(self):
-        return tuple(), self._asdict() 
+        return tuple(), self._asdict()
 
 def assemble_profiling_nets_from_file(fname,
                                       base_cfg_fname,
@@ -203,8 +212,19 @@ def assemble_profiling_nets(profiling_primitives,
                 assert isinstance(
                     stride, int) and stride > 0, "stride: {stride}".format(
                         stride=stride)
-                geno.append(
-                    glue_layer(cur_size, cur_channel, out_channel, stride))
+                glue_conv = glue_layer(cur_size, cur_channel, out_channel, min(stride, 2))
+                geno.append(glue_conv)
+
+                if stride > 2:
+                    _stride = stride // 2
+                    _cur_size = int(round(cur_size / 2))
+                    _channel = out_channel
+                    while _stride > 1:
+                        glue_conv = glue_layer(_cur_size, _channel, _channel,
+                                2)
+                        geno.append(glue_conv)
+                        _stride //= 2
+                        _cur_size //= 2
 
             cur_channel = int(sampled_prim["C_out"])
             cur_size = int(
@@ -304,20 +324,58 @@ class ExtractSumFeaturesPreprocessor(Preprocessor):
             return unpreprocessed, train_x, train_y
         return unpreprocessed, train_x
 
+class ExtractLSTMFeaturesPreProcessor(Preprocessor):
+    NAME = "extract_lstm_features"
 
-class TableBasedModel(BaseHardwareObjectiveModel):
+    def __init__(self, preprocessors=None, schedule_cfg=None):
+        super().__init__(preprocessors, schedule_cfg)
+
+    def __call__(self, unpreprocessed, **kwargs):
+        is_training = kwargs.get('is_training', True)
+        perf_name = kwargs.get("performance", 'latency')
+        unpreprocessed = list(unpreprocessed)
+        train_x = list()
+        train_y = list()
+        for prof_net in unpreprocessed:
+            x_feature = list()
+            for prim in prof_net['primitives']:
+                cin    = prim['C']
+                cout   = prim['C_out']
+                exp    = prim['expansion'] if 'expansion' in prim else 1
+                k      = prim['kernel_size'] if 'kernel_size' in prim else 3
+                perf   = prim['performances'][perf_name]
+                size   = prim['spatial_size']
+                stride = prim['stride']
+                x_feature.append([cin, cout, exp, k, perf, size, stride])
+            train_x.append(x_feature)
+            if is_training:
+                train_y.append(prof_net['overall_{}'.format(perf_name)])
+        if is_training:
+            return unpreprocessed, train_x, train_y
+        else:
+            return unpreprocessed, train_x
+            
+        
+
+
+class TableBasedModel(BaseHardwarePerformanceModel):
     NAME = "table"
 
     def __init__(
         self,
         mixin_search_space,
-        prof_prims_cfg={},
-        preprocessors=("flatten", ),
+        *,
         perf_name="latency",
+        preprocessors=("flatten", ),
+        prof_prims_cfg={},
         schedule_cfg=None,
     ):
         super(TableBasedModel, self).__init__(
-            mixin_search_space, preprocessors, perf_name, schedule_cfg)
+            mixin_search_space,
+            perf_name=perf_name,
+            preprocessors=preprocessors,
+            schedule_cfg=schedule_cfg,
+        )
         self.prof_prims_cfg = prof_prims_cfg
 
         self._table = {}
@@ -333,6 +391,7 @@ class TableBasedModel(BaseHardwareObjectiveModel):
         self._table = {k: np.mean(v) for k, v in self._table.items()}
 
     def predict(self, rollout, assemble_fn=sum):
+        # return random.random()
         primitives = self.mixin_search_space.rollout_to_primitives(
             rollout, **self.prof_prims_cfg)
         perfs = []
@@ -359,20 +418,25 @@ class TableBasedModel(BaseHardwareObjectiveModel):
             m = pickle.load(fr)
         self._table = {Prim(**k): v for k, v in m["table"]}
 
-class RegressionHardwareObjectiveModel(TableBasedModel):
+
+class RegressionModel(TableBasedModel):
     NAME = "regression"
 
     def __init__(
         self,
         mixin_search_space,
-        prof_prims_cfg={},
+        *,
+        perf_name="latency",
         preprocessors=("block_sum", "remove_anomaly", "flatten",
                        "extract_sum_features"),
-        performance="latency",
+        prof_prims_cfg={},
         schedule_cfg=None,
     ):
-        super().__init__(mixin_search_space, prof_prims_cfg, preprocessors,
-                         performance, schedule_cfg)
+        super().__init__(mixin_search_space,
+                         perf_name=perf_name,
+                         preprocessors=preprocessors,
+                         prof_prims_cfg=prof_prims_cfg,
+                         schedule_cfg=schedule_cfg)
         self.regression_model = linear_model.LinearRegression()
 
         assert isinstance(mixin_search_space, MixinProfilingSearchSpace)
@@ -408,6 +472,174 @@ class RegressionHardwareObjectiveModel(TableBasedModel):
             m = pickle.load(fr)
         self._table = {Prim(**k): v for k, v in m["table"]}
         self.regression_model = m["model"]
+
+
+class MLPModel(TableBasedModel):
+    NAME = 'mlp'
+
+    def __init__(
+        self,
+        mixin_search_space,
+        *,
+        perf_name='latency',
+        preprocessors=('block_sum','remove_anomaly','flatten','extract_sum_features'),
+        prof_prims_cfg={},
+        schedule_cfg=None,
+    ):
+
+        super().__init__(
+            mixin_search_space,
+            perf_name=perf_name,
+            preprocessors=preprocessors,
+            prof_prims_cfg=prof_prims_cfg,
+            schedule_cfg=schedule_cfg
+        )       
+
+        self.mlp_model = MLPRegressor(
+            solver='adam',
+            alpha=1e-4,
+            hidden_layer_sizes=(100,100,100),
+            random_state=1,
+            max_iter=10000
+        )
+           
+    def _train(self, args):
+        prof_nets, train_x, train_y = args
+        super()._train(prof_nets)
+        return self.mlp_model.fit(train_x, train_y)
+
+    def predict(self, rollout):
+        primitives = self.mixin_search_space.rollout_to_primitives(
+            rollout, **self.prof_prims_cfg)
+        perfs = super().predict(rollout, assemble_fn=lambda x: x)
+        primitives = [p._asdict() for p in primitives]
+        for prim, perf in zip(primitives, perfs):
+            prim["performances"] = {self.perf_name: perf}
+        prof_nets = [[{"primitives": primitives}]]
+        prof_nets, test_x = self.preprocessor(
+            prof_nets, is_training=False, performance=self.perf_name)
+        return float(self.mlp_model.predict(test_x)[0])
+
+    def save(self, path):
+        pickled_table = [(k._asdict(), v) for k, v in self._table.items()]
+        with open(path, "wb") as fw:
+            pickle.dump(
+                {
+                    "table": pickled_table,
+                    "model": self.mlp_model
+                }, fw)
+
+    def load(self, path):
+        with open(path, "rb") as fr:
+            m = pickle.load(fr)
+        self._table = {Prim(**k): v for k, v in m["table"]}
+        self.mlp_model = m["model"]
+
+
+
+
+class LSTM(nn.Module):
+    def __init__(self, input_size=1, hidden_layer_size=100, output_size=1, device="cpu"):
+        super().__init__()
+        self.hidden_layer_size = hidden_layer_size
+        self.device = device
+        self.lstm = nn.LSTM(input_size, hidden_layer_size, batch_first=True).to(self.device)
+        self.linear = nn.Linear(hidden_layer_size, output_size).to(self.device)
+        self.hidden_cell = (torch.zeros(1, 1, self.hidden_layer_size).to(self.device),
+                            torch.zeros(1, 1, self.hidden_layer_size).to(self.device))
+        
+
+    def forward(self, seq, bs=1):
+        self.hidden_cell = (torch.zeros(1, bs, self.hidden_layer_size).to(self.device),
+                                    torch.zeros(1, bs, self.hidden_layer_size).to(self.device))
+        seq = rnn_utils.pack_sequence([torch.tensor(s).reshape(-1, 1).to(self.device) for s in seq], enforce_sorted=False)
+        lstm_out, self.hidden_cell = self.lstm(seq, self.hidden_cell)
+        lstm_out, index = rnn_utils.pad_packed_sequence(lstm_out)
+        lstm_out = lstm_out.permute([1, 0, 2])
+        select = torch.zeros(lstm_out.shape[:2]).scatter_(1, index.reshape(-1, 1) - 1, 1).to(torch.bool).to(self.device)
+        lstm_out = lstm_out[select]
+        predictions = self.linear(lstm_out)
+        return predictions[:, -1]
+
+    def predict(self, input_seqs):
+        return self.forward(input_seqs, bs=len(input_seqs)).cpu().detach().numpy()
+
+    def fit(self, train_X, train_y, epochs=3000, bs=128):
+        loss_function = nn.MSELoss()
+        optimizer = torch.optim.Adam(self.parameters(), lr=0.001)
+        for i in range(epochs):
+            for j in range(len(train_X) // bs + 1):
+                seq = train_X[j * bs: (j + 1) * bs]
+                label = train_y[j * bs: (j + 1) * bs]
+                optimizer.zero_grad()
+                pred = self.forward(seq, bs=bs)
+                loss = loss_function(pred, torch.tensor(label).to(pred.device))
+                loss.backward()
+                optimizer.step()
+
+            if i % 5 == 0:
+                print("epoch: {:3}, loss: {:10.5f}".format(
+                    i, loss.item()))
+        return self 
+
+
+class LSTMModel(TableBasedModel):
+    NAME = "lstm"
+
+    def __init__(
+        self,
+        mixin_search_space,
+        *,
+        perf_name="latency",
+        preprocessors=("block_sum", "remove_anomaly", "flatten",
+                       "extract_lstm_features"),
+        prof_prims_cfg={},
+        schedule_cfg=None,
+    ):
+        super().__init__(mixin_search_space,
+                         perf_name=perf_name,
+                         preprocessors=preprocessors,
+                         prof_prims_cfg=prof_prims_cfg,
+                         schedule_cfg=schedule_cfg)
+        gpu = torch.cuda.current_device()
+        self.device = 'cuda:' + str(gpu)
+        self.lstm_model = LSTM(1, 100, 1, device=self.device)
+        assert isinstance(mixin_search_space, MixinProfilingSearchSpace) 
+
+    def _train(self, args):
+        prof_nets, train_x, train_y = args
+        # build Prim -> performance look-up table
+        super()._train(prof_nets)
+        return self.lstm_model.fit(train_x, train_y)
+
+
+    def predict(self, rollout):
+        primitives = self.mixin_search_space.rollout_to_primitives(
+            rollout, **self.prof_prims_cfg)
+        perfs = super().predict(rollout, assemble_fn=lambda x: x)
+        primitives = [p._asdict() for p in primitives]
+        for prim, perf in zip(primitives, perfs):
+            prim["performances"] = {self.perf_name: perf}
+        prof_nets = [[{"primitives": primitives}]]
+        prof_nets, test_x = self.preprocessor(
+            prof_nets, is_training=False, performance=self.perf_name)
+        return float(self.lstm_model.predict(test_x)[0])
+
+    def save(self, path):
+        pickled_table = [(k._asdict(), v) for k, v in self._table.items()]
+        with open(path, "wb") as fw:
+            pickle.dump(
+                {
+                    "table": pickled_table,
+                    "model": self.lstm_model
+                }, fw)
+
+    def load(self, path):
+        with open(path, "rb") as fr:
+            m = pickle.load(fr)
+        self._table = {Prim(**k): v for k, v in m["table"]}
+        self.lstm_model = m["model"].to(self.device)
+
 
 
 def iterate(prof_prim_dir):

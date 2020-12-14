@@ -27,6 +27,13 @@ class ContainerObjective(BaseObjective):
     def supported_data_types(cls):
         return ["image"]
 
+    def aggregate_fn(self, perf_name, is_training=True):
+        for obj in self.objectives:
+            if perf_name in obj.perf_names():
+                return obj.aggregate_fn(perf_name, is_training)
+        else:
+            return super().aggregate_fn(perf_name, is_training)
+
     def perf_names(self):
         return sum([obj.perf_names() for obj in self.objectives], [])
 
@@ -50,7 +57,7 @@ class ContainerObjective(BaseObjective):
         ]
         weighted_loss = [l * c for l, c in zip(losses, self.losses_coef)]
         return sum(weighted_loss)
-    
+
     def get_reward(self, inputs, outputs, targets, cand_net):
         rewards = [
             obj.get_reward(

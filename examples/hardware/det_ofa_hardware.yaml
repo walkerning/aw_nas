@@ -1,0 +1,46 @@
+mixin_search_space_type: ssd_ofa_mixin
+mixin_search_space_cfg:
+  fixed_primitives: null
+
+
+# hardware compiler type: dpu/xavier ..
+hardware_compiler_type: xavier
+
+
+# should be kept the same with prof_prims_cfg in search space configuration
+prof_prims_cfg:
+  sample: null # or int
+  as_dict: true # if set false, the return value is a namedtuple
+  spatial_size: 300
+  base_channels: [16, 16, 24, 32, 64, 96, 160, 960, 1280]
+  mult_ratio: 1.
+  strides: [1, 2, 2, 2, 1, 2]
+  acts: ["relu6", "relu6", "relu6", "h_swish", "h_swish", "h_swish"]
+  use_ses: [ False, False, True, False, True, True ]  
+  stem_stride: 2
+  primitive_type: 'mobilenet_v3_block'
+  
+
+# Legal Preprocessor Combinations
+# TABLE: ["block_sum", "remove_anomaly", "flatten"]
+# LINEAR REGRESSION: ["block_sum", "remove_anomaly", "flatten", "extract_sum_features"]
+# MLP: ["block_sum", "remove_anomaly", "flatten", "padding"]
+# LSTM: ["block_sum", "remove_anomaly", "flatten", "extrace_lstm_features"]
+
+hwperfmodel_type: mlp
+hwperfmodel_cfg: 
+  perf_name: "latency"
+  preprocessors: ["block_sum", "remove_anomaly", "flatten", "padding"]
+
+profiling_net_cfg:
+  base_cfg_template:
+    placeholder: null
+  image_size: 300
+  max_layers: 20
+  base_cfg_template:
+    search_space_type: general
+    search_space_cfg: 
+      primitives: []
+    final_model_type: general_final_model
+    final_model_cfg: {}
+

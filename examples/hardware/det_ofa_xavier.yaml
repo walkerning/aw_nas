@@ -1,0 +1,202 @@
+rollout_type: ssd_ofa
+
+## ---- Component search_space ----
+# ---- Type ofa ----
+search_space_type: ssd_ofa_mixin
+search_space_cfg:
+  num_cell_groups: [ 1, 4, 4, 4, 4, 4 ]
+  expansions: [ 1, 6, 6, 6, 6, 6 ]
+  image_size_choice: [ 300 ]
+  head_width_choice: [ 0.5 ]
+  num_head: 4
+  schedule_cfg:
+    kernel_choice:
+      type: value
+      boundary: [ 1, 81 ]
+      value: [ [ 7, 5 ], [ 7, 5, 3 ] ]
+    width_choice:
+      type: value
+      boundary: [ 1, 161, 241 ]
+      value: [ [ 6 ], [ 6, 4 ], [ 6, 4, 3 ] ]
+    depth_choice:
+      type: value
+      boundary: [ 1, 321, 401 ]
+      value: [ [ 4 ], [ 4, 3 ], [ 4, 3, 2 ] ]
+# ---- End Type mnsanet_ofa ----
+## ---- End Component search_space ----
+
+## ---- Component dataset ----
+dataset_type: voc
+dataset_cfg:
+  load_train_only: false
+  random_choose: false
+  random_seed: 123
+  train_crop_size: 300
+  test_crop_size: 300
+  image_mean: 0.
+  image_std: 1.
+  image_norm_factor: 128.
+  image_bias: -1
+# ---- End Type cifar10 ----
+## ---- End Component dataset ----
+
+## ---- Component controller ----
+# ---- Type rl ----
+controller_type: hw_ofa
+controller_cfg:
+  # Schedulable attributes:
+  rollout_type: ofa
+# ---- End Type rl ----
+## ---- End Component controller ----
+
+## ---- Component evaluator ----
+# ---- Type mepa ----
+evaluator_type: mepa
+evaluator_cfg:
+  # Schedulable attributes: controller_surrogate_steps, mepa_surrogate_steps, mepa_samples
+  load_optimizer: false
+  load_scheduler: false
+  rollout_type: ofa
+  batch_size: 256
+  controller_surrogate_steps: 0
+  # derive_surrogate_steps: 0
+  mepa_surrogate_steps: 0
+  mepa_optimizer:
+    lr: 0.005
+    momentum: 0.9
+    type: SGD
+    weight_decay: 0.0001
+  mepa_scheduler:
+    eta_min: 0.0
+    T_0: 80
+    type: CosineAnnealingWarmRestarts
+  surrogate_optimizer: null
+  surrogate_scheduler: null
+  mepa_samples: 1
+  evaluate_with_whole_queue: true
+  data_portion:
+    - 0.0
+#    - 0.9 # train evaluator weights
+#    - 0.1 # for train controller
+    - 0.0 # train evaluator weights
+    - [ train_testTransform, [ 0.9, 1.0 ] ] # for train controller
+  mepa_as_surrogate: false
+  bptt_steps: 35
+  schedule_cfg: null
+  workers_per_queue: 8
+# ---- End Type mepa ----
+## ---- End Component evaluator ----
+
+## ---- Component weights_manager ----
+# ---- Type supernet ----
+weights_manager_type: det_supernet
+weights_manager_cfg:
+  # Schedulable attributes:
+  rollout_type: ofa
+  search_backbone_type: ofa_supernet
+  search_backbone_cfg:
+    backbone_type: mbv3_backbone
+    backbone_cfg:
+      blocks: [ 1, 4, 4, 4, 4, 4 ]
+      strides: [ 1, 2, 2, 2, 1, 2 ]
+      expansions: [ 1, 6, 6, 6, 6, 6 ]
+      acts: [ "relu", "relu", "relu", "h_swish", "h_swish", "h_swish" ]
+      layer_channels: [ 16, 16, 24, 40, 80, 112, 160, 960, 1280 ]
+      mult_ratio: 1.
+      kernel_sizes: [ 3, 5, 7 ]
+      num_classes: 20
+      block_type: mbv3_block
+      pretrained_path: null
+  head_type: ssd_header
+  head_cfg:
+    expansions: [ 0.5, 0.5, 0.5, 0.5 ]
+    channels: [ 512, 256, 256, 128 ]
+    kernel_sizes: [ 3 ]
+    aspect_ratios: [ [ 2 ], [ 2, 3 ], [ 2, 3 ], [ 2, 3 ], [ 2 ], [ 2 ] ]
+    pretrained_path: null
+  num_classes: 20
+  feature_levels: [ 4, 5 ]
+
+# ---- End Type supernet ----
+## ---- End Component weights_manager ----
+objective_type: container
+objective_cfg:
+  sub_objectives:
+    - objective_type: detection
+      objective_cfg:
+        # Schedulable attributes:
+        num_classes: 20
+        anchors_generator_type: ssd_anchors_generator
+        anchors_generator_cfg:
+          aspect_ratios: [ [ 2 ], [ 2, 3 ], [ 2, 3 ], [ 2, 3 ], [ 2 ], [ 2 ] ]
+          clip: true
+        matcher_type: iou_matcher
+        matcher_cfg:
+          matched_threshold: 0.5
+          unmatched_threshold: 0.4
+          variance: [ 0.1, 0.2 ]
+        loss_type: focal_loss
+        loss_cfg:
+          alpha: 0.25
+          gamma: 2.0
+          loc_coef: 1.
+        soft_losses_cfg:
+          teacher_cfg: null
+          losses_cfg:
+            type: adaptive_distillation_loss
+            cfg:
+              beta: 1.5
+              gamma: 1.0
+              temperature: 2.
+              loss_coef: 0.
+              schedule_cfg:
+                loss_coef:
+                  type: value
+                  boundary: [ 1, 81 ]
+                  value: [ 0., 0.1 ]
+        post_processing_type: ssd_post_processing
+        post_processing_cfg:
+          top_k: 200
+          confidence_threshold: 0.01
+          nms_threshold: 0.5
+          variance: [ 0.1, 0.2 ]
+          apply_prob_type: sigmoid
+        metrics_type: voc
+    - objective_type: hardware
+      objective_cfg:
+        hardware_perfmodel_type: lstm
+        hardware_perfmodel_cfg:
+          preprocessors: [ "block_sum", "remove_anomaly", "flatten", "extract_lstm_features" ]
+          prof_prims_cfg:
+            primitive_type: 'mobilenet_v3_block'
+            spatial_size: 300
+            strides: [ 1, 2, 2, 2, 1, 2 ]
+            base_channels: [ 16, 16, 24, 32, 64, 96, 160, 960, 1280 ]
+            mult_ratio: 1.0
+            use_ses: [ False, False, True, False, True, True ]
+            acts: [ "relu", "relu", "relu", "h_swish", "h_swish", "h_swish" ]
+            # following items are necessary to specify hardware objective
+            # sample: null # or int
+            # as_dict : true # of set false, the return value is namedtuple
+        hardware_model_paths: [ "xavier_latency.pkl" ]
+        perf_names: [ "latency" ]
+
+## ---- Component trainer ----
+# ---- Type simple ----
+trainer_type: simple
+trainer_cfg:
+  # Schedulable attributes: controller_samples, derive_samples
+  rollout_type: ofa
+  epochs: 500
+  test_every: 10
+  controller_scheduler: null
+  controller_samples: 1
+  derive_samples: 1
+#  evaluator_steps: null
+  controller_steps: 1
+  controller_train_every: 1
+  controller_train_begin: 1
+  interleave_controller_every: null
+  schedule_cfg: null
+# ---- End Type simple ----
+## ---- End Component trainer ----

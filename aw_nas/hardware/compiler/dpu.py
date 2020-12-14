@@ -279,9 +279,10 @@ class DPUCompiler(BaseHardwareCompiler):
 
     def parse_file(
         self,
-        prof_result_file,
+        prof_result_dir,
         prof_prim_file,
-        prim_to_ops,
+        prim_to_ops_file,
+        result_dir,
         perf_fn=None,
         perf_names=("latency",),
     ):
@@ -289,9 +290,44 @@ class DPUCompiler(BaseHardwareCompiler):
         """
         prof_result_dir: the measurement result file
         prof_prim_file: all primitives that need to be profiled.
-        prim_to_op: primitive(tuple) to the names of caffe layers
+        prim_to_ops_file: primitive to the names of caffe layers file
         """
 
+        # load prims to op dict
+        prim_to_ops = dict()
+        for _dir in os.listdir(prim_to_ops_file):
+            cur_dir = os.path.join(prim_to_ops_file, _dir, 'pytorch_to_caffe')
+            for _file in os.listdir(cur_dir):
+                if not _file.endswith('prim2names.pkl'): 
+                    continue
+                pkl = os.path.join(cur_dir, _file)
+                with open(pkl, "rb") as r_f:
+                    _dict = pickle.load(r_f)
+                    prim_to_ops.update(_dict)
+                    self.logger.info("Unpickled file: {pkl}".format(pkl=pkl))
+
+        # meta info: prim_to_ops is saved when generate profiling final-yaml folder for each net
+        for _dir in os.listdir(prof_result_dir):
+            cur_dir = os.path.join(prof_result_dir, _dir)
+            if os.path.isdir(cur_dir):
+                parsed_dir = os.path.join(result_dir, _dir)
+                os.makedirs(parsed_dir, exist_ok=True)
+                for i, _file in enumerate(os.listdir(cur_dir)):
+                    perf_yaml = self.parse_one_network(
+                        os.path.join(cur_dir, _file), prof_prim_file, prim_to_ops)
+                    if perf_yaml:
+                        with open(os.path.join(parsed_dir, i + ".yaml"),
+                                "w") as fw:
+                            yaml.safe_dump(perf_yaml, fw)
+    
+    def parse_one_network(
+        self,
+        prof_result_file,
+        prof_prim_file,
+        prim_to_ops,
+        perf_fn=None,
+        perf_names=("latency",)
+    ):
         # parse result file
         profiled_yaml = {"overall_{}".format(k): 0. for k in perf_names}
         if perf_fn is None:
@@ -317,7 +353,6 @@ class DPUCompiler(BaseHardwareCompiler):
                             getattr(name_to_perf_dict[name], perf).append(
                                 performance[perf]
                                     )
-                
         name_to_perf_dict = {
             k: Perf(
                 *[sum(getattr(v, perf)) / len(getattr(v, perf)) for perf in perf_names]

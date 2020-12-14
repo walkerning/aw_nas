@@ -82,11 +82,21 @@ def test_inject(super_net):
         "use_ses": [False, False, True, False, True, True],
         "acts": ["relu", "relu", "relu", "relu", "relu", "relu"]
     },
-    "hardware_obj_type": "regression",
-    "hardware_obj_cfg": {
+    "hardware_perfmodel_type": "regression",
+    "hardware_perfmodel_cfg": {
         "preprocessors":
         ("block_sum", "remove_anomaly", "flatten", "extract_sum_features"),
+        "prof_prims_cfg": {
+            "primitive_type": 'mobilenet_v3_block',
+            'spatial_size': 300,
+            'strides': [ 1, 2, 2, 2, 1, 2 ],
+            'base_channels': [ 16, 16, 24, 32, 64, 96, 160, 960, 1280 ],
+            'mult_ratio': 1.0,
+            'use_ses': [ False, False, True, False, True, True ],
+            'acts': [ "relu", "relu", "relu", "h_swish", "h_swish", "h_swish" ]
+        }
     },
+    "perf_names": ["latency"],
     "prof_nets": [[{
         "overall_latency":
         26.2,
@@ -127,15 +137,13 @@ def test_hardware(case):
 
     latency = [p["performances"]["latency"] for p in case["prof_nets"][0][0]["primitives"]]
     ss = get_search_space("ofa_mixin", **case["search_space_cfg"])
-    if case["hardware_obj_type"] == "regression":
+    if case["hardware_perfmodel_type"] == "regression":
         try:
             from sklearn import linear_model
         except ImportError as e:
             pytest.xfail("Do not install scikit-learn, this should fail")
-    obj = HardwareObjective(ss, case["prof_prims_cfg"], case["hardware_obj_type"],
-                            case["hardware_obj_cfg"])
-    obj.hwobj_models[0].train(case["prof_nets"])
-
+    obj = HardwareObjective(search_space=ss, hardware_perfmodel_type=case['hardware_perfmodel_type'], hardware_perfmodel_cfg=case["hardware_perfmodel_cfg"], perf_names=case['perf_names'])
+    obj.hardware_perfmodels[0].train(case["prof_nets"])
     rollout = ss.rollout_from_genotype(case["genotypes"])
     C = namedtuple("cand_net", ["rollout"])
     cand_net = C(rollout)

@@ -10,6 +10,7 @@ search_space_cfg:
   kernel_choice: [3, 5, 7]
   width_choice: [4, 3, 2]
   depth_choice: [4, 3, 2]
+  image_size_choice: [224]
 
 
 # ---- End Type mnsanet_ofa ----
@@ -79,7 +80,11 @@ weights_manager_cfg:
     blocks: [1, 4, 4, 4, 4, 4]
     strides: [1, 2, 2, 2, 1, 2]
     expansions: [1, 6, 6, 6, 6, 6]
-    channels: [16, 16, 24, 32, 64, 96, 160, 320, 1280]
+    channels: [16, 16, 24, 32, 64, 96, 160, 960, 1280]
+    #acts: ["relu6", "relu6", "relu6", "relu6", "relu6", "relu6"]
+    acts: ["relu6", "relu6", "relu6", "h_swish", "h_swish", "h_swish"]
+    #use_ses: [false, false, false, false, false, false]
+    use_ses: [false, false, true, false, true, true]
     mult_ratio: 1.
     kernel_sizes: [3, 5, 7]
     num_classes: 10
@@ -120,7 +125,7 @@ trainer_cfg:
 final_model_type: ofa_final_model
 final_model_cfg:
   backbone_type: mbv3_backbone
-  layer_channels: [16, 16, 24, 32, 64, 96, 160, 320, 1280]
+  layer_channels: [16, 16, 24, 32, 64, 96, 160, 960, 1280]
   strides: [1, 2, 2, 2, 1, 2]
   kernel_sizes: [3, 5, 7]
   ofa_state_dict: null

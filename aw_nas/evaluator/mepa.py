@@ -1380,14 +1380,14 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
         if mepa_as_surrogate:
             # use mepa data queue as surrogate data queue
             self.surrogate_queue = self.mepa_queue
-        len_surrogate = len(self.surrogate_queue) * self.surrogate_queue.batch_size \
-                        if self.surrogate_queue else 0
-        self.logger.info(
-            "Data sizes: surrogate: %s; controller: %d; mepa: %d; derive: %d",
-            str(len_surrogate) if not mepa_as_surrogate else "(mepa queue)",
-            len(self.controller_queue) * self.controller_queue.batch_size,
-            len(self.mepa_queue) * self.mepa_queue.batch_size,
-            len(self.derive_queue) * self.derive_queue.batch_size)
+        # len_surrogate = len(self.surrogate_queue) * self.surrogate_queue.batch_size \
+        #                 if self.surrogate_queue else 0
+        # self.logger.info(
+        #     "Data sizes: surrogate: %s; controller: %d; mepa: %d; derive: %d",
+        #     str(len_surrogate) if not mepa_as_surrogate else "(mepa queue)",
+        #     len(self.controller_queue) * self.controller_queue.batch_size,
+        #     len(self.mepa_queue) * self.mepa_queue.batch_size,
+        #     len(self.derive_queue) * self.derive_queue.batch_size)
         self._dataset_related_attrs += [
             "surrogate_queue", "mepa_queue", "controller_queue", "derive_queue",
             "s_hid_kwargs", "c_hid_kwargs", "m_hid_kwargs", "d_hid_kwargs"

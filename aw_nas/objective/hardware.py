@@ -1,5 +1,5 @@
 from aw_nas.objective.base import BaseObjective
-from aw_nas.hardware.base import BaseHardwareObjectiveModel
+from aw_nas.hardware.base import BaseHardwarePerformanceModel
 
 
 class HardwareObjective(BaseObjective):
@@ -7,23 +7,30 @@ class HardwareObjective(BaseObjective):
 
     def __init__(self,
                  search_space,
-                 prof_prims_cfg,
-                 hardware_obj_type,
-                 hardware_obj_cfg={},
+                 hardware_perfmodel_type,
+                 hardware_perfmodel_cfg=None,
+                 perf_names=("latency", ),
                  hardware_model_paths=None,
-                 perf_names=["latency"],
+                 hardware_obj_type=None,
                  schedule_cfg=None):
         super().__init__(search_space, schedule_cfg=schedule_cfg)
 
-        self.hwobj_models = [
-            BaseHardwareObjectiveModel.get_class_(
-                hardware_obj_type)(
-                    search_space, prof_prims_cfg, performance=perf, **hardware_obj_cfg)
-            for perf in perf_names]
+        if hardware_obj_type is not None:
+            raise TypeError("`hardware_obj_type` has been removed, use "
+                            "`hardware_perfmodel_type` instead")
+
+        self.hardware_perfmodels = [
+            BaseHardwarePerformanceModel.get_class_(hardware_perfmodel_type)(
+                search_space,
+                perf_name=perf_name,
+                **hardware_perfmodel_cfg
+            )
+            for perf_name in perf_names
+        ]
         self._perf_names = perf_names
         if hardware_model_paths:
-            for hardware_model_path, hwobj_model in zip(hardware_model_paths, self.hwobj_models):
-                hwobj_model.load(hardware_model_path)
+            for path, perfmodel in zip(hardware_model_paths, self.hardware_perfmodels):
+                perfmodel.load(path)
 
     @classmethod
     def supported_data_types(cls):
@@ -33,7 +40,7 @@ class HardwareObjective(BaseObjective):
         return self._perf_names
 
     def get_perfs(self, inputs, outputs, targets, cand_net):
-        perfs = [hwobj_model.predict(cand_net.rollout) for hwobj_model in self.hwobj_models]
+        perfs = [perfmodel.predict(cand_net.rollout) for perfmodel in self.hardware_perfmodels]
         return perfs
 
     def get_reward(self, inputs, outputs, targets, cand_net):

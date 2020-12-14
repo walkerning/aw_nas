@@ -103,8 +103,6 @@ PRIMITVE_FACTORY = {
                                                                     affine=affine),
     "conv_3x3" : lambda C, C_out, stride, affine: nn.Conv2d(C, C_out, 3, stride, 1),
     "bn_relu" : lambda C, C_out, stride, affine: BNReLU(C, C_out, affine),
-
-    # imagenet stem
     "imagenet_stem0": lambda C, C_out, stride, affine: nn.Sequential(
         nn.Conv2d(3, C_out // 2, kernel_size=3, stride=2, padding=1, bias=False),
         nn.BatchNorm2d(C_out // 2),
@@ -139,7 +137,8 @@ PRIMITVE_FACTORY = {
     "sigmoid": lambda C=None, C_out=None, stride=None, affine=None: nn.Sigmoid(),
     "identity": lambda C=None, C_out=None, stride=None, affine=None: Identity(),
     "h_swish": lambda C=None, C_out=None, stride=None, affine=None: Hswish(inplace=True),
-    "h_sigmoid": lambda C=None, C_out=None, stride=None, affine=None: Hsigmoid(inplace=True)
+    "h_sigmoid": lambda C=None, C_out=None, stride=None, affine=None: Hsigmoid(inplace=True),
+    "relu6": lambda C=None, C_out=None, stride=None, affine=None: nn.ReLU6(inplace=True),
 }
 
 def register_primitive(name, func, override=False):

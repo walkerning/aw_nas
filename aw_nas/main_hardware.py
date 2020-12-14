@@ -66,12 +66,12 @@ def genprof(cfg_file, hwobj_cfg_file, result_dir, compile_hardware,
             num_sample):
     with open(cfg_file, "r") as ss_cfg_f:
         ss_cfg = yaml.load(ss_cfg_f)
-    with open(hwobj_cfg_file, "r") as lat_cfg_f:
-        lat_cfg = yaml.load(lat_cfg_f)
+    with open(hwobj_cfg_file, "r") as hw_cfg_f:
+        hw_cfg = yaml.load(hw_cfg_f)
 
-    ss = get_search_space(lat_cfg["mixin_search_space_type"],
+    ss = get_search_space(hw_cfg["mixin_search_space_type"],
                           **ss_cfg["search_space_cfg"],
-                          **lat_cfg["mixin_search_space_cfg"])
+                          **hw_cfg["mixin_search_space_cfg"])
     expect(isinstance(ss, MixinProfilingSearchSpace),
            "search space must be a subclass of MixinProfilingsearchspace")
 
@@ -82,8 +82,10 @@ def genprof(cfg_file, hwobj_cfg_file, result_dir, compile_hardware,
                     os.path.join(result_dir, "hwobj_config.yaml"))
 
     # generate profiling primitive list
+    assert 'prof_prims_cfg' in hw_cfg, "key prof_prims_cfg must be specified in hardware configuration file."
+    hw_obj_cfg = hw_cfg['prof_prims_cfg']
     prof_prims = list(
-        ss.generate_profiling_primitives(**lat_cfg["profiling_primitive_cfg"]))
+        ss.generate_profiling_primitives(**hw_obj_cfg))
     prof_prim_fname = os.path.join(result_dir, "prof_prims.yaml")
     with open(prof_prim_fname, "w") as prof_prim_f:
         yaml.dump(prof_prims, prof_prim_f)
@@ -92,15 +94,15 @@ def genprof(cfg_file, hwobj_cfg_file, result_dir, compile_hardware,
     if num_sample:
         prof_net_cfgs = sample_networks(
             ss,
-            base_cfg_template=lat_cfg["profiling_net_cfg"]
+            base_cfg_template=hw_cfg["profiling_net_cfg"]
             ["base_cfg_template"],
             num_sample=num_sample,
-            **lat_cfg["profiling_primitive_cfg"])
+            **hw_obj_cfg)
     else:
         # assemble profiling nets
         # the primitives can actually be mapped to layers in model during the assembling process
         prof_net_cfgs = assemble_profiling_nets(prof_prims,
-                                                **lat_cfg["profiling_net_cfg"])
+                                                **hw_cfg["profiling_net_cfg"])
     prof_net_cfgs = list(prof_net_cfgs)
     prof_net_dir = utils.makedir(os.path.join(result_dir, "prof_nets"),
                                  remove=True)
@@ -113,13 +115,11 @@ def genprof(cfg_file, hwobj_cfg_file, result_dir, compile_hardware,
     LOGGER.info("Save the profiling net configs to directory %s", prof_net_dir)
 
     # optional (hardware specific): call hardware-specific compiling process
-    hw_cfgs = lat_cfg.get("hardware_compilers", [])
+    hw_cfgs = hw_cfg.get("hardware_compilers", [])
     if compile_hardware:
         hw_cfgs.extend([{
             "hardware_compiler_type": hw_name,
-            'hardware_compiler_cfg': {
-                'input_size': 224
-            }
+            'hardware_compiler_cfg': {}
         } for hw_name in compile_hardware])
     if hw_cfgs:
         hw_compile_dir = utils.makedir(os.path.join(result_dir, "hardwares"),
@@ -189,39 +189,8 @@ def parse(hwobj_cfg_file, prof_result_dir, prof_prim_file, prim_to_ops_file,
     LOGGER.info("Constructed hardware compiler {}{}".format(
         hw_name, ":{}".format(hw_kwargs) if hw_kwargs else ""))
 
-    # prim_to_ops_file = ./results_zns/hardwares/0-dpu/
-    # under this directory:
-    # 0-dpu
-    # |- 0
-    # |- 1
-    #    |_pytorch_to_caffe
-    #           |_ *.pkl
-    prim_to_ops = dict()
-    for _dir in os.listdir(prim_to_ops_file):
-        cur_dir = os.path.join(prim_to_ops_file, _dir, 'pytorch_to_caffe')
-        for _file in os.listdir(cur_dir):
-            if not _file.endswith('prim2names.pkl'): 
-                continue
-            pkl = os.path.join(cur_dir, _file)
-            with open(pkl, "rb") as r_f:
-                _dict = pickle.load(r_f)
-                prim_to_ops.update(_dict)
-                LOGGER.info("Unpickled file: {pkl}".format(pkl=pkl))
-
-    # meta info: prim_to_ops is saved when generate profiling final-yaml folder for each net
-    for _dir in os.listdir(prof_result_dir):
-        cur_dir = os.path.join(prof_result_dir, _dir)
-        if os.path.isdir(cur_dir):
-            parsed_dir = os.path.join(result_dir, _dir)
-            os.makedirs(parsed_dir, exist_ok=True)
-            for i, _file in enumerate(os.listdir(cur_dir)):
-                perf_yaml = hw_compiler.parse_file(
-                    os.path.join(cur_dir, _file), prof_prim_file, prim_to_ops)
-                if perf_yaml:
-                    with open(os.path.join(parsed_dir, i + ".yaml"),
-                              "w") as fw:
-                        yaml.safe_dump(perf_yaml, fw)
-
+    hw_compiler.parse_file(prof_result_dir, prof_prim_file, prim_to_ops_file, result_dir)
+    
 
 @main.command(help="Parse primitive statistics to generate the hwobj model"
               "hwobj_cfg_file sections: profiling_primitive_cfg, hwobj_cfg")
@@ -234,17 +203,19 @@ def parse(hwobj_cfg_file, prof_result_dir, prof_prim_file, prim_to_ops_file,
 def genmodel(cfg_file, hwobj_cfg_file, prof_prim_dir, result_file):
     with open(cfg_file, "r") as ss_cfg_f:
         ss_cfg = yaml.load(ss_cfg_f)
-    with open(hwobj_cfg_file, "r") as lat_cfg_f:
-        lat_cfg = yaml.load(lat_cfg_f)
-    ss = get_search_space(lat_cfg["mixin_search_space_type"],
+    with open(hwobj_cfg_file, "r") as hw_cfg_f:
+        hw_cfg = yaml.load(hw_cfg_f)
+    ss = get_search_space(hw_cfg["mixin_search_space_type"],
                           **ss_cfg["search_space_cfg"],
-                          **lat_cfg["mixin_search_space_cfg"])
+                          **hw_cfg["mixin_search_space_cfg"])
     expect(isinstance(ss, MixinProfilingSearchSpace),
            "search space must be a subclass of MixinProfilingsearchspace")
 
+
     hwobj_model = ss.parse_profiling_primitives(
-        lat_cfg["profiling_primitive_cfg"], lat_cfg["hwobjmodel_type"],
-        lat_cfg["hwobjmodel_cfg"])
+       hw_cfg['hwperfmodel_type'], hw_cfg['hwperfmodel_cfg']
+    )
+
     prof_nets = iterate(prof_prim_dir)
     hwobj_model.train(prof_nets)
     hwobj_model.save(result_file)
