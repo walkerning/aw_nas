@@ -355,7 +355,35 @@ class ExtractLSTMFeaturesPreProcessor(Preprocessor):
         else:
             return unpreprocessed, train_x
             
-        
+class PaddingPreProcessor(Preprocessor):
+    NAME = "padding"
+
+    def __init__(self, preprocessors=None, schedule_cfg=None):
+        super().__init__(preprocessors, schedule_cfg)
+
+    def __call__(self, unpreprocessed, **kwargs):
+        is_training = kwargs.get("is_training", True)
+        perf_name = kwargs.get('performance', 'latency')
+        unpreprocessed = list(unpreprocessed)
+        train_x = list()
+        train_y = list()
+        for prof_net in unpreprocessed:
+            x_feature = list()
+            for prim in prof_net['primitives']:
+                x_feature.append(prim['performances'][perf_name])
+            train_x.append(x_feature)
+            if is_training:
+                train_y.append(prof_net['overall_{}'.format(perf_name)])
+        # pad train_x
+        max_len = max([len(_) for _ in train_x])
+        for x in train_x:
+            if len(x) == max_len: continue
+            x.extend([0] * (max_len - len(x)) )
+
+        if is_training:
+            return unpreprocessed, train_x, train_y
+        else:
+            return unpreprocessed, train_x
 
 
 class TableBasedModel(BaseHardwarePerformanceModel):

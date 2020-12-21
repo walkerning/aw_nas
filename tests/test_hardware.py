@@ -238,6 +238,51 @@ def test_genprof(case):
             "use_ses": [False, False, True, False, True, True],
             "primitive_type": "mobilenet_v3_block",
         },
+        "hwperfmodel_type": "regression",
+        "hwperfmodel_cfg": {
+            "perf_name": "latency",
+            "preprocessors":
+            ["block_sum", "remove_anomaly", "flatten", "extract_sum_features"]
+        },
+        "prof_prim_latencies": [[{
+            "overall_latency":
+            13.,
+            "primitives": [{
+                "prim_type": "mobilenet_v3_block",
+                "C": 16,
+                "C_out": 24,
+                "spatial_size": 112,
+                "expansion": 4,
+                "use_se": True,
+                "stride": 2,
+                "affine": True,
+                "kernel_size": 3,
+                "activation": "relu",
+                "performances": {
+                    "latency": 12.5
+                }
+            }],
+        }]],
+    },
+
+    {
+        "search_space_cfg": {
+            "width_choice": [3, 4, 6],
+            "depth_choice": [2, 3, 4],
+            "kernel_choice": [3, 5, 7],
+            "image_size_choice": [224],
+            "num_cell_groups": [1, 4, 4, 4, 4, 4],
+            "expansions": [1, 6, 6, 6, 6, 6],
+        },
+        "prof_prim_cfg": {
+            "spatial_size": 112,
+            "base_channels": [16, 16, 24, 32, 64, 96, 160, 320, 1280],
+            "mult_ratio": 1.0,
+            "strides": [1, 2, 2, 2, 1, 2],
+            "acts": ["relu", "relu", "relu", "h_swish", "h_swish", "h_swish"],
+            "use_ses": [False, False, True, False, True, True],
+            "primitive_type": "mobilenet_v3_block",
+        },
         "hwperfmodel_type": "lstm",
         "hwperfmodel_cfg": {
             "perf_name": "latency",
@@ -319,16 +364,25 @@ def test_gen_model(case):
     assert isinstance(ss, MixinProfilingSearchSpace)
 
     prof_prim_latencies = case["prof_prim_latencies"]
+    print(f"Running test for {case['hwperfmodel_type']} model")
     if case["hwperfmodel_type"] == "regression":
         try:
             from sklearn import linear_model
         except ImportError as e:
-            pytest.xfail("Package 'scikit-learn' not found, this test case should fail")
+            pytest.xfail("Package 'scikit-learn' not found")
     if case["hwperfmodel_type"] == "mlp":
         try:
-            from sklearn import MLPRegressor
+            from sklearn.neural_network import MLPRegressor
         except ImportError as e:
-            pytest.xfail("Package 'scikit-learn' not found, this test case should fail")
+            pytest.xfail("Package 'sklearn.MLPRegressor' not found")
+    if case["hwperfmodel_type"] == "lstm":
+        try:
+            import torch
+            import torch.nn as nn
+            import torch.nn.utils.rnn as rnn_utils
+            from torch import optim
+        except ImportError as e:
+            pytest.xfail("Package 'torch' not found") 
     hwobj_model = ss.parse_profiling_primitives(case["hwperfmodel_type"],
                                                 case["hwperfmodel_cfg"])
     hwobj_model.train(prof_prim_latencies)
