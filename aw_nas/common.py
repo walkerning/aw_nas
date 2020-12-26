@@ -299,8 +299,8 @@ class CNNSearchSpace(CellSearchSpace):
             # mutate op
             op_mutate_idx = np.random.randint(0, len(new_arch[mutate_i_cg][1]))
             offset = np.random.randint(1, num_prims)
-            new_arch[mutate_i_cg][0][op_mutate_idx] = \
-                    (new_arch[mutate_i_cg][0][op_mutate_idx] + offset) % num_prims
+            new_arch[mutate_i_cg][1][op_mutate_idx] = \
+                    (new_arch[mutate_i_cg][1][op_mutate_idx] + offset) % num_prims
         return Rollout(new_arch, info={}, search_space=self)
 
     def genotype(self, arch):

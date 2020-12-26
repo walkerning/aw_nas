@@ -50,6 +50,7 @@ class PGAgent(BaseRLAgent):
         self.entropy_coeff = entropy_coeff
         self.max_grad_norm = max_grad_norm
         self.batch_update = batch_update
+        assert batch_update == True
 
         self.baseline = None
 

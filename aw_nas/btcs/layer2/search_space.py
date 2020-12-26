@@ -1138,4 +1138,4 @@ class DenseMicroSearchSpace(SearchSpace):
 
     @classmethod
     def supported_rollout_types(cls):
-        retur["micro-dense"]
+        return ["micro-dense"]

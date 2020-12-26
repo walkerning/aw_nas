@@ -77,8 +77,8 @@ def test_rl_controller():
     controller = RLController(search_space, device)
     controller_i = RLController(search_space,
                                 device,
-                                independent_cell_group=True,
-                                rl_agent_cfg={"batch_update": False})
+                                independent_cell_group=True)
+                                # rl_agent_cfg={"batch_update": False})
     assert len(list(controller.parameters())) == 10
     assert len(list(controller_i.parameters())) == 20
     rollouts = controller.sample(3)
