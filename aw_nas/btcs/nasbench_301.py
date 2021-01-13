@@ -86,6 +86,10 @@ class NB301SearchSpace(CNNSearchSpace):
             self._num_primitives),
                             info={}, search_space=self)
 
+    def canonicalize(self, rollout):
+        # TODO
+        pass
+
     @classmethod
     def supported_rollout_types(cls):
         return ["nb301"]

@@ -75,9 +75,14 @@ class NasBench201SearchSpace(SearchSpace):
         if self.load_nasbench:
             self._init_nasbench()
 
+    def canonicalize(self, rollout):
+        # TODO
+        pass
+
     def __getstate__(self):
         state = super(NasBench201SearchSpace, self).__getstate__().copy()
-        del state["api"]
+        if "api" in state:
+            del state["api"]
         return state
 
     def __setstate__(self, state):

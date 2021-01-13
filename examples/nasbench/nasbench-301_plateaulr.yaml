@@ -108,16 +108,20 @@ evaluator_type: mepa
 evaluator_cfg:
   # Schedulable attributes: controller_surrogate_steps, mepa_surrogate_steps, mepa_samples
   rollout_type: nb301
-  batch_size: 128
+  batch_size: 512
   mepa_optimizer:
     lr: 0.05
     momentum: 0.9
     type: SGD
-    weight_decay: 0.0001
+    weight_decay: 0.0005
   mepa_scheduler:
-    eta_min: 0.0
-    T_max: 400
-    type: CosineAnnealingLR
+    patience: 30
+    factor: 0.5
+    type: ReduceLROnPlateau
+  surrogate_optimizer: null
+  surrogate_scheduler: null
+  mepa_as_surrogate: false
+  bptt_steps: 35
   mepa_samples: 1
   evaluate_with_whole_queue: false
 
@@ -207,11 +211,9 @@ trainer_cfg:
   # Schedulable attributes: controller_samples, derive_samples
   rollout_type: nb301
   is_differentiable: false
-  epochs: 200
-  test_every: 10
-  controller_optimizer:
-    lr: 0.001
-    type: Adam
+  epochs: 1500
+  test_every: 2000
+  controller_optimizer: null
   controller_scheduler: null
   controller_samples: 1
   derive_samples: 8
@@ -219,7 +221,7 @@ trainer_cfg:
   evaluator_steps: null
   controller_steps: null
   controller_train_every: 1
-  controller_train_begin: 1
+  controller_train_begin: 2000
   interleave_controller_every: null
   schedule_cfg: null
 # ---- End Type simple ----
