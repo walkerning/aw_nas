@@ -4,14 +4,25 @@ import argparse
 import yaml
 import numpy as np
 from scipy.stats import stats, spearmanr
+import pickle
 
-from aw_nas.btcs.nasbench_201 import NasBench201SearchSpace
+from collections import namedtuple
+
+#from aw_nas.btcs.nasbench_201 import NasBench201SearchSpace
 from aw_nas import utils
+from aw_nas.common import genotype_from_str
+from aw_nas.utils.common_utils import _parse_derive_file
+from aw_nas.btcs.nasbench_301 import NB301SearchSpace
+
+import nasbench301 as nb
 
 parser = argparse.ArgumentParser()
-parser.add_argument('-t','--type', default='deiso', choices=['deiso', 'iso', 'iso2deiso'])
+parser.add_argument('-t','--type', default='deiso', choices=['deiso', 'iso', 'iso2deiso', 'nb301'])
+parser.add_argument('--model', default=None)
 parser.add_argument('derive_result', type=str)
 args = parser.parse_args()
+
+
 
 # Calculate the BR@K
 def minn_at_k(true_scores, predict_scores, ks=[0.01, 0.05, 0.10, 0.20]):
@@ -27,7 +38,7 @@ def minn_at_k(true_scores, predict_scores, ks=[0.01, 0.05, 0.10, 0.20]):
     return minn_at_ks
 
 # Calculate the P@K and Kendall-Tau
-def test_xk(true_scores, predict_scores):
+def test_xk(true_scores, predict_scores, ratios=[0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0]):
     true_inds = np.argsort(true_scores)[::-1]
     true_scores = np.array(true_scores)
     reorder_true_scores = true_scores[true_inds]
@@ -36,21 +47,24 @@ def test_xk(true_scores, predict_scores):
     ranks = np.argsort(reorder_predict_scores)[::-1]
     num_archs = len(ranks)
     patks = []
-    for ratio in [0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0]:
+    for ratio in ratios:
         k = int(num_archs * ratio)
         if k < 1:
             continue
         p = len(np.where(ranks[:k] < k)[0]) / float(k)
+        pred_rank = ranks[:k]
         arch_inds = ranks[:k][ranks[:k] < k]
         # [#samples, #samples/#total_samples, models in top-K, P@K%, Kendall-Tau]
         patks.append((k, ratio, len(arch_inds), p, stats.kendalltau(
             reorder_true_scores[arch_inds],
-            reorder_predict_scores[arch_inds]).correlation))
+            reorder_predict_scores[arch_inds]).correlation, pred_rank))
     return patks
 
 # Parse the derive results
 def parse_derive(filename):
     f = open(filename)
+    arch_dict = _parse_derive_file(f)
+    """
     lines = f.readlines()
     arch_dict = {}
     reward = None
@@ -62,8 +76,50 @@ def parse_derive(filename):
             arch = lines[i].strip()[3:-1]
         else:
             arch_dict[arch] = reward
+    """
     f.close()
     return arch_dict
+
+class Model(object):
+    def __init__(self, path, tabular_path):
+        self.path = path
+        self.model = nb.load_ensemble(path)
+        self.search_space = NB301SearchSpace()
+        self.genotype_type = namedtuple("Genotype", "normal normal_concat reduce reduce_concat")
+        self.tabular = {}
+
+        self.tabular_path = tabular_path or os.path.join(path, "tabular.pkl")
+        if os.path.exists(self.tabular_path):
+            self.load(self.tabular_path)
+
+
+    def load(self, path=None):
+        path = path or self.tabular_path
+        with open(path, "rb") as fr:
+            self.tabular = pickle.load(fr)
+        return self
+
+    def save(self, path=None):
+        path = path or self.tabular_path
+        with open(path, "wb") as fw:
+            pickle.dump(self.tabular, fw)
+
+    def __call__(self, key):
+        if key in self.tabular:
+            return self.tabular[key]
+        geno = genotype_from_str(key, self.search_space)
+        res = self.model.predict(config=self.genotype_type(
+            normal=[g[:2] for g in geno.normal_0], normal_concat=[2,3,4,5], 
+            reduce=[g[:2] for g in geno.reduce_1], reduce_concat=[2,3,4,5]),
+                representation="genotype", with_noise=False)
+        self.tabular[key] = res
+        return res
+
+
+def get_nb301_iso_dict(model_dir, tabular_path=None):
+    model = Model(model_dir, tabular_path)
+    return model
+
 
 # Read the isomorphic ground truth
 def get_iso_dict():
@@ -95,17 +151,35 @@ def get_deiso_dict():
     return query_dict, iso_group
 
 # Print the evaluation results 
-def print_info(final_arch_dict, query_dict):
+def print_info(final_arch_dict, query_dict, gt_threshold=0.):
     search_list = []
     query_list = []
+    loss_list = []
     for arch in final_arch_dict.keys():
-        accs = query_dict[arch]
+        accs = query_dict(arch)
         query_list.append(accs)
-        search_list.append(final_arch_dict[arch])
-    print("linear corr: {}".format(np.corrcoef(np.array(search_list), np.array(query_list))))
-    print("spearman corr: {}".format(spearmanr(np.array(search_list), np.array(query_list))))
-    print("BR@K: {}".format(minn_at_k(np.array(search_list), np.array(query_list))))
-    print("P@K/Kendall-Tau: {}".format(test_xk(np.array(search_list), np.array(query_list))))
+        search_list.append(final_arch_dict[arch]["acc"])
+        loss_list.append(final_arch_dict[arch]["loss"])
+    search_list = np.array(search_list)
+    query_list = np.array(query_list) / 100
+    loss_list = np.array(loss_list)
+
+    if gt_threshold > 0:
+        search_list = np.round(search_list / gt_threshold)
+        query_list = np.round(query_list / gt_threshold)
+        #loss_list = np.round(loss_list / gt_threshold)
+    res = {}
+    res["linear_corr"] = np.corrcoef(search_list, query_list)[0][1]
+    res["spearman_corr"] = spearmanr(search_list, query_list).correlation
+    res["BR@K"] = minn_at_k(search_list, query_list)
+    res["P@K/Kendall-Tau"] = test_xk(search_list, query_list)
+    res["valid_loss_acc_corr"] = -np.corrcoef(loss_list, search_list)[0][1]
+    res["gt_loss_acc_corr"] = -np.corrcoef(loss_list, query_list)[0][1]
+
+    for k, v in res.items():
+        print(k + ":")
+        print(v)
+    return res
 
 # Post De-isomorphism
 def iso_to_deiso(iso_dict, iso_group):
@@ -125,15 +199,23 @@ def iso_to_deiso(iso_dict, iso_group):
 
 def main():
     final_arch_dict = parse_derive(args.derive_result)
+    log_path = str(args.derive_result).replace(".yaml", "_statistic.pkl")
     if args.type == "iso2deiso":
         query_dict, iso_group = get_deiso_dict()
         print_info(iso_to_deiso(final_arch_dict, iso_group), query_dict)
     elif args.type == "deiso":
         query_dict, iso_group = get_deiso_dict()
         print_info(final_arch_dict, query_dict)
+    elif args.type == "nb301":
+        query_dict = get_nb301_iso_dict(args.model)
+        non_sparse = print_info(final_arch_dict, query_dict)
+        query_dict.save()
+        sparse = print_info(final_arch_dict, query_dict, gt_threshold=0.005)
+        with open(log_path, "wb") as fw:
+            pickle.dump({"non_sparse": non_sparse, "sparse": sparse}, fw)
     else:
         iso_dict = get_iso_dict()
-        print_info(final_arch_dict, iso_dict)
+        print_info(final_arch_dict, iso_dict, log_path)
 
 if __name__ == "__main__":
     main()
