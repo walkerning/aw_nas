@@ -6,6 +6,7 @@ search_space_cfg:
   # Schedulable attributes: 
   num_layers: 17
   vertices: 4
+  load_nasbench: false
 # ---- End Type nasbench-201 ----
 ## ---- End Component search_space ----
 
@@ -24,6 +25,8 @@ controller_cfg:
   # Schedulable attributes: 
   rollout_type: nasbench-201
   mode: eval
+  deiso: true
+  text_file: /home/foxfi/projects/aw_nas_clones/aw_nas_dev/examples/research/surgery/nb201/data/non-isom.txt
 ## ---- End Component controller ----
 
 ## ---- Component evaluator ----
@@ -88,18 +91,16 @@ trainer_type: simple
 trainer_cfg:
   # Schedulable attributes: controller_samples, derive_samples
   rollout_type: nasbench-201
-  epochs: 1000
-  test_every: 10
-  controller_optimizer:
-    lr: 0.001
-    type: Adam
+  epochs: 1400
+  test_every: 2000
+  controller_optimizer: null
   controller_scheduler: null
   controller_samples: 1
   derive_samples: 10
   evaluator_steps: null
   controller_steps: 0
   controller_train_every: 1
-  controller_train_begin: 1001
+  controller_train_begin: 2000
   interleave_controller_every: null
   schedule_cfg: null
   controller_optimizer: false

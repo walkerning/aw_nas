@@ -415,9 +415,12 @@ class SimpleTrainer(BaseTrainer):
                     derive_out_file, derive_out_file + ".tmp"), shell=True)
                 with open(derive_out_file) as r_f:
                     save_dict = _parse_derive_file(r_f)
-                out_f = open(derive_out_file, "w")
-                yield out_f, save_dict
-                out_f.close()
+            else:
+                os.makedirs(os.path.dirname(derive_out_file), exist_ok=True)
+                save_dict = {}
+            out_f = open(derive_out_file, "w")
+            yield out_f, save_dict
+            out_f.close()
 
     def derive(self, n, steps=None, out_file=None):
         # # some scheduled value will be used in test too, e.g. surrogate_lr, gumbel temperature...
@@ -429,8 +432,8 @@ class SimpleTrainer(BaseTrainer):
             with self._open_derive_out_file(out_file) as (out_f, save_dict):
                 for i_sample, rollout in enumerate(rollouts):
                     if str(rollout.genotype) in save_dict:
+                        rollout.perf = save_dict[str(rollout.genotype)]
                         _dump_with_perf(rollout, "str", out_f, index=i_sample)
-                        rollout.set_perf(save_dict[str(rollout.genotype)])
                         continue
                     rollout = self.evaluator.evaluate_rollouts([rollout],
                                                                is_training=False,

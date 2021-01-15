@@ -453,7 +453,7 @@ class NasBench201RSController(BaseController):
         rollouts = []
         if self.avoid_repeat:
             if self.deiso or self.num_op_choices != 5:
-                assert n == self.arch_num
+                # assert n == self.arch_num
                 for i in range(n):
                     line = self.lines[i].strip()
                     rollouts.append(
