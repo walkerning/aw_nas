@@ -243,6 +243,8 @@ def search(cfg_file, gpu, seed, load, save_every, save_controller_every, interle
               help="the directory to load checkpoint")
 @click.option("--save-every", default=None, type=int,
               help="the number of epochs to save checkpoint every")
+@click.option("--save-controller-every", default=None, type=int,
+              help="the number of epochs to save controller checkpoint every")
 @click.option("--interleave-report-every", default=50, type=int,
               help="the number of interleave steps to report every, "
               "only work in interleave training mode")
@@ -253,7 +255,7 @@ def search(cfg_file, gpu, seed, load, save_every, save_controller_every, interle
               "need `tensorboard` extra, `pip install aw_nas[tensorboard]`")
 @click.option("--develop", default=False, type=bool, is_flag=True,
               help="in develop mode, will copy the `aw_nas` source files into train_dir for backup")
-def mpsearch(cfg_file, seed, load, save_every, interleave_report_every,
+def mpsearch(cfg_file, seed, load, save_every, save_controller_every, interleave_report_every,
            train_dir, vis_dir, develop):
     # check dependency and initialize visualization writer
     local_rank = int(os.environ["LOCAL_RANK"])

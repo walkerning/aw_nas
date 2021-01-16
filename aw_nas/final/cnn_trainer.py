@@ -181,8 +181,10 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
         self._parallelize()
         log_strs = ["model from {}".format(m_path)]
 
-        # init/load the optimzier
+        # init the optimzier/scheduler
         self.optimizer = self._init_optimizer()
+        self.scheduler = self._init_scheduler(self.optimizer, self.optimizer_scheduler_cfg)
+
         o_path = os.path.join(path, "optimizer.pt") if os.path.isdir(path) else None
         if o_path and os.path.exists(o_path):
             checkpoint = torch.load(o_path, map_location=torch.device("cpu"))
@@ -190,8 +192,7 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
             log_strs.append("optimizer from {}".format(o_path))
             self.last_epoch = checkpoint["epoch"]
 
-        # init/load the scheduler
-        self.scheduler = self._init_scheduler(self.optimizer, self.optimizer_scheduler_cfg)
+        # load the optimizer/scheduler
         if self.scheduler is not None:
             s_path = os.path.join(path, "scheduler.pt") if os.path.isdir(path) else None
             if s_path and os.path.exists(s_path):
