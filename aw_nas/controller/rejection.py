@@ -52,7 +52,7 @@ class CanonicalTableRejector(BaseRejector):
         if not reject:
             # the canonicalized representation is already in the table,
             # and the rollout is not the representative rollout
-            self.cano_table[canoed] = copy.deepcopy(rollout)
+            self.cano_table[canoed] = rollout #copy.deepcopy(rollout)
         return not reject
 
     def load(self, path):
@@ -72,8 +72,10 @@ class RejectionSampleController(BaseController):
                  schedule_cfg=None):
         super(RejectionSampleController, self).__init__(search_space, rollout_type, mode)
         self.device = device
+        base_sampler_cfg = base_sampler_cfg or {}
+        rejector_cfg = rejector_cfg or {}
         self.base_sampler = BaseController.get_class_(base_sampler_type)(
-            self.search_space, rollout_type, mode=mode, **base_sampler_cfg
+            self.search_space, device=device, rollout_type=rollout_type, mode=mode, **base_sampler_cfg
         )
         self.rejector = BaseRejector.get_class_(rejector_type)(search_space, **rejector_cfg)
         self.maximum_sample_threshold = maximum_sample_threshold
@@ -86,7 +88,8 @@ class RejectionSampleController(BaseController):
 
     def sample(self, n, batch_size):
         rollouts = []
-        for _ in range(n):
+        for i_sample in range(n):
+            print("\r{}/{}".format(i_sample, n), end="")
             for num_trials in range(1, self.maximum_sample_threshold + 1):
                 rollout = self.base_sampler.sample(1, batch_size)[0]
                 if self.rejector.accept(rollout):
@@ -94,7 +97,7 @@ class RejectionSampleController(BaseController):
                     rollouts.append(rollout)
                     break
             else:
-                self.logger.info(
+                self.logger.debug(
                     "Does not find a rollout to accept after %d trials",
                     self.maximum_sample_threshold)
                 if self.accept_when_reaching_threshold:

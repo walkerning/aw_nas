@@ -77,7 +77,30 @@ class NasBench201SearchSpace(SearchSpace):
 
     def canonicalize(self, rollout):
         # TODO
-        pass
+        arch = rollout.arch
+        num_vertices = rollout.search_space.num_vertices
+        op_choices = rollout.search_space.ops_choices
+        S = []
+        S.append("0")
+        res = ""
+        for i in range(1, num_vertices):
+            preS = []
+            s = ""
+            for j in range(i):
+                if ((int(arch[i][j]) == 0) or (S[j] == "#")):
+                    s = "#"
+                elif (int(arch[i][j]) == 1):
+                    s = S[j]
+                else:
+                    s = "(" + S[j] + ")" + "@" + op_choices[int(arch[i][j])]
+                preS.append(s)
+            preS.sort()
+            s = ""
+            for j in range(i):
+                s = s + preS[j]
+            S.append(s)
+            res = s
+        return res
 
     def __getstate__(self):
         state = super(NasBench201SearchSpace, self).__getstate__().copy()
@@ -419,6 +442,10 @@ class NasBench201RSController(BaseController):
             fo = open(self.pickle_file, "rb")
             self.lines = pickle.load(fo)
             fo.close()
+        if self.avoid_repeat and not self.deiso:
+            self.indices = np.arange(15625)
+            np.random.shuffle(self.indices)
+            self.index = 0
 
     def random_sample_nonisom(self):
         ind = np.random.randint(low=0, high=self.arch_num)
@@ -465,17 +492,29 @@ class NasBench201RSController(BaseController):
                 for line in self.lines:
                     rollouts.append(NasBench201Rollout(line[0], self.search_space))
             else:
-                indexes = np.random.choice(np.arange(15625), size=n, replace=False)
-                for i in indexes:
-                    rollouts.append(
-                        NasBench201Rollout(
-                            self.search_space.api.str2matrix(
-                                self.search_space.api.query_by_index(i).arch_str
-                            ),
-                            self.search_space,
-                        )
-                    )
+                # indexes = np.random.choice(np.arange(15625), size=n, replace=False)
+                next_index = self.index + n
+                rollouts = [NasBench201Rollout(
+                    self.search_space.api.str2matrix(
+                        self.search_space.api.query_by_index(self.indices[i]).arch_str
+                    ),
+                    self.search_space,
+                ) for i in range(self.index, min(next_index, 15625))]
+
+                if next_index >= 15625:
+                    # reshuffle the indices
+                    np.random.shuffle(self.indices)
+                    next_index = next_index - 15625
+                    rollouts += [NasBench201Rollout(
+                        self.search_space.api.str2matrix(
+                            self.search_space.api.query_by_index(self.indices[i]).arch_str
+                        ),
+                        self.search_space,
+                    ) for i in range(0, next_index)]
+
+                self.index = next_index
             return rollouts
+
         if self.fair:
             assert n == self.num_op_choices
             archs = np.zeros([self.num_ops, self.num_op_choices])

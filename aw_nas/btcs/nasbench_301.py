@@ -88,7 +88,49 @@ class NB301SearchSpace(CNNSearchSpace):
 
     def canonicalize(self, rollout):
         # TODO
-        pass
+        archs = rollout.arch
+        ss = rollout.search_space
+        num_groups = ss.num_cell_groups
+        num_vertices = ss.num_steps
+        num_node_inputs = ss.num_node_inputs
+        Res = ""
+
+        for i_cg in range(num_groups):
+            prims = ss.shared_primitives
+            S = []
+            outS = []
+            S.append("0")
+            S.append("1")
+            arch = archs[i_cg]
+            res = ""
+            index = 0
+            nodes = arch[0]
+            ops = arch[1]
+            for i_out in range(num_vertices):
+                preS = []
+                s = ""
+                for i in range(num_node_inputs):
+                    if (ops[index] == 6):
+                        s = S[nodes[index]]
+                    else:
+                        s = "(" + S[nodes[index]] + ")" + "@" + prims[ops[index]]
+                    preS.append(s)
+                    index = index + 1
+                preS.sort()
+                s = ""
+                for i in range(num_node_inputs):
+                    s = s + preS[i]
+                S.append(s)
+                outS.append(s)
+            outS.sort()
+            for i_out in range(num_vertices):
+                res = res + outS[i_out]
+            if (i_cg < num_groups - 1):
+                Res = Res + res + "&"
+            else:
+                Res = Res + res
+
+        return Res
 
     @classmethod
     def supported_rollout_types(cls):
