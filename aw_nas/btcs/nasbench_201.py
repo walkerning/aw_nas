@@ -433,19 +433,24 @@ class NasBench201RSController(BaseController):
         self.deiso = deiso
         self.pickle_file = pickle_file
         self.text_file = text_file
+        self.lines = None
         if self.text_file:
-            fo = open(self.text_file)
-            self.lines = fo.readlines()
-            fo.close()
-            self.arch_num = len(self.lines)
+            with open(self.text_file) as rf:
+                self.lines = rf.readlines()
         elif self.pickle_file:
-            fo = open(self.pickle_file, "rb")
-            self.lines = pickle.load(fo)
-            fo.close()
-        if self.avoid_repeat and not self.deiso:
-            self.indices = np.arange(15625)
-            np.random.shuffle(self.indices)
-            self.index = 0
+            with open(self.pickle_file, "rb") as rf:
+                self.lines = pickle.load(rf)
+        else:
+            # if neither text_file nor pickle_file is speficied,
+            # assume non-isom{num op choices}.txt is under the awnas data dir
+            base_dir = os.path.join(utils.get_awnas_dir("AWNAS_DATA", "data"), "nasbench-201")
+            isom_table_fname = os.path.join(base_dir, "non-isom{}.txt".format(self.num_op_choices))
+            if self.deiso:
+                assert os.path.exists(isom_table_fname)
+                with open(isom_table_fname) as rf:
+                    self.lines = rf.readlines()
+        if self.lines is not None:
+            self.arch_num = len(self.lines)
 
     def random_sample_nonisom(self):
         ind = np.random.randint(low=0, high=self.arch_num)
