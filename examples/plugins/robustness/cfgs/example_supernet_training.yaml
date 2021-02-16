@@ -67,7 +67,7 @@ evaluator_cfg:
   - 0.0
   - 0.8
   - 0.2
-  shuffle_data_before_split: false
+  shuffle_data_before_split: false # true in our paper
   # cfg items below are of no use
   controller_surrogate_steps: 0
   mepa_surrogate_steps: 0

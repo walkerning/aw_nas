@@ -523,22 +523,25 @@ def prepare_data_queues(dataset, queue_cfg_lst, data_type="image", drop_last=Fal
     # save cur np random seed state and apply data seed only for shuffling data
     # then restore seed for the rest of the process
     if shuffle:
-        assert shuffle_seed is not None
-        np_random_state = np.random.get_state()
-        np.random.seed(shuffle_seed)
-        [np.random.shuffle(indices) for indices in dset_indices.values()]
-        if shuffle_indice_file:
-            if os.path.exists(shuffle_indice_file):
-                with open(shuffle_indice_file, "r") as r_f:
-                    dset_indices = yaml.load(r_f)
-                _getLogger("aw_nas.torch_utils").info(
-                    "Load dataset split indices from %s", shuffle_indice_file)
-            else:
+        if shuffle_indice_file and os.path.exists(shuffle_indice_file):
+            # load from `shuffle_indice_file`
+            with open(shuffle_indice_file, "r") as r_f:
+                dset_indices = yaml.load(r_f)
+            _getLogger("aw_nas.torch_utils").info(
+                "Load dataset split indices from %s", shuffle_indice_file)
+        else:
+            # shuffle using `shuffle_seed` as the random seed
+            assert shuffle_seed is not None
+            np_random_state = np.random.get_state()
+            np.random.seed(shuffle_seed)
+            [np.random.shuffle(indices) for indices in dset_indices.values()]
+            np.random.set_state(np_random_state)
+            if shuffle_indice_file:
+                # dump the shuffled indices to `shuffle_indice_file`
                 with open(shuffle_indice_file, "w") as w_f:
                     yaml.dump(dset_indices, w_f)
                 _getLogger("aw_nas.torch_utils").info(
                     "Dump dataset split indices to %s", shuffle_indice_file)
-        np.random.set_state(np_random_state)
 
     used_portions = {n: 0. for n in dset_splits}
     queues = []

@@ -129,7 +129,7 @@ evaluator_cfg:
       - [train_testTransform, [0.8, 0.9], {shuffle: false}]
       - [train_testTransform, [0.8, 0.9], {shuffle: false}]
       shuffle_indice_file: /home/foxfi/projects/aw_nas_clones/aw_nas_dev/robnas_1028/indices.yaml
-      shuffle_data_before_split: true
+      shuffle_data_before_split: false # true in our paper
       evaluate_with_whole_queue: true # evaluate each rollout on the whole valid queue (0.2)
 
       # cfg items below are of no use
@@ -189,7 +189,7 @@ evaluator_cfg:
       - [train_testTransform, [0.8, 0.9], {shuffle: false}]
       - [train_testTransform, [0.8, 0.9], {shuffle: false}]
       shuffle_indice_file: /home/foxfi/projects/aw_nas_clones/aw_nas_dev/robnas_1028/indices.yaml
-      shuffle_data_before_split: true
+      shuffle_data_before_split: false # true in our paper
       evaluate_with_whole_queue: true # evaluate each rollout on the whole valid queue (0.2)
 
       # cfg items below are of no use
@@ -249,7 +249,7 @@ evaluator_cfg:
       - [train_testTransform, [0.8, 0.9], {shuffle: false}]
       - [train_testTransform, [0.8, 0.9], {shuffle: false}]
       shuffle_indice_file: /home/foxfi/projects/aw_nas_clones/aw_nas_dev/robnas_1028/indices.yaml
-      shuffle_data_before_split: true
+      shuffle_data_before_split: false # true in our paper
       evaluate_with_whole_queue: true # evaluate each rollout on the whole valid queue (0.2)
 
       # cfg items below are of no use
@@ -309,7 +309,7 @@ evaluator_cfg:
       - [train_testTransform, [0.8, 0.9], {shuffle: false}]
       - [train_testTransform, [0.8, 0.9], {shuffle: false}]
       shuffle_indice_file: /home/foxfi/projects/aw_nas_clones/aw_nas_dev/robnas_1028/indices.yaml
-      shuffle_data_before_split: true
+      shuffle_data_before_split: false # true in our paper
       evaluate_with_whole_queue: true # evaluate each rollout on the whole valid queue (0.2)
 
       # cfg items below are of no use
@@ -369,7 +369,7 @@ evaluator_cfg:
       - [train_testTransform, [0.8, 0.9], {shuffle: false}]
       - [train_testTransform, [0.8, 0.9], {shuffle: false}]
       shuffle_indice_file: /home/foxfi/projects/aw_nas_clones/aw_nas_dev/robnas_1028/indices.yaml
-      shuffle_data_before_split: true
+      shuffle_data_before_split: false # true in our paper
       evaluate_with_whole_queue: true # evaluate each rollout on the whole valid queue (0.2)
 
       # cfg items below are of no use
@@ -429,7 +429,7 @@ evaluator_cfg:
       - [train_testTransform, [0.8, 0.9], {shuffle: false}]
       - [train_testTransform, [0.8, 0.9], {shuffle: false}]
       shuffle_indice_file: /home/foxfi/projects/aw_nas_clones/aw_nas_dev/robnas_1028/indices.yaml
-      shuffle_data_before_split: true
+      shuffle_data_before_split: false # true in our paper
       evaluate_with_whole_queue: true # evaluate each rollout on the whole valid queue (0.2)
 
       # cfg items below are of no use
@@ -489,7 +489,7 @@ evaluator_cfg:
       - [train_testTransform, [0.8, 0.9], {shuffle: false}]
       - [train_testTransform, [0.8, 0.9], {shuffle: false}]
       shuffle_indice_file: /home/foxfi/projects/aw_nas_clones/aw_nas_dev/robnas_1028/indices.yaml
-      shuffle_data_before_split: true
+      shuffle_data_before_split: false # true in our paper
       evaluate_with_whole_queue: true # evaluate each rollout on the whole valid queue (0.2)
 
       # cfg items below are of no use
@@ -549,7 +549,7 @@ evaluator_cfg:
       - [train_testTransform, [0.8, 0.9], {shuffle: false}]
       - [train_testTransform, [0.8, 0.9], {shuffle: false}]
       shuffle_indice_file: /home/foxfi/projects/aw_nas_clones/aw_nas_dev/robnas_1028/indices.yaml
-      shuffle_data_before_split: true
+      shuffle_data_before_split: false # true in our paper
       evaluate_with_whole_queue: true # evaluate each rollout on the whole valid queue (0.2)
 
       # cfg items below are of no use
