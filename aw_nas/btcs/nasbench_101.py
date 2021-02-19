@@ -352,8 +352,16 @@ class NasBench101OneShotSearchSpace(NasBench101SearchSpace):
         self.cellwise_primitives = False
         self.shared_primitives = self.ops_choices
 
+        self.num_parents = None
+
         if self.load_nasbench:
             self._init_nasbench()
+
+    def _is_valid(self, matrix):
+        assert self.num_parents is not None, \
+                "Do no use nasbench-101-1shot directly, please use nasbench-101-1shot-1, "\
+                "nasbench-101-1shot-2 or nasbench-101-1shot-3 search space instead."
+        return all([p == k for p, k in zip(self.num_parents, matrix.sum(axis=1))])
 
     def get_layer_num_steps(self, layer_index):
         return self.get_num_steps(self.cell_layout[layer_index])
@@ -364,6 +372,30 @@ class NasBench101OneShotSearchSpace(NasBench101SearchSpace):
             if isinstance(self.num_steps, int)
             else self.num_steps[cell_index]
         )
+
+    def _random_sample_ori(self):
+        while 1:
+            matrix = np.random.choice(
+                [0, 1], size=(self.num_vertices, self.num_vertices)
+            )
+            matrix = np.triu(matrix, 1)
+            ops = np.random.choice(
+                self.ops_choices[:-1], size=(self.num_vertices)
+            ).tolist()
+            ops[0] = "input"
+            ops[-1] = "output"
+            spec = _ModelSpec(matrix=matrix, ops=ops)
+            if (
+                self.validate_spec
+                and not self.nasbench.is_valid(spec)
+                and not self._is_valid(matrix)
+            ):
+                continue
+            return NasBench101Rollout(
+                spec.original_matrix,
+                ops=self.op_to_idx(spec.original_ops),
+                search_space=self,
+            )
 
 
 class NasBench101OneShot1SearchSpace(NasBench101OneShotSearchSpace):
@@ -399,34 +431,73 @@ class NasBench101OneShot1SearchSpace(NasBench101OneShotSearchSpace):
 
         assert sum(self.num_parents) == 9, "The num of edges must equal to 9."
 
-    def _is_valid(self, matrix):
-        return all([p == k for p, k in zip(self.num_parents, matrix.sum(axis=1))])
+class NasBench101OneShot2SearchSpace(NasBench101OneShotSearchSpace):
+    NAME = "nasbench-101-1shot-2"
 
-    def _random_sample_ori(self):
-        while 1:
-            matrix = np.random.choice(
-                [0, 1], size=(self.num_vertices, self.num_vertices)
-            )
-            matrix = np.triu(matrix, 1)
-            ops = np.random.choice(
-                self.ops_choices[:-1], size=(self.num_vertices)
-            ).tolist()
-            ops[0] = "input"
-            ops[-1] = "output"
-            spec = _ModelSpec(matrix=matrix, ops=ops)
-            if (
-                self.validate_spec
-                and not self.nasbench.is_valid(spec)
-                and not self._is_valid(matrix)
-            ):
-                continue
-            return NasBench101Rollout(
-                spec.original_matrix,
-                ops=self.op_to_idx(spec.original_ops),
-                search_space=self,
-            )
+    def __init__(
+        self,
+        multi_fidelity=False,
+        load_nasbench=True,
+        compare_reduced=True,
+        compare_use_hash=False,
+        validate_spec=True,
+        num_cell_groups=2,
+        num_init_nodes=1,
+        cell_layout=None,
+        reduce_cell_groups=(1,),
+        num_layers=8,
+    ):
+        super(NasBench101OneShot2SearchSpace, self).__init__(
+            multi_fidelity,
+            load_nasbench,
+            compare_reduced,
+            compare_use_hash,
+            validate_spec,
+            num_cell_groups,
+            num_init_nodes,
+            cell_layout,
+            reduce_cell_groups,
+            num_layers,
+        )
 
+        self.num_parents = [0, 1, 1, 2, 2, 0, 3]
 
+        assert sum(self.num_parents) == 9, "The num of edges must equal to 9."
+
+class NasBench101OneShot3SearchSpace(NasBench101OneShotSearchSpace):
+    NAME = "nasbench-101-1shot-3"
+
+    def __init__(
+        self,
+        multi_fidelity=False,
+        load_nasbench=True,
+        compare_reduced=True,
+        compare_use_hash=False,
+        validate_spec=True,
+        num_cell_groups=2,
+        num_init_nodes=1,
+        cell_layout=None,
+        reduce_cell_groups=(1,),
+        num_layers=8,
+    ):
+        super(NasBench101OneShot3SearchSpace, self).__init__(
+            multi_fidelity,
+            load_nasbench,
+            compare_reduced,
+            compare_use_hash,
+            validate_spec,
+            num_cell_groups,
+            num_init_nodes,
+            cell_layout,
+            reduce_cell_groups,
+            num_layers,
+        )
+
+        self.num_parents = [0, 1, 1, 1, 2, 2, 2]
+
+        assert sum(self.num_parents) == 9, "The num of edges must equal to 9."
+
+    
 class NasBench101Rollout(BaseRollout):
     NAME = "nasbench-101"
     supported_components = [("evaluator", "mepa"), ("trainer", "simple")]

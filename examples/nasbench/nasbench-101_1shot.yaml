@@ -23,7 +23,7 @@ controller_type: random_sample
 controller_cfg:
   # Schedulable attributes: 
   rollout_type: nasbench-101
-  mode: train
+  mode: eval
 # ---- End Type nasbench-101-sa ----
 ## ---- End Component controller ----
 
@@ -34,26 +34,36 @@ evaluator_cfg:
   # Schedulable attributes: controller_surrogate_steps, mepa_surrogate_steps, mepa_samples
   rollout_type: nasbench-101
   batch_size: 128
-  controller_surrogate_steps: 0
-  mepa_surrogate_steps: 0
   mepa_optimizer:
     lr: 0.05
     momentum: 0.9
     type: SGD
-    weight_decay: 0.0003
+    weight_decay: 0.0005
   mepa_scheduler:
-    eta_min: 0.0
-    T_max: 200
-    type: CosineAnnealingLR
+    patience: 30
+    factor: 0.5
+    type: ReduceLROnPlateau
   surrogate_optimizer: null
   surrogate_scheduler: null
+  bptt_steps: 35
   mepa_samples: 1
+  evaluate_with_whole_queue: false
   data_portion:
   - 0.0
   - 0.8
   - 0.2
-  mepa_as_surrogate: false
-  bptt_steps: 35
+  shuffle_data_before_split: false
+  shuffle_indice_file: null
+  shuffle_data_before_split_seed: null  
+  load_optimizer: true
+  load_scheduler: true
+  strict_load_weigts_manager: true
+  controller_surrogate_steps: 0
+  mepa_surrogate_steps: 0
+  surrogate_optimizer: null
+  scheduler_every_batch: false
+  workers_per_queue: 2
+  rollout_batch_size: 1
   
 # ---- End Type nasbench-101 ----
 ## ---- End Component evaluator ----
@@ -88,18 +98,19 @@ trainer_type: simple
 trainer_cfg:
   # Schedulable attributes: controller_samples, derive_samples
   rollout_type: nasbench-101
-  epochs: 4000
-  test_every: 10
+  is_differentiable: false
+  epochs: 1500
+  test_every: 2000
   controller_optimizer: null
   controller_scheduler: null
   controller_samples: 1
-  derive_samples: 1
+  derive_samples: 8
+  rollout_batch_size: 1
   evaluator_steps: null
-  controller_steps: 100
+  controller_steps: null
   controller_train_every: 1
-  controller_train_begin: 1
+  controller_train_begin: 2000
   interleave_controller_every: null
   schedule_cfg: null
-  rollout_batch_size: null
 # ---- End Type simple ----
 ## ---- End Component trainer ----

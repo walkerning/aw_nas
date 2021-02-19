@@ -10,6 +10,7 @@ from aw_nas.objective.fault_injection import FaultInjectionObjective
 from aw_nas.objective.ofa import OFAClassificationObjective
 from aw_nas.objective.detection import DetectionObjective
 from aw_nas.objective.hardware import HardwareObjective
+from aw_nas.objective.zeroshot import ZeroShot
 
 from aw_nas.objective.container import ContainerObjective
 

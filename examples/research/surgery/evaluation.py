@@ -58,7 +58,7 @@ def test_xk(true_scores, predict_scores, ratios=[0.001, 0.005, 0.01, 0.05, 0.1, 
         patks.append((k, ratio, len(arch_inds), p, stats.kendalltau(
             reorder_true_scores[arch_inds],
             reorder_predict_scores[arch_inds]).correlation, pred_rank))
-    return patks
+    return patks, patks[-1][4]
 
 # Parse the derive results
 def parse_derive(filename):
@@ -104,14 +104,12 @@ class Model(object):
         with open(path, "wb") as fw:
             pickle.dump(self.tabular, fw)
 
-    def __call__(self, key):
+    def __getitem__(self, key):
         if key in self.tabular:
             return self.tabular[key]
         geno = genotype_from_str(key, self.search_space)
         res = self.model.predict(config=self.genotype_type(
-            normal=[g[:2] for g in geno.normal_0], normal_concat=[2,3,4,5], 
-            reduce=[g[:2] for g in geno.reduce_1], reduce_concat=[2,3,4,5]),
-                representation="genotype", with_noise=False)
+                representation="genotype", with_noise=False))
         self.tabular[key] = res
         return res
 
@@ -156,7 +154,7 @@ def print_info(final_arch_dict, query_dict, gt_threshold=0.):
     query_list = []
     loss_list = []
     for arch in final_arch_dict.keys():
-        accs = query_dict(arch)
+        accs = query_dict[arch]
         query_list.append(accs)
         search_list.append(final_arch_dict[arch]["acc"])
         loss_list.append(final_arch_dict[arch]["loss"])
@@ -166,19 +164,20 @@ def print_info(final_arch_dict, query_dict, gt_threshold=0.):
 
     if gt_threshold > 0:
         search_list = np.round(search_list / gt_threshold)
-        query_list = np.round(query_list / gt_threshold)
+        #query_list = np.round(query_list / gt_threshold)
         #loss_list = np.round(loss_list / gt_threshold)
     res = {}
     res["linear_corr"] = np.corrcoef(search_list, query_list)[0][1]
     res["spearman_corr"] = spearmanr(search_list, query_list).correlation
     res["BR@K"] = minn_at_k(search_list, query_list)
-    res["P@K/Kendall-Tau"] = test_xk(search_list, query_list)
+    res["P@K"], res["Kendall-Tau"] = test_xk(search_list, query_list)
     res["valid_loss_acc_corr"] = -np.corrcoef(loss_list, search_list)[0][1]
     res["gt_loss_acc_corr"] = -np.corrcoef(loss_list, query_list)[0][1]
 
     for k, v in res.items():
-        print(k + ":")
-        print(v)
+        if "corr" in k or "Tau" in k:
+            print(k + ":")
+            print(v)
     return res
 
 # Post De-isomorphism
@@ -210,7 +209,7 @@ def main():
         query_dict = get_nb301_iso_dict(args.model)
         non_sparse = print_info(final_arch_dict, query_dict)
         query_dict.save()
-        sparse = print_info(final_arch_dict, query_dict, gt_threshold=0.005)
+        sparse = print_info(final_arch_dict, query_dict, gt_threshold=0.01)
         with open(log_path, "wb") as fw:
             pickle.dump({"non_sparse": non_sparse, "sparse": sparse}, fw)
     else:
