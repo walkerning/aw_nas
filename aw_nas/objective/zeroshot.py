@@ -11,21 +11,23 @@ from aw_nas.objective.base import BaseObjective
 
 def parameters_saliency(model, batch_inputs, saliency_fn):
     model.zero_grad()
-    l = (batch_inputs)
+
+    l = model(batch_inputs)
     l.backward(torch.ones_like(l))
 
     saliency = 0.
     for _, p in model.named_modules():
-        if isinstance(p, nn.Conv2d):
+        if isinstance(p, nn.Conv2d) and p.weight.grad is not None:
             saliency += saliency_fn(p.weight, p.weight.grad)
+    del l
     return saliency
 
 
 def grad_norm(params, grads):
-    return grads.abs().sum()
+    return grads.abs().sum().item()
 
 def snip(params, grads):
-    return (params * grads).abs().sum()
+    return (params * grads).abs().sum().item()
 
 def grasp(params, grads):
     # Hassian Matrix need to be calculated
@@ -33,8 +35,8 @@ def grasp(params, grads):
 
 def synflow(params, grads):
     # TODO: NOT sure whether it is right implementation
-    return (params * grads).sum()
-    return params.sum()
+    return (params * grads).sum().item()
+    return params.sum().item()
 
 
 def activation_saliency(model, batch_inputs, saliency_fn):
@@ -46,6 +48,7 @@ def activation_saliency(model, batch_inputs, saliency_fn):
     model.zero_grad()
     l = model(batch_inputs)
     l.backward(torch.ones_like(l))
+    del l
     # TODO: how to extract the gradient of activation layers
 
 
@@ -59,20 +62,22 @@ def jacob_covariance(model, batch_inputs):
 
     l = model(batch_inputs)
     l.backward(torch.ones_like(l))
-    jacob = x.grad.detach()
+    jacob = batch_inputs.grad.detach().cpu().numpy()
+    del l
     return jacob
 
 def correlation(jacob, eps=1e-5):
-    corrs = np.corrcoef(jacob)
+    corrs = np.corrcoef(jacob.reshape(jacob.shape[0], -1))
     v, _ = np.linalg.eig(corrs)
     v += eps
     return np.sum(np.log(v) + 1. / v)
 
 def jacob_score(model, batch_inputs):
     jacob = jacob_covariance(model, batch_inputs)
-    return -correlation(jacob)
-
-
+    try:
+        return -correlation(jacob)
+    except:
+        return 0.
 
 def calc_scores(model, batch_inputs, perfs=["snip", "synflow", "grad_norm", "jacob", "vote"]):
     saliency_fns = {
