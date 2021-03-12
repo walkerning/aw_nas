@@ -9,11 +9,12 @@ from aw_nas.objective.base import BaseObjective
 class ClassificationObjective(BaseObjective):
     NAME = "classification"
 
-    def __init__(self, search_space, label_smooth=None, schedule_cfg=None):
+    def __init__(self, search_space, label_smooth=None, aggregate_as_list=False, schedule_cfg=None):
         super(ClassificationObjective, self).__init__(search_space, schedule_cfg=schedule_cfg)
         self.label_smooth = label_smooth
         self._criterion = nn.CrossEntropyLoss() if not self.label_smooth \
                           else CrossEntropyLabelSmooth(self.label_smooth)
+        self.aggregate_as_list = aggregate_as_list
 
     @classmethod
     def supported_data_types(cls):
@@ -42,6 +43,11 @@ class ClassificationObjective(BaseObjective):
         """
         return self._criterion(outputs, targets)
 
+    def aggregate_fn(self, perf_name, is_training=True):
+        if self.aggregate_as_list:
+            return list
+        else:
+            return super().aggregate_fn(perf_name, is_training)
 
 
 class FLOPsRegClassificationObjective(ClassificationObjective):
