@@ -10,16 +10,11 @@ from aw_nas.objective.base import BaseObjective
 
 
 def parameters_saliency(model, batch_inputs, saliency_fn):
-    model.zero_grad()
-
-    l = model(batch_inputs)
-    l.backward(torch.ones_like(l))
-
     saliency = 0.
-    for _, p in model.named_modules():
-        if isinstance(p, nn.Conv2d) and p.weight.grad is not None:
-            saliency += saliency_fn(p.weight, p.weight.grad)
-    del l
+    for _, module in model.named_modules():
+        if isinstance(module, nn.Conv2d) and module.weight.grad is not None:
+            saliency += saliency_fn(module.weight, module.weight.grad)
+
     return saliency
 
 
@@ -36,7 +31,6 @@ def grasp(params, grads):
 def synflow(params, grads):
     # TODO: NOT sure whether it is right implementation
     return (params * grads).sum().item()
-    return params.sum().item()
 
 
 def activation_saliency(model, batch_inputs, saliency_fn):
@@ -56,14 +50,14 @@ def fisher(module, inputs, activations):
     raise NotImplementedError("To be solved how to extract the gradient of activation layer")
 
 def jacob_covariance(model, batch_inputs):
-    model.zero_grad()
+    # model.zero_grad()
 
-    batch_inputs.requires_grad_(True)
+    # batch_inputs.requires_grad_(True)
 
-    l = model(batch_inputs)
-    l.backward(torch.ones_like(l))
+    # l = model(batch_inputs)
+    # l.backward(torch.ones_like(l))
     jacob = batch_inputs.grad.detach().cpu().numpy()
-    del l
+    # del l
     return jacob
 
 def correlation(jacob, eps=1e-5):
@@ -85,6 +79,13 @@ def calc_scores(model, batch_inputs, perfs=["snip", "synflow", "grad_norm", "jac
         "synflow": synflow,
         "grad_norm": grad_norm
     }
+
+    # get the gradients (currently, only parameters)
+    model.zero_grad()
+    batch_inputs.requires_grad_(True)
+    loss = model(batch_inputs)
+    loss.backward(torch.ones_like(loss))
+
     saliency_fns = {k: partial(parameters_saliency, saliency_fn=v) for k, v in saliency_fns.items()}
     saliency_fns["jacob"] = jacob_score
 
@@ -93,16 +94,17 @@ def calc_scores(model, batch_inputs, perfs=["snip", "synflow", "grad_norm", "jac
     if "vote" in perfs:
         assert set(("snip", "synflow", "jacob")).issubset(set(perfs))
         scores["vote"] = np.max([scores[k] for k in ["snip", "synflow", "jacob"]])
-    
+    del loss
     return scores
 
 
 class ZeroShot(BaseObjective):
     NAME = "zero-shot"
 
-    def __init__(self, search_space, perf_names, schedule_cfg=None):
+    def __init__(self, search_space, perf_names, aggregate_as_list=False, schedule_cfg=None):
         super(ZeroShot, self).__init__(search_space, schedule_cfg=schedule_cfg)
 
+        self.aggregate_as_list = aggregate_as_list
         self._perf_names = perf_names
 
     @classmethod
@@ -124,3 +126,8 @@ class ZeroShot(BaseObjective):
 
         return torch.tensor(0.)
 
+    def aggregate_fn(self, perf_name, is_training=True):
+        if self.aggregate_as_list:
+            return list
+        else:
+            return super().aggregate_fn(perf_name, is_training)

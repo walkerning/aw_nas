@@ -3,6 +3,7 @@
 import sys
 import math
 import copy
+import contextlib
 from functools import partial
 from collections import defaultdict, OrderedDict
 
@@ -16,6 +17,20 @@ from aw_nas.base import Component
 from aw_nas.evaluator.base import BaseEvaluator
 from aw_nas.utils.exception import expect, ConfigException
 
+
+def _dropout_eval_forward(module, inputs):
+    module.training = False
+    return nn.Dropout.forward(module, inputs)
+
+@contextlib.contextmanager
+def _patch_dropout_forward(model):
+    for _, module in model.named_modules():
+        if isinstance(module, nn.Dropout):
+            module.forward = partial(_dropout_eval_forward, module)
+    yield
+    for _, module in model.named_modules():
+        if isinstance(module, nn.Dropout):
+            module.forward = nn.Dropout.forward
 
 def _summary_inner_diagnostics(t_accs,
                                t_losses,
@@ -627,47 +642,50 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
                                                 num_surrogate_step,
                                                 phase="controller_update")
         else:  # only for test
-            if eval_batches is not None:
-                eval_steps = eval_batches
-            else:
-                eval_steps = len(data_queue)
-                if portion is not None:
-                    expect(0.0 < portion < 1.0)
-                    eval_steps = int(portion * eval_steps)
+            # We need to use train mode BN
+            # let's make dropout in the eval mode
+            with _patch_dropout_forward(self.weights_manager):
+                if eval_batches is not None:
+                    eval_steps = eval_batches
+                else:
+                    eval_steps = len(data_queue)
+                    if portion is not None:
+                        expect(0.0 < portion < 1.0)
+                        eval_steps = int(portion * eval_steps)
 
-            for rollout in eval_rollouts:
-                cand_net = self.weights_manager.assemble_candidate(rollout)
-                if return_candidate_net:
-                    rollout.candidate_net = cand_net
-                # prepare criterions
-                criterions = [self._scalar_reward_func
-                              ] + self._report_loss_funcs
-                criterions = [
-                    partial(func, cand_net=cand_net) for func in criterions
-                ]
+                for rollout in eval_rollouts:
+                    cand_net = self.weights_manager.assemble_candidate(rollout)
+                    if return_candidate_net:
+                        rollout.candidate_net = cand_net
+                    # prepare criterions
+                    criterions = [self._scalar_reward_func
+                                  ] + self._report_loss_funcs
+                    criterions = [
+                        partial(func, cand_net=cand_net) for func in criterions
+                    ]
 
-                # run surrogate steps and evalaute on queue
-                # NOTE: if virtual buffers, must use train mode here...
-                # if not virtual buffers(virtual parameter only), can use train/eval mode
-                aggregate_fns = [
-                    self.objective.aggregate_fn(name, is_training=False)
-                    for name in self._all_perf_names
-                ]
-                eval_func = lambda: cand_net.eval_queue(
-                    data_queue,
-                    criterions=criterions,
-                    steps=eval_steps,
-                    # NOTE: In parameter-sharing evaluation, let's keep using train-mode BN!!!
-                    mode="train",
-                    # if test, differentiable rollout does not need to set detach_arch=True too
-                    aggregate_fns=aggregate_fns,
-                    **hid_kwargs)
-                res = self._run_surrogate_steps(eval_func,
-                                                cand_net,
-                                                self.derive_surrogate_steps,
-                                                phase="controller_test")
-                rollout.set_perfs(OrderedDict(zip(
-                    self._all_perf_names, res)))  # res is already flattend
+                    # run surrogate steps and evalaute on queue
+                    # NOTE: if virtual buffers, must use train mode here...
+                    # if not virtual buffers(virtual parameter only), can use train/eval mode
+                    aggregate_fns = [
+                        self.objective.aggregate_fn(name, is_training=False)
+                        for name in self._all_perf_names
+                    ]
+                    eval_func = lambda: cand_net.eval_queue(
+                        data_queue,
+                        criterions=criterions,
+                        steps=eval_steps,
+                        # NOTE: In parameter-sharing evaluation, let's keep using train-mode BN!!!
+                        mode="train",
+                        # if test, differentiable rollout does not need to set detach_arch=True too
+                        aggregate_fns=aggregate_fns,
+                        **hid_kwargs)
+                    res = self._run_surrogate_steps(eval_func,
+                                                    cand_net,
+                                                    self.derive_surrogate_steps,
+                                                    phase="controller_test")
+                    rollout.set_perfs(OrderedDict(zip(
+                        self._all_perf_names, res)))  # res is already flattend
 
         # support CompareRollout
         if self.rollout_type == "compare":

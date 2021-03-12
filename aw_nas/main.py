@@ -538,7 +538,7 @@ def sample(load, out_file, n, save_plot, gpu, seed, dump_mode, prob_thresh, uniq
 @main.command(help="Eval architecture from file.")
 @click.argument("cfg_file", required=True, type=str)
 @click.argument("arch_file", required=True, type=str)
-@click.option("--load", required=True, type=str,
+@click.option("--load", default=None, type=str,
               help="the directory to load checkpoint")
 @click.option("--gpu", default=0, type=int,
               help="the gpu to run training on")
@@ -590,9 +590,13 @@ def eval_arch(cfg_file, arch_file, load, gpu, seed, save_plot, save_state_dict, 
     res = _init_components_from_cfg(cfg, device, evaluator_only=True)
     search_space = res[0] #pylint: disable=unused-variable
     evaluator = res[-1]
-    path = os.path.join(load, "evaluator")
-    LOGGER.info("Loading evalutor from %s", path)
-    evaluator.load(path)
+    if load is not None:
+        path = os.path.join(load, "evaluator")
+        LOGGER.info("Loading evalutor from %s", path)
+        evaluator.load(path)
+    else:
+        LOGGER.warn("No `--load` cmdline argument is specified, currently, this is only reasonable"
+                    " for zero-shot estimations.")
 
     expect((not reset_dataloader_each_rollout) or hasattr(evaluator, "reset_dataloader"))
 
@@ -625,7 +629,7 @@ def eval_arch(cfg_file, arch_file, load, gpu, seed, save_plot, save_state_dict, 
             )
         print("Finish test {}/{}\r".format(i+1, num_r), end="")
         LOGGER.info("Arch %3d: %s", i, "; ".join(
-            ["{}: {:.3f}".format(n, v) for n, v in r.perf.items()]))
+            ["{}: {}".format(n, utils.format_as_float(v, "{:.3f}")) for n, v in r.perf.items()]))
 
     if dump_rollouts is not None:
         LOGGER.info("Dump the evaluated rollouts into file %s", dump_rollouts)
