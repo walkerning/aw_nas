@@ -551,10 +551,16 @@ def sample(load, out_file, n, save_plot, gpu, seed, dump_mode, prob_thresh, uniq
               "Only tested for CNN now.")
 @click.option("--steps", default=None, type=int,
               help="number of batches to eval for each arch, default to be the whole derive queue.")
+@click.option("--reset-dataloader-each-rollout", default=False, type=bool, is_flag=True,
+              help="This option is useful when you specify `--step n` "
+              "and want to use the same data for every arch rollout. "
+              "If true, would reset the dataloader before evaluating each rollout. "
+              "You should specify proper configuration for the derive queue "
+              "in the cfg file: e.g., `- [train_testTransform, [0.8, 0.9], {shuffle: false}]`.")
 @click.option("--dump-rollouts", default=None, type=str,
               help="dump evaluated rollouts to path")
 def eval_arch(cfg_file, arch_file, load, gpu, seed, save_plot, save_state_dict, steps,
-              dump_rollouts):
+              dump_rollouts, reset_dataloader_each_rollout):
     setproctitle.setproctitle("awnas-eval-arch config: {}; arch_file: {}; load: {}; cwd: {}"\
                               .format(cfg_file, arch_file, load, os.getcwd()))
 
@@ -588,6 +594,8 @@ def eval_arch(cfg_file, arch_file, load, gpu, seed, save_plot, save_state_dict, 
     LOGGER.info("Loading evalutor from %s", path)
     evaluator.load(path)
 
+    expect((not reset_dataloader_each_rollout) or hasattr(evaluator, "reset_dataloader"))
+
     # create the directory for saving plots
     if save_plot is not None:
         save_plot = utils.makedir(save_plot)
@@ -598,6 +606,10 @@ def eval_arch(cfg_file, arch_file, load, gpu, seed, save_plot, save_state_dict, 
     num_r = len(rollouts)
 
     for i, r in enumerate(rollouts):
+        if reset_dataloader_each_rollout:
+            # reset the derive data queue
+            evaluator.reset_dataloader(is_training=False)
+
         evaluator.evaluate_rollouts([r], is_training=False,
                                     eval_batches=steps,
                                     return_candidate_net=save_state_dict)[0]

@@ -821,6 +821,13 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
         return OrderedDict(
             zip(self._all_perf_names, np.mean(report_stats, axis=0)))
 
+    def reset_dataloader(self, is_training):
+        if is_training:
+            for queue in [self.surrogate_queue, self.mepa_queue, self.controller_queue]:
+                queue.reset()
+        else:
+            self.derive_queue.reset()
+
     def on_epoch_start(self, epoch):
         super(MepaEvaluator, self).on_epoch_start(epoch)
         self.weights_manager.on_epoch_start(epoch)

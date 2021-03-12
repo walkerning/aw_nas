@@ -476,6 +476,11 @@ class InfIterator(six.Iterator):
         self.iter_ = None
         self.callbacks = list(callbacks)
 
+    def reset(self):
+        self.iter_ = iter(self.iterable)
+        # the old iterator should be garbage collected
+        # and the old worker should be shut down
+
     def __getattr__(self, name):
         return getattr(self.iterable, name)
 
