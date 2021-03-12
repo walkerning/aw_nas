@@ -51,6 +51,9 @@ By simply modifying the `init_channels` defined in  `weights_manager_cfg`, the s
 
 To run the training process, simply run `bash run_cfg.sh ../../plugins/robustness/cfgs/example_supernet_training.yaml`. The logs and results are saved under directory `results_search/<exp_name>` by default, and `<exp_name>` will be the file-extension-stripped basename of the configuration file by default (in this case `example_supernet_training`). Check the `run_cfg.sh` script for details.
 
+> NOTE: Since the supernet training stage and the search stage are decoupled in thw workflow. One must use the same training/validation data splits in two stages. You can simply choose to set `shuffle_data_before_split: false` in configuration files of both stages (which I have already set as default in the example configurations).
+Nevertheless, if you'd like to shuffle the dataset before split it into training/validation splits, you should use the same `shuffle_seed`, or use the same `shuffle_indice_file`. [This indice file](https://cloud.tsinghua.edu.cn/f/fa8e252640ee4c03bd30/?dl=1) is used in our paper.
+
 ----
 ### Run predictor-based search
 As described in our paper, although the FGSM attack is not suitable for the adversarial training phase, it makes a reasonable proxy objective of using PGD attack during the search phase. And the predictor-based search is conducted in the stagewise search space, and thanks to several evaluation proxies (objective proxy: PGD-FGSM, dataset proxy: half validation data queue) and the better exploration (smaller search space, and better predictor-based search strategy), we regard the predictor-based search flow to be more effective.

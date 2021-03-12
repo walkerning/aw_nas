@@ -12,6 +12,7 @@ class BaseObjective(Component):
         super(BaseObjective, self).__init__(schedule_cfg)
 
         self.search_space = search_space
+        self.is_training = True
 
     @utils.abstractclassmethod
     def supported_data_types(cls):
@@ -41,3 +42,9 @@ class BaseObjective(Component):
 
     def aggregate_fn(self, perf_name, is_training=True):
         return lambda perfs: np.mean(perfs) if len(perfs) > 0 else 0.
+
+    def set_mode(self, mode):
+        if mode == "train":
+            self.is_training = True
+        elif mode == "eval":
+            self.is_training = False

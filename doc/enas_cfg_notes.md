@@ -222,6 +222,7 @@ evaluator_cfg:
 * `mepa_scheduler`: The learning rate scheduler of the shared weights in the supernet. The `type` should be an lr scheduler class name in `torch.optim.lr_scheduler` (e.g., "CosineAnnealingLR" here), or one of `["WarmupCosineAnnealingLR", "CosineWithRestarts", "ExpDecay"]`, which are implemented in `aw_nas` (See `aw_nas/utils/lr_scheduler.py`). And, other items in the dict will be fed as keyword arguments to initialize the scheduler.
 * `mepa_samples`: Numbers of architecture Monte-Carlo samples in every supernet training step.
 
+**NEW!!!**: NOTE that, for the ease of understanding, we have simplified the `mepa` evaluator by removing the tedious and redundant codes related to conducting surrogate steps: `discrete_shared_weights` and `differentiable_shared_weights` evaluators. See `evaluator/shared_weights.py`. Also, you can run `python scripts/convert_cfg_mepa2sw.py <old cfg> <new cfg>` to convert an old cfg that uses `mepa` evaluator into new cfg files. For example, you can run `python scripts/convert_cfg_mepa2sw.py examples/mloss/enas/enas_search.yaml examples/mloss/enas/enas_search_cvt.yaml`, and then run `awnas search examples/mloss/enas/enas_search_cvt.yaml`. These two options should be equivalent.
 
 #### Component `trainer`
 

@@ -27,10 +27,12 @@ n_batches = args.num_batch
 os.makedirs(args.result_dir, exist_ok=True)
 
 # data shuffle indices file paths, None means no shuffle
+# since we preserve the perfs of all batches, it seems we do not need
+# to experiment with different shuffle indice files now!!!
 data_shuffle_indices_files = [
     None,
-    "/home/eva_share_users/foxfi/surgery/nb201/zero_shot/shuffle2020.yaml",
-    "/home/eva_share_users/foxfi/surgery/nb201/zero_shot/shuffle202020.yaml"
+    # "/home/eva_share_users/foxfi/surgery/nb201/zero_shot/shuffle2020.yaml",
+    # "/home/eva_share_users/foxfi/surgery/nb201/zero_shot/shuffle202020.yaml"
 ]
 
 with open(args.eval_cfg, "r") as rf:
