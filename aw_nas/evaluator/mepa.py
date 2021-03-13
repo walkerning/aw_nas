@@ -318,6 +318,7 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
             shuffle_indice_file=None,
             shuffle_data_before_split_seed=None,
             workers_per_queue=2,
+            pin_memory_per_queue=True,
             # only work for differentiable controller now
             rollout_batch_size=1,
             # only for rnn data
@@ -421,6 +422,7 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
         self.disable_step_current = disable_step_current
         self.data_portion = data_portion
         self.workers_per_queue = workers_per_queue
+        self.pin_memory_per_queue = pin_memory_per_queue
         self.shuffle_data_before_split = shuffle_data_before_split
         self.shuffle_indice_file = shuffle_indice_file
         self.shuffle_data_before_split_seed = shuffle_data_before_split_seed
@@ -1399,6 +1401,7 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
                                         shuffle=self.shuffle_data_before_split,
                                         shuffle_seed=self.shuffle_data_before_split_seed,
                                         num_workers=self.workers_per_queue,
+                                        pin_memory=self.pin_memory_per_queue,
                                         multiprocess=self.multiprocess,
                                         shuffle_indice_file=self.shuffle_indice_file)
 

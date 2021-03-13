@@ -512,7 +512,7 @@ def get_inf_iterator(iterable, callback):
     return InfIterator(iterable, [callback])
 
 def prepare_data_queues(dataset, queue_cfg_lst, data_type="image", drop_last=False,
-                        shuffle=False, shuffle_seed=None, num_workers=2, multiprocess=False, shuffle_indice_file=None):
+                        shuffle=False, shuffle_seed=None, num_workers=2, multiprocess=False, shuffle_indice_file=None, pin_memory=True):
     """
     Further partition the dataset splits, prepare different data queues.
 
@@ -550,7 +550,12 @@ def prepare_data_queues(dataset, queue_cfg_lst, data_type="image", drop_last=Fal
 
     used_portions = {n: 0. for n in dset_splits}
     queues = []
-    for cfg in queue_cfg_lst: # all the queues interleave sub-dataset
+    if isinstance(num_workers, int):
+        num_workers = [num_workers] * len(queue_cfg_lst)
+    if isinstance(pin_memory, bool):
+        pin_memory = [pin_memory] * len(queue_cfg_lst)
+    for cfg, worker_num, pin_memory_per_queue in zip(queue_cfg_lst, num_workers, pin_memory):
+        # all the queues interleave sub-dataset
         batch_size = cfg["batch_size"]
         split = cfg["split"]
         portion = cfg["portion"]
@@ -583,8 +588,8 @@ def prepare_data_queues(dataset, queue_cfg_lst, data_type="image", drop_last=Fal
             # can be overrided use kwargs
             kwargs = {
                 "batch_size": batch_size,
-                "pin_memory": True,
-                "num_workers": num_workers,
+                "pin_memory": pin_memory_per_queue,
+                "num_workers": worker_num,
                 "drop_last": drop_last,
                 "timeout": 0,
             }
