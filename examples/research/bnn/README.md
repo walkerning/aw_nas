@@ -4,7 +4,7 @@
 
 ## Cfgs
 
-> Acquire configs from [Google Drive](https://drive.google.com/drive/folders/1_tbL4ChZrf-5jqCGt0nojKelGVq8trwj?usp=sharing)
+> Acquire configs from [Google Drive](https://drive.google.com/drive/folders/1pPOtC7v46UCkgfKa-fBJTkqqTsPhdeQH?usp=sharing)
 
 ## Scripts
 

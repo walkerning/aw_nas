@@ -92,6 +92,7 @@ class SharedweightEvaluator(
         shuffle_indice_file=None,
         shuffle_data_before_split_seed=None,
         workers_per_queue=2,
+        update_evaluator_report_perfs=True,
         # only work for differentiable controller now
         rollout_batch_size=1,
         # only for rnn data
@@ -136,6 +137,7 @@ class SharedweightEvaluator(
         self.load_optimizer = load_optimizer
         self.load_scheduler = load_scheduler
         self.strict_load_weights_manager = strict_load_weights_manager
+        self.update_evaluator_report_perfs = update_evaluator_report_perfs
 
         # rnn specific configs
         self.bptt_steps = bptt_steps
@@ -172,6 +174,7 @@ class SharedweightEvaluator(
         self._dataset_related_attrs = None
         self._criterions_related_attrs = None
         self._all_perf_names = None
+        self._all_perf_names_update_evaluator = None
         self._reward_func = None
         self._reward_kwargs = None
         self._scalar_reward_func = None
@@ -179,6 +182,7 @@ class SharedweightEvaluator(
         self._perf_names = None
         self._eval_loss_func = None
         self._report_loss_funcs = None
+        self._report_perf_funcs = None
         # initialize reward criterions used by `get_rollout_reward`
         self._init_criterions(self.rollout_type)
 
@@ -224,7 +228,6 @@ class SharedweightEvaluator(
         """
         feed in the rollouts abd acquire the reward signal(valid loss) through self.eval_reward_func
         """
-        self.objective.set_mode("train" if is_training else "eval")
 
         # support CompareRollout
         if self.rollout_type == "compare":
@@ -239,6 +242,7 @@ class SharedweightEvaluator(
             return rollouts
 
         if is_training and not self.evaluate_with_whole_queue:
+            self.objective.set_mode("train")
             # get one data batch from controller/derive queue
             cont_data = next(data_queue)
             cont_data = utils.to_device(cont_data, self.device)
@@ -267,6 +271,7 @@ class SharedweightEvaluator(
                 )
 
         else:  # only for test
+            self.objective.set_mode("eval")
             if eval_batches is not None:
                 eval_steps = eval_batches
             else:
@@ -315,6 +320,7 @@ class SharedweightEvaluator(
                 rollouts[i_rollout].set_perfs(
                     OrderedDict([("compare_result", better),])
                 )
+        self.objective.set_mode("train")
         return rollouts
 
     def update_rollouts(self, rollouts):
@@ -346,7 +352,12 @@ class SharedweightEvaluator(
             cand_net = self.weights_manager.assemble_candidate(rollout)
 
             # prepare criterions
-            eval_criterions = [self._scalar_reward_func] + self._report_loss_funcs
+            if self.update_evaluator_report_perfs:
+                # report get_perfs results
+                eval_criterions = [self._scalar_reward_func] + self._report_perf_funcs
+            else:
+                # only report loss and reward
+                eval_criterions = [self._scalar_reward_func]
             eval_criterions = [
                 partial(func, cand_net=cand_net) for func in eval_criterions
             ]
@@ -395,7 +406,8 @@ class SharedweightEvaluator(
         if isinstance(self.eval_scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
             self.plateau_scheduler_loss.append(report_stats[0][1])
         # return stats
-        return OrderedDict(zip(self._all_perf_names, np.mean(report_stats, axis=0)))
+        return OrderedDict(zip(self._all_perf_names_update_evaluator,
+                               np.mean(report_stats, axis=0)))
 
     def on_epoch_start(self, epoch):
         super(SharedweightEvaluator, self).on_epoch_start(epoch)
@@ -736,6 +748,8 @@ class DiscreteSharedweightEvaluator(SharedweightEvaluator):
 
         self._perf_names = self.objective.perf_names()
         self._all_perf_names = utils.flatten_list(["reward", "loss", self._perf_names])
+        self._all_perf_names_update_evaluator = utils.flatten_list(
+            ["loss", "reward", self._perf_names])
         # criterion funcs for meta parameter training
         self._eval_loss_func = partial(
             self.objective.get_loss,
@@ -743,6 +757,9 @@ class DiscreteSharedweightEvaluator(SharedweightEvaluator):
             add_evaluator_regularization=True,
         )
         # criterion funcs for log/report
+        self._report_perf_funcs = [
+            self.objective.get_perfs
+        ]
         self._report_loss_funcs = [
             partial(
                 self.objective.get_loss_item,
@@ -787,6 +804,8 @@ class DifferentiableEvaluator(SharedweightEvaluator):
 
         self._perf_names = self.objective.perf_names()
         self._all_perf_names = utils.flatten_list(["reward", "loss", self._perf_names])
+        self._all_perf_names_update_evaluator = utils.flatten_list(
+            ["loss", "reward", self._perf_names])
         # criterion funcs for meta parameter training
         self._eval_loss_func = partial(
             self.objective.get_loss,
@@ -794,6 +813,9 @@ class DifferentiableEvaluator(SharedweightEvaluator):
             add_evaluator_regularization=True,
         )
         # criterion funcs for log/report
+        self._report_perf_funcs = [
+            self.objective.get_perfs
+        ]
         self._report_loss_funcs = [
             partial(
                 self.objective.get_loss_item,
@@ -809,5 +831,6 @@ class DifferentiableEvaluator(SharedweightEvaluator):
             "_reward_kwargs",
             "_perf_names",
             "_eval_loss_func",
+            "_report_perf_funcs",
             "_report_loss_funcs",
         ]

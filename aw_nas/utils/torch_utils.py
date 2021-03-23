@@ -706,19 +706,21 @@ def get_numpy(arr):
     return arr
 
 def count_parameters(model, count_binary=False):
+    if not count_binary:
+        return sum(p.nelement() for name, p in model.named_parameters() if "auxiliary" not in name)
+
+    # For binary search
     params = 0
     bi_params = 0
-    for name, p in model.named_parameters():
-        if "auxiliary" not in name:
-            if not count_binary:
+    from aw_nas import ops
+    for _, module in model.named_modules():
+        if isinstance(module, ops.BinaryConv2d):
+            for _, p in module.named_parameters():
+                bi_params += p.nelement()
+        elif isinstance(module, (nn.Conv2d, nn.Linear)):
+            for _, p in module.named_parameters():
                 params += p.nelement()
-            else:
-                if "cells" in name: # FIXME: not sure how to count
-                    bi_params += p.nelement()
-                else:
-                    params += p.nelement()
-    return np.array([params, bi_params])   # FIXME: dirty return mode, should fix later
-    # return sum(p.nelement() for name, p in model.named_parameters() if "auxiliary" not in name)
+    return np.array([params, bi_params])
 
 def _to_device(data, device):
     if isinstance(data, torch.Tensor):

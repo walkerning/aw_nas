@@ -9,6 +9,7 @@ from torch.utils.data.distributed import DistributedSampler
 
 from aw_nas import utils
 from aw_nas.final.base import FinalTrainer
+from aw_nas.final.bnn_model import BNNGenotypeModel
 from aw_nas.utils.common_utils import nullcontext
 from aw_nas.utils.exception import expect
 from aw_nas.utils import DataParallel
@@ -138,7 +139,9 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                 self._load_state_dict(load_state_dict)
 
             self.logger.info("param size = {} M".format( \
-                             utils.count_parameters(self.model, count_binary=False)/1.e6))
+                             utils.count_parameters(
+                                 self.model,
+                                 count_binary=isinstance(self.model, BNNGenotypeModel))/1.e6))
             self._parallelize()
 
         self.save_every = save_every
