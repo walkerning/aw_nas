@@ -8,7 +8,7 @@ import torch
 from torch.nn import functional as F
 
 from aw_nas import assert_rollout_type, utils
-from aw_nas.rollout.base import DartsArch, DifferentiableRollout
+from aw_nas.rollout.base import DartsArch, DifferentiableRollout, BaseRollout
 from aw_nas.utils import data_parallel, use_params
 from aw_nas.weights_manager.base import CandidateNet
 from aw_nas.weights_manager.shared import SharedNet, SharedCell, SharedOp
@@ -16,8 +16,8 @@ from aw_nas.weights_manager.shared import SharedNet, SharedCell, SharedOp
 __all__ = ["DiffSubCandidateNet", "DiffSuperNet"]
 
 class DiffSubCandidateNet(CandidateNet):
-    def __init__(self, super_net, rollout: DifferentiableRollout, gpus=tuple(), virtual_parameter_only=True,
-                 eval_no_grad=True):
+    def __init__(self, super_net, rollout: DifferentiableRollout, gpus=tuple(),
+                 virtual_parameter_only=True, eval_no_grad=True):
         super(DiffSubCandidateNet, self).__init__(eval_no_grad=eval_no_grad)
         self.super_net = super_net
         self._device = super_net.device
@@ -142,6 +142,15 @@ class DiffSuperNet(SharedNet):
         self.candidate_eval_no_grad = candidate_eval_no_grad
 
     # ---- APIs ----
+    def extract_features(self, inputs, rollout_or_arch, **kwargs):
+        if isinstance(rollout_or_arch, BaseRollout):
+            # from extract_features (wrapper wm)
+            arch = rollout_or_arch.arch
+        else:
+            # from candidate net
+            arch = rollout_or_arch
+        return super().extract_features(inputs, arch, **kwargs)
+
     def assemble_candidate(self, rollout):
         return DiffSubCandidateNet(self, rollout, gpus=self.gpus,
                                    virtual_parameter_only=self.candidate_virtual_parameter_only,

@@ -510,7 +510,8 @@ def get_inf_iterator(iterable, callback):
     return InfIterator(iterable, [callback])
 
 def prepare_data_queues(dataset, queue_cfg_lst, data_type="image", drop_last=False,
-                        shuffle=False, shuffle_seed=None, num_workers=2, multiprocess=False, shuffle_indice_file=None):
+                        shuffle=False, shuffle_seed=None, num_workers=2, multiprocess=False,
+                        shuffle_indice_file=None):
     """
     Further partition the dataset splits, prepare different data queues.
 

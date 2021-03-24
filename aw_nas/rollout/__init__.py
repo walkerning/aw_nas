@@ -36,6 +36,11 @@ from aw_nas.rollout.general import (
     GeneralRollout
 )
 
+from aw_nas.rollout.wrapper import (
+    WrapperSearchSpace,
+    WrapperRollout
+)
+
 def assert_rollout_type(type_name):
     expect(type_name in BaseRollout.all_classes_(),
            "rollout type {} not registered yet".format(type_name))
