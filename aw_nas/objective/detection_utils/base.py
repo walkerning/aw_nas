@@ -50,8 +50,14 @@ class PostProcessing(Component):
 class Metrics(Component):
     REGISTRY = "det_metrics"
 
-    def __init__(self, schedule_cfg=None):
+    def __init__(self, eval_dir=None, schedule_cfg=None):
         super(Metrics, self).__init__(schedule_cfg)
+        if eval_dir is None:
+            eval_dir = os.environ['HOME']
+            pid = os.getpid()
+            eval_dir = os.path.join(eval_dir, '.det_exp', str(pid))
+            os.makedirs(eval_dir, exist_ok=True)
+        self.eval_dir = eval_dir
 
     @abc.abstractmethod
     def __call__(self, boxes):

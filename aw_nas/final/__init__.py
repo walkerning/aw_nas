@@ -16,7 +16,7 @@ from .dense import DenseGenotypeModel
 from .ofa_model import OFAGenotypeModel
 
 try:
-    from .ssd_model import SSDFinalModel, SSDHeadFinalModel
+    from .det_model import DetectionFinalModel
     from .det_trainer import DetectionFinalTrainer
 except ImportError as e:
     _LOGGER.warn(

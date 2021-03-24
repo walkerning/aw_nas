@@ -4,6 +4,8 @@ import numpy as np
 import torch
 
 from aw_nas.objective.detection_utils.base import AnchorsGenerator
+from aw_nas.utils.box_utils import point_form
+
 
 __all__ = ["SSDAnchorsGenerator"]
 
@@ -30,10 +32,11 @@ class SSDAnchorsGenerator(AnchorsGenerator):
         if feature_maps in self.anchors_boxes:
             return self.anchors_boxes[feature_maps]
 
-        mean = []
+        means = []
         steps = [(float(1 / f[0]), float(1 / f[1])) for f in feature_maps]
         offset = [(step[0] * 0.5, step[1] * 0.5) for step in steps]
         for k, f in enumerate(feature_maps): 
+            mean = []
             for i, j in product(range(int(f[0])), range(int(f[1]))):
                 cx = j * steps[k][1] + offset[k][1]
                 cy = i * steps[k][0] + offset[k][0]
@@ -48,8 +51,11 @@ class SSDAnchorsGenerator(AnchorsGenerator):
                         mean += [cx, cy, s_k / ar_sqrt, s_k * ar_sqrt]
                     elif isinstance(ar, list):
                         mean += [cx, cy, s_k * ar[0], s_k * ar[1]]
-        output = torch.Tensor(mean).view(-1, 4)
-        if self.clip:
-            output.clamp_(max=1, min=0)
-        self.anchors_boxes[feature_maps] = output
-        return output
+            mean = torch.Tensor(mean).view(-1, 4)
+            if self.clip:
+                mean.clamp_(max=1, min=0)
+            mean = point_form(mean)
+            means += [mean] 
+        self.anchors_boxes[feature_maps] = means
+        return means
+

@@ -42,7 +42,7 @@ class SSDPostProcessing(PostProcessing):
 
     def __call__(self, features, confidences, locations):
         feature_maps = [ft.shape[-2:] for ft in features]
-        anchors = self.anchors(feature_maps).to(confidences.device)
+        anchors = torch.cat(self.anchors(feature_maps)).to(confidences.device)
         num = confidences.size(0)  # batch size
         num_anchors = anchors.size(0)
         output = [[torch.tensor([]) for _ in range(self.num_classes)]

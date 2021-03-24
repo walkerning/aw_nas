@@ -5,21 +5,38 @@ import pickle
 import cv2
 import numpy as np
 import torch
+import torch.nn.functional as F
 import torch.utils.data as data
 import torchvision.transforms as transforms
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 
 from aw_nas.dataset.base import BaseDataset
-from aw_nas.dataset.transform import *
+from aw_nas.dataset.det_transform import *
 
 min_keypoints_per_image = 10
 
-def collate_fn(batch):
+
+def _collate_fn(batch):
     inputs = [b[0] for b in batch]
     targets = [b[1] for b in batch]
     inputs = torch.stack(inputs, 0)
     return inputs, targets
+
+def collate_fn(batch):
+    """
+    For GroupSampler to stack images when `keep_ratio` is True.
+    """
+    inputs = [b.pop("img").data for b in batch]
+    height = max([inp.shape[-2] for inp in inputs])
+    width = max([inp.shape[-1] for inp in inputs])
+    targets = [b for b in batch]
+    inputs = torch.stack([
+        F.pad(i, [0, width - i.shape[-1], 0, height - i.shape[-2]])
+        for i in inputs
+    ], 0)
+    return inputs, targets
+
 
 def _count_visible_keypoints(anno):
     return sum(sum(1 for v in ann["keypoints"][2::3] if v > 0) for ann in anno)
@@ -71,6 +88,8 @@ class COCODetection(data.Dataset):
                  is_test=False,
                  max_images=None,
                  remove_no_anno=False,
+                 has_background=True,
+                 remove_invalid_labels=False,
                  dataset_name="COCO"):
         self.root = root
         self.cache_path = os.path.join(self.root, "awnas_cache")
@@ -81,6 +100,9 @@ class COCODetection(data.Dataset):
         self.target_transform = target_transform
         self.name = dataset_name
         self.is_test = is_test
+        self.has_background = has_background
+        self.remove_invalid_labels = remove_invalid_labels
+
         self.img_paths = list()
         self.image_indexes = list()
         self.annotations = list()
@@ -89,7 +111,6 @@ class COCODetection(data.Dataset):
             "valminusminival2014": "val2014",  # val2014 \setminus minival2014
             "test-dev2015": "test2015",
         }
-
         # self.data_name = list()
         # self.data_len = list()
         for (year, image_set) in image_sets:
@@ -101,8 +122,12 @@ class COCODetection(data.Dataset):
             self._COCO = _COCO
             self.coco_name = coco_name
             cats = _COCO.loadCats(_COCO.getCatIds())
-            self._classes = tuple(["__background__"] +
-                                  [c["name"] for c in cats])
+            self._classes = tuple([
+                c["name"] for c in cats
+                if not remove_invalid_labels or c["name"]
+            ])
+            if self.has_background:
+                self._classes = ("__background__", ) + self._classes
             self.num_classes = len(self._classes)
             self._class_to_ind = dict(
                 zip(self._classes, range(self.num_classes)))
@@ -124,6 +149,10 @@ class COCODetection(data.Dataset):
         self.img_paths = self.img_paths[:max_images]
 
         self.kwargs = {"collate_fn": collate_fn}
+        if not self.is_test:
+            self.kwargs["group_sample"] = True
+
+        self._set_group_flag()
 
     def image_path_from_index(self, name, index):
         """
@@ -145,6 +174,16 @@ class COCODetection(data.Dataset):
                 else "image_info"
         return os.path.join(self.root, "annotations",
                             prefix + "_" + name + ".json")
+
+    def _set_group_flag(self):
+        self.group_index = np.zeros(len(self), dtype=np.uint8)
+        for i in range(len(self)):
+            img_info = self._COCO.loadImgs(self.image_indexes[i])[0]
+            self.group_index[i] = img_info["width"] > img_info["height"]
+
+    def _rand_another(self, idx):
+        pool = np.where(self.grou_index == self.group_index[idx])[0]
+        return np.random.choice(pool)
 
     def _load_coco_annotations(self,
                                coco_name,
@@ -210,9 +249,9 @@ class COCODetection(data.Dataset):
         for obj in objs:
             x1 = np.max((0, obj["bbox"][0]))
             y1 = np.max((0, obj["bbox"][1]))
-            x2 = np.min((width - 1, x1 + np.max((0, obj["bbox"][2] - 1))))
-            y2 = np.min((height - 1, y1 + np.max((0, obj["bbox"][3] - 1))))
-            if obj["area"] > 0 and x2 >= x1 and y2 >= y1:
+            x2 = x1 + np.max((0, obj["bbox"][2]))
+            y2 = y1 + np.max((0, obj["bbox"][3]))
+            if obj["area"] > 0 and x2 - x1 >= 1 and y2 - y1 >= 1:
                 obj["clean_bbox"] = [x1, y1, x2, y2]
                 valid_objs.append(obj)
         objs = valid_objs
@@ -222,14 +261,14 @@ class COCODetection(data.Dataset):
 
         # Lookup table to map from COCO category ids to our internal class
         # indices
-        # coco_cat_id_to_class_ind = dict([(self._class_to_coco_cat_id[cls],
-        #                                   self._class_to_ind[cls])
-        #                                  for cls in self._classes[1:]])
+        coco_cat_id_to_class_ind = dict([
+            (self._class_to_coco_cat_id[cls], self._class_to_ind[cls])
+            for cls in self._classes[int(self.has_background):]
+        ])
 
         # do not transform label 1~90 to 1~80
         for ix, (annId, obj) in enumerate(zip(annIds, objs)):
-            # cls = coco_cat_id_to_class_ind[obj["category_id"]]
-            cls = obj["category_id"]
+            cls = coco_cat_id_to_class_ind[obj["category_id"]]
             res[ix, :4] = obj["clean_bbox"]
             res[ix, 4] = cls
             res[ix, 5] = annId
@@ -237,7 +276,26 @@ class COCODetection(data.Dataset):
         return res
 
     def __getitem__(self, index):
-        image, boxes, labels, height, width, ori_boxes, annIds = self._getitem(index)
+        """
+        Return:
+            dict of {
+                ori_boxes: x, y, w, h
+                boxes: x1, y1, x2, y2
+                labels: list of int
+                image_id: int
+                anno_ids: list of int
+                shape: [ori_w, ori_h]
+            }
+        """
+        if self.is_test:
+            return self._getitem(index)
+        while True:
+            data = self._getitem(index)
+            if data is None:
+                index = self._rand_another(index)
+                continue
+            return data
+        #image, boxes, labels, height, width, ori_boxes, annIds = self._getitem(index)
         ori_boxes[:, 2] -= ori_boxes[:, 0]
         ori_boxes[:, 3] -= ori_boxes[:, 1]
         return image, {
@@ -254,17 +312,35 @@ class COCODetection(data.Dataset):
         target = self.annotations[index]
         ori_boxes, labels, annIds = target[:, :4], target[:, 4], target[:, 5]
 
-        img = cv2.imread(img_path, cv2.IMREAD_COLOR)
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).astype(np.float32)
+        img = cv2.imread(img_path, cv2.IMREAD_COLOR)#.astype(np.float32)
         height, width, _ = img.shape
 
         if self.transform is not None:
-            img, boxes, labels = self.transform(img, ori_boxes.copy(), labels)
+            #img, boxes, labels = self.transform(img, ori_boxes.copy(), labels)
+            results = self.transform(img, ori_boxes.copy(), labels)
+            ori_boxes[:, 2] -= ori_boxes[:, 0]
+            ori_boxes[:, 3] -= ori_boxes[:, 1]
+            results.update({
+                "ori_boxes": ori_boxes,
+                "anno_ids": annIds,
+                "shape": (height, width),
+                "ori_shape": (height, width, 3),
+                "labels": labels,
+                "image_id": self.image_indexes[index]
+            })
+            return results
 
-        img = torch.from_numpy(img).to(torch.float)
-        boxes = torch.from_numpy(boxes).to(torch.float)
-        labels = torch.from_numpy(labels).to(torch.long)
+        img = self._to_tensor(img).to(torch.float)
+        boxes = self._to_tensor(boxes).to(torch.float)
+        labels = self._to_tensor(labels).to(torch.long)
         return img, boxes, labels, height, width, ori_boxes, annIds
+
+    def _to_tensor(self, var):
+        if isinstance(var, torch.Tensor):
+            return var
+        if isinstance(var, np.ndarray):
+            return torch.from_numpy(var)
+        return torch.tensor(var)
 
     def __len__(self):
         return len(self.img_paths)
@@ -333,6 +409,10 @@ class COCODataset(BaseDataset):
                  iou_threshold=0.5,
                  keep_difficult=False,
                  max_images=None,
+                 train_pipeline=None,
+                 test_pipeline=None,
+                 remove_invalid_labels=False,
+                 has_background=True,
                  remove_no_anno=False):
         super(COCODataset, self).__init__()
         self.load_train_only = load_train_only
@@ -341,19 +421,39 @@ class COCODataset(BaseDataset):
 
         self.iou_threshold = iou_threshold
 
-        train_transform = TrainAugmentation(train_crop_size,
+        if isinstance(train_crop_size, int):
+            train_crop_size = (train_crop_size, ) * 2
+        if isinstance(test_crop_size, int):
+            test_crop_size = (test_crop_size, ) * 2
+
+        assert len(train_crop_size) == 2 and len(test_crop_size) == 2
+
+        train_transform = TrainAugmentation(train_pipeline, train_crop_size,
                                             np.array(image_mean),
                                             np.array(image_std),
                                             image_norm_factor, image_bias)
-        test_transform = TestTransform(test_crop_size, np.array(image_mean),
+        test_transform = TestTransform(test_pipeline, test_crop_size,
+                                       np.array(image_mean),
                                        np.array(image_std), image_norm_factor,
                                        image_bias)
 
         self.datasets = {}
-        self.datasets["train"] = COCODetection(self.train_data_dir,
-                                               train_sets,
-                                               train_transform,
-                                               remove_no_anno=remove_no_anno)
+        self.datasets["train"] = COCODetection(
+            self.train_data_dir,
+            train_sets,
+            train_transform,
+            remove_no_anno=remove_no_anno,
+            remove_invalid_labels=remove_invalid_labels,
+            has_background=has_background)
+        
+        self.datasets["train_testTransform"] = COCODetection(
+            self.train_data_dir,
+            train_sets,
+            test_transform,
+            remove_no_anno=remove_no_anno,
+            remove_invalid_labels=remove_invalid_labels,
+            has_background=has_background)
+
 
         if not self.load_train_only:
             self.test_data_dir = self.data_dir
@@ -363,7 +463,9 @@ class COCODataset(BaseDataset):
                 test_transform,
                 is_test=True,
                 max_images=max_images,
-                remove_no_anno=remove_no_anno)
+                remove_no_anno=remove_no_anno,
+                remove_invalid_labels=remove_invalid_labels,
+                has_background=has_background)
 
     def splits(self):
         return self.datasets

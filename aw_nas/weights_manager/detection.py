@@ -16,6 +16,7 @@ from aw_nas.utils.common_utils import make_divisible, nullcontext
 from aw_nas.utils import DistributedDataParallel
 from aw_nas.weights_manager.base import BaseWeightsManager, CandidateNet
 from aw_nas.weights_manager.detection_header import DetectionHeader
+from aw_nas.weights_manager.detection_neck import DetectionNeck
 
 try:
     from torch.nn import SyncBatchNorm
@@ -39,9 +40,12 @@ class DetectionBackboneSupernet(BaseWeightsManager, nn.Module):
         feature_levels=[3, 4, 5],
         search_backbone_type="ofa_supernet",
         search_backbone_cfg={},
-        head_type="ssd_header",
+        neck_type="ssd",
+        neck_cfg={},
+        head_type="anchor_header",
         head_cfg={},
-        num_classes=21,
+        num_classes=20,
+        supernet_state_dict=None,
         multiprocess=False,
         gpus=tuple(),
         schedule_cfg=None,
@@ -60,16 +64,28 @@ class DetectionBackboneSupernet(BaseWeightsManager, nn.Module):
         self.gpus = gpus
 
         self.feature_levels = feature_levels
-        backbone_stage_channel = self.backbone.backbone.get_feature_channel_num(
+        backbone_stage_channels = self.backbone.get_feature_channel_num(
             feature_levels)
-        cfg_channels = head_cfg.get("feature_channels", backbone_stage_channel)
+
+        self.neck = DetectionNeck.get_class_(neck_type)(
+            search_space,
+            device,
+            backbone_stage_channels,
+            **neck_cfg
+        )
+
+        feature_channels = self.neck.get_feature_channel_num()
 
         self.head = DetectionHeader.get_class_(head_type)(
             device,
             num_classes,
-            cfg_channels,
+            feature_channels,
             **head_cfg
         )
+
+        if supernet_state_dict is not None:
+            res = self.load_state_dict(torch.load(supernet_state_dict, "cpu"), strict=False)
+            self.logger.info(res)
 
         self.reset_flops()
         self.set_hook()
@@ -92,29 +108,8 @@ class DetectionBackboneSupernet(BaseWeightsManager, nn.Module):
     def forward(self, inputs, rollout=None):
         features, out = self.backbone.extract_features(
             inputs, self.feature_levels, rollout)
-        features, confidences, regression = self.head.forward_rollout(features, rollout)
-        return features, confidences, regression
-
-    def set_hook(self):
-        for name, module in self.named_modules():
-            module.register_forward_hook(self._hook_intermediate_feature)
-
-    def _hook_intermediate_feature(self, module, inputs, outputs):
-        if not self._flops_calculated:
-            if isinstance(module, nn.Conv2d):
-                self.total_flops += (
-                    inputs[0].size(1)
-                    * outputs.size(1)
-                    * module.kernel_size[0]
-                    * module.kernel_size[1]
-                    * inputs[0].size(2)
-                    * inputs[0].size(3)
-                    / (module.stride[0] * module.stride[1] * module.groups)
-                )
-            elif isinstance(module, nn.Linear):
-                self.total_flops += inputs[0].size(1) * outputs.size(1)
-        else:
-            pass
+        features = self.neck.forward_rollout(features, rollout)
+        return self.head.forward_rollout(features, rollout)
 
     def set_hook(self):
         for name, module in self.named_modules():
@@ -238,24 +233,33 @@ class DetectionBackboneCandidateNet(CandidateNet):
                 _parameters = active_parameters
         inputs, targets = data
         batch_size = inputs.size(0)
-        min_image_size = min(self.super_net.search_space.image_size_choice)
-        cur_image_size = self.rollout.image_size
-        ratio = (min_image_size / cur_image_size) ** 2
-        mini_batch_size = make_divisible(batch_size * ratio, 8)
-        inputs = F.interpolate(inputs, (cur_image_size, cur_image_size),
-                               mode="bilinear", align_corners=False)
+
         if zero_grads:
             self.zero_grad()
-        for i in range(
-                0, batch_size // mini_batch_size +
-            int(batch_size % mini_batch_size != 0), mini_batch_size
-        ):
-            mini_inputs = inputs[i: i + mini_batch_size]
-            mini_targets = targets[i: i + mini_batch_size]
-            outputs = self.forward_data(mini_inputs, mini_targets, **kwargs)
-            loss = criterion(mini_inputs, outputs, mini_targets)
 
-            loss.backward()
+        if False:
+            """
+            It used to support varying batch size according to input resolution.
+            """
+            min_image_size = min(self.super_net.search_space.image_size_choice)
+            cur_image_size = self.rollout.image_size
+            ratio = (min_image_size / cur_image_size) ** 2
+            mini_batch_size = make_divisible(batch_size * ratio, 8)
+            inputs = F.interpolate(inputs, (cur_image_size, cur_image_size),
+                                   mode="bilinear", align_corners=False)
+            for i in range(
+                    0, batch_size // mini_batch_size +
+                int(batch_size % mini_batch_size != 0), mini_batch_size
+            ):
+                mini_inputs = inputs[i: i + mini_batch_size]
+                mini_targets = targets[i: i + mini_batch_size]
+                outputs = self.forward_data(mini_inputs, mini_targets, **kwargs)
+                loss = criterion(mini_inputs, outputs, mini_targets)
+        else:
+            outputs = self.forward_data(inputs, targets, **kwargs)
+            loss = criterion(inputs, outputs, targets)
+
+        loss.backward()
 
         if not return_grads:
             grads = None
@@ -264,8 +268,8 @@ class DetectionBackboneCandidateNet(CandidateNet):
                      if v.grad is not None]
 
         if eval_criterions:
-            eval_res = utils.flatten_list(
-                [c(mini_inputs, outputs, mini_targets) for c in eval_criterions])
+            eval_res = [loss.item()] + utils.flatten_list(
+                [c(inputs, outputs, targets) for c in eval_criterions])
             return grads, eval_res
         return grads
 

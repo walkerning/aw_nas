@@ -36,8 +36,12 @@ else:
     class COCODetectionMetrics(Metrics):
         NAME = "coco"
 
-        def __init__(self, class_names=None, schedule_cfg=None):
-            super(COCODetectionMetrics, self).__init__(schedule_cfg)
+        def __init__(self, class_names=None, remove_invalid_labels=False,
+                has_background=True, eval_dir=None, schedule_cfg=None):
+            super(COCODetectionMetrics, self).__init__(eval_dir, schedule_cfg)
+
+            self.remove_invalid_labels = remove_invalid_labels
+            self.has_background = has_background
 
             self.gt_recs = {}
             self.mAP = None
@@ -137,12 +141,23 @@ else:
                 "toothbrush",
             )
 
+            if remove_invalid_labels:
+                self.index_mapping = {i: j for i, j in
+                        zip([i for i, n in enumerate(self.class_names) if n],
+                            range(len(self.class_names)))}
+                self.invert_mapping = {j: i for i, j in
+                        self.index_mapping.items()}
+            else:
+                self.index_mapping = {i: i for i in range(len(self.class_names))}
+                self.invert_mapping = self.index_mapping
+
             self._init_gt_recs()
 
         def __call__(self, det_boxes):
             if self.mAP is not None and len(self.eval_ids) == 0:
                 return self.mAP
-            self.mAP = self._do_eval(det_boxes, self.gt_recs, self.class_names)
+            self.mAP = self._do_eval(det_boxes, self.gt_recs, self.class_names,
+                    self.eval_dir)
             self._init_gt_recs()
             return self.mAP
 
@@ -150,6 +165,7 @@ else:
             self._COCO = COCO()
             self._COCO.dataset["categories"] = [
                 {"id": i, "name": name} for i, name in enumerate(self.class_names)
+                if name != "__background__"
             ]
             self._COCO.dataset.setdefault("images", [])
             self.eval_ids = []
@@ -162,12 +178,13 @@ else:
                 anno_ids = info["anno_ids"]
                 height, width = info["shape"]
                 self.eval_ids += [image_id]
-                bboxes = bboxes.cpu() if hasattr(bboxes, "cpu") else bboxes
+                bboxes = bboxes.cpu().numpy() if hasattr(bboxes, "cpu") else bboxes
                 anns = [
                     {
                         "bbox": box,
                         "image_id": image_id,
-                        "category_id": int(label),
+                        "category_id": self.invert_mapping[int(label) +
+                            int(not self.has_background)],
                         "id": anno_id,
                         "height": int(height),
                         "width": int(width),
@@ -185,7 +202,7 @@ else:
                     continue
                 results.extend(
                     self._coco_results_one_category(
-                        det_boxes[cls_ind - 1], cls_ind)
+                        det_boxes[self.index_mapping[cls_ind] - 1], cls_ind)
                 )
             ann_type = "bbox"
             self._COCO.dataset["images"] = [
@@ -201,53 +218,17 @@ else:
             coco_eval.params.useSegm = ann_type == "segm"
             coco_eval.evaluate()
             coco_eval.accumulate()
-            stats = self._print_detection_eval_metrics(coco_eval)
+            coco_eval.summarize()
+            stats = coco_eval.stats
+            #stats = self._print_detection_eval_metrics(coco_eval)
+            self.logger.info(", ".join(["%s: %.3f" % x for x
+                in zip(["mAP", "AP50", "AP75", "AP_s", "AP_m", "AP_l"], stats)]))
             if output_dir:
                 eval_file = os.path.join(output_dir, "detection_results.pkl")
                 with open(eval_file, "wb") as fid:
                     pickle.dump(coco_eval, fid, pickle.HIGHEST_PROTOCOL)
-                print("Wrote COCO eval results to: {}".format(eval_file))
+                self.logger.info("Wrote COCO eval results to: {}".format(eval_file))
             return stats[0]
-
-        def _print_detection_eval_metrics(self, coco_eval):
-            IoU_lo_thresh = 0.5
-            IoU_hi_thresh = 0.95
-
-            def _get_thr_ind(coco_eval, thr):
-                ind = np.where(
-                    (coco_eval.params.iouThrs > thr - 1e-5)
-                    & (coco_eval.params.iouThrs < thr + 1e-5)
-                )[0][0]
-                iou_thr = coco_eval.params.iouThrs[ind]
-                assert np.isclose(iou_thr, thr)
-                return ind
-
-            ind_lo = _get_thr_ind(coco_eval, IoU_lo_thresh)
-            ind_hi = _get_thr_ind(coco_eval, IoU_hi_thresh)
-            # precision has dims (iou, recall, cls, area range, max dets)
-            # area range index 0: all area ranges
-            # max dets index 2: 100 per image
-            precision = coco_eval.eval["precision"][ind_lo: (
-                ind_hi + 1), :, :, 0, 2]
-            ap_default = np.mean(precision[precision > -1])
-            print(
-                "~~~~ Mean and per-category AP @ IoU=[{:.2f},{:.2f}] "
-                "~~~~".format(IoU_lo_thresh, IoU_hi_thresh)
-            )
-            print("{:.1f}".format(100 * ap_default))
-            for cls_ind, cls_name in enumerate(self.class_names):
-                if cls_name == "__background__":
-                    continue
-                # minus 1 because of __background__
-                precision = coco_eval.eval["precision"][
-                    ind_lo: (ind_hi + 1), :, cls_ind - 1, 0, 2
-                ]
-                ap = np.mean(precision[precision > -1])
-                print("{:.1f}".format(100 * ap))
-
-            print("~~~~ Summary metrics ~~~~")
-            coco_eval.summarize()
-            return coco_eval.stats
 
         def _coco_results_one_category(self, boxes, cat_id):
             results = []
@@ -258,8 +239,8 @@ else:
                 scores = dets[:, -1]
                 xs = dets[:, 0]
                 ys = dets[:, 1]
-                ws = dets[:, 2] - xs + 1
-                hs = dets[:, 3] - ys + 1
+                ws = dets[:, 2] - xs
+                hs = dets[:, 3] - ys
                 results.extend(
                     [
                         {
@@ -280,10 +261,9 @@ __all__ = ["VOCMetrics", "COCODetectionMetrics"]
 class VOCMetrics(Metrics):
     NAME = "voc"
 
-    def __init__(self, class_names=None, schedule_cfg=None):
+    def __init__(self, class_names=None, eval_dir=None, schedule_cfg=None):
         super(VOCMetrics, self).__init__(schedule_cfg)
         self.class_names = class_names or (
-            "__background__",
             "aeroplane",
             "bicycle",
             "bird",
@@ -500,6 +480,6 @@ class VOCMetrics(Metrics):
         if self.mAP is not None and all([len(gt) == 0 for gt in
             self.gt_recs.values()]):
             return self.mAP
-        self.mAP = self.do_python_eval(det_boxes, self.gt_recs, self.class_names)
+        self.mAP = self.do_python_eval(det_boxes, self.gt_recs, True)
         self._init_gt_recs()
         return self.mAP

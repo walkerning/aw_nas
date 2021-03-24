@@ -648,7 +648,8 @@ def test_dense_morphism_wider(population, tmp_path):
     assert (logits - logits_ori).abs().mean() < 1e-6
 
 @pytest.mark.parametrize("ofa_super_net", [
-    {"search_space_cfg": {"width_choice": [4, 5, 6], "depth_choice": [4, 5, 6]}}
+    {"search_space_cfg": {"num_cell_groups": [1, 4, 4, 4, 4, 4, 1],
+        "expansions": [1, 6, 6, 6, 6, 6, 6], "width_choice": [4, 5, 6], "depth_choice": [4, 5, 6]}}
 ], indirect=["ofa_super_net"])
 def test_ofa_forward_rollout(ofa_super_net):
     # test forward

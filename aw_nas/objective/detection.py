@@ -99,14 +99,14 @@ class DetectionObjective(BaseObjective):
         device = inputs.device
         img_shape = inputs.shape[-1]
         batch_size = inputs.shape[0]
-        anchors = self.anchors(feature_maps).to(device)
+        anchors = torch.cat(self.anchors(feature_maps), dim=0).to(device)
         num_anchors = anchors.shape[0]
         location_t = torch.zeros([batch_size, num_anchors, 4])
         confidence_t = torch.zeros([batch_size, num_anchors])
 
         shapes = []
         for i, anno in enumerate(annotations):
-            boxes = anno["boxes"]
+            boxes = anno["boxes"] / inputs.shape[-1]
             labels = anno["labels"]
             height, width = anno["shape"]
             _id = anno["image_id"]
@@ -137,6 +137,10 @@ class DetectionObjective(BaseObjective):
         # target: [batch_size, anchor_num, 5], boxes + labels
         keep = conf_t > 0
         _, confidences, _ = outputs
+        confidences = torch.cat([conf
+            .permute(0, 2, 3, 1)
+            .reshape(conf.shape[0], -1, self.num_classes + 1) 
+            for conf in confidences], dim=1)
         return accuracy(confidences[keep], conf_t[keep], topk=(1, 5))
 
     def get_mAP(self, inputs, outputs, annotations, cand_net):
@@ -146,6 +150,16 @@ class DetectionObjective(BaseObjective):
         # This method does not actually calculate mAP, but detection boxes
         # of current batch only. After all batch's boxes are calculated, passing them
         # to method `evaluate_detections`
+        features, confidences, regressions = outputs
+        confidences = torch.cat([conf
+            .permute(0, 2, 3, 1)
+            .reshape(conf.shape[0], -1, self.num_classes + 1) 
+            for conf in confidences], dim=1)
+        regressions = torch.cat([reg
+            .permute(0, 2, 3, 1)
+            .reshape(reg.shape[0], -1, 4) 
+            for reg in regressions], dim=1)
+        outputs = features, confidences, regressions
         detections = self.predictor(*outputs)
         self.metrics.target_to_gt_recs(annotations)
         for batch_id, anno in enumerate(annotations):
@@ -199,6 +213,17 @@ class DetectionObjective(BaseObjective):
         return sum(self._criterion(inputs, outputs, annotations, cand_net).values())
 
     def _criterion(self, inputs, outputs, annotations, cand_net):
+        _, confidences, regressions = outputs
+        confidences = torch.cat([conf
+            .permute(0, 2, 3, 1)
+            .reshape(conf.shape[0], -1, self.num_classes + 1) 
+            for conf in confidences], dim=1)
+        regressions = torch.cat([reg
+            .permute(0, 2, 3, 1)
+            .reshape(reg.shape[0], -1, 4) 
+            for reg in regressions], dim=1)
+        outputs = _, confidences, regressions
+
         conf_t, loc_t, _ = self.batch_transform(inputs, outputs,
                                                      annotations)
         indices, normalizer = self.box_loss.filter_samples(outputs, (conf_t, loc_t))

@@ -6,6 +6,7 @@ from contextlib import contextmanager
 import six
 import yaml
 import numpy as np
+import pickle
 import torch
 from torch import optim, nn
 from torch.autograd import Variable
@@ -13,6 +14,8 @@ import torch.nn.functional as F
 import torch.utils.data
 from torch.optim.lr_scheduler import _LRScheduler
 from torch.utils.data.distributed import DistributedSampler
+from torch.utils.data import Sampler
+from torch import distributed as dist
 
 from aw_nas.utils.common_utils import AverageMeter
 from aw_nas.utils.log import getLogger as _getLogger
@@ -560,6 +563,7 @@ def prepare_data_queues(dataset, queue_cfg_lst, data_type="image", drop_last=Fal
         indices = dset_indices[same_dset_mapping.get(split, split)]
         size = dset_sizes[split]
         d_kwargs = getattr(dset_splits[split], "kwargs", {})
+        group_sample = d_kwargs.pop("group_sample", False)
         if isinstance(portion, (list, tuple)) and len(portion) == 2:
             ranges = int(size * portion[0]), int(size * portion[1])
             # do not accumulate `used_portions` with range portion specification
@@ -578,7 +582,6 @@ def prepare_data_queues(dataset, queue_cfg_lst, data_type="image", drop_last=Fal
             # can be overrided use kwargs
             kwargs = {
                 "batch_size": batch_size,
-                "pin_memory": True,
                 "num_workers": num_workers,
                 "drop_last": drop_last,
                 "timeout": 0,
@@ -589,12 +592,20 @@ def prepare_data_queues(dataset, queue_cfg_lst, data_type="image", drop_last=Fal
                 if multiprocess and not no_distributed_sampler:
                     # for multiprocess (distributed) and no-shuffle data queue
                     kwargs["sampler"] = DistributedSampler(dataset_split, shuffle=False)
+                elif multiprocess and group_sample:
+                    raise ValueError("shuffle_queue must be True when using group sampler.")
             else:
                 # use subset random samplers
                 dataset_split = dset_splits[split]
-                kwargs["sampler"] = torch.utils.data.SubsetRandomSampler(subset_indices) \
+                if not group_sample:
+                    kwargs["sampler"] = torch.utils.data.SubsetRandomSampler(subset_indices) \
                                     if not multiprocess or no_distributed_sampler else \
-                                       CustomDistributedSampler(split, subset_indices)
+                                       CustomDistributedSampler(dataset_split, subset_indices)
+                else:
+                    kwargs["sampler"] = GroupSampler(dataset_split, subset_indices, batch_size) \
+                                        if not multiprocess or no_distributed_sampler \
+                                        else DistributedGroupSampler(dataset_split, subset_indices,
+                                                batch_size)
             kwargs.update(d_kwargs) # first update dataset-specific kwargs
             kwargs.update(other_kwargs) # then update queue-specific kwargs
             queue = get_inf_iterator(torch.utils.data.DataLoader(dataset_split, **kwargs), callback)
@@ -608,7 +619,6 @@ def prepare_data_queues(dataset, queue_cfg_lst, data_type="image", drop_last=Fal
             )
             kwargs = {
                 "batch_size": bptt_steps,
-                "pin_memory": False,
                 "num_workers": 0,
                 "shuffle": False
             }
@@ -766,6 +776,196 @@ class CustomDistributedSampler(DistributedSampler):
         assert len(indices) == self.num_samples
 
         return iter(indices)
+
+
+class GroupSampler(Sampler):
+
+    def __init__(self, dataset, indices, samples_per_gpu=1):
+        if hasattr(dataset, 'group_index'):
+            self.flag = dataset.group_index.astype(np.int64)
+        else:
+            self.flag = np.zeros(len(dataset), np.int64)
+
+        self.indices = indices or list(range(len(dataset)))
+        self.dataset = dataset
+        self.samples_per_gpu = samples_per_gpu
+        self.group_sizes = np.bincount(self.flag)
+        self.num_samples = 0
+        for i, _ in enumerate(self.group_sizes):
+            indice = np.where(self.flag[self.indices] == i)[0]
+            size = len(indice)
+            self.num_samples += int(np.ceil(
+                size / self.samples_per_gpu)) * self.samples_per_gpu
+
+    def __iter__(self):
+        indices = []
+        for i, size in enumerate(self.group_sizes):
+            if size == 0:
+                continue
+            indice = np.where(self.flag[self.indices] == i)[0]
+            size = len(indice)
+            np.random.shuffle(indice)
+            num_extra = int(np.ceil(size / self.samples_per_gpu)
+                            ) * self.samples_per_gpu - len(indice)
+            indice = np.concatenate(
+                [indice, np.random.choice(indice, num_extra)])
+            indices.append(indice)
+        indices = np.concatenate(indices)
+        indices = [
+            indices[i * self.samples_per_gpu:(i + 1) * self.samples_per_gpu]
+            for i in np.random.permutation(
+                range(len(indices) // self.samples_per_gpu))
+        ]
+        indices = np.concatenate(indices)
+        indices = indices.astype(np.int64).tolist()
+        assert len(indices) == self.num_samples
+        return iter(indices)
+
+    def __len__(self):
+        return self.num_samples
+
+
+class DistributedGroupSampler(DistributedSampler):
+    """Sampler that restricts data loading to a subset of the dataset.
+
+    It is especially useful in conjunction with
+    :class:`torch.nn.parallel.DistributedDataParallel`. In such case, each
+    process can pass a DistributedSampler instance as a DataLoader sampler,
+    and load a subset of the original dataset that is exclusive to it.
+
+    .. note::
+    Arguments:
+        dataset: Dataset used for sampling.
+        num_replicas (optional): Number of processes participating in
+            distributed training.
+        rank (optional): Rank of the current process within num_replicas.
+    """
+
+    def __init__(self,
+                 dataset,
+                 indices=None,
+                 samples_per_gpu=1):
+        super(DistributedGroupSampler, self).__init__(dataset)
+        self.dataset = dataset
+        self.indices = indices or list(range(len(dataset)))
+        self.samples_per_gpu = samples_per_gpu
+        self.epoch = 0
+
+        if hasattr(self.dataset, "group_index"):
+            self.flag = self.dataset.group_index
+        else:
+            self.flag = np.zeros(len(self.dataset), dtype=np.uint8)
+        self.group_sizes = np.bincount(self.flag)
+
+        self.num_samples = 0
+        for i, j in enumerate(self.group_sizes):
+            indice = np.where(self.flag[self.indices] == i)[0]
+            size = len(indice)
+            self.num_samples += int(
+                math.ceil(size * 1.0 / self.samples_per_gpu /
+                          self.num_replicas)) * self.samples_per_gpu
+        self.total_size = self.num_samples * self.num_replicas
+
+    def __iter__(self):
+        # deterministically shuffle based on epoch
+        g = torch.Generator()
+        g.manual_seed(self.epoch)
+
+        indices = []
+        for i, size in enumerate(self.group_sizes):
+            if size > 0:
+                indice = np.where(self.flag[self.indices] == i)[0]
+                size = len(indice)
+                # add .numpy() to avoid bug when selecting indice in parrots.
+                # TODO: check whether torch.randperm() can be replaced by
+                # numpy.random.permutation().
+                indice = indice[list(
+                    torch.randperm(int(size), generator=g).numpy())].tolist()
+                extra = int(
+                    math.ceil(
+                        size * 1.0 / self.samples_per_gpu / self.num_replicas)
+                ) * self.samples_per_gpu * self.num_replicas - len(indice)
+                # pad indice
+                tmp = indice.copy()
+                for _ in range(extra // size):
+                    indice.extend(tmp)
+                indice.extend(tmp[:extra % size])
+                indices.extend(indice)
+
+        assert len(indices) == self.total_size
+
+        indices = [
+            indices[j] for i in list(
+                torch.randperm(
+                    len(indices) // self.samples_per_gpu, generator=g))
+            for j in range(i * self.samples_per_gpu, (i + 1) *
+                           self.samples_per_gpu)
+        ]
+
+        # subsample
+        offset = self.num_samples * self.rank
+        indices = indices[offset:offset + self.num_samples]
+        assert len(indices) == self.num_samples
+
+        return iter(indices)
+
+    def __len__(self):
+        return self.num_samples
+
+    def set_epoch(self, epoch):
+        self.epoch = epoch
+
+
+def get_dist_info():
+    if dist.is_available():
+        initialized = dist.is_initialized()
+    else:
+        initialized = False
+
+    if initialized:
+        return dist.get_rank(), dist.get_world_size()
+    else:
+        return 0, 1
+
+def collect_results_gpu(result_part):
+    """
+    Adopted from MMDetection: https://github.com/open-mmlab/mmdetection
+    """
+    rank, world_size = get_dist_info()
+    if world_size == 1:
+        return result_part
+    # dump result part to tensor with pickle
+    part_tensor = torch.tensor(
+        bytearray(pickle.dumps(result_part)), dtype=torch.uint8, device='cuda')
+    # gather all result part tensor shape
+    shape_tensor = torch.tensor(part_tensor.shape, device='cuda')
+    shape_list = [shape_tensor.clone() for _ in range(world_size)]
+    dist.all_gather(shape_list, shape_tensor)
+    # padding result part tensor to max length
+    shape_max = torch.tensor(shape_list).max()
+    part_send = torch.zeros(shape_max, dtype=torch.uint8, device='cuda')
+    part_send[:shape_tensor[0]] = part_tensor
+    part_recv_list = [
+        part_tensor.new_zeros(shape_max) for _ in range(world_size)
+    ]
+    # gather all result part
+    dist.all_gather(part_recv_list, part_send)
+
+    if rank == 0:
+        part_list = []
+        for recv, shape in zip(part_recv_list, shape_list):
+            part_list.append(
+                pickle.loads(recv[:shape[0]].cpu().numpy().tobytes()))
+        #with open("/tmp/xxx.pkl", "wb") as fw:
+        #    pickle.dump(part_list, fw)
+        # sort the results
+        ordered_results = []
+        for res in zip(*part_list):
+            ordered_results.extend(list(res))
+        # the dataloader may pad some samples
+        # ordered_results = ordered_results
+        return ordered_results
+
 
 def drop_connect(inputs, p, training):
     """ Drop connect. """

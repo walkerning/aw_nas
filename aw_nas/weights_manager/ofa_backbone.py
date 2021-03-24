@@ -27,6 +27,68 @@ class FlexibleBlock(Component, nn.Module):
                 m.reset_mask()
 
 
+class FlexibleFusedConvBlock(FlexibleBlock):
+    NAME = "fuse_conv_block"
+
+    def __init__(
+        self,
+        expansion,
+        C,
+        C_out,
+        stride,
+        kernel_sizes=(3, 5, 7),
+        do_kernel_transform=True,
+        affine=True,
+        activation="relu",
+        schedule_cfg=None,
+    ):
+        FlexibleBlock.__init__(self, schedule_cfg)
+        self.activation = activation
+        C_inner = make_divisible(C * expansion, 8)
+        self.kernel_sizes = sorted(kernel_sizes)
+        self.kernel_size = self.kernel_sizes[-1]
+        self.do_kernel_transform = do_kernel_transform
+        self.affine = affine
+
+        fuse = nn.Sequential(
+            FlexiblePointLinear(C, C_inner, 3, stride, 1),
+            FlexibleBatchNorm2d(C_inner, affine=affine),
+            get_op(activation)(),
+        )
+
+        point_linear = nn.Sequential(
+            FlexiblePointLinear(C_inner, C_out, 1, 1, 0),
+            FlexibleBatchNorm2d(C_out, affine=affine),
+        )
+        super(FlexibleMobileNetV2Block, self).__init__(
+            expansion,
+            C,
+            C_out,
+            stride,
+            self.kernel_size,
+            affine,
+            activation,
+            inv_bottleneck,
+            depth_wise,
+            point_linear,
+        )
+
+        self.reset_mask()
+
+    def set_mask(self, expansion, kernel_size):
+        mask = None
+        pass
+
+    def forward_rollout(self, inputs, expansion, kernel_size, drop_connect_rate=0.0):
+        self.set_mask(expansion, kernel_size)
+        out = self.forward(inputs, drop_connect_rate)
+        self.reset_mask()
+        return out
+
+    def finalize(self):
+        pass
+
+
 class FlexibleMobileNetV2Block(MobileNetV2Block, FlexibleBlock):
     NAME = "mbv2_block"
 
@@ -93,7 +155,7 @@ class FlexibleMobileNetV2Block(MobileNetV2Block, FlexibleBlock):
         if expansion is not None and expansion != self.expansion:
             filters = self.point_linear[0].weight.data
             mask = _get_channel_mask(filters, make_divisible(self.C *
-                expansion, 8))
+                                                             expansion, 8))
         if self.inv_bottleneck:
             self.inv_bottleneck[0].set_mask(None, mask)
             self.inv_bottleneck[1].set_mask(mask)
@@ -102,9 +164,9 @@ class FlexibleMobileNetV2Block(MobileNetV2Block, FlexibleBlock):
         self.depth_wise[1].set_mask(mask)
         self.point_linear[0].set_mask(mask, None)
 
-    def forward_rollout(self, inputs, expansion, kernel_size):
+    def forward_rollout(self, inputs, expansion, kernel_size, drop_connect_rate=0.0):
         self.set_mask(expansion, kernel_size)
-        out = self.forward(inputs)
+        out = self.forward(inputs, drop_connect_rate)
         self.reset_mask()
         return out
 
@@ -221,7 +283,7 @@ class FlexibleMobileNetV3Block(MobileNetV3Block, FlexibleBlock):
         if expansion != self.expansion:
             filters = self.point_linear[0].weight.data
             mask = _get_channel_mask(filters, make_divisible(self.C *
-                expansion, 8))
+                                                             expansion, 8))
         if self.inv_bottleneck:
             self.inv_bottleneck[0].set_mask(None, mask)
             self.inv_bottleneck[1].set_mask(mask)
@@ -286,13 +348,12 @@ class BaseBackboneArch(Component, nn.Module):
         device,
         blocks=[1, 4, 4, 4, 4, 4],
         strides=[1, 2, 2, 1, 2, 1],
-        expansions=[1, 6, 6, 6, 6, 6],
         layer_channels=[16, 24, 40, 80, 96, 192, 320],
         mult_ratio=1.0,
         kernel_sizes=[3, 5, 7],
         do_kernel_transform=True,
         num_classes=10,
-        cell_type="mbv2_cell",
+        block_type="mbv2_block",
         pretrained_path=None,
         schedule_cfg=None,
     ):
@@ -302,7 +363,6 @@ class BaseBackboneArch(Component, nn.Module):
 
         self.blocks = blocks
         self.strides = strides
-        self.expansions = expansions
         self.channels = layer_channels
         self.mult_ratio = mult_ratio
         self.kernel_sizes = kernel_sizes
@@ -311,13 +371,8 @@ class BaseBackboneArch(Component, nn.Module):
 
         self.pretrained_path = pretrained_path
 
-    @abc.abstractmethod
-    def make_stage(
-        self, C_in, C_out, depth, stride, expansion, kernel_size, mult_ratio=1.0
-    ):
-        """
-        make a serial of blocks as a stage
-        """
+    def forward(self, inputs):
+        return self.forward_rollout(inputs)
 
 
 class MobileNetV2Arch(BaseBackboneArch):
@@ -346,15 +401,16 @@ class MobileNetV2Arch(BaseBackboneArch):
     def __init__(
         self,
         device,
-        blocks=[1, 4, 4, 4, 4, 4],
-        strides=[1, 2, 2, 2, 1, 2],
-        expansions=[1, 6, 6, 6, 6, 6],
+        blocks=[1, 4, 4, 4, 4, 4, 1],
+        strides=[1, 2, 2, 2, 1, 2, 1],
         layer_channels=[32, 16, 24, 32, 64, 96, 160, 320, 1280],
         mult_ratio=1.0,
         kernel_sizes=[3, 5, 7],
         do_kernel_transform=True,
         num_classes=10,
         block_type="mbv2_block",
+        expansions=[1, 6, 6, 6, 6, 6, 6],
+        activation="relu",
         pretrained_path=None,
         stem_stride=2,
         schedule_cfg=None,
@@ -363,7 +419,6 @@ class MobileNetV2Arch(BaseBackboneArch):
             device,
             blocks,
             strides,
-            expansions,
             layer_channels,
             mult_ratio,
             kernel_sizes,
@@ -375,14 +430,15 @@ class MobileNetV2Arch(BaseBackboneArch):
         )
         self.block_initializer = FlexibleBlock.get_class_(block_type)
         self.stem_stride = stem_stride
-        self.channels = [make_divisible(c * mult_ratio, 8)
-                         for c in layer_channels]
+        self.expansions = expansions
+        self.channels = [layer_channels[0]] + [make_divisible(c * mult_ratio, 8)
+                                               for c in layer_channels[1:-1]] + [layer_channels[-1]]
         self.stem = nn.Sequential(
             nn.Conv2d(
                 3, self.channels[0], kernel_size=3, stride=self.stem_stride, padding=1, bias=False
             ),
             nn.BatchNorm2d(self.channels[0]),
-            get_op("relu")(),
+            get_op(activation)(),
         )
         expect(
             blocks[0] == expansions[0] == 1,
@@ -413,18 +469,10 @@ class MobileNetV2Arch(BaseBackboneArch):
                 )
             )
         self.cells = nn.ModuleList(self.cells)
-        self.conv_head = self.block_initializer(
-            6,
-            self.channels[-3],
-            self.channels[-2],
-            1,
-            self.kernel_sizes,
-            self.do_kernel_transform,
-            activation="relu",
-            affine=True,
-        )
+
         self.conv_final = nn.Sequential(
-            FlexiblePointLinear(self.channels[-2], self.channels[-1], 1, 1, 0),
+            nn.Conv2d(self.channels[-2],
+                      self.channels[-1], 1, 1, 0, bias=False),
             nn.BatchNorm2d(self.channels[-1]),
         )
         self.classifier = nn.Conv2d(self.channels[-1], num_classes, 1, 1, 0)
@@ -462,22 +510,19 @@ class MobileNetV2Arch(BaseBackboneArch):
             )
         return nn.ModuleList(cell)
 
-    def forward(self, inputs):
-        return self.forward_rollout(inputs)
-
-    def forward_rollout(self, inputs, rollout=None):
+    def forward_rollout(self, inputs, rollout=None, drop_connect_rate=0.0):
         out = self.stem(inputs)
         for i, cell in enumerate(self.cells):
             for j, block in enumerate(cell):
                 if rollout is None:
-                    out = block(out)
+                    out = block(out, drop_connect_rate=drop_connect_rate)
                 else:
                     if j >= rollout.depth[i]:
                         break
                     out = block.forward_rollout(
-                        out, rollout.width[i][j], rollout.kernel[i][j]
+                        out, rollout.width[i][j], rollout.kernel[i][j],
+                        drop_connect_rate=drop_connect_rate
                     )
-        out = self.conv_head(out)
         out = self.conv_final(out)
         out = F.adaptive_avg_pool2d(out, 1)
         return self.classifier(out).flatten(1)
@@ -511,36 +556,11 @@ class MobileNetV2Arch(BaseBackboneArch):
                         out, rollout.width[i][j], rollout.kernel[i][j], drop_connect_rate
                     )
             features.append(out)
-        out = self.conv_head(out)
-        features[-1] = out
         return [features[level_indexes[p]] for p in p_levels], out
 
     def get_feature_channel_num(self, p_levels):
         level_indexes = feature_level_to_stage_index(self.strides)
-        return [self.channels[level_indexes[p]] for p in p_levels]
-
-    def get_features(self, inputs, p_levels, rollout=None):
-        out = self.stem(inputs)
-        level_indexes = feature_level_to_stage_index(self.strides)
-        features = []
-        for i, cell in enumerate(self.cells):
-            for j, block in enumerate(cell):
-                if rollout is None:
-                    out = block(out)
-                else:
-                    if j >= rollout.depth[i]:
-                        break
-                    out = block.forward_rollout(
-                        out, rollout.width[i][j], rollout.kernel[i][j]
-                    )
-            features.append(out)
-        out = self.conv_head(out)
-        features[-1] = out
-        return [features[level_indexes[p]] for p in p_levels], out
-
-    def get_feature_channel_num(self, p_levels):
-        level_indexes = feature_level_to_stage_index(self.strides)
-        return [self.channels[level_indexes[p]] for p in p_levels]
+        return [self.channels[1 + level_indexes[p]] for p in p_levels]
 
 
 class MobileNetV3Arch(BaseBackboneArch):
@@ -551,24 +571,24 @@ class MobileNetV3Arch(BaseBackboneArch):
             device,
             blocks=[1, 4, 4, 4, 4, 4],
             strides=[1, 2, 2, 2, 1, 2],
-            expansions=[1, 6, 6, 6, 6, 6],
             layer_channels=[16, 16, 24, 40, 80, 112, 160, 960, 1280],
             mult_ratio=1.0,
             kernel_sizes=[3, 5, 7],
             do_kernel_transform=True,
             use_ses=[False, False, True, False, True, True],
             acts=["relu", "relu", "relu", "h_swish", "h_swish", "h_swish"],
+            activation="h_swish",
             num_classes=10,
             block_type="mbv3_block",
-            pretrained_path=None,
+            expansions=[1, 6, 6, 6, 6, 6],
             stem_stride=2,
+            pretrained_path=None,
             schedule_cfg=None,
     ):
         super(MobileNetV3Arch, self).__init__(
             device,
             blocks,
             strides,
-            expansions,
             layer_channels,
             mult_ratio,
             kernel_sizes,
@@ -579,16 +599,17 @@ class MobileNetV3Arch(BaseBackboneArch):
             schedule_cfg,
         )
         self.block_initializer = FlexibleBlock.get_class_(block_type)
-        self.channels = [make_divisible(c * mult_ratio, 8)
-                         for c in layer_channels]
+        self.channels = [layer_channels[0]] + [make_divisible(c * mult_ratio, 8)
+                                               for c in layer_channels[1:-1]] + [layer_channels[-1]]
 
         self.stem_stride = stem_stride
+        self.expansions = expansions
         self.stem = nn.Sequential(
             nn.Conv2d(
                 3, self.channels[0], kernel_size=3, stride=self.stem_stride, padding=1, bias=False
             ),
             nn.BatchNorm2d(self.channels[0]),
-            get_op("h_swish")(),
+            get_op(activation)(),
         )
         expect(
             blocks[0] == expansions[0] == 1,
@@ -630,12 +651,12 @@ class MobileNetV3Arch(BaseBackboneArch):
             nn.Conv2d(self.channels[-3],
                       self.channels[-2], 1, 1, 0, bias=False),
             nn.BatchNorm2d(self.channels[-2]),
-            get_op("h_swish")(),
+            get_op(activation)(),
         )
         self.conv_final = nn.Sequential(
             nn.Conv2d(self.channels[-2],
                       self.channels[-1], 1, 1, 0, bias=False),
-            get_op("h_swish")(),
+            get_op(activation)(),
         )
         self.classifier = nn.Linear(self.channels[-1], num_classes)
 
@@ -672,9 +693,6 @@ class MobileNetV3Arch(BaseBackboneArch):
                 )
             )
         return nn.ModuleList(cell)
-
-    def forward(self, inputs):
-        return self.forward_rollout(inputs)
 
     def forward_rollout(self, inputs, rollout=None):
         out = self.stem(inputs)
@@ -730,3 +748,266 @@ class MobileNetV3Arch(BaseBackboneArch):
     def get_feature_channel_num(self, p_levels):
         level_indexes = feature_level_to_stage_index(self.strides + [1])
         return [self.channels[1 + level_indexes[p]] for p in p_levels]
+
+
+# ---------- ShuffleNet ----------
+
+def channel_shuffle(x, groups):
+    batchsize, num_channels, height, width = x.size()
+    channels_per_group = num_channels // groups
+    x = x.view(batchsize, groups, channels_per_group, height, width)
+    x = torch.transpose(x, 1, 2).contiguous()
+    x = x.view(batchsize, -1, height, width)
+    return x
+
+
+class FlexibleShuffleNetV2Block(FlexibleBlock):
+    NAME = "shuffle_v2_block"
+
+    def __init__(
+        self,
+        C,
+        C_out,
+        stride,
+        kernel_sizes=(3, 5, 7),
+        do_kernel_transform=True,
+        affine=True,
+        activation="relu",
+        schedule_cfg=None,
+    ):
+        FlexibleBlock.__init__(self, schedule_cfg)
+        self.activation = activation
+        self.stride = stride
+        self.kernel_sizes = sorted(kernel_sizes)
+        self.kernel_size = self.kernel_sizes[-1]
+        self.do_kernel_transform = do_kernel_transform
+        self.affine = affine
+
+        self.C_branch = C_out // 2
+        assert stride == 2 or C == self.C_branch * 2
+
+        self.shortcut = nn.Sequential()
+        if self.stride > 1:
+            self.shortcut = nn.Sequential(
+                FlexibleDepthWiseConv(
+                    C,
+                    self.kernel_sizes,
+                    stride,
+                    do_kernel_transform=do_kernel_transform
+                ),
+                FlexibleBatchNorm2d(C, affine=affine),
+                FlexiblePointLinear(C, self.C_branch, 1, 1, 0),
+                FlexibleBatchNorm2d(self.C_branch, affine=affine),
+                ops.get_op(activation)()
+            )
+
+        bottleneck = nn.Sequential(
+            FlexiblePointLinear(
+                C if self.stride > 1 else self.C_branch,
+                self.C_branch, 1, 1, 0
+            ),
+            FlexibleBatchNorm2d(self.C_branch),
+            ops.get_op(activation)(),
+        )
+
+        depth_wise = nn.Sequential(
+            FlexibleDepthWiseConv(
+                self.C_branch,
+                self.kernel_sizes,
+                stride,
+                do_kernel_transform=do_kernel_transform,
+            ),
+            FlexibleBatchNorm2d(self.C_branch, affine=affine),
+        )
+
+        point_linear = nn.Sequential(
+            FlexiblePointLinear(self.C_branch, self.C_branch, 1, 1, 0),
+            FlexibleBatchNorm2d(self.C_branch, affine=affine),
+            ops.get_op(activation)()
+        )
+
+        self.branch = nn.Sequential(
+            bottleneck,
+            depth_wise,
+            point_linear
+        )
+
+    def forward(self, inputs, drop_connect_rate=0.):
+        # @FIXME: need to be refractor
+        return self.forward_rollout(inputs, None, None, drop_connect_rate=0.)
+
+    def forward_rollout(self, inputs, expansion, kernel, drop_connect_rate=0.0):
+        if self.stride == 1:
+            x1, x2 = inputs.chunk(2, dim=1)
+            out = torch.cat([x1, self.branch(x2)], dim=1)
+        else:
+            out = torch.cat(
+                [self.shortcut(inputs), self.branch(inputs)], dim=1)
+        out = channel_shuffle(out, 2)
+        return out
+
+    def finalize(self, *args, **kwargs):
+        return self
+
+    def set_mask(self, *args, **kwargs):
+        pass
+
+    def reset_mask(self):
+        pass
+
+
+class ShuffleNetV2Arch(BaseBackboneArch):
+    NAME = "shuffle_v2_backbone"
+
+    def __init__(
+            self,
+            device,
+            blocks=[4, 4, 4, 4],
+            strides=[2, 2, 1, 2],
+            layer_channels=[24, 116, 176, 176, 192, 1024],
+            mult_ratio=1.0,
+            kernel_sizes=[3, 5, 7],
+            do_kernel_transform=True,
+            activation="relu6",
+            num_classes=10,
+            block_type="shuffle_v2_block",
+            stem_stride=2,
+            pretrained_path=None,
+            schedule_cfg=None,
+    ):
+        super(ShuffleNetV2Arch, self).__init__(
+            device,
+            blocks,
+            strides,
+            layer_channels,
+            mult_ratio,
+            kernel_sizes,
+            do_kernel_transform,
+            num_classes,
+            block_type,
+            pretrained_path,
+            schedule_cfg,
+        )
+        self.block_initializer = FlexibleBlock.get_class_(block_type)
+        self.channels = [layer_channels[0]] + [make_divisible(c * mult_ratio, 8)
+                                               for c in layer_channels[1:-1]] + [layer_channels[-1]]
+
+        self.stem_stride = stem_stride
+        self.stem = nn.Sequential(
+            nn.Conv2d(
+                3, self.channels[0], kernel_size=3, stride=self.stem_stride, padding=1, bias=False
+            ),
+            nn.BatchNorm2d(self.channels[0]),
+            get_op(activation)(),
+            nn.MaxPool2d(3, stride=2, padding=1)
+        )
+
+        self.mult_ratio = mult_ratio
+        self.activation = activation
+
+        self.cells = []
+        for i, depth in enumerate(self.blocks):
+            self.cells.append(
+                self.make_stage(
+                    self.channels[i],
+                    self.channels[i + 1],
+                    depth,
+                    self.strides[i],
+                    self.kernel_sizes,
+                )
+            )
+        self.cells = nn.ModuleList(self.cells)
+        self.conv_final = nn.Sequential(
+            nn.Conv2d(self.channels[-2],
+                      self.channels[-1], 1, 1, 0, bias=False),
+            nn.BatchNorm2d(self.channels[-1]),
+            get_op(activation)(),
+        )
+        self.classifier = nn.Linear(self.channels[-1], num_classes)
+
+        if self.pretrained_path:
+            state_dict = torch.load(self.pretrained_path, "cpu")
+            if state_dict["classifier.weight"].shape[0] != self.num_classes:
+                del state_dict["classifier.weight"]
+                del state_dict["classifier.bias"]
+            self.logger.info(self.load_state_dict(state_dict, strict=False))
+
+        self.to(self.device)
+
+    def make_stage(
+        self, C_in, C_out, block_num, stride, kernel_sizes
+    ):
+        cell = []
+        for i in range(block_num):
+            if i == 0:
+                s = stride
+            else:
+                s = 1
+                C_in = C_out
+            cell.append(
+                self.block_initializer(
+                    C_in,
+                    C_out,
+                    s,
+                    kernel_sizes,
+                    self.do_kernel_transform,
+                    affine=True,
+                    activation=self.activation
+                )
+            )
+        return nn.ModuleList(cell)
+
+    def forward(self, inputs, drop_connect_rate=0.):
+        return self.forward_rollout(inputs, rollout=None, drop_connect_rate=0.)
+
+    def forward_rollout(self, inputs, rollout=None, drop_connect_rate=0.):
+        out = self.stem(inputs)
+        for i, cell in enumerate(self.cells):
+            for j, block in enumerate(cell):
+                if rollout is None:
+                    out = block(out)
+                else:
+                    if j >= rollout.depth[i]:
+                        break
+                    out = block.forward_rollout(
+                        out, rollout.width[i][j], rollout.kernel[i][j]
+                    )
+        out = self.conv_final(out)
+        out = out.mean(3, keepdim=True).mean(2, keepdim=True)
+        out = torch.flatten(out, 1)
+        return self.classifier(out)
+
+    def finalize(self, blocks, expansions, kernel_sizes):
+        cells = []
+        finalized_model = copy.deepcopy(self)
+        for i, cell in enumerate(self.cells):
+            cells.append([])
+            for j, block in enumerate(cell):
+                if j >= blocks[i]:
+                    break
+                block.set_mask(expansions[i][j], kernel_sizes[i][j])
+                cells[-1].append(block.finalize())
+            cells[-1] = nn.ModuleList(cells[-1])
+        finalized_model.cells = nn.ModuleList(cells)
+        return finalized_model
+
+    def extract_features(self, inputs, p_levels, rollout=None, drop_connect_rate=0.0):
+        out = self.stem(inputs)
+        level_indexes = feature_level_to_stage_index(self.strides, 2)
+        features = []
+        for i, cell in enumerate(self.cells):
+            for j, block in enumerate(cell):
+                if rollout is None:
+                    out = block(out, drop_connect_rate)
+                else:
+                    if j >= rollout.depth[i]:
+                        break
+                    out = block.forward_rollout(
+                        out, rollout.width[i][j], rollout.kernel[i][j], drop_connect_rate
+                    )
+            features.append(out)
+        return [features[level_indexes[p]] for p in p_levels], out
+
+    def get_feature_channel_num(self, p_levels):
+        level_indexes = feature_level_to_stage_index(self.strides, 2)
+        return [self.channels[level_indexes[p] + 1] for p in p_levels]

@@ -3,7 +3,7 @@ import torch
 from aw_nas.objective.detection_utils.base import Matcher
 from aw_nas.utils import box_utils
 
-__all__ = ["IOUMatcher"]
+__all__ = ["IOUMatcher", "WarpperMatcher"]
 
 
 class IOUMatcher(Matcher):
@@ -42,3 +42,17 @@ class IOUMatcher(Matcher):
         loc_t = loc_t.squeeze(0)
         conf_t = conf_t.squeeze(0)
         return conf_t, loc_t
+
+
+class WarpperMatcher(Matcher):
+    NAME = "warpper"
+
+    def __init__(self, matcher_type, matcher_cfg):
+        self.matcher = build_assigner({
+            "type": matcher_type,
+            **matcher_cfg
+        })
+
+    def __call__(self, boxes, labels, anchors):
+        return self.matcher.assign(
+                anchors, boxes, [False] * len(boxes), labels)

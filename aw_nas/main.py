@@ -36,6 +36,16 @@ click.option = functools.partial(click.option, show_default=True)
 
 LOGGER = _logger.getChild("main")
 
+
+# To be compatible with MMDet config which assert tuple as input
+def construct_python_tuple(loader, node):
+    return tuple(loader.construct_sequence(node))
+
+yaml.SafeLoader.add_constructor(
+    u'tag:yaml.org,2002:python/tuple',
+    construct_python_tuple)
+
+
 def _onlycopy_py(src, names):
     return [name for name in names if not \
             (name == "VERSION" or name.endswith(".py") or os.path.isdir(os.path.join(src, name)))]
@@ -957,6 +967,7 @@ def test(cfg_file, load, load_state_dict, split, gpus, seed): #pylint: disable=r
     LOGGER.info("Initializing components.")
     whole_dataset = _init_component(cfg, "dataset")
     search_space = _init_component(cfg, "search_space")
+
     objective = _init_component(cfg, "objective", search_space=search_space)
     trainer = _init_component(cfg, "final_trainer",
                               dataset=whole_dataset,

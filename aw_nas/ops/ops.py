@@ -865,7 +865,7 @@ class FlexibleSEModule(SEModule, FlexibleLayer):
         return SEModule(self.channel, self.reduction, reduction_layer, expand_layer)
 
 
-# ---- added for SSD ----
+# ---- added for Detection ----
 class L2Norm(nn.Module):
     def __init__(self,n_channels, scale):
         super(L2Norm,self).__init__()
@@ -880,15 +880,108 @@ class L2Norm(nn.Module):
         out = self.weight.unsqueeze(0).unsqueeze(2).unsqueeze(3).expand_as(x) * x
         return out
         
-def SeperableConv2d(in_channels, out_channels, kernel_size=1, stride=1, padding=0, relu6=False):
+def SeparableConv(in_channels, 
+                    out_channels, 
+                    kernel_size=3, 
+                    stride=1, 
+                    padding=1,
+                    activation="relu", 
+                    norm=True,
+                    final_activation=None):
     """
-    A simple separable conv for SSD.
+    A simple separable conv.
     """
-    act_fn = nn.ReLU6 if relu6 else nn.ReLU
     return nn.Sequential(
         nn.Conv2d(in_channels=in_channels, out_channels=in_channels, kernel_size=kernel_size,
                groups=in_channels, stride=stride, padding=padding, bias=False),
         nn.BatchNorm2d(in_channels),
-        act_fn(),
-        nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=1),
+        get_op(activation)(),
+        nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=1, bias=not norm),
+        nn.BatchNorm2d(out_channels) if norm else nn.Sequential(),
+        get_op(final_activation)() if final_activation else nn.Sequential()
     )
+
+def ConvModule(in_channels,
+               out_channels,
+               kernel_size=3,
+               stride=1,
+               padding=1,
+               activation="relu",
+               norm=True,
+               final_activation=None):
+    return nn.Sequential(
+        nn.Conv2d(in_channels, out_channels, kernel_size, stride=stride, padding=padding, bias=not
+            norm),
+        nn.BatchNorm2d(out_channels) if norm else nn.Sequential(),
+        get_op(final_activation)() if final_activation else nn.Sequential()
+    )
+
+class FlexibleSepConv(nn.Module, FlexibleLayer):
+
+    def __init__(self, in_channels, out_channels, kernel_sizes=[3], stride=1, activation=None,
+            norm=True, final_activation=None):
+        super(FlexibleSepConv, self).__init__()
+        FlexibleLayer.__init__(self)
+
+        self.kernel_sizes = kernel_sizes
+        self.final_activation = final_activation
+
+        #if max(kernel_sizes) > 1:
+        self.depthwise_conv = FlexibleDepthWiseConv(in_channels, kernel_sizes,
+                                                      stride=stride, bias=not norm)
+        #else:
+        #    self.depthwise_conv  = nn.Sequential()
+        self.pointwise_conv = FlexiblePointLinear(in_channels, out_channels, bias=not norm)
+
+        self.norm = norm
+        if self.norm:
+            self.bn0 = [FlexibleBatchNorm2d(in_channels)]
+            if activation is not None:
+                self.bn0 += [get_op(activation)()]
+            self.bn0 = nn.Sequential(*self.bn0)
+
+            self.bn1 = FlexibleBatchNorm2d(out_channels)
+
+        if self.final_activation is not None:
+            self.act = get_op(final_activation)()
+
+
+        self.reset_mask()
+
+    def forward(self, x):
+        x = self.depthwise_conv(x)
+        if self.norm:
+            x = self.bn0(x)
+        x = self.pointwise_conv(x)
+        if self.norm:
+            x = self.bn1(x)
+
+        if self.final_activation:
+            x = self.act(x)
+        return x
+
+    def set_mask(self, mask):
+        pass
+
+    def reset_mask(self):
+        pass
+
+    def finalize(self):
+        return self
+
+
+class Scale(nn.Module):
+    """A learnable scale parameter.
+    This layer scales the input by a learnable factor. It multiplies a
+    learnable scale parameter of shape (1,) with input of any shape.
+    Args:
+        scale (float): Initial value of scale factor. Default: 1.0
+    """
+
+    def __init__(self, scale=1.0):
+        super(Scale, self).__init__()
+        self.scale = nn.Parameter(torch.tensor(scale, dtype=torch.float))
+
+    def forward(self, x):
+        return x * self.scale
+

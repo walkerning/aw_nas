@@ -9,7 +9,7 @@ import torch
 from torchvision import datasets, transforms
 
 from aw_nas.dataset.base import BaseDataset
-from aw_nas.dataset.det_transform import *
+from aw_nas.dataset.transform import *
 from aw_nas.utils.box_utils import *
 
 
@@ -20,17 +20,17 @@ def collate_fn(batch):
     return inputs, targets
 
 
-class VOCDataset(object):
+class BDD100kDataset(object):
     def __init__(self,
                  data_dir,
-                 image_sets=[("VOC2007", "trainval"), ("VOC2012", "trainval")],
+                 image_set="train",
                  transform=None,
                  is_test=False,
                  keep_difficult=False,
                  label_file=None):
-        """Dataset for VOC data.
+        """Dataset for BDD100k data.
         Args:
-            root: the root of the VOC2007 or VOC2012 dataset, 
+            root: the root of the BDD100k dataset, 
                 the directory contains the following sub-directories:
                 Annotations, ImageSets, JPEGImages, SegmentationClass, SegmentationObject.
         """
@@ -38,15 +38,14 @@ class VOCDataset(object):
         self.data_dir = data_dir
         self.root = pathlib.Path(self.data_dir)
         self.transform = transform
-        self.anno_path = os.path.join(data_dir, '%s', 'Annotations', '%s.xml')
-        self._imgpath = os.path.join(data_dir, '%s', 'JPEGImages', '%s.jpg')
+        self.anno_path = os.path.join(data_dir, 'Annotations', image_set, '%s.xml')
+        self._imgpath = os.path.join(data_dir, 'images', '100k', image_set, '%s.jpg')
         self.ids = []
 
-        for sub_dir in image_sets:
-            self.image_sets_file = self.root / ("%s/ImageSets/Main/%s.txt" %
-                                                sub_dir)
-            self.ids.extend(
-                VOCDataset._read_image_ids(self.image_sets_file, sub_dir[0]))
+        self.image_sets_file = self.root / ("ImageSets/Main/%s.txt" %
+                                                image_set)
+        self.ids.extend(
+                BDD100kDataset._read_image_ids(self.image_sets_file))
         self.keep_difficult = keep_difficult
         self.is_test = is_test
 
@@ -64,15 +63,12 @@ class VOCDataset(object):
             classes = class_string.split(',')
             classes = [elem.replace(" ", "") for elem in classes]
             self.class_names = tuple(classes)
-            logging.info("VOC Labels read from file: " + str(self.class_names))
+            logging.info("BDD100k Labels read from file: " + str(self.class_names))
 
         else:
-            logging.info("No labels file, using default VOC classes.")
-            self.class_names = ('__background__', 'aeroplane', 'bicycle',
-                                'bird', 'boat', 'bottle', 'bus', 'car', 'cat',
-                                'chair', 'cow', 'diningtable', 'dog', 'horse',
-                                'motorbike', 'person', 'pottedplant', 'sheep',
-                                'sofa', 'train', 'tvmonitor')
+            logging.info("No labels file, using default BDD100k classes.")
+            self.class_names = ("__background__", "car", "bus", "person",
+                    "bike", "truck", "motor", "rider")
 
         self.class_dict = {
             class_name: i
@@ -88,7 +84,7 @@ class VOCDataset(object):
             "ori_boxes": ori_boxes,
             "boxes": boxes,
             "labels": labels,
-            "image_id": img_id[1],
+            "image_id": img_id,
             "shape": [height, width],
             "is_difficult": is_difficult
         }
@@ -101,6 +97,9 @@ class VOCDataset(object):
         if self.transform is not None:
             image, boxes, labels = self.transform(image, ori_boxes, labels)
 
+        image = torch.from_numpy(image).to(torch.float)
+        boxes = torch.from_numpy(boxes).to(torch.float)
+        labels = torch.from_numpy(labels).to(torch.long)
         return img_id, image, boxes, labels, height, width, is_difficult, ori_boxes
 
     def get_image(self, index):
@@ -118,11 +117,11 @@ class VOCDataset(object):
         return len(self.ids)
 
     @staticmethod
-    def _read_image_ids(image_sets_file, year):
+    def _read_image_ids(image_sets_file):
         ids = []
         with open(image_sets_file) as f:
             for line in f:
-                ids.append((year, line.rstrip()))
+                ids.append(line.rstrip())
         return ids
 
     def _get_annotation(self, image_id):
@@ -137,7 +136,7 @@ class VOCDataset(object):
             if class_name in self.class_dict:
                 bbox = object.find('bndbox')
 
-                # VOC dataset format follows Matlab, in which indexes start from 0
+                # BDD100k dataset format follows Matlab, in which indexes start from 0
                 x1 = float(bbox.find('xmin').text) - 1
                 y1 = float(bbox.find('ymin').text) - 1
                 x2 = float(bbox.find('xmax').text) - 1
@@ -156,20 +155,20 @@ class VOCDataset(object):
     def _read_image(self, image_id):
         image_file = self._imgpath % image_id
         image = cv2.imread(str(image_file))
-        image = image.astype(np.float32)
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB).astype(np.float)
         return image
 
 
-class VOC(BaseDataset):
-    NAME = "voc"
+class BDD100k(BaseDataset):
+    NAME = "bdd100k"
 
     def __init__(self,
                  load_train_only=False,
                  class_name_file=None,
                  random_choose=False,
                  random_seed=123,
-                 train_sets=[("VOC2007", "trainval"), ("VOC2012", "trainval")],
-                 test_sets=[("VOC2007", "test")],
+                 train_set="train",
+                 test_set="val",
                  train_crop_size=300,
                  test_crop_size=300,
                  image_mean=[0.485, 0.456, 0.406],
@@ -178,33 +177,31 @@ class VOC(BaseDataset):
                  image_bias=0.,
                  iou_threshold=0.5,
                  keep_difficult=False,
-                 train_pipeline=None,
-                 test_pipeline=None,
                  relative_dir=None):
-        super(VOC, self).__init__(relative_dir)
-        self.load_train_only = load_train_only
-        self.train_data_dir = os.path.join(self.data_dir, "train")
-        self.class_name_file = class_name_file
+        super(BDD100k, self).__init__(relative_dir)
 
-        train_transform = TrainAugmentation(train_pipeline, train_crop_size,
+        self.load_train_only = load_train_only
+        self.class_name_file = class_name_file
+        self.data_dir = os.path.join(self.data_dir, "BDD100K")
+
+        train_transform = TrainAugmentation(train_crop_size,
                                             np.array(image_mean),
                                             np.array(image_std),
                                             image_norm_factor, image_bias)
-        test_transform = TestTransform(test_pipeline, test_crop_size, np.array(image_mean),
+        test_transform = TestTransform(test_crop_size, np.array(image_mean),
                                        np.array(image_std), image_norm_factor,
                                        image_bias)
 
         self.datasets = {}
-        self.datasets['train'] = VOCDataset(self.train_data_dir, train_sets,
+        self.datasets['train'] = BDD100kDataset(self.data_dir, train_set,
                                             train_transform)
-        self.datasets['train_testTransform'] = VOCDataset(self.train_data_dir, train_sets,
+        self.datasets['train_testTransform'] = BDD100kDataset(self.data_dir, train_set,
                                                           test_transform)
         self.grouped_annotation = {}
 
         if not self.load_train_only:
-            self.test_data_dir = os.path.join(self.data_dir, "test")
-            self.datasets['test'] = VOCDataset(self.test_data_dir,
-                                               test_sets,
+            self.datasets['test'] = BDD100kDataset(self.data_dir,
+                                               test_set,
                                                test_transform,
                                                is_test=True)
 
@@ -231,6 +228,6 @@ class VOC(BaseDataset):
     def evaluate_detections(self, box_list, output_dir):
         dataset = self.datasets["test"]
         write_voc_results_file(output_dir, box_list, dataset)
-        return do_python_eval(dataset.anno_path % ("VOC2007", "%s"),
+        return do_python_eval(dataset.anno_path,
                               dataset.image_sets_file, dataset.class_names,
                               output_dir)

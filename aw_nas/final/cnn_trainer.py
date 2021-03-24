@@ -14,7 +14,8 @@ from aw_nas.utils.common_utils import nullcontext
 from aw_nas.utils.exception import expect
 from aw_nas.utils import DataParallel
 from aw_nas.utils import DistributedDataParallel
-from aw_nas.utils.torch_utils import calib_bn
+from aw_nas.utils.torch_utils import calib_bn, GroupSampler, DistributedGroupSampler
+
 
 try:
     from torch.nn import SyncBatchNorm
@@ -24,13 +25,14 @@ except ImportError:
         "Import convert_sync_bn failed! SyncBatchNorm might not work!")
     convert_sync_bn = lambda m: m
 
-def _warmup_update_lr(optimizer, epoch, init_lr, warmup_epochs):
+def _warmup_update_lr(optimizer, epoch, init_lr, warmup_epochs, warmup_ratio=0.0):
     """
     update learning rate of optimizers
     """
-    lr = init_lr * epoch / warmup_epochs
+    lr = (init_lr - warmup_ratio) * epoch / warmup_epochs + warmup_ratio
     for param_group in optimizer.param_groups:
         param_group["lr"] = lr
+    return lr
 
 class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attributes
     NAME = "cnn_trainer"
@@ -96,21 +98,38 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
         train_kwargs = getattr(_splits["train"], "kwargs", {})
         test_kwargs = getattr(_splits["test"], "kwargs", train_kwargs)
 
+        """
+        GroupSampler is needed when `keep_ratio` in dataset is set True.
+        It makes two group of images: aspect ratio > 1 , and aspect ratio < 1.
+
+        `shuffle` is invalid when using GroupSampler because it cannot
+        guarantee the original order of images.
+        """
+        group = train_kwargs.pop("group_sample", False)
+        test_kwargs["shuffle"] = False
+
         if self.multiprocess:
-            self.train_queue = torch.utils.data.DataLoader(
-                _splits["train"], batch_size=batch_size, pin_memory=True,
-                num_workers=workers_per_queue,
-                sampler=DistributedSampler(_splits["train"], shuffle=True), **train_kwargs)
-            self.valid_queue = torch.utils.data.DataLoader(
-                _splits["test"], batch_size=batch_size, pin_memory=True,
-                num_workers=workers_per_queue, shuffle=False, **test_kwargs)
+            sampler = DistributedGroupSampler(_splits["train"], None, batch_size) if group \
+                      else DistributedSampler(_splits["train"], shuffle=True)
+            test_kwargs["sampler"] = DistributedSampler(_splits["test"],
+                    shuffle=False)
         else:
-            self.train_queue = torch.utils.data.DataLoader(
-                _splits["train"], batch_size=batch_size, pin_memory=True,
-                num_workers=workers_per_queue, shuffle=True, **train_kwargs)
-            self.valid_queue = torch.utils.data.DataLoader(
-                _splits["test"], batch_size=batch_size, pin_memory=True,
-                num_workers=workers_per_queue, shuffle=False, **test_kwargs)
+            sampler = GroupSampler(_splits["train"], None, batch_size) if group \
+                      else None
+        if sampler is None:
+            train_kwargs["shuffle"] = True
+        else:
+            train_kwargs.pop("shuffle", None)
+            train_kwargs["sampler"] = sampler
+
+        self.train_queue = torch.utils.data.DataLoader(
+            _splits["train"], batch_size=batch_size, pin_memory=False,
+            num_workers=workers_per_queue,
+            **train_kwargs)
+
+        self.valid_queue = torch.utils.data.DataLoader(
+            _splits["test"], batch_size=1, pin_memory=False,
+            num_workers=workers_per_queue, **test_kwargs)
 
         if self.calib_bn_setup:
             self.model = calib_bn(self.model, self.train_queue)
@@ -203,7 +222,7 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                 log_strs.append("scheduler from {}".format(s_path))
 
         self.logger.info("param size = %f M",
-                         utils.count_parameters(self.model)/1.e6)
+                         utils.count_parameters(self.model) / 1.e6)
         self.logger.info("Loaded checkpoint from %s: %s", path, ", ".join(log_strs))
         self.logger.info("Last epoch: %d", self.last_epoch)
 
@@ -230,6 +249,10 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                                                     self.device, epoch)
             self.logger.info("train_acc %f ; train_obj %f", train_acc, train_obj)
 
+            if self.save_every and epoch % self.save_every == 0:
+                path = os.path.join(self.train_dir, str(epoch))
+                self.save(path)
+
             if epoch % self.eval_every == 0:
                 valid_acc, valid_obj, valid_perfs = self.infer_epoch(self.valid_queue,
                                                                     self.parallel_model,
@@ -239,9 +262,6 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                                 "; ".join(
                                     ["{}: {:.3f}".format(n, v) for n, v in valid_perfs.items()]))
 
-            if self.save_every and epoch % self.save_every == 0:
-                path = os.path.join(self.train_dir, str(epoch))
-                self.save(path)
             self.on_epoch_end(epoch)
 
         self.save(os.path.join(self.train_dir, "final"))
