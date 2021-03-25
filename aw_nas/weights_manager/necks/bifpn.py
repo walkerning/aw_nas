@@ -6,25 +6,37 @@ from collections import OrderedDict
 import torch
 from torch import nn
 from torch.nn import functional as F
+
 from aw_nas import ops
 from aw_nas.ops import FlexibleDepthWiseConv, FlexiblePointLinear, FlexibleBatchNorm2d
 from aw_nas.weights_manager import FlexibleBlock
-from aw_nas.weights_manager.detection_header import DetectionHeader
 
-class FlexibleSepConv(FlexibleBlock):
+from .base import BaseNeck
+
+__all__ = ["BiFPNSepConv", "BiFPN"]
+
+class BiFPNSepConv(FlexibleBlock):
     NAME = "sep_conv"
 
+    """
+    The implementation of BiFPN in Tensorflow is slightly different with
+    Pytorch version. In order to reuse its weight, we implement
+    Conv2dStaticSamePadding and MaxPool2dStaticSamePadding in comments.
+    """
+
     def __init__(self, in_channels, out_channels, norm=True, kernel_sizes=[3]):
-        super(FlexibleSepConv, self).__init__()
+        super(BiFPNSepConv, self).__init__()
 
         self.depthwise_conv = FlexibleDepthWiseConv(in_channels, kernel_sizes,
-                                                      stride=1, bias=False)
+                                                    stride=1, bias=False)
         #self.depthwise_conv = ops.Conv2dStaticSamePadding(in_channels, in_channels, kernel_sizes[0], stride=1, groups=in_channels, bias=False)
-        self.pointwise_conv = FlexiblePointLinear(in_channels, out_channels, bias=True)
+        self.pointwise_conv = FlexiblePointLinear(
+            in_channels, out_channels, bias=True)
 
         self.norm = norm
         if self.norm:
-            self.bn = nn.BatchNorm2d(num_features=out_channels, momentum=0.01, eps=1e-3)
+            self.bn = nn.BatchNorm2d(
+                num_features=out_channels, momentum=0.01, eps=1e-3)
 
         self.reset_mask()
 
@@ -43,41 +55,11 @@ class FlexibleSepConv(FlexibleBlock):
         return self
 
 
-class Classifier(nn.Module):
-    def __init__(self, in_channels, num_anchors, num_classes, num_layers, activation="swish", onnx_export=False):
-        super(Classifier, self).__init__()
-        self.num_anchors = num_anchors
-        self.num_classes = num_classes
-        self.num_layers = num_layers
-        self.conv_list = nn.ModuleList([
-                FlexibleSepConv(in_channels, in_channels, norm=False) for i in range(num_layers)
-            ])
-
-        self.bn_list = nn.ModuleList([
-            nn.ModuleList([
-                FlexibleBatchNorm2d(in_channels, momentum=0.01, eps=1e-3) for i in range(num_layers)
-            ]) 
-            for j in range(5)
-        ])
-        self.header = FlexibleSepConv(in_channels, num_anchors * num_classes, norm=False)
-        self.act = ops.get_op(activation)() 
-
-    def forward(self, inputs, post_process=False):
-        feats = []
-        for feat, bn_list in zip(inputs, self.bn_list):
-            for i, bn, conv in zip(range(self.num_layers), bn_list, self.conv_list):
-                feat = conv(feat)
-                feat = bn(feat)
-                feat = self.act(feat)
-            feat = self.header(feat)
-            feats.append(feat)
-        return feats
-
 class FlexibleBiFPNBlock(FlexibleBlock):
     NAME = "bifpn_block"
 
     def __init__(self, num_channels, conv_channels, first_time=False,
-            epsilon=1e-4, attention=True, activation="swish", schedule_cfg=None):
+                 epsilon=1e-4, attention=True, activation="swish", schedule_cfg=None):
         super().__init__(schedule_cfg)
         self.num_channels = num_channels
         self.conv_channels = conv_channels
@@ -86,30 +68,31 @@ class FlexibleBiFPNBlock(FlexibleBlock):
         self.attention = attention
 
         self.conv_up = nn.ModuleDict(OrderedDict({
-            str(k): FlexibleSepConv(num_channels, num_channels) for k in range(6, 2, -1)
+            str(k): BiFPNSepConv(num_channels, num_channels) for k in range(6, 2, -1)
         }))
         self.conv_down = nn.ModuleDict(OrderedDict({
-            str(k): FlexibleSepConv(num_channels, num_channels) for k in range(4, 8)
+            str(k): BiFPNSepConv(num_channels, num_channels) for k in range(4, 8)
         }))
 
         self.downsample = nn.ModuleDict(OrderedDict({
-            #str(k): ops.MaxPool2dStaticSamePadding((3, 3), (2, 2)) for k in range(4, 8)
-            str(k): nn.MaxPool2d((3, 3), (2, 2), padding=(1,1)) for k in range(4, 8)
+            # str(k): ops.MaxPool2dStaticSamePadding((3, 3), (2, 2)) for k in range(4, 8)
+            str(k): nn.MaxPool2d((3, 3), (2, 2), padding=(1, 1)) for k in range(4, 8)
         }))
 
         self.swish = ops.get_op(activation)()
         #self.relu_fn = ops.get_op("relu6")
 
         self.weights_1 = nn.ParameterDict({
-            str(k): nn.Parameter(torch.ones(2, dtype=torch.float32), requires_grad=True) 
+            str(k): nn.Parameter(torch.ones(2, dtype=torch.float32), requires_grad=True)
             for k in range(3, 7)
         })
 
         self.weights_2 = nn.ParameterDict({
-            str(k): nn.Parameter(torch.ones(3, dtype=torch.float32), requires_grad=True) 
+            str(k): nn.Parameter(torch.ones(3, dtype=torch.float32), requires_grad=True)
             for k in range(4, 7)
         })
-        self.weights_2["7"] = nn.Parameter(torch.ones(2, dtype=torch.float32), requires_grad=True)
+        self.weights_2["7"] = nn.Parameter(torch.ones(
+            2, dtype=torch.float32), requires_grad=True)
 
         if self.first_time:
             self.down_channel = nn.ModuleDict({str(k): nn.Sequential(
@@ -133,7 +116,6 @@ class FlexibleBiFPNBlock(FlexibleBlock):
                 #ops.MaxPool2dStaticSamePadding((3, 3), (2, 2)),
                 nn.MaxPool2d((3, 3), (2, 2), padding=(1, 1)),
             )
-
 
         self.reset_mask()
 
@@ -162,7 +144,7 @@ class FlexibleBiFPNBlock(FlexibleBlock):
             p_in = {}
             p_in[3], p_in[4], p_in[5] = features
             p4, p5 = p_in[4], p_in[5]
-            
+
             p_in[6] = self.p5_to_p6(p_in[5])
             p_in[7] = self.p6_to_p7(p_in[6])
 
@@ -178,7 +160,8 @@ class FlexibleBiFPNBlock(FlexibleBlock):
         up = {}
         for i, conv in sorted(self.conv_up.items(), reverse=True):
             ii = int(i)
-            up[ii] = conv(self.swish(attention_fn(self.weights_1[i], p_in[ii], F.interpolate(prev, p_in[ii].shape[-2:], mode="nearest"))))
+            up[ii] = conv(self.swish(attention_fn(self.weights_1[i], p_in[ii], F.interpolate(
+                prev, p_in[ii].shape[-2:], mode="nearest"))))
             prev = up[ii]
 
         if self.first_time:
@@ -189,9 +172,11 @@ class FlexibleBiFPNBlock(FlexibleBlock):
         for i, conv in sorted(self.conv_down.items()):
             ii = int(i)
             if ii in up:
-                outs[ii] = conv(self.swish(attention_fn(self.weights_2[i], p_in[ii], up[ii], self.downsample[i](prev))))
+                outs[ii] = conv(self.swish(attention_fn(
+                    self.weights_2[i], p_in[ii], up[ii], self.downsample[i](prev))))
             else:
-                outs[ii] = conv(self.swish(attention_fn(self.weights_2[i], p_in[ii], self.downsample[i](prev))))
+                outs[ii] = conv(self.swish(attention_fn(
+                    self.weights_2[i], p_in[ii], self.downsample[i](prev))))
             prev = outs[ii]
 
         return tuple([v for k, v in sorted(outs.items())])
@@ -201,51 +186,57 @@ class FlexibleBiFPNBlock(FlexibleBlock):
         for block, exp, kernel in zip(self.blocks, expansions, kernel_sizes):
             block.set_mask(exp, kernel)
 
-    def finalize(self):
+    def finalize(self, rollout):
         return self
 
-class FlexibleBiFPNExtras(FlexibleBlock):
-    def __init__(self, in_channels, out_channels, activation="swish", attention=True, repeat=3):
-        super(FlexibleBiFPNExtras, self).__init__()
+
+class BiFPN(BaseNeck, FlexibleBlock):
+    NAME = "bifpn"
+
+    def __init__(
+        self,
+        search_space,
+        device,
+        rollout_type,
+        in_channels, 
+        out_channels,
+        activation="swish", 
+        attention=True, 
+        repeat=3,
+        gpus=tuple(),
+        schedule_cfg=None
+    ):
+        super(BiFPN, self).__init__(search_space, device,
+                rollout_type, gpus, schedule_cfg)
+        FlexibleBlock.__init__(self)
 
         self.blocks = nn.Sequential(*[
-            FlexibleBiFPNBlock(out_channels, in_channels, first_time=i==0, epsilon=1e-4,
-                activation=activation, attention=attention) for i in range(repeat)   
+            FlexibleBiFPNBlock(out_channels, in_channels, first_time=i == 0, epsilon=1e-4,
+                               activation=activation, attention=attention) for i in range(repeat)
         ])
 
-    def forward(self, features):
-        return self.forward_rollout(features)
+        # The implementation of BiFPN in this version has 6 layers.
+        self.pyramid_layers = 6
+        self.in_channels = in_channels
+        self.out_channels
 
-    def forward_rollout(self, features, rollout=None):
-        return self.blocks(features)
+    def forward(self, features, rollout=None):
+        for i, block in enumerate(self.blocks):
+            sub_rollout = None if rollout is None else rollout.sub_rollouts[i]
+            features = block(features, sub_rollout)
 
-    def finalize(self):
-        self.blocks = nn.Sequential(*[m.finalize() for m in self.blocks])
+    def set_mask(self, *args, **kwargs):
+        pass
+
+    def finalize(self, rollout=None):
+        if rollout is None:
+            return self
+        self.blocks = nn.Sequential(*[m.finalize(sub_r) for m, sub_r in
+            zip(self.blocks, rollout.sub_rollouts)])
         return self
 
+    def get_feature_channel_num(self):
+        return [self.out_channels] * self.pyramid_layers
 
-class BiFPN(DetectionHeader):
-    NAME = "bifpn_header"
 
-    def __init__(self, device, num_classes, feature_channels, bifpn_out_channels, 
-                 activation="swish", attention=True, repeat=3, num_layers=4, pretrained_path=None, schedule_cfg=None):
-        super().__init__(schedule_cfg)
-        self.num_classes = num_classes
-        self.extras = FlexibleBiFPNExtras(feature_channels, bifpn_out_channels, activation, attention, repeat)
-
-        num_anchors = 9
-        self.regression_headers = Classifier(bifpn_out_channels, num_anchors, 4, num_layers, activation)
-        self.classification_headers = Classifier(bifpn_out_channels,
-                num_anchors, num_classes + 1, num_layers, activation)
-                                    
-        self.device = device
-        self.pretrained_path = pretrained_path
-
-    def forward(self, features):
-        return self.extras(features)
-
-    def finalize(self, rollout):
-        finalized_model = copy.deepcopy(self)
-        finalized_model.extras = finalized_model.extras.finalize()
-        return finalized_model
 

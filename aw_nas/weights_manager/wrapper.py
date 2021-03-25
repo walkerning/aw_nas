@@ -53,9 +53,12 @@ class WrapperCandidateNet(CandidateNet):
         super(WrapperCandidateNet, self).__init__(eval_no_grad=eval_no_grad)
         self.super_net = super_net
         self._device = self.super_net.device
+        self.multiprocess = self.super_net.multiprocess
         self.rollout = rollout
 
     def forward(self, inputs): #pylint: disable=arguments-differ
+        if self.multiprocess:
+            return self.super_net.parallel_model(inputs, self.rollout)
         return self.super_net.forward(inputs, self.rollout)
 
     def _forward_with_params(self, *args, **kwargs): #pylint: disable=arguments-differ
@@ -91,6 +94,8 @@ class WrapperWeightsManager(BaseWeightsManager, nn.Module):
                  head_type=None, head_cfg=None,
                  feature_levels=[-1], # How to specificy this, need discuss @tcc
                  max_grad_norm=None,
+                 multiprocess=False,
+                 gpus=tuple(),
                  schedule_cfg=None):
         super().__init__(search_space, device, rollout_type, schedule_cfg)
         nn.Module.__init__(self)
@@ -122,6 +127,7 @@ class WrapperWeightsManager(BaseWeightsManager, nn.Module):
         if neck_type is not None:
             self.neck = BaseBackboneWeightsManager.get_class_(backbone_type)(
                 neck_ss, self.device, neck_rollout_type, feature_channel_nums, **(neck_cfg or {}))
+            feature_channel_nums = self.neck.get_feature_channel_num()
         else:
             self.neck = None
         self.head = BaseHead.get_class_(head_type)(
@@ -129,8 +135,22 @@ class WrapperWeightsManager(BaseWeightsManager, nn.Module):
 
         # other configs
         self.max_grad_norm = max_grad_norm
+        self.multiprocess = multiprocess
+        self.gpus = gpus
         # the features that need to be passed from backbone to neck
         self.feature_levels = feature_levels
+
+        # parallize
+        self._parallelize()
+
+    def _parallelize(self):
+        if self.multiprocess:
+            net = convert_sync_bn(self).to(self.device)
+            object.__setattr__(
+                self, "parallel_model", DistributedDataParallel(net, self.gpus, find_unused_parameters=True)
+            )
+        else:
+            object.__setattr__(self, "parallel_model", self)
 
     @staticmethod
     def _extract_backbone_and_neck_rollout(rollout):
@@ -140,7 +160,6 @@ class WrapperWeightsManager(BaseWeightsManager, nn.Module):
 
     @staticmethod
     def _pickout_features(features, feature_levels):
-        # TODO: @tcc
         return [features[level] for level in feature_levels]
 
     def set_device(self, device):

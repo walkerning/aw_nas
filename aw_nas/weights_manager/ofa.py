@@ -14,6 +14,7 @@ from aw_nas.utils.exception import expect
 from aw_nas.utils import DistributedDataParallel
 from aw_nas.weights_manager.base import BaseWeightsManager, CandidateNet
 from aw_nas.weights_manager.ofa_backbone import BaseBackboneArch
+from aw_nas.weights_manager.wrapper import BaseBackboneWeightsManager
 
 try:
     from torch.nn import SyncBatchNorm
@@ -26,7 +27,7 @@ except ImportError:
 __all__ = ["OFACandidateNet", "OFASupernet"]
 
 
-class OFASupernet(BaseWeightsManager, nn.Module):
+class OFASupernet(BaseBackboneWeightsManager, nn.Module):
     NAME = "ofa_supernet"
 
     def __init__(
@@ -116,7 +117,6 @@ class OFASupernet(BaseWeightsManager, nn.Module):
             {
                 "epoch": self.epoch,
                 "state_dict": self.state_dict(),
-                # "norms": self.norms
             },
             path,
         )
@@ -168,9 +168,9 @@ class OFACandidateNet(CandidateNet):
 
     def forward(self, inputs, single=False):  # pylint: disable=arguments-differ
         if self.multiprocess:
-            out = self.super_net.parallel_model.forward(inputs, self.rollout)
+            return self.super_net.parallel_model.forward(inputs, self.rollout)
         elif len(self.gpus) > 1:
-            out = data_parallel(
+            return data_parallel(
                 self, (inputs,), self.gpus, module_kwargs={"single": True}
             )
         else:
