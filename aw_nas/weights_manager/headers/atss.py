@@ -1,18 +1,21 @@
+import numpy as np
 import torch
 from torch import nn
 
-from aw_nas.utils import getLogger as _getLogger
-from aw_nas.ops import SeparableConv, ConvModule, Scale, get_op
+from aw_nas.ops import Scale
 from aw_nas.weights_manager.wrapper import BaseHead
+from aw_nas.weights_manager.headers.classifiers import SharedClassifier
 
-from .classifiers import SharedClassifier
+def normal_init(module, mean=0, std=1, bias=0):
+    if hasattr(module, 'weight') and module.weight is not None:
+        nn.init.normal_(module.weight, mean, std)
+    if hasattr(module, 'bias') and module.bias is not None:
+        nn.init.constant_(module.bias, bias)
 
-try:
-    from mmcv.cnn import normal_init, bias_init_with_prob
-except ImportError as e:
-    _getLogger("det_header").warn(
-        "Cannot import mmdet_head, detection NAS might not work: {}".format(e)
-    )
+def bias_init_with_prob(prior_prob):
+    """initialize conv/fc bias value according to giving probability."""
+    bias_init = float(-np.log((1 - prior_prob) / prior_prob))
+    return bias_init
 
 __all__ = ["AtssHead"]
 
@@ -82,9 +85,9 @@ class AtssHead(BaseHead):
             self.logger.info(matched)
             return
 
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                normal_init(m, std=0.1)
+        for mod in self.modules():
+            if isinstance(mod, nn.Conv2d):
+                normal_init(mod, std=0.1)
 
         bias_cls = bias_init_with_prob(0.01)
         normal_init(self.atss_cls, std=0.01, bias=bias_cls)

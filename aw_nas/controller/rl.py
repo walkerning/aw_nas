@@ -75,12 +75,7 @@ class RLController(BaseController, nn.Module):
             c_net.device = device
             c_net.to(device)
 
-    def forward(self, n=1): #pylint: disable=arguments-differ
-        return self.sample(n=n)
-
-    def sample(self, n=1, batch_size=1):
-        assert batch_size == 1, "batch_size must equal 1 for rl controller"
-        assert n > 0
+    def forward(self, n=1, batch_size=1): #pylint: disable=arguments-differ
         arch_lst = []
         log_probs_lst = []
         entropies_lst = []
@@ -100,7 +95,13 @@ class RLController(BaseController, nn.Module):
         arch_lst = zip(*arch_lst)
         log_probs_lst = zip(*log_probs_lst)
         entropies_lst = zip(*entropies_lst)
+        return arch_lst, log_probs_lst, entropies_lst
 
+    def sample(self, n=1, batch_size=1):
+        assert batch_size == 1, "batch_size must equal 1 for rl controller"
+        assert n > 0
+
+        arch_lst, log_probs_lst, entropies_lst = self.forward(n, batch_size)
         rollouts = [Rollout(arch, info={"log_probs": log_probs,
                                         "entropies": entropies},
                             search_space=self.search_space)

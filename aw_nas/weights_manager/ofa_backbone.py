@@ -541,10 +541,9 @@ class MobileNetV2Arch(BaseBackboneArch):
         finalized_model.cells = nn.ModuleList(cells)
         return finalized_model
 
-    def extract_features(self, inputs, p_levels, rollout=None, drop_connect_rate=0.0):
+    def extract_features(self, inputs, rollout=None, drop_connect_rate=0.0):
         out = self.stem(inputs)
-        level_indexes = feature_level_to_stage_index(self.strides)
-        features = []
+        features = [inputs, out]
         for i, cell in enumerate(self.cells):
             for j, block in enumerate(cell):
                 if rollout is None:
@@ -556,7 +555,8 @@ class MobileNetV2Arch(BaseBackboneArch):
                         out, rollout.width[i][j], rollout.kernel[i][j], drop_connect_rate
                     )
             features.append(out)
-        return [features[level_indexes[p]] for p in p_levels], out
+        return features
+        #return [features[level_indexes[p]] for p in p_levels], out
 
     def get_feature_channel_num(self, p_levels):
         level_indexes = feature_level_to_stage_index(self.strides)
@@ -728,8 +728,7 @@ class MobileNetV3Arch(BaseBackboneArch):
 
     def extract_features(self, inputs, p_levels, rollout=None, drop_connect_rate=0.0):
         out = self.stem(inputs)
-        level_indexes = feature_level_to_stage_index(self.strides)
-        features = []
+        features = [inputs, out]
         for i, cell in enumerate(self.cells):
             for j, block in enumerate(cell):
                 if rollout is None:
@@ -743,7 +742,7 @@ class MobileNetV3Arch(BaseBackboneArch):
             features.append(out)
         out = self.conv_head(out)
         features[-1] = out
-        return [features[level_indexes[p]] for p in p_levels], out
+        return features
 
     def get_feature_channel_num(self, p_levels):
         level_indexes = feature_level_to_stage_index(self.strides + [1])

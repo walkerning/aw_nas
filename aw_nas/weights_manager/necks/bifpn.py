@@ -9,7 +9,7 @@ from torch.nn import functional as F
 
 from aw_nas import ops
 from aw_nas.ops import FlexibleDepthWiseConv, FlexiblePointLinear, FlexibleBatchNorm2d
-from aw_nas.weights_manager import FlexibleBlock
+from aw_nas.weights_manager.ofa_backbone import FlexibleBlock
 
 from .base import BaseNeck
 
@@ -238,5 +238,7 @@ class BiFPN(BaseNeck, FlexibleBlock):
     def get_feature_channel_num(self):
         return [self.out_channels] * self.pyramid_layers
 
-
+    @classmethod
+    def supported_rollout_types(cls):
+        return [None]
 

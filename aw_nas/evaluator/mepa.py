@@ -1437,8 +1437,15 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
     def set_dataset(self, dataset):
         self.dataset = dataset
         self._data_type = self.dataset.data_type()
-        self._init_data_queues_and_hidden(self._data_type, self.data_portion,
-                                          self.mepa_as_surrogate)
+        if self.multiprocess:
+            self.logger.warning(
+                "When loading a multiprocess evaluator from a pickle file, "
+                "if no process group is initialized, "
+                "the data queues cannot be initialized properly, evaluator methods might not work. "
+                "However, `evaluator.weights_manager` can be used without problem.")
+        else:
+            self._init_data_queues_and_hidden(
+                self._data_type, self.data_portion, self.mepa_as_surrogate)
 
     def __setstate__(self, state):
         super(MepaEvaluator, self).__setstate__(state)

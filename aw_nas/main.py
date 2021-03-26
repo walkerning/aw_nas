@@ -358,13 +358,13 @@ def mpsearch(cfg_file, seed, load, save_every, save_controller_every, interleave
         weights_manager = _init_component(cfg, "weights_manager",
                                 search_space=search_space,
                                 device=device,
-                                gpus=[device],
+                                #gpus=[device],
                                 rollout_type=rollout_type,
                                 num_tokens=num_tokens)
     else:
         weights_manager = _init_component(cfg, "weights_manager",
                                 search_space=search_space,
-                                device=device, gpus=[device],
+                                device=device, #gpus=[device],
                                 rollout_type=rollout_type)
     # check model support for data type
     expect(_data_type in weights_manager.supported_data_types())

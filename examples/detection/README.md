@@ -21,6 +21,26 @@ There are a several of things you may need to edit in configure YAML file:
   * `backbone_cfg.pretrained_path`: load the (ImageNet or other dataset) pretrained model for backbone.
   * `backbone_cfg.num_classes`: the number of classes of dataset. It does not include the background class, and the background label will be add to `0`. The number of finally predicted classes always includes the background, which will be `num_classes + 1`.
 
+
+#### Distributed Parallelized Training
+
+We implement a multiprocess decorator to support distributed parallelized training for `weights_manager`. `controller` also needs to be parallelized and synchronized to behave as expected. However, parallelized controller is not supported yet, which will cause weird behaviors. For example, controller in differnt process samples different rollout to assemble candidate net, then `forward` will get stuck because different batchnorm layers are waiting to be synchronized across devices. Considering this situation, we convert `BatchNorm2d` in weights manager to `SyncBatchNorm2d` only if the environment variable `AWNAS_SET_SYNC_BN` is set to avoid getting stuck.
+
+
+```
+from aw_nas.utils.parallel_utils import parallelize
+
+@parallelize()
+class CustomWeightsManager(object):
+    def __init__(self, *args, **kwargs):
+        """
+        It is unnecessary to define `multiprocess` in `__init__` argument list.
+        Decorator will do that in wrapper.
+        """
+
+```
+
+
 #### Distillation
 Distillation is an essential part during the OFA training process, which can pass the knowledge of the supernet to sub-networks to gain improvements. Currently, we implement [Adaptive Distillation Loss](https://arxiv.org/abs/1901.00366) with focal loss only.
 

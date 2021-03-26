@@ -134,7 +134,6 @@ class SharedNet(BaseBackboneWeightsManager, nn.Module):
         self.to(device)
 
     def get_feature_channel_num(self, feature_levels=None):
-        # TODO: discuss @tcc
         if feature_levels is None:
             return self.all_num_channels
         return [self.all_num_channels[level] for level in feature_levels]

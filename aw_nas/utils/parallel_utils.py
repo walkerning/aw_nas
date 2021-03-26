@@ -3,7 +3,7 @@ Patch replicate function, to ignore those parameters/buffers that are not copied
 Bring a 1.4x performance increase for super_net weights_manager using discrete rollout.
 """
 # pylint: disable-all
-
+import os
 from itertools import chain
 import functools
 
@@ -266,3 +266,56 @@ class DistributedDataParallel(_DistributedDataParallel):
     def replicate(self, module, device_ids):
         replicas = replicate(module, device_ids, not torch.is_grad_enabled())
         return replicas
+
+
+def parallelize(override_forward=True):
+    def decorator(cls):
+        ori_init = cls.__init__
+        ori_forward = cls.forward
+        ori_getstate = cls.__getstate__
+
+        def __getstate__(self):
+            state = ori_getstate(self)
+            state.pop("parallel_model", None)
+            return state
+
+        @functools.wraps(ori_init)
+        def __init__(self, *args, multiprocess=False, **kwargs):
+            self.multiprocess = multiprocess
+            ori_init(self, *args, **kwargs)
+
+            if self.multiprocess:
+                sync_bn = os.environ.get("AWNAS_SET_SYNC_BN", None)
+                if sync_bn and sync_bn != "0":
+                    net = SyncBatchNorm.convert_sync_batchnorm(self).to(self.device)
+                else:
+                    net = self
+                object.__setattr__(
+                    self,
+                    "parallel_model",
+                    DistributedDataParallel(
+                        net,
+                        (self.device,),
+                        find_unused_parameters=True,
+                        check_reduction=True,
+                    ),
+                )
+            else:
+                object.__setattr__(self, "parallel_model", self)
+
+        @functools.wraps(ori_forward)
+        def forward(self, *args, **kwargs):
+            if not self.multiprocess:
+                return ori_forward(self, *args, **kwargs)
+            self.multiprocess = False
+            out = self.parallel_model(*args, **kwargs)
+            self.multiprocess = True
+            return out
+
+        cls.__init__ = __init__
+        cls.__getstate__ = __getstate__
+        if override_forward:
+            cls.forward = forward
+        return cls
+
+    return decorator

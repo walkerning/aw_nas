@@ -13,7 +13,8 @@ from aw_nas.utils import expect
 from aw_nas.common import BaseRollout
 from aw_nas.rollout.wrapper import WrapperSearchSpace, WrapperRollout
 from aw_nas.weights_manager.base import BaseWeightsManager, CandidateNet
-
+from aw_nas.weights_manager.necks.base import BaseNeck
+from aw_nas.utils.parallel_utils import parallelize
 
 __all__ = [
     "BaseHead", "BaseBackboneWeightsManager",
@@ -44,7 +45,6 @@ class BaseBackboneWeightsManager(BaseWeightsManager):
         """
         Get a list of channel numbers of feature maps of certain feature_levels.
         By default, the channel numbers of all feature levels are returned.
-        @TCC
         """
 
 
@@ -53,21 +53,19 @@ class WrapperCandidateNet(CandidateNet):
         super(WrapperCandidateNet, self).__init__(eval_no_grad=eval_no_grad)
         self.super_net = super_net
         self._device = self.super_net.device
-        self.multiprocess = self.super_net.multiprocess
         self.rollout = rollout
 
     def forward(self, inputs): #pylint: disable=arguments-differ
-        if self.multiprocess:
-            return self.super_net.parallel_model(inputs, self.rollout)
-        return self.super_net.forward(inputs, self.rollout)
+        return self.super_net(inputs, self.rollout)
 
     def _forward_with_params(self, *args, **kwargs): #pylint: disable=arguments-differ
         raise NotImplementedError()
 
     def get_device(self):
         return self._device
-
     
+
+@parallelize()
 class WrapperWeightsManager(BaseWeightsManager, nn.Module):
     """
     A ``wrapper'' (shared weights) weights manager that delegate the calls to subcomponents:
@@ -82,6 +80,8 @@ class WrapperWeightsManager(BaseWeightsManager, nn.Module):
     for the backbone/neck search spaces in `gen-sample-config`
     in wrapper search space, weights manager.
 
+    The concrete meaning of `feature_levels` depends on specific backbone/neck/head implementations.
+
     NOTE: Use wrapper weights manager to run examples/mloss/enas/enas_search.yaml,
     7% slower than the original one: 75.6s/epoch (6epoch 7min34s) v.s. 70.5s/epoch (6epoch 7min3s)
     """
@@ -92,10 +92,8 @@ class WrapperWeightsManager(BaseWeightsManager, nn.Module):
                  backbone_type=None, backbone_cfg=None,
                  neck_type=None, neck_cfg=None,
                  head_type=None, head_cfg=None,
-                 feature_levels=[-1], # How to specificy this, need discuss @tcc
+                 feature_levels=[-1],
                  max_grad_norm=None,
-                 multiprocess=False,
-                 gpus=tuple(),
                  schedule_cfg=None):
         super().__init__(search_space, device, rollout_type, schedule_cfg)
         nn.Module.__init__(self)
@@ -125,7 +123,7 @@ class WrapperWeightsManager(BaseWeightsManager, nn.Module):
             backbone_ss, self.device, backbone_rollout_type, **(backbone_cfg or {}))
         feature_channel_nums = self.backbone.get_feature_channel_num(feature_levels)
         if neck_type is not None:
-            self.neck = BaseBackboneWeightsManager.get_class_(backbone_type)(
+            self.neck = BaseNeck.get_class_(neck_type)(
                 neck_ss, self.device, neck_rollout_type, feature_channel_nums, **(neck_cfg or {}))
             feature_channel_nums = self.neck.get_feature_channel_num()
         else:
@@ -135,22 +133,10 @@ class WrapperWeightsManager(BaseWeightsManager, nn.Module):
 
         # other configs
         self.max_grad_norm = max_grad_norm
-        self.multiprocess = multiprocess
-        self.gpus = gpus
         # the features that need to be passed from backbone to neck
         self.feature_levels = feature_levels
 
-        # parallize
-        self._parallelize()
-
-    def _parallelize(self):
-        if self.multiprocess:
-            net = convert_sync_bn(self).to(self.device)
-            object.__setattr__(
-                self, "parallel_model", DistributedDataParallel(net, self.gpus, find_unused_parameters=True)
-            )
-        else:
-            object.__setattr__(self, "parallel_model", self)
+        self.to(self.device)
 
     @staticmethod
     def _extract_backbone_and_neck_rollout(rollout):
@@ -160,6 +146,9 @@ class WrapperWeightsManager(BaseWeightsManager, nn.Module):
 
     @staticmethod
     def _pickout_features(features, feature_levels):
+        features_shape = {f.shape[-1]: i for i, f in enumerate(features)}
+        features = [features[i] for i in sorted(features_shape.values())]
+        assert len(features) >= max(feature_levels) + 1
         return [features[level] for level in feature_levels]
 
     def set_device(self, device):

@@ -2,7 +2,8 @@ import copy
 
 from torch import nn
 
-from aw_nas.weights_manager import (FlexibleBlock, FlexibleMobileNetV3Block)
+from aw_nas.common import assert_rollout_type
+from aw_nas.weights_manager.ofa_backbone import (FlexibleBlock, FlexibleMobileNetV3Block)
 
 from .base import BaseNeck
 
@@ -17,10 +18,10 @@ class SSD(BaseNeck, FlexibleBlock):
         search_space,
         device,
         rollout_type,
-        backbone_stage_channels,
-        expansions,
-        channels,
-        kernel_sizes,
+        feature_channel_nums,
+        expansions=[0.5, 0.5, 0.5, 0.5],
+        channels=[512, 256, 256, 128],
+        kernel_sizes=[3],
         activation="relu",
         gpus=tuple(),
         schedule_cfg=None,
@@ -30,8 +31,8 @@ class SSD(BaseNeck, FlexibleBlock):
         FlexibleBlock.__init__(self)
 
         self.expansions = expansions
-        self.channels = backbone_stage_channels + channels
-        channels = backbone_stage_channels[-1:] + channels
+        self.channels = feature_channel_nums + channels
+        channels = feature_channel_nums[-1:] + channels
         self.kernel_sizes = sorted(kernel_sizes)
         self.max_kernel_size = max(self.kernel_sizes)
         self.blocks = nn.ModuleList(
@@ -77,5 +78,9 @@ class SSD(BaseNeck, FlexibleBlock):
 
     def get_feature_channel_num(self):
         return self.channels
+
+    @classmethod
+    def supported_rollout_types(cls):
+        return [None]
 
 

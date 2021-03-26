@@ -2,6 +2,7 @@
 from torch import nn
 
 from aw_nas.weights_manager.necks.bifpn import BiFPNSepConv
+from aw_nas.ops import SeparableConv, get_op
 
 
 class SharedClassifier(nn.Module):

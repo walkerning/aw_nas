@@ -3,7 +3,8 @@ from torch import nn
 from torch.nn import functional as F
 
 from aw_nas import ops
-from aw_nas.weights_manager import FlexibleBlock
+from aw_nas.common import assert_rollout_type
+from aw_nas.weights_manager.ofa_backbone import FlexibleBlock
 from aw_nas.utils import getLogger as _getLogger
 
 from .base import BaseNeck
@@ -14,6 +15,8 @@ except ImportError as e:
     _getLogger("det_neck").warn(
         "Cannot import mmdet_head, detection NAS might not work: {}".format(e)
     )
+    def xavier_init(mod, distribution):
+        getattr(torch.nn.init, "xavier_{}_".format(distribution))(mod.weight)
 
 __all__ = ["FPN"]
 
@@ -153,3 +156,7 @@ class FPN(BaseNeck, FlexibleBlock):
 
     def get_feature_channel_num(self):
         return [self.out_channels] * self.pyramid_layers
+
+    @classmethod
+    def supported_rollout_types(cls):
+        return [None]
