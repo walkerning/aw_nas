@@ -16,8 +16,8 @@ def _warmup_update_lr(optimizer, epoch, init_lr, warmup_epochs, warmup_ratio=0.0
         param_group["lr"] = lr
     return lr
 
-class DetectionFinalTrainer(CNNFinalTrainer):  # pylint: disable=too-many-instance-attributes
-    NAME = "det_final_trainer"
+class WrapperFinalTrainer(CNNFinalTrainer):  # pylint: disable=too-many-instance-attributes
+    NAME = "wrapper_final_trainer"
 
     def __init__(
             self,
@@ -61,7 +61,7 @@ class DetectionFinalTrainer(CNNFinalTrainer):  # pylint: disable=too-many-instan
 
         self.freeze_base_net = freeze_base_net
         self.base_net_lr = base_net_lr
-        super(DetectionFinalTrainer,
+        super(WrapperFinalTrainer,
               self).__init__(model, dataset, device, gpus, objective,
                              multiprocess, epochs, batch_size, optimizer_type,
                              optimizer_kwargs, learning_rate, momentum,
@@ -78,6 +78,7 @@ class DetectionFinalTrainer(CNNFinalTrainer):  # pylint: disable=too-many-instan
         self.warmup_steps = warmup_steps
         self.warmup_ratio = warmup_ratio
 
+
     def _init_optimizer(self):
         optim_cls = getattr(torch.optim, self.optimizer_type)
         optim_kwargs = {
@@ -86,6 +87,7 @@ class DetectionFinalTrainer(CNNFinalTrainer):  # pylint: disable=too-many-instan
             "weight_decay": self.weight_decay
         }
         backbone = self.model.backbone
+        neck = self.model.neck
         head = self.model.head
         if not self.freeze_base_net:
             params = [{"params": self.model.parameters()}]
@@ -96,6 +98,8 @@ class DetectionFinalTrainer(CNNFinalTrainer):  # pylint: disable=too-many-instan
             }, {
                 "params": head.parameters()
             }]
+            if neck is not None:
+                params += [{"params": neck.parameters()}]
         optim_kwargs.update(self.optimizer_kwargs or {})
         optimizer = optim_cls(params, **optim_kwargs)
 
@@ -134,7 +138,7 @@ class DetectionFinalTrainer(CNNFinalTrainer):  # pylint: disable=too-many-instan
 
         for step, (inputs, targets) in enumerate(train_queue):
             cur_step = step + len(train_queue) * (epoch - 1)
-            if 0 <= cur_step < self.warmup_steps:
+            if 0 <= cur_step <= self.warmup_steps:
                 lr = _warmup_update_lr(optimizer, cur_step,
                                        self.learning_rate, self.warmup_steps, self.warmup_ratio)
                 if cur_step % self.report_every == 0:
@@ -146,6 +150,10 @@ class DetectionFinalTrainer(CNNFinalTrainer):  # pylint: disable=too-many-instan
             losses = criterion(inputs, predictions, targets, model)
             loss = sum(losses.values())
             loss.backward()
+
+            #for p in optimizer.param_groups[0]['params']:
+            #    if p.grad is not None:
+            #        print(p.grad.sum())
 
             if self.grad_clip is not None:
                 nn.utils.clip_grad_norm_(model.parameters(), self.grad_clip)
@@ -203,5 +211,4 @@ class DetectionFinalTrainer(CNNFinalTrainer):  # pylint: disable=too-many-instan
             k: self.objective.aggregate_fn(k, False)(v)
             for k, v in zip(self._perf_names, all_perfs)
         }
-        return 0., 0., obj_perfs
         return top1.avg, sum(losses_obj.avgs().values()), obj_perfs

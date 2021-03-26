@@ -529,11 +529,11 @@ def get_sub_kernel(kernel, sub_kernel_size):
     return kernel[:, :, left:right, left:right].contiguous()
 
 
-def _get_channel_mask(filters: torch.Tensor, num_channels: int):
-    mask = torch.zeros(filters.shape[1], dtype=torch.bool)
-    channel_order = filters.norm(p=1, dim=(0, 2, 3)).argsort(descending=True)
-    mask[channel_order[:num_channels]] = True
-
+def _get_channel_mask(filters: torch.Tensor, num_channels: int, p=1):
+    assert p in (0, 1)
+    dim = (0, 2, 3) if p == 1 else (1, 2, 3)
+    channel_order = filters.norm(p=1, dim=dim).argsort(descending=True)
+    mask = channel_order[:num_channels].sort()[0]
     return mask
 
 

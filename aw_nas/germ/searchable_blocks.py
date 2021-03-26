@@ -1,10 +1,11 @@
 #pylint: disable=arguments-differ
-from collections import OrderedDict
 from collections import abc as collection_abcs
 
 from torch import nn
 
 from aw_nas import ops, germ
+from aw_nas.utils import nullcontext
+from .utils import *
 
 
 class GermOpOnEdge(germ.SearchableBlock):
@@ -208,7 +209,8 @@ class GermMixedOp(germ.SearchableBlock):
         self.op_list = op_list
         if op_choice is None:
             # initalize new choice
-            self.op_choice = germ.Choices(choices=list(range(len(self.op_list))), size=1)
+            self.op_choice = germ.Choices(
+                choices=list(range(len(self.op_list))), size=1)
         else:
             # directly use the passed-in `op_choice`
             self.op_choice = op_choice
@@ -229,8 +231,8 @@ class GermMixedOp(germ.SearchableBlock):
                 op = op_cls(**self.op_kwargs)
             self.p_ops.append(op)
 
-    def forward_rollout(self, rollout, inputs):
-        op_index = self._get_decision(self.op_choice, rollout)
+    def forward(self, inputs):
+        op_index = self._get_decision(self.op_choice, self.ctx.rollout)
         return self.p_ops[op_index](inputs)
 
     def finalize_rollout_outplace(self, rollout):
@@ -239,3 +241,381 @@ class GermMixedOp(germ.SearchableBlock):
     def finalize_rollout(self, rollout):
         op_index = self._get_decision(self.op_choice, rollout)
         return self.p_ops[op_index]
+
+
+class SearchableConv(germ.SearchableBlock, nn.Conv2d):
+    NAME = "conv"
+
+    def __init__(self, ctx, in_channels, out_channels, kernel_size, stride=1, bias=False, groups=1, **kwargs):
+        super().__init__(ctx)
+
+        self.ci_choices = in_channels
+        self.co_choices = out_channels
+        self.k_choices = kernel_size
+        self.s_choices = stride
+        self.g_choices = groups
+
+        assert groups == 1 or out_channels == in_channels, "Only support Depthwise and regular" \
+            " conv currently, either set groups = 1 or out_channels == in_channels."
+
+        if isinstance(groups, germ.Choices):
+            groups = groups.range()[1]
+
+        self.ci_handler = ChannelMaskHandler(
+            ctx, self, "in_channels", in_channels)
+        self.co_handler = ChannelMaskHandler(
+            ctx, self, "out_channels", out_channels)
+        self.k_handler = KernelMaskHandler(
+            ctx, self, "kernel_size", kernel_size)
+        self.s_handler = StrideMaskHandler(ctx, self, "stride", stride)
+
+
+        _modules = self._modules
+        nn.Conv2d.__init__(
+            self,
+            in_channels=self.ci_handler.max,
+            out_channels=self.co_handler.max,
+            kernel_size=self.k_handler.max,
+            stride=self.s_handler.max,
+            padding=self.k_handler.max // 2,
+            bias=bias,
+            groups=groups,
+            **kwargs
+        )
+        self._modules.update(_modules)
+
+
+    def rollout_context(self, rollout=None, detach=False):
+        if rollout is None:
+            return nullcontext()
+        # stride
+        r_s = self._get_decision(self.s_handler.choices, rollout)
+        # kernel size
+        r_k_s = self._get_decision(self.k_handler.choices, rollout)
+        # out channels
+        r_o_c = self._get_decision(self.co_handler.choices, rollout)
+        r_i_c = self._get_decision(self.ci_handler.choices, rollout)
+
+        if self.groups == 1:
+            ctx = self.ci_handler.apply(self, r_i_c, axis=1, detach=detach)
+        else:
+            ctx = nullcontext()
+        ctx = self.co_handler.apply(
+            self, r_o_c, axis=0, ctx=ctx, detach=detach)
+        ctx = self.k_handler.apply(self, r_k_s, ctx=ctx, detach=detach)
+        ctx = self.s_handler.apply(self, r_s, ctx=ctx, detach=detach)
+        return ctx
+
+    def forward(self, inputs):
+        with self.rollout_context(self.ctx.rollout):
+            out = super().forward(inputs)
+        return out
+
+    def finalize_rollout(self, rollout):
+        with self.rollout_context(rollout, detach=True):
+            conv = nn.Conv2d(
+                in_channels=self.in_channels,
+                out_channels=self.out_channels,
+                kernel_size=self.kernel_size,
+                stride=self.stride,
+                padding=self.padding,
+                bias=self.bias is not None,
+                groups=self.groups,
+                dilation=self.dilation)
+            conv.weight.data.copy_(self.weight.data)
+            if self.bias is not None:
+                conv.bias.data.copy_(self.bias.data)
+        return conv
+
+
+class SearchableBN(germ.SearchableBlock, nn.BatchNorm2d):
+    NAME = "bn"
+
+    def __init__(self, ctx, channels, **kwargs):
+        super().__init__(ctx)
+        self.c_choices = channels
+        self.handler = ChannelMaskHandler(ctx, self, "channel", channels)
+        nn.BatchNorm2d.__init__(self, self.handler.max, **kwargs)
+
+    def rollout_context(self, rollout, detach=False):
+        co = self._get_decision(self.handler.choices, rollout)
+        return self.handler.apply(self, co, detach=detach)
+
+    def forward(self, inputs):
+        with self.rollout_context(self.ctx.rollout):
+            out = super().forward(inputs)
+        return out
+
+    def finalize_rollout(self, rollout):
+        with self.rollout_context(rollout, True):
+            bn = nn.BatchNorm2d(
+                self.num_features,
+                self.eps,
+                self.momentum,
+                self.affine,
+                self.track_running_stats)
+        bn.weight.data.copy_(self.weight.data)
+        bn.bias.data.copy_(self.bias.data)
+        return bn
+
+
+class SearchableConvBNBlock(germ.SearchableBlock):
+    NAME = "conv_bn"
+
+    def __init__(self, ctx, in_channels, out_channels, kernel_size, stride=1, groups=1,
+                 conv_cfg={}, norm_cfg={}):
+        super().__init__(ctx)
+
+        self.conv = SearchableConv(
+            ctx,
+            in_channels,
+            out_channels,
+            kernel_size,
+            stride,
+            bias=False,
+            groups=groups,
+            **conv_cfg)
+        self.bn = SearchableBN(ctx, out_channels, **norm_cfg)
+
+    def forward(self, inputs):
+        out = self.bn(self.conv(inputs))
+        return out
+
+
+class SearchableSepConv(germ.SearchableBlock):
+    NAME = "sep_conv"
+
+    def __init__(self, ctx, in_channels, out_channels, kernel_size, stride=1, activation="relu"):
+        super().__init__(ctx)
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        self.stride = stride
+
+        depth_wise = SearchableConvBNBlock(ctx, in_channels, in_channels, kernel_size, stride,
+                                           groups=in_channels)
+        point_linear = SearchableConvBNBlock(ctx, in_channels, out_channels, 1)
+
+        self.conv = nn.Sequential(
+            depth_wise,
+            ops.get_op(activation)(),
+            point_linear
+        )
+
+    def forward(self, inputs):
+        return self.conv(inputs)
+
+
+class SearchableMBV2Block(germ.SearchableBlock):
+    NAME = "mobilenet_v2"
+
+    def __init__(self, ctx, in_channels, out_channels, exp_ratio, kernel_size,
+                 stride=1, activation="relu", **kwargs):
+        super().__init__(ctx)
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        self.inner_channels = exp_ratio * in_channels
+        self.stride = stride
+
+        self.inv_bottleneck = SearchableConvBNBlock(
+            ctx, in_channels, self.inner_channels, 1)
+        self.depth_wise = SearchableConvBNBlock(ctx, self.inner_channels, self.inner_channels, kernel_size, stride,
+                                                groups=self.inner_channels)
+        self.point_linear = SearchableConvBNBlock(
+            ctx, self.inner_channels, out_channels, 1)
+
+        self.act1 = ops.get_op(activation)()
+        self.act2 = ops.get_op(activation)()
+
+    def forward(self, inputs):
+        out = self.inv_bottleneck(inputs)
+        out = self.act1(out)
+        out = self.depth_wise(out)
+        out = self.act2(out)
+        out = self.point_linear(out)
+        if inputs.shape[-1] == out.shape[-1] and self.in_channels == self.out_channels:
+            out += inputs
+        return out
+
+
+def channel_shuffle(x, groups):
+    batchsize, num_channels, height, width = x.size()
+    channels_per_group = num_channels // groups
+    x = x.view(batchsize, groups, channels_per_group, height, width)
+    x = torch.transpose(x, 1, 2).contiguous()
+    x = x.view(batchsize, -1, height, width)
+    return x
+
+
+class SearchableShuffleV2Block(germ.SearchableBlock):
+    NAME = "shufflenet_v2"
+
+    def __init__(self, ctx, in_channels, out_channels, kernel_size, stride=1, activation="relu",
+                 **kwargs):
+        super().__init__(ctx)
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        self.stride = stride
+
+        assert isinstance(stride, int)
+
+        self.inner_channels = self.out_channels * 0.5
+
+        if isinstance(self.inner_channels, float):
+            self.inner_channels = int(self.inner_channels)
+
+        bottleneck = SearchableConvBNBlock(ctx, in_channels if stride > 1 else
+                                           self.inner_channels, self.inner_channels, 1)
+        depth_wise = SearchableConvBNBlock(ctx, self.inner_channels, self.inner_channels,
+                                           kernel_size, stride, groups=self.inner_channels)
+        point_linear = SearchableConvBNBlock(
+            ctx, self.inner_channels, self.inner_channels, 1)
+
+        self.shortcut = nn.Sequential()
+        if stride > 1:
+            self.shortcut = nn.Sequential(
+                SearchableConvBNBlock(ctx, in_channels, in_channels, kernel_size, stride,
+                                      groups=in_channels),
+                SearchableConvBNBlock(
+                    ctx, in_channels, self.inner_channels, 1),
+                ops.get_op(activation)()
+            )
+
+        self.branch = nn.Sequential(
+            bottleneck,
+            ops.get_op(activation)(),
+            depth_wise,
+            point_linear,
+            ops.get_op(activation)(),
+        )
+
+    def forward(self, inputs):
+        if self.stride == 1:
+            x1, x2 = inputs.chunk(2, dim=1)
+            out = torch.cat([x1, self.branch(x2)], dim=1)
+        else:
+            out = torch.cat(
+                [self.shortcut(inputs), self.branch(inputs)], dim=1)
+        return channel_shuffle(out, 2)
+
+
+class SearchableTucker(germ.SearchableBlock):
+
+    def __init__(self, ctx, in_channels, out_channels, sqz_ratio_1, sqz_ratio_2, kernel_size, stride=1,
+                 activation="relu"):
+        super().__init__(ctx)
+        self.in_channels = in_channels
+        self.squeeze_channels = sqz_ratio_1 * in_channels
+        self.expand_channels = sqz_ratio_2 * out_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.activation = activatiion
+
+        bottleneck = SearchableConvBNBlock(
+            ctx, in_channels, self.squeeze_channels, 1)
+        regular = SearchableConvBNBlock(
+            ctx, self.squeeze_channels, self.expand_channels, kernel_size, stride)
+        point_linear = SearchableConvBNBlock(
+            ctx, self.expand_channels, out_channels, 1)
+
+        self.tucker = nn.Sequential(
+            bottleneck,
+            ops.get_op(activation)(),
+            regular,
+            ops.get_op(activation)(),
+            point_linear
+        )
+
+    def forward(self, inputs):
+        out = self.tucker(inputs)
+        if self.stride == 1 and self.in_channels == self.out_channels:
+            out += inputs
+        return out
+
+
+class SearchableFusedConv(germ.SearchableBlock):
+
+    def __init__(self, ctx, in_channels, out_channels, exp_ratio, kernel_size, stride=1,
+                 activation="relu"):
+        super().__init__(ctx)
+        self.in_channels = in_channels
+        self.inner_channels = exp_ratio * in_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.activation = activatiion
+
+        bottleneck = SearchableConvBNBlock(
+            ctx, in_channels, self.inner_channels, 1)
+        point_linear = SearchableConvBNBlock(
+            ctx, self.inner_channels, out_channels, 1)
+
+        self.fused_conv = nn.Sequential(
+            bottleneck,
+            ops.get_op(activation)(),
+            point_linear
+        )
+
+    def forward(self, inputs):
+        out = self.fused_conv(inputs)
+        if self.stride == 1 and self.in_channels == self.out_channels:
+            out += inputs
+        return out
+
+    def finalize_rollout(self, rollout):
+        self.fused_conv = nn.Sequential(*[m.finalize_rollout(rollout) if isinstance(m,
+                                                                                    SearchableConvBNBlock) else m for m in self.fused_conv])
+        return self
+
+
+class RepConv(germ.SearchableBlock):
+
+    def __init__(self, ctx, in_channels, out_channels, kernel_size, stride=1, groups=1):
+        super().__init__(ctx)
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.groups = groups
+
+        assert isinstance(stride, int)
+
+        self.conv = SearchableConvBNBlock(ctx, in_channels, out_channels, kernel_size, stride=stride,
+                                          groups=groups)
+        self.branch = SearchableConvBNBlock(
+            ctx, in_channels, out_channels, 1, stride=stride)
+        self.bn = SearchableBN(ctx, in_channels)
+
+    def forward(self, inputs):
+        out = self.conv(inputs)
+        out += self.branch(inputs)
+        if self.stride == 1 and self.in_channels == self.out_channels:
+            out = out + self.bn(inputs)
+        return out
+
+    def reparameter(self):
+        """ 
+        call this function after calling finalize_rollout
+        """
+        conv_w = self.conv.weight.data
+        branch_w = self.branch.weight.data
+        branch_w = F.pad(branch_w, (1, 1, 1, 1))
+        weight = conv_w + branch_w
+        if self.stride == 1 and self.in_channels == self.out_channels:
+            w = torch.zeros_like(weight)
+            w[:, :, 1, 1] = 1
+            weight += w
+        conv = nn.Conv2d(
+            self.conv.in_channels,
+            self.conv.out_channels,
+            self.conv.kernel_size,
+            stride=self.stride,
+            groups=self.groups,
+            bias=False)
+
+        conv.weight.data.copy_(weight)
+        return nn.Sequential(conv, self.bn)

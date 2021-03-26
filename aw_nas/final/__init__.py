@@ -15,6 +15,9 @@ from .dense import DenseGenotypeModel
 
 from .ofa_model import OFAGenotypeModel
 
+from .wrapper_model import WrapperFinalModel
+from .wrapper_trainer import WrapperFinalTrainer
+
 try:
     from .det_model import DetectionFinalModel
     from .det_trainer import DetectionFinalTrainer

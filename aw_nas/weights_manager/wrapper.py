@@ -47,6 +47,12 @@ class BaseBackboneWeightsManager(BaseWeightsManager):
         By default, the channel numbers of all feature levels are returned.
         """
 
+    @abc.abstractmethod
+    def finalize(self, rollout):
+        """
+        In-place finalize model, and return self
+        """
+
 
 class WrapperCandidateNet(CandidateNet):
     def __init__(self, super_net, rollout, eval_no_grad=True):
@@ -137,6 +143,34 @@ class WrapperWeightsManager(BaseWeightsManager, nn.Module):
         self.feature_levels = feature_levels
 
         self.to(self.device)
+
+        self.reset_flops()
+        self.set_hook()
+
+    def reset_flops(self):
+        self._flops_calculated = False
+        self.total_flops = 0
+
+    def set_hook(self):
+        for name, module in self.named_modules():
+            module.register_forward_hook(self._hook_intermediate_feature)
+
+    def _hook_intermediate_feature(self, module, inputs, outputs):
+        if not self._flops_calculated:
+            if isinstance(module, nn.Conv2d):
+                self.total_flops += (
+                    inputs[0].size(1)
+                    * outputs.size(1)
+                    * module.kernel_size[0]
+                    * module.kernel_size[1]
+                    * inputs[0].size(2)
+                    * inputs[0].size(3)
+                    / (module.stride[0] * module.stride[1] * module.groups)
+                )
+            elif isinstance(module, nn.Linear):
+                self.total_flops += inputs[0].size(1) * outputs.size(1)
+        else:
+            pass
 
     @staticmethod
     def _extract_backbone_and_neck_rollout(rollout):

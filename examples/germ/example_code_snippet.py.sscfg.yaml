@@ -1,0 +1,20 @@
+blocks: !!python/object/apply:collections.defaultdict
+  args: [!!python/name:builtins.dict '']
+  dictitems:
+    block_1: {kernel_size: block_1.kernel_size, out_channels: block_1.out_channels}
+    block_2: {in_channels: block_1.out_channels, kernel_size: block_2.kernel_size,
+      out_channels: block_2.out_channels}
+    block_3: {in_channels: block_2.out_channels}
+    block_4: {in_channels: block_2.out_channels, out_channels: block_4.out_channels}
+    block_5: {in_channels: block_4.out_channels}
+decisions:
+  block_1.kernel_size: !!python/tuple [choices, 'Choices(choices: [3, 5, 7], size:
+      1, replace: True, p: null)']
+  block_1.out_channels: !!python/tuple [choices, 'Choices(choices: [16, 32, 64], size:
+      1, replace: True, p: null)']
+  block_2.kernel_size: !!python/tuple [choices, 'Choices(choices: [3, 5], size: 1,
+      replace: True, p: null)']
+  block_2.out_channels: !!python/tuple [choices, 'Choices(choices: [16, 32, 64], size:
+      1, replace: True, p: null)']
+  block_4.out_channels: !!python/tuple [choices, 'Choices(choices: [32, 64, 128],
+      size: 1, replace: True, p: null)']

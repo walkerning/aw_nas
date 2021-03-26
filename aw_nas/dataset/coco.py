@@ -252,6 +252,8 @@ class COCODetection(data.Dataset):
             x2 = x1 + np.max((0, obj["bbox"][2]))
             y2 = y1 + np.max((0, obj["bbox"][3]))
             if obj["area"] > 0 and x2 - x1 >= 1 and y2 - y1 >= 1:
+                if obj.get("iscrowd", False):
+                    continue
                 obj["clean_bbox"] = [x1, y1, x2, y2]
                 valid_objs.append(obj)
         objs = valid_objs
@@ -397,7 +399,6 @@ class COCODataset(BaseDataset):
                  load_train_only=False,
                  class_name_file=None,
                  random_choose=False,
-                 random_seed=123,
                  train_sets=[("2017", "train")],
                  test_sets=[("2017", "val")],
                  train_crop_size=300,
@@ -488,3 +489,65 @@ class COCODataset(BaseDataset):
         dataset = self.datasets.get("test", self.datasets["train"])
         return dataset.evaluate_detections(all_boxes, output_dir,
                                            dataset.image_indexes)
+
+
+class COCOMMDetDataset(BaseDataset):
+    NAME = "coco_mmdet"
+
+    def __init__(self,
+                 train_ann_file,
+                 test_ann_file,
+                 train_img_prefix,
+                 test_img_prefix,
+                 classes=None,
+                 max_images=None,
+                 train_pipeline=None,
+                 test_pipeline=None):
+        super(COCOMMDetDataset, self).__init__()
+
+        from mmdet.datasets.coco import CocoDataset
+
+        self.datasets = {}
+        self.datasets["train"] = CocoDataset(
+            train_ann_file,
+            train_pipeline,
+            data_root=self.data_dir,
+            img_prefix=train_img_prefix)
+
+        self.datasets["train_testTransform"] = CocoDataset(
+            train_ann_file,
+            test_pipeline,
+            data_root=self.data_dir,
+            img_prefix=train_img_prefix,
+            test_mode=True)
+
+        self.datasets["test"] = CocoDataset(
+            test_ann_file,
+            test_pipeline,
+            data_root=self.data_dir,
+            img_prefix=test_img_prefix,
+            test_mode=True)
+        
+        for ds in self.datasets.values():
+            ds.kwargs = {"collate_fn": collate_fn}
+            if not ds.test_mode:
+                ds.kwargs["group_sample"] = True
+                ds.group_index = ds.flag
+
+    def splits(self):
+        return self.datasets
+
+    @classmethod
+    def data_type(cls):
+        return "image"
+
+    @staticmethod
+    def _read_names_from_file(path):
+        with open(path, "r") as f:
+            return f.read().strip().split("\n")
+
+    @staticmethod
+    def _write_names_to_file(names, path):
+        with open(path, "w") as f:
+            f.write("\n".join(names))
+

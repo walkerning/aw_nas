@@ -68,6 +68,12 @@ cfg = {
         "germ_def_file": os.path.abspath(code_snippet_path)
     },
 }
+
+with open(search_cfg, "r") as fr:
+    new_cfg = yaml.load(fr)
+
+new_cfg.update(cfg)
+
 with open(search_cfg, "w") as w_f:
-    yaml.dump(cfg, w_f)
+    yaml.dump(new_cfg, w_f)
 print("Dump the search_space/weights_manager cfg to {}. Other settings should be added manually, you can use `awnas gen-sample-config -r germ` to help!".format(search_cfg))

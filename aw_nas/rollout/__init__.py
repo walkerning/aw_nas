@@ -38,7 +38,8 @@ from aw_nas.rollout.general import (
 
 from aw_nas.rollout.wrapper import (
     WrapperSearchSpace,
-    WrapperRollout
+    WrapperRollout,
+    GermWrapperSearchSpace
 )
 
 def assert_rollout_type(type_name):

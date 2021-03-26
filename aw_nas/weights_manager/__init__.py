@@ -1,5 +1,5 @@
 #pylint: disable=unused-import,unused-wildcard-import
-from aw_nas.weights_manager.base import BaseWeightsManager
+from aw_nas.weights_manager.base import BaseWeightsManager, CandidateNet
 
 from aw_nas.weights_manager.super_net import *
 from aw_nas.weights_manager.diff_super_net import *

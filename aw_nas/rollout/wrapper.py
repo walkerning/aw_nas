@@ -154,3 +154,16 @@ class WrapperRollout(BaseRollout):
 
     def __eq__(self, other):
         return self.backbone == other.backbone and self.neck == other.neck
+
+
+class GermWrapperSearchSpace(WrapperSearchSpace):
+    NAME = "germ_wrapper"
+    
+    def random_sample(self):
+        rollout = super().random_sample()
+        br, nr = rollout.backbone, rollout.neck
+        if nr is not None:
+            duplicate_r = {k: v for k, v in br.arch.items() if k in nr.arch}
+            nr.arch.update(duplicate_r)
+        return rollout
+

@@ -15,6 +15,7 @@ class GermNB201Net(germ.GermSuperNet):
 
     def __init__(
         self,
+        search_space,
         op_list=[
             "none",
             "skip_connect",
@@ -31,7 +32,7 @@ class GermNB201Net(germ.GermSuperNet):
         stem_stride=1,
         stem_affine=True
     ):
-        super(GermNB201Net, self).__init__()
+        super(GermNB201Net, self).__init__(search_space)
 
         # search space configs
         self.op_list = op_list

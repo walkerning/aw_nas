@@ -32,13 +32,18 @@ class OFAClassificationObjective(BaseObjective):
         return ["image"]
 
     def perf_names(self):
-        return ["acc"]
+        return ["acc", "FLOPs"]
 
     def get_perfs(self, inputs, outputs, targets, cand_net):
         """
         Get top-1 acc.
         """
-        return float(accuracy(outputs, targets)[0]) / 100
+        if hasattr(cand_net.super_net, "total_flops"):
+            flops = cand_net.super_net.total_flops
+            cand_net.super_net.reset_flops()
+        else:
+            flops = 0
+        return float(accuracy(outputs, targets)[0]) / 100, -flops 
 
     def get_reward(self, inputs, outputs, targets, cand_net):
         return float(accuracy(outputs, targets)[0]) / 100

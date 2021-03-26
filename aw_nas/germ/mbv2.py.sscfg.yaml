@@ -1,0 +1,414 @@
+blocks: !!python/object/apply:collections.defaultdict
+  args: [!!python/name:builtins.dict '']
+  dictitems:
+    backbone.cells.0.0: {inner_channels: backbone.cells.0.0.inner_channels, kernel_size: backbone.cells.0.0.kernel_size,
+      out_channels: backbone.cells.0.0.out_channels, stride: backbone.cells.0.0.stride}
+    backbone.cells.0.0.depth_wise: {in_channels: backbone.cells.0.0.inner_channels,
+      kernel_size: backbone.cells.0.0.kernel_size, out_channels: backbone.cells.0.0.inner_channels,
+      stride: backbone.cells.0.0.stride}
+    backbone.cells.0.0.inv_bottleneck: {out_channels: backbone.cells.0.0.inner_channels}
+    backbone.cells.0.0.point_linear: {in_channels: backbone.cells.0.0.inner_channels,
+      out_channels: backbone.cells.0.0.out_channels}
+    backbone.cells.0.1: {in_channels: backbone.cells.0.0.out_channels, inner_channels: backbone.cells.0.1.inner_channels,
+      kernel_size: backbone.cells.0.1.kernel_size, out_channels: backbone.cells.0.0.out_channels,
+      stride: backbone.cells.0.1.stride}
+    backbone.cells.0.1.depth_wise: {in_channels: backbone.cells.0.1.inner_channels,
+      kernel_size: backbone.cells.0.1.kernel_size, out_channels: backbone.cells.0.1.inner_channels,
+      stride: backbone.cells.0.1.stride}
+    backbone.cells.0.1.inv_bottleneck: {in_channels: backbone.cells.0.0.out_channels,
+      out_channels: backbone.cells.0.1.inner_channels}
+    backbone.cells.0.1.point_linear: {in_channels: backbone.cells.0.1.inner_channels,
+      out_channels: backbone.cells.0.0.out_channels}
+    backbone.cells.0.2: {in_channels: backbone.cells.0.0.out_channels, inner_channels: backbone.cells.0.2.inner_channels,
+      kernel_size: backbone.cells.0.2.kernel_size, out_channels: backbone.cells.0.0.out_channels,
+      stride: backbone.cells.0.2.stride}
+    backbone.cells.0.2.depth_wise: {in_channels: backbone.cells.0.2.inner_channels,
+      kernel_size: backbone.cells.0.2.kernel_size, out_channels: backbone.cells.0.2.inner_channels,
+      stride: backbone.cells.0.2.stride}
+    backbone.cells.0.2.inv_bottleneck: {in_channels: backbone.cells.0.0.out_channels,
+      out_channels: backbone.cells.0.2.inner_channels}
+    backbone.cells.0.2.point_linear: {in_channels: backbone.cells.0.2.inner_channels,
+      out_channels: backbone.cells.0.0.out_channels}
+    backbone.cells.0.3: {in_channels: backbone.cells.0.0.out_channels, inner_channels: backbone.cells.0.3.inner_channels,
+      kernel_size: backbone.cells.0.3.kernel_size, out_channels: backbone.cells.0.0.out_channels,
+      stride: backbone.cells.0.3.stride}
+    backbone.cells.0.3.depth_wise: {in_channels: backbone.cells.0.3.inner_channels,
+      kernel_size: backbone.cells.0.3.kernel_size, out_channels: backbone.cells.0.3.inner_channels,
+      stride: backbone.cells.0.3.stride}
+    backbone.cells.0.3.inv_bottleneck: {in_channels: backbone.cells.0.0.out_channels,
+      out_channels: backbone.cells.0.3.inner_channels}
+    backbone.cells.0.3.point_linear: {in_channels: backbone.cells.0.3.inner_channels,
+      out_channels: backbone.cells.0.0.out_channels}
+    backbone.cells.1.0: {in_channels: backbone.cells.0.0.out_channels, inner_channels: backbone.cells.1.0.inner_channels,
+      kernel_size: backbone.cells.1.0.kernel_size, out_channels: backbone.cells.1.0.out_channels,
+      stride: backbone.cells.1.0.stride}
+    backbone.cells.1.0.depth_wise: {in_channels: backbone.cells.1.0.inner_channels,
+      kernel_size: backbone.cells.1.0.kernel_size, out_channels: backbone.cells.1.0.inner_channels,
+      stride: backbone.cells.1.0.stride}
+    backbone.cells.1.0.inv_bottleneck: {in_channels: backbone.cells.0.0.out_channels,
+      out_channels: backbone.cells.1.0.inner_channels}
+    backbone.cells.1.0.point_linear: {in_channels: backbone.cells.1.0.inner_channels,
+      out_channels: backbone.cells.1.0.out_channels}
+    backbone.cells.1.1: {in_channels: backbone.cells.1.0.out_channels, inner_channels: backbone.cells.1.1.inner_channels,
+      kernel_size: backbone.cells.1.1.kernel_size, out_channels: backbone.cells.1.0.out_channels,
+      stride: backbone.cells.1.1.stride}
+    backbone.cells.1.1.depth_wise: {in_channels: backbone.cells.1.1.inner_channels,
+      kernel_size: backbone.cells.1.1.kernel_size, out_channels: backbone.cells.1.1.inner_channels,
+      stride: backbone.cells.1.1.stride}
+    backbone.cells.1.1.inv_bottleneck: {in_channels: backbone.cells.1.0.out_channels,
+      out_channels: backbone.cells.1.1.inner_channels}
+    backbone.cells.1.1.point_linear: {in_channels: backbone.cells.1.1.inner_channels,
+      out_channels: backbone.cells.1.0.out_channels}
+    backbone.cells.1.2: {in_channels: backbone.cells.1.0.out_channels, inner_channels: backbone.cells.1.2.inner_channels,
+      kernel_size: backbone.cells.1.2.kernel_size, out_channels: backbone.cells.1.0.out_channels,
+      stride: backbone.cells.1.2.stride}
+    backbone.cells.1.2.depth_wise: {in_channels: backbone.cells.1.2.inner_channels,
+      kernel_size: backbone.cells.1.2.kernel_size, out_channels: backbone.cells.1.2.inner_channels,
+      stride: backbone.cells.1.2.stride}
+    backbone.cells.1.2.inv_bottleneck: {in_channels: backbone.cells.1.0.out_channels,
+      out_channels: backbone.cells.1.2.inner_channels}
+    backbone.cells.1.2.point_linear: {in_channels: backbone.cells.1.2.inner_channels,
+      out_channels: backbone.cells.1.0.out_channels}
+    backbone.cells.1.3: {in_channels: backbone.cells.1.0.out_channels, inner_channels: backbone.cells.1.3.inner_channels,
+      kernel_size: backbone.cells.1.3.kernel_size, out_channels: backbone.cells.1.0.out_channels,
+      stride: backbone.cells.1.3.stride}
+    backbone.cells.1.3.depth_wise: {in_channels: backbone.cells.1.3.inner_channels,
+      kernel_size: backbone.cells.1.3.kernel_size, out_channels: backbone.cells.1.3.inner_channels,
+      stride: backbone.cells.1.3.stride}
+    backbone.cells.1.3.inv_bottleneck: {in_channels: backbone.cells.1.0.out_channels,
+      out_channels: backbone.cells.1.3.inner_channels}
+    backbone.cells.1.3.point_linear: {in_channels: backbone.cells.1.3.inner_channels,
+      out_channels: backbone.cells.1.0.out_channels}
+    backbone.cells.2.0: {in_channels: backbone.cells.1.0.out_channels, inner_channels: backbone.cells.2.0.inner_channels,
+      kernel_size: backbone.cells.2.0.kernel_size, out_channels: backbone.cells.2.0.out_channels,
+      stride: backbone.cells.2.0.stride}
+    backbone.cells.2.0.depth_wise: {in_channels: backbone.cells.2.0.inner_channels,
+      kernel_size: backbone.cells.2.0.kernel_size, out_channels: backbone.cells.2.0.inner_channels,
+      stride: backbone.cells.2.0.stride}
+    backbone.cells.2.0.inv_bottleneck: {in_channels: backbone.cells.1.0.out_channels,
+      out_channels: backbone.cells.2.0.inner_channels}
+    backbone.cells.2.0.point_linear: {in_channels: backbone.cells.2.0.inner_channels,
+      out_channels: backbone.cells.2.0.out_channels}
+    backbone.cells.2.1: {in_channels: backbone.cells.2.0.out_channels, inner_channels: backbone.cells.2.1.inner_channels,
+      kernel_size: backbone.cells.2.1.kernel_size, out_channels: backbone.cells.2.0.out_channels,
+      stride: backbone.cells.2.1.stride}
+    backbone.cells.2.1.depth_wise: {in_channels: backbone.cells.2.1.inner_channels,
+      kernel_size: backbone.cells.2.1.kernel_size, out_channels: backbone.cells.2.1.inner_channels,
+      stride: backbone.cells.2.1.stride}
+    backbone.cells.2.1.inv_bottleneck: {in_channels: backbone.cells.2.0.out_channels,
+      out_channels: backbone.cells.2.1.inner_channels}
+    backbone.cells.2.1.point_linear: {in_channels: backbone.cells.2.1.inner_channels,
+      out_channels: backbone.cells.2.0.out_channels}
+    backbone.cells.2.2: {in_channels: backbone.cells.2.0.out_channels, inner_channels: backbone.cells.2.2.inner_channels,
+      kernel_size: backbone.cells.2.2.kernel_size, out_channels: backbone.cells.2.0.out_channels,
+      stride: backbone.cells.2.2.stride}
+    backbone.cells.2.2.depth_wise: {in_channels: backbone.cells.2.2.inner_channels,
+      kernel_size: backbone.cells.2.2.kernel_size, out_channels: backbone.cells.2.2.inner_channels,
+      stride: backbone.cells.2.2.stride}
+    backbone.cells.2.2.inv_bottleneck: {in_channels: backbone.cells.2.0.out_channels,
+      out_channels: backbone.cells.2.2.inner_channels}
+    backbone.cells.2.2.point_linear: {in_channels: backbone.cells.2.2.inner_channels,
+      out_channels: backbone.cells.2.0.out_channels}
+    backbone.cells.2.3: {in_channels: backbone.cells.2.0.out_channels, inner_channels: backbone.cells.2.3.inner_channels,
+      kernel_size: backbone.cells.2.3.kernel_size, out_channels: backbone.cells.2.0.out_channels,
+      stride: backbone.cells.2.3.stride}
+    backbone.cells.2.3.depth_wise: {in_channels: backbone.cells.2.3.inner_channels,
+      kernel_size: backbone.cells.2.3.kernel_size, out_channels: backbone.cells.2.3.inner_channels,
+      stride: backbone.cells.2.3.stride}
+    backbone.cells.2.3.inv_bottleneck: {in_channels: backbone.cells.2.0.out_channels,
+      out_channels: backbone.cells.2.3.inner_channels}
+    backbone.cells.2.3.point_linear: {in_channels: backbone.cells.2.3.inner_channels,
+      out_channels: backbone.cells.2.0.out_channels}
+    backbone.cells.3.0: {in_channels: backbone.cells.2.0.out_channels, inner_channels: backbone.cells.3.0.inner_channels,
+      kernel_size: backbone.cells.3.0.kernel_size, out_channels: backbone.cells.3.0.out_channels,
+      stride: backbone.cells.3.0.stride}
+    backbone.cells.3.0.depth_wise: {in_channels: backbone.cells.3.0.inner_channels,
+      kernel_size: backbone.cells.3.0.kernel_size, out_channels: backbone.cells.3.0.inner_channels,
+      stride: backbone.cells.3.0.stride}
+    backbone.cells.3.0.inv_bottleneck: {in_channels: backbone.cells.2.0.out_channels,
+      out_channels: backbone.cells.3.0.inner_channels}
+    backbone.cells.3.0.point_linear: {in_channels: backbone.cells.3.0.inner_channels,
+      out_channels: backbone.cells.3.0.out_channels}
+    backbone.cells.3.1: {in_channels: backbone.cells.3.0.out_channels, inner_channels: backbone.cells.3.1.inner_channels,
+      kernel_size: backbone.cells.3.1.kernel_size, out_channels: backbone.cells.3.0.out_channels,
+      stride: backbone.cells.3.1.stride}
+    backbone.cells.3.1.depth_wise: {in_channels: backbone.cells.3.1.inner_channels,
+      kernel_size: backbone.cells.3.1.kernel_size, out_channels: backbone.cells.3.1.inner_channels,
+      stride: backbone.cells.3.1.stride}
+    backbone.cells.3.1.inv_bottleneck: {in_channels: backbone.cells.3.0.out_channels,
+      out_channels: backbone.cells.3.1.inner_channels}
+    backbone.cells.3.1.point_linear: {in_channels: backbone.cells.3.1.inner_channels,
+      out_channels: backbone.cells.3.0.out_channels}
+    backbone.cells.3.2: {in_channels: backbone.cells.3.0.out_channels, inner_channels: backbone.cells.3.2.inner_channels,
+      kernel_size: backbone.cells.3.2.kernel_size, out_channels: backbone.cells.3.0.out_channels,
+      stride: backbone.cells.3.2.stride}
+    backbone.cells.3.2.depth_wise: {in_channels: backbone.cells.3.2.inner_channels,
+      kernel_size: backbone.cells.3.2.kernel_size, out_channels: backbone.cells.3.2.inner_channels,
+      stride: backbone.cells.3.2.stride}
+    backbone.cells.3.2.inv_bottleneck: {in_channels: backbone.cells.3.0.out_channels,
+      out_channels: backbone.cells.3.2.inner_channels}
+    backbone.cells.3.2.point_linear: {in_channels: backbone.cells.3.2.inner_channels,
+      out_channels: backbone.cells.3.0.out_channels}
+    backbone.cells.3.3: {in_channels: backbone.cells.3.0.out_channels, inner_channels: backbone.cells.3.3.inner_channels,
+      kernel_size: backbone.cells.3.3.kernel_size, out_channels: backbone.cells.3.0.out_channels,
+      stride: backbone.cells.3.3.stride}
+    backbone.cells.3.3.depth_wise: {in_channels: backbone.cells.3.3.inner_channels,
+      kernel_size: backbone.cells.3.3.kernel_size, out_channels: backbone.cells.3.3.inner_channels,
+      stride: backbone.cells.3.3.stride}
+    backbone.cells.3.3.inv_bottleneck: {in_channels: backbone.cells.3.0.out_channels,
+      out_channels: backbone.cells.3.3.inner_channels}
+    backbone.cells.3.3.point_linear: {in_channels: backbone.cells.3.3.inner_channels,
+      out_channels: backbone.cells.3.0.out_channels}
+    backbone.cells.4.0: {in_channels: backbone.cells.3.0.out_channels, inner_channels: backbone.cells.4.0.inner_channels,
+      kernel_size: backbone.cells.4.0.kernel_size, out_channels: backbone.cells.4.0.out_channels,
+      stride: backbone.cells.4.0.stride}
+    backbone.cells.4.0.depth_wise: {in_channels: backbone.cells.4.0.inner_channels,
+      kernel_size: backbone.cells.4.0.kernel_size, out_channels: backbone.cells.4.0.inner_channels,
+      stride: backbone.cells.4.0.stride}
+    backbone.cells.4.0.inv_bottleneck: {in_channels: backbone.cells.3.0.out_channels,
+      out_channels: backbone.cells.4.0.inner_channels}
+    backbone.cells.4.0.point_linear: {in_channels: backbone.cells.4.0.inner_channels,
+      out_channels: backbone.cells.4.0.out_channels}
+    backbone.cells.4.1: {in_channels: backbone.cells.4.0.out_channels, inner_channels: backbone.cells.4.1.inner_channels,
+      kernel_size: backbone.cells.4.1.kernel_size, out_channels: backbone.cells.4.0.out_channels,
+      stride: backbone.cells.4.1.stride}
+    backbone.cells.4.1.depth_wise: {in_channels: backbone.cells.4.1.inner_channels,
+      kernel_size: backbone.cells.4.1.kernel_size, out_channels: backbone.cells.4.1.inner_channels,
+      stride: backbone.cells.4.1.stride}
+    backbone.cells.4.1.inv_bottleneck: {in_channels: backbone.cells.4.0.out_channels,
+      out_channels: backbone.cells.4.1.inner_channels}
+    backbone.cells.4.1.point_linear: {in_channels: backbone.cells.4.1.inner_channels,
+      out_channels: backbone.cells.4.0.out_channels}
+    backbone.cells.4.2: {in_channels: backbone.cells.4.0.out_channels, inner_channels: backbone.cells.4.2.inner_channels,
+      kernel_size: backbone.cells.4.2.kernel_size, out_channels: backbone.cells.4.0.out_channels,
+      stride: backbone.cells.4.2.stride}
+    backbone.cells.4.2.depth_wise: {in_channels: backbone.cells.4.2.inner_channels,
+      kernel_size: backbone.cells.4.2.kernel_size, out_channels: backbone.cells.4.2.inner_channels,
+      stride: backbone.cells.4.2.stride}
+    backbone.cells.4.2.inv_bottleneck: {in_channels: backbone.cells.4.0.out_channels,
+      out_channels: backbone.cells.4.2.inner_channels}
+    backbone.cells.4.2.point_linear: {in_channels: backbone.cells.4.2.inner_channels,
+      out_channels: backbone.cells.4.0.out_channels}
+    backbone.cells.4.3: {in_channels: backbone.cells.4.0.out_channels, inner_channels: backbone.cells.4.3.inner_channels,
+      kernel_size: backbone.cells.4.3.kernel_size, out_channels: backbone.cells.4.0.out_channels,
+      stride: backbone.cells.4.3.stride}
+    backbone.cells.4.3.depth_wise: {in_channels: backbone.cells.4.3.inner_channels,
+      kernel_size: backbone.cells.4.3.kernel_size, out_channels: backbone.cells.4.3.inner_channels,
+      stride: backbone.cells.4.3.stride}
+    backbone.cells.4.3.inv_bottleneck: {in_channels: backbone.cells.4.0.out_channels,
+      out_channels: backbone.cells.4.3.inner_channels}
+    backbone.cells.4.3.point_linear: {in_channels: backbone.cells.4.3.inner_channels,
+      out_channels: backbone.cells.4.0.out_channels}
+    backbone.cells.5.0: {in_channels: backbone.cells.4.0.out_channels, inner_channels: backbone.cells.5.0.inner_channels,
+      kernel_size: backbone.cells.5.0.kernel_size, out_channels: backbone.cells.5.0.out_channels,
+      stride: backbone.cells.5.0.stride}
+    backbone.cells.5.0.depth_wise: {in_channels: backbone.cells.5.0.inner_channels,
+      kernel_size: backbone.cells.5.0.kernel_size, out_channels: backbone.cells.5.0.inner_channels,
+      stride: backbone.cells.5.0.stride}
+    backbone.cells.5.0.inv_bottleneck: {in_channels: backbone.cells.4.0.out_channels,
+      out_channels: backbone.cells.5.0.inner_channels}
+    backbone.cells.5.0.point_linear: {in_channels: backbone.cells.5.0.inner_channels,
+      out_channels: backbone.cells.5.0.out_channels}
+    backbone.cells.5.1: {in_channels: backbone.cells.5.0.out_channels, inner_channels: backbone.cells.5.1.inner_channels,
+      kernel_size: backbone.cells.5.1.kernel_size, out_channels: backbone.cells.5.0.out_channels,
+      stride: backbone.cells.5.1.stride}
+    backbone.cells.5.1.depth_wise: {in_channels: backbone.cells.5.1.inner_channels,
+      kernel_size: backbone.cells.5.1.kernel_size, out_channels: backbone.cells.5.1.inner_channels,
+      stride: backbone.cells.5.1.stride}
+    backbone.cells.5.1.inv_bottleneck: {in_channels: backbone.cells.5.0.out_channels,
+      out_channels: backbone.cells.5.1.inner_channels}
+    backbone.cells.5.1.point_linear: {in_channels: backbone.cells.5.1.inner_channels,
+      out_channels: backbone.cells.5.0.out_channels}
+    backbone.cells.5.2: {in_channels: backbone.cells.5.0.out_channels, inner_channels: backbone.cells.5.2.inner_channels,
+      kernel_size: backbone.cells.5.2.kernel_size, out_channels: backbone.cells.5.0.out_channels,
+      stride: backbone.cells.5.2.stride}
+    backbone.cells.5.2.depth_wise: {in_channels: backbone.cells.5.2.inner_channels,
+      kernel_size: backbone.cells.5.2.kernel_size, out_channels: backbone.cells.5.2.inner_channels,
+      stride: backbone.cells.5.2.stride}
+    backbone.cells.5.2.inv_bottleneck: {in_channels: backbone.cells.5.0.out_channels,
+      out_channels: backbone.cells.5.2.inner_channels}
+    backbone.cells.5.2.point_linear: {in_channels: backbone.cells.5.2.inner_channels,
+      out_channels: backbone.cells.5.0.out_channels}
+    backbone.cells.5.3: {in_channels: backbone.cells.5.0.out_channels, inner_channels: backbone.cells.5.3.inner_channels,
+      kernel_size: backbone.cells.5.3.kernel_size, out_channels: backbone.cells.5.0.out_channels,
+      stride: backbone.cells.5.3.stride}
+    backbone.cells.5.3.depth_wise: {in_channels: backbone.cells.5.3.inner_channels,
+      kernel_size: backbone.cells.5.3.kernel_size, out_channels: backbone.cells.5.3.inner_channels,
+      stride: backbone.cells.5.3.stride}
+    backbone.cells.5.3.inv_bottleneck: {in_channels: backbone.cells.5.0.out_channels,
+      out_channels: backbone.cells.5.3.inner_channels}
+    backbone.cells.5.3.point_linear: {in_channels: backbone.cells.5.3.inner_channels,
+      out_channels: backbone.cells.5.0.out_channels}
+    backbone.conv_final: {in_channels: backbone.cells.5.0.out_channels}
+    backbone.depth_decs: {'0': backbone.depth_decs.0, '1': backbone.depth_decs.1,
+      '2': backbone.depth_decs.2, '3': backbone.depth_decs.3, '4': backbone.depth_decs.4,
+      '5': backbone.depth_decs.5}
+decisions:
+  backbone.cells.0.0.inner_channels: !!python/tuple [choices, 'Choices(choices: [32,
+      48, 64, 96], size: 1, replace: True, p: [0.25, 0.25, 0.25, 0.25])']
+  backbone.cells.0.0.kernel_size: !!python/tuple [choices, 'Choices(choices: [3, 5,
+      7], size: 1, replace: True, p: [0.3333333333333333, 0.3333333333333333, 0.3333333333333333])']
+  backbone.cells.0.0.out_channels: !!python/tuple [choices, 'Choices(choices: [24],
+      size: 1, replace: True, p: [1.0])']
+  backbone.cells.0.0.stride: !!python/tuple [choices, 'Choices(choices: [2], size:
+      1, replace: True, p: [1.0])']
+  backbone.cells.0.1.inner_channels: !!python/tuple [choices, 'Choices(choices: [48,
+      72, 96, 144], size: 1, replace: True, p: [0.25, 0.25, 0.25, 0.25])']
+  backbone.cells.0.1.kernel_size: !!python/tuple [choices, 'Choices(choices: [3, 5,
+      7], size: 1, replace: True, p: [0.3333333333333333, 0.3333333333333333, 0.3333333333333333])']
+  backbone.cells.0.1.stride: !!python/tuple [choices, 'Choices(choices: [1], size:
+      1, replace: True, p: [1.0])']
+  backbone.cells.0.2.inner_channels: !!python/tuple [choices, 'Choices(choices: [48,
+      72, 96, 144], size: 1, replace: True, p: [0.25, 0.25, 0.25, 0.25])']
+  backbone.cells.0.2.kernel_size: !!python/tuple [choices, 'Choices(choices: [3, 5,
+      7], size: 1, replace: True, p: [0.3333333333333333, 0.3333333333333333, 0.3333333333333333])']
+  backbone.cells.0.2.stride: !!python/tuple [choices, 'Choices(choices: [1], size:
+      1, replace: True, p: [1.0])']
+  backbone.cells.0.3.inner_channels: !!python/tuple [choices, 'Choices(choices: [48,
+      72, 96, 144], size: 1, replace: True, p: [0.25, 0.25, 0.25, 0.25])']
+  backbone.cells.0.3.kernel_size: !!python/tuple [choices, 'Choices(choices: [3, 5,
+      7], size: 1, replace: True, p: [0.3333333333333333, 0.3333333333333333, 0.3333333333333333])']
+  backbone.cells.0.3.stride: !!python/tuple [choices, 'Choices(choices: [1], size:
+      1, replace: True, p: [1.0])']
+  backbone.cells.1.0.inner_channels: !!python/tuple [choices, 'Choices(choices: [48,
+      72, 96, 144], size: 1, replace: True, p: [0.25, 0.25, 0.25, 0.25])']
+  backbone.cells.1.0.kernel_size: !!python/tuple [choices, 'Choices(choices: [3, 5,
+      7], size: 1, replace: True, p: [0.3333333333333333, 0.3333333333333333, 0.3333333333333333])']
+  backbone.cells.1.0.out_channels: !!python/tuple [choices, 'Choices(choices: [32],
+      size: 1, replace: True, p: [1.0])']
+  backbone.cells.1.0.stride: !!python/tuple [choices, 'Choices(choices: [2], size:
+      1, replace: True, p: [1.0])']
+  backbone.cells.1.1.inner_channels: !!python/tuple [choices, 'Choices(choices: [64,
+      96, 128, 192], size: 1, replace: True, p: [0.25, 0.25, 0.25, 0.25])']
+  backbone.cells.1.1.kernel_size: !!python/tuple [choices, 'Choices(choices: [3, 5,
+      7], size: 1, replace: True, p: [0.3333333333333333, 0.3333333333333333, 0.3333333333333333])']
+  backbone.cells.1.1.stride: !!python/tuple [choices, 'Choices(choices: [1], size:
+      1, replace: True, p: [1.0])']
+  backbone.cells.1.2.inner_channels: !!python/tuple [choices, 'Choices(choices: [64,
+      96, 128, 192], size: 1, replace: True, p: [0.25, 0.25, 0.25, 0.25])']
+  backbone.cells.1.2.kernel_size: !!python/tuple [choices, 'Choices(choices: [3, 5,
+      7], size: 1, replace: True, p: [0.3333333333333333, 0.3333333333333333, 0.3333333333333333])']
+  backbone.cells.1.2.stride: !!python/tuple [choices, 'Choices(choices: [1], size:
+      1, replace: True, p: [1.0])']
+  backbone.cells.1.3.inner_channels: !!python/tuple [choices, 'Choices(choices: [64,
+      96, 128, 192], size: 1, replace: True, p: [0.25, 0.25, 0.25, 0.25])']
+  backbone.cells.1.3.kernel_size: !!python/tuple [choices, 'Choices(choices: [3, 5,
+      7], size: 1, replace: True, p: [0.3333333333333333, 0.3333333333333333, 0.3333333333333333])']
+  backbone.cells.1.3.stride: !!python/tuple [choices, 'Choices(choices: [1], size:
+      1, replace: True, p: [1.0])']
+  backbone.cells.2.0.inner_channels: !!python/tuple [choices, 'Choices(choices: [64,
+      96, 128, 192], size: 1, replace: True, p: [0.25, 0.25, 0.25, 0.25])']
+  backbone.cells.2.0.kernel_size: !!python/tuple [choices, 'Choices(choices: [3, 5,
+      7], size: 1, replace: True, p: [0.3333333333333333, 0.3333333333333333, 0.3333333333333333])']
+  backbone.cells.2.0.out_channels: !!python/tuple [choices, 'Choices(choices: [64],
+      size: 1, replace: True, p: [1.0])']
+  backbone.cells.2.0.stride: !!python/tuple [choices, 'Choices(choices: [2], size:
+      1, replace: True, p: [1.0])']
+  backbone.cells.2.1.inner_channels: !!python/tuple [choices, 'Choices(choices: [128,
+      192, 256, 384], size: 1, replace: True, p: [0.25, 0.25, 0.25, 0.25])']
+  backbone.cells.2.1.kernel_size: !!python/tuple [choices, 'Choices(choices: [3, 5,
+      7], size: 1, replace: True, p: [0.3333333333333333, 0.3333333333333333, 0.3333333333333333])']
+  backbone.cells.2.1.stride: !!python/tuple [choices, 'Choices(choices: [1], size:
+      1, replace: True, p: [1.0])']
+  backbone.cells.2.2.inner_channels: !!python/tuple [choices, 'Choices(choices: [128,
+      192, 256, 384], size: 1, replace: True, p: [0.25, 0.25, 0.25, 0.25])']
+  backbone.cells.2.2.kernel_size: !!python/tuple [choices, 'Choices(choices: [3, 5,
+      7], size: 1, replace: True, p: [0.3333333333333333, 0.3333333333333333, 0.3333333333333333])']
+  backbone.cells.2.2.stride: !!python/tuple [choices, 'Choices(choices: [1], size:
+      1, replace: True, p: [1.0])']
+  backbone.cells.2.3.inner_channels: !!python/tuple [choices, 'Choices(choices: [128,
+      192, 256, 384], size: 1, replace: True, p: [0.25, 0.25, 0.25, 0.25])']
+  backbone.cells.2.3.kernel_size: !!python/tuple [choices, 'Choices(choices: [3, 5,
+      7], size: 1, replace: True, p: [0.3333333333333333, 0.3333333333333333, 0.3333333333333333])']
+  backbone.cells.2.3.stride: !!python/tuple [choices, 'Choices(choices: [1], size:
+      1, replace: True, p: [1.0])']
+  backbone.cells.3.0.inner_channels: !!python/tuple [choices, 'Choices(choices: [128,
+      192, 256, 384], size: 1, replace: True, p: [0.25, 0.25, 0.25, 0.25])']
+  backbone.cells.3.0.kernel_size: !!python/tuple [choices, 'Choices(choices: [3, 5,
+      7], size: 1, replace: True, p: [0.3333333333333333, 0.3333333333333333, 0.3333333333333333])']
+  backbone.cells.3.0.out_channels: !!python/tuple [choices, 'Choices(choices: [96],
+      size: 1, replace: True, p: [1.0])']
+  backbone.cells.3.0.stride: !!python/tuple [choices, 'Choices(choices: [1], size:
+      1, replace: True, p: [1.0])']
+  backbone.cells.3.1.inner_channels: !!python/tuple [choices, 'Choices(choices: [192,
+      288, 384, 576], size: 1, replace: True, p: [0.25, 0.25, 0.25, 0.25])']
+  backbone.cells.3.1.kernel_size: !!python/tuple [choices, 'Choices(choices: [3, 5,
+      7], size: 1, replace: True, p: [0.3333333333333333, 0.3333333333333333, 0.3333333333333333])']
+  backbone.cells.3.1.stride: !!python/tuple [choices, 'Choices(choices: [1], size:
+      1, replace: True, p: [1.0])']
+  backbone.cells.3.2.inner_channels: !!python/tuple [choices, 'Choices(choices: [192,
+      288, 384, 576], size: 1, replace: True, p: [0.25, 0.25, 0.25, 0.25])']
+  backbone.cells.3.2.kernel_size: !!python/tuple [choices, 'Choices(choices: [3, 5,
+      7], size: 1, replace: True, p: [0.3333333333333333, 0.3333333333333333, 0.3333333333333333])']
+  backbone.cells.3.2.stride: !!python/tuple [choices, 'Choices(choices: [1], size:
+      1, replace: True, p: [1.0])']
+  backbone.cells.3.3.inner_channels: !!python/tuple [choices, 'Choices(choices: [192,
+      288, 384, 576], size: 1, replace: True, p: [0.25, 0.25, 0.25, 0.25])']
+  backbone.cells.3.3.kernel_size: !!python/tuple [choices, 'Choices(choices: [3, 5,
+      7], size: 1, replace: True, p: [0.3333333333333333, 0.3333333333333333, 0.3333333333333333])']
+  backbone.cells.3.3.stride: !!python/tuple [choices, 'Choices(choices: [1], size:
+      1, replace: True, p: [1.0])']
+  backbone.cells.4.0.inner_channels: !!python/tuple [choices, 'Choices(choices: [192,
+      288, 384, 576], size: 1, replace: True, p: [0.25, 0.25, 0.25, 0.25])']
+  backbone.cells.4.0.kernel_size: !!python/tuple [choices, 'Choices(choices: [3, 5,
+      7], size: 1, replace: True, p: [0.3333333333333333, 0.3333333333333333, 0.3333333333333333])']
+  backbone.cells.4.0.out_channels: !!python/tuple [choices, 'Choices(choices: [160],
+      size: 1, replace: True, p: [1.0])']
+  backbone.cells.4.0.stride: !!python/tuple [choices, 'Choices(choices: [2], size:
+      1, replace: True, p: [1.0])']
+  backbone.cells.4.1.inner_channels: !!python/tuple [choices, 'Choices(choices: [320,
+      480, 640, 960], size: 1, replace: True, p: [0.25, 0.25, 0.25, 0.25])']
+  backbone.cells.4.1.kernel_size: !!python/tuple [choices, 'Choices(choices: [3, 5,
+      7], size: 1, replace: True, p: [0.3333333333333333, 0.3333333333333333, 0.3333333333333333])']
+  backbone.cells.4.1.stride: !!python/tuple [choices, 'Choices(choices: [1], size:
+      1, replace: True, p: [1.0])']
+  backbone.cells.4.2.inner_channels: !!python/tuple [choices, 'Choices(choices: [320,
+      480, 640, 960], size: 1, replace: True, p: [0.25, 0.25, 0.25, 0.25])']
+  backbone.cells.4.2.kernel_size: !!python/tuple [choices, 'Choices(choices: [3, 5,
+      7], size: 1, replace: True, p: [0.3333333333333333, 0.3333333333333333, 0.3333333333333333])']
+  backbone.cells.4.2.stride: !!python/tuple [choices, 'Choices(choices: [1], size:
+      1, replace: True, p: [1.0])']
+  backbone.cells.4.3.inner_channels: !!python/tuple [choices, 'Choices(choices: [320,
+      480, 640, 960], size: 1, replace: True, p: [0.25, 0.25, 0.25, 0.25])']
+  backbone.cells.4.3.kernel_size: !!python/tuple [choices, 'Choices(choices: [3, 5,
+      7], size: 1, replace: True, p: [0.3333333333333333, 0.3333333333333333, 0.3333333333333333])']
+  backbone.cells.4.3.stride: !!python/tuple [choices, 'Choices(choices: [1], size:
+      1, replace: True, p: [1.0])']
+  backbone.cells.5.0.inner_channels: !!python/tuple [choices, 'Choices(choices: [320,
+      480, 640, 960], size: 1, replace: True, p: [0.25, 0.25, 0.25, 0.25])']
+  backbone.cells.5.0.kernel_size: !!python/tuple [choices, 'Choices(choices: [3, 5,
+      7], size: 1, replace: True, p: [0.3333333333333333, 0.3333333333333333, 0.3333333333333333])']
+  backbone.cells.5.0.out_channels: !!python/tuple [choices, 'Choices(choices: [320],
+      size: 1, replace: True, p: [1.0])']
+  backbone.cells.5.0.stride: !!python/tuple [choices, 'Choices(choices: [1], size:
+      1, replace: True, p: [1.0])']
+  backbone.cells.5.1.inner_channels: !!python/tuple [choices, 'Choices(choices: [640,
+      960, 1280, 1920], size: 1, replace: True, p: [0.25, 0.25, 0.25, 0.25])']
+  backbone.cells.5.1.kernel_size: !!python/tuple [choices, 'Choices(choices: [3, 5,
+      7], size: 1, replace: True, p: [0.3333333333333333, 0.3333333333333333, 0.3333333333333333])']
+  backbone.cells.5.1.stride: !!python/tuple [choices, 'Choices(choices: [1], size:
+      1, replace: True, p: [1.0])']
+  backbone.cells.5.2.inner_channels: !!python/tuple [choices, 'Choices(choices: [640,
+      960, 1280, 1920], size: 1, replace: True, p: [0.25, 0.25, 0.25, 0.25])']
+  backbone.cells.5.2.kernel_size: !!python/tuple [choices, 'Choices(choices: [3, 5,
+      7], size: 1, replace: True, p: [0.3333333333333333, 0.3333333333333333, 0.3333333333333333])']
+  backbone.cells.5.2.stride: !!python/tuple [choices, 'Choices(choices: [1], size:
+      1, replace: True, p: [1.0])']
+  backbone.cells.5.3.inner_channels: !!python/tuple [choices, 'Choices(choices: [640,
+      960, 1280, 1920], size: 1, replace: True, p: [0.25, 0.25, 0.25, 0.25])']
+  backbone.cells.5.3.kernel_size: !!python/tuple [choices, 'Choices(choices: [3, 5,
+      7], size: 1, replace: True, p: [0.3333333333333333, 0.3333333333333333, 0.3333333333333333])']
+  backbone.cells.5.3.stride: !!python/tuple [choices, 'Choices(choices: [1], size:
+      1, replace: True, p: [1.0])']
+  backbone.depth_decs.0: !!python/tuple [choices, 'Choices(choices: [2, 3, 4], size:
+      1, replace: True, p: [0.3333333333333333, 0.3333333333333333, 0.3333333333333333])']
+  backbone.depth_decs.1: !!python/tuple [choices, 'Choices(choices: [2, 3, 4], size:
+      1, replace: True, p: [0.3333333333333333, 0.3333333333333333, 0.3333333333333333])']
+  backbone.depth_decs.2: !!python/tuple [choices, 'Choices(choices: [2, 3, 4], size:
+      1, replace: True, p: [0.3333333333333333, 0.3333333333333333, 0.3333333333333333])']
+  backbone.depth_decs.3: !!python/tuple [choices, 'Choices(choices: [2, 3, 4], size:
+      1, replace: True, p: [0.3333333333333333, 0.3333333333333333, 0.3333333333333333])']
+  backbone.depth_decs.4: !!python/tuple [choices, 'Choices(choices: [2, 3, 4], size:
+      1, replace: True, p: [0.3333333333333333, 0.3333333333333333, 0.3333333333333333])']
+  backbone.depth_decs.5: !!python/tuple [choices, 'Choices(choices: [2, 3, 4], size:
+      1, replace: True, p: [0.3333333333333333, 0.3333333333333333, 0.3333333333333333])']

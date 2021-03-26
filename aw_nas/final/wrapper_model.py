@@ -2,58 +2,70 @@ from __future__ import print_function
 
 import torch
 from torch import nn
+
+from aw_nas.utils.exception import expect
 from aw_nas.final.base import FinalModel
 from aw_nas.weights_manager.necks.base import BaseNeck
-from aw_nas.weights_manager.wrapper import BaseHead
-from aw_nas.rollout.wrapper import WrapperRollout
+from aw_nas.weights_manager.wrapper import BaseHead, BaseBackboneWeightsManager
+from aw_nas.rollout.wrapper import WrapperSearchSpace, WrapperRollout
 from aw_nas.utils import RegistryMeta
 
-
-class DetectionFinalModel(FinalModel):
-    NAME = "det_final_model"
+class WrapperFinalModel(FinalModel):
+    NAME = "wrapper_final_model"
     SCHEDULABLE_ATTRS = []
 
     def __init__(self,
                  search_space,
                  device,
+                 rollout_type,
                  genotypes,
                  backbone_type,
                  backbone_cfg,
-                 neck_type,
-                 neck_cfg,
-                 head_type,
-                 head_cfg,
+                 neck_type=None,
+                 neck_cfg=None,
+                 head_type=None,
+                 head_cfg=None,
                  feature_levels=[4, 5],
                  supernet_state_dict=None,
                  schedule_cfg=None):
-        super(DetectionFinalModel, self).__init__(schedule_cfg=schedule_cfg)
+        super(WrapperFinalModel, self).__init__(schedule_cfg=schedule_cfg)
         self.search_space = search_space
         self.device = device
         self.feature_levels = feature_levels
+        
+        # check search space type
+        if isinstance(search_space, WrapperSearchSpace):
+            backbone_ss = search_space.backbone
+            backbone_rollout_type = search_space.backbone_rollout_type
+            neck_ss = search_space.neck
+            neck_rollout_type = search_space.neck_rollout_type
+            expect(rollout_type == "wrapper",
+                   "WrapperSearchSpace corresponds to `wrapper` rollout")
+        else:
+            # search_space should be compatible with backbone weights manager
+            backbone_ss = search_space
+            backbone_rollout_type = rollout_type
+            # neck weights manager must accept `search_space=None` and `forward(rollout=None)`
+            # or neck is None
+            neck_ss = None
+            neck_rollout_type = None
 
-        self.backbone = RegistryMeta.get_class('final_model',
-                                               backbone_type)(search_space,
-                                                              device,
-                                                              **backbone_cfg)
-
-        feature_channels = self.backbone.get_feature_channel_num(
-            feature_levels)
-        self.neck = BaseNeck.get_class_(
-            neck_type)(
-            search_space,
-            device,
-            None,
-            feature_channels,
-            **neck_cfg)
-
-        neck_feature_channels = self.neck.get_feature_channel_num()
-
+        self.backbone = BaseBackboneWeightsManager.get_class_(backbone_type)(
+            backbone_ss, self.device, backbone_rollout_type, **(backbone_cfg or {}))
+        feature_channel_nums = self.backbone.get_feature_channel_num(feature_levels)
+        if neck_type is not None:
+            self.neck = BaseNeck.get_class_(neck_type)(
+                neck_ss, self.device, neck_rollout_type, feature_channel_nums, **(neck_cfg or {}))
+            feature_channel_nums = self.neck.get_feature_channel_num()
+        else:
+            self.neck = None
         self.head = BaseHead.get_class_(head_type)(
-                device, neck_feature_channels, **head_cfg)
+            self.device, feature_channel_nums, **(head_cfg or {}))
 
         if supernet_state_dict:
             self.load_supernet_state_dict(supernet_state_dict)
         rollout = search_space.rollout_from_genotype(genotypes)
+
         self.finalize(rollout)
 
         self.to(self.device)
@@ -66,28 +78,14 @@ class DetectionFinalModel(FinalModel):
     def finalize(self, rollout):
         b_rollout, n_rollout = self._extract_backbone_and_neck_rollout(rollout)
         self.backbone = self.backbone.finalize(b_rollout)
-        self.neck = self.neck.finalize(n_rollout)
+        if self.neck is not None and n_rollout is not None:
+            self.neck = self.neck.finalize(n_rollout)
         return self
 
     def load_supernet_state_dict(self, supernet_state_dict, strict=True):
         model_state = torch.load(supernet_state_dict, "cpu")
         model_state = model_state.get("weights_manager", model_state)
-        backbone_state = {
-            k[9:]: v
-            for k, v in model_state.items() if k.startswith("backbone")
-        }
-        neck_state = {
-            k[5:]: v
-            for k, v in model_state.items() if k.startswith("neck")
-        }
-        head_state = {
-            k[5:]: v
-            for k, v in model_state.items() if k.startswith("head")
-        }
-        self.backbone.load_supernet_state_dict(backbone_state,
-                                               filter_regex=r".*classifier.*")
-        self.neck.load_state_dict(neck_state, strict=strict)
-        self.head.load_state_dict(head_state, strict=strict)
+        self.load_state_dict(model_state, strict=strict)
         return self
 
     def set_hook(self):
@@ -125,6 +123,7 @@ class DetectionFinalModel(FinalModel):
     def forward(self, inputs):
         features = self.backbone.extract_features(inputs)
         features = self._pickout_features(features, self.feature_levels)
-        features = self.neck(features)
+        if self.neck is not None:
+            features = self.neck(features)
         return self.head(features)
 

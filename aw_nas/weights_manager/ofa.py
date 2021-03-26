@@ -126,6 +126,9 @@ class OFASupernet(BaseBackboneWeightsManager, nn.Module):
         self.device = device
         self.to(device)
 
+    def finalize(self, rollout):
+        pass
+
 
 class OFACandidateNet(CandidateNet):
     """

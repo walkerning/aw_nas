@@ -13,6 +13,7 @@ from torch import nn
 from aw_nas.common import genotype_from_str
 from aw_nas.final.base import FinalModel
 from aw_nas.weights_manager.ofa_backbone import BaseBackboneArch
+from aw_nas.germ import GermWeightsManager
 
 
 class OFAGenotypeModel(FinalModel):
@@ -53,8 +54,8 @@ class OFAGenotypeModel(FinalModel):
             self._flops_calculated = True
         return res
 
-    def extract_features(self, inputs, p_levels=(4, 5), drop_connect_rate=0.0):
-        return self.backbone.extract_features(inputs, p_levels, drop_connect_rate=drop_connect_rate)
+    def extract_features(self, inputs,  drop_connect_rate=0.0):
+        return self.backbone.extract_features(inputs, drop_connect_rate=drop_connect_rate)
 
     def get_feature_channel_num(self, p_level):
         return self.backbone.get_feature_channel_num(p_level)

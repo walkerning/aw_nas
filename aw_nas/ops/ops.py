@@ -139,6 +139,7 @@ PRIMITVE_FACTORY = {
     "h_swish": lambda C=None, C_out=None, stride=None, affine=None: Hswish(inplace=True),
     "h_sigmoid": lambda C=None, C_out=None, stride=None, affine=None: Hsigmoid(inplace=True),
     "relu6": lambda C=None, C_out=None, stride=None, affine=None: nn.ReLU6(inplace=True),
+    None: lambda C=None, C_out=None, stride=None, affine=None: nn.Sequential(),
 }
 
 def register_primitive(name, func, override=False):

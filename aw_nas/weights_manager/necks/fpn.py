@@ -6,7 +6,6 @@ from aw_nas import ops
 from aw_nas.common import assert_rollout_type
 from aw_nas.weights_manager.ofa_backbone import FlexibleBlock
 from aw_nas.utils import getLogger as _getLogger
-
 from .base import BaseNeck
 
 try:
@@ -18,7 +17,8 @@ except ImportError as e:
     def xavier_init(mod, distribution):
         getattr(torch.nn.init, "xavier_{}_".format(distribution))(mod.weight)
 
-__all__ = ["FPN"]
+__all__ = ["FPN"]#, "SearchableFPN"]
+
 
 class FPN(BaseNeck, FlexibleBlock):
     NAME = "fpn"
@@ -160,3 +160,5 @@ class FPN(BaseNeck, FlexibleBlock):
     @classmethod
     def supported_rollout_types(cls):
         return [None]
+
+

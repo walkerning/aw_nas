@@ -235,6 +235,11 @@ class SharedNet(BaseBackboneWeightsManager, nn.Module):
     def supported_data_types(cls):
         return ["image"]
 
+    def finalize(self, rollout):
+        # TODO: implement this
+        raise NotImplementedError()
+
+
 class SharedCell(nn.Module):
     def __init__(self, op_cls, search_space, layer_index, num_channels, num_out_channels,
                  prev_num_channels, stride, prev_strides, use_preprocess, preprocess_op_type,

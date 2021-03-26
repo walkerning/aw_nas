@@ -3,13 +3,11 @@ import numpy as np
 import torch
 import pytest
 
-
 def _cnn_data(device="cuda", batch_size=2, shape=28):
     return (
         torch.rand(batch_size, 3, shape, shape, dtype=torch.float, device=device),
         torch.tensor(np.random.randint(0, high=10, size=batch_size)).long().to(device),
     )
-
 
 def test_wrapper_ss(tmp_path):
     from aw_nas.common import (

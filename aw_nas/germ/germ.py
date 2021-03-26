@@ -5,8 +5,8 @@ Decision, search space, rollout.
 And searchable block primitives.
 """
 
-import abc
 import copy
+import contextlib
 from collections import OrderedDict
 from collections import abc as collection_abcs
 
@@ -16,7 +16,6 @@ import numpy as np
 
 import torch
 from torch import nn
-import torch.nn.functional as F
 
 from aw_nas.base import Component
 from aw_nas.common import BaseRollout, SearchSpace
@@ -29,20 +28,35 @@ class GermSearchSpace(SearchSpace):
 
     def __init__(self, search_space_cfg_file=None):
         super().__init__()
-        expect(search_space_cfg_file is not None, "Must specify search_space_cfg_file")
-        with open(search_space_cfg_file, "r") as r_f:
-            self.ss_cfg = yaml.load(r_f)
+        
         self.decisions = OrderedDict()
-        for decision_id, value in self.ss_cfg["decisions"].items():
-            decision = BaseDecision.get_class_(value[0]).from_string(value[1])
+        self._is_initialized = False
+        
+        if search_space_cfg_file is not None: 
+            with open(search_space_cfg_file, "r") as r_f:
+                ss_cfg = yaml.load(r_f)
+            self.set_cfg(ss_cfg)
+
+    def set_cfg(self, ss_cfg):
+        for decision_id, value in ss_cfg["decisions"].items():
+            if isinstance(value[1], str):
+                decision = BaseDecision.get_class_(value[0]).from_string(value[1])
+            elif isinstance(value[1], BaseDecision.get_class_(value[0])):
+                decision = value[1]
+            else:
+                raise ValueError("Except str or {} type in ss_cfg['decisions'], got {} "
+                        "instead.".format(value[0], type(value[1])))
             self.decisions[decision_id] = decision
-        self.blocks = self.ss_cfg["blocks"]
+        self.blocks = ss_cfg["blocks"]
 
         self.decision_ids = list(self.decisions.keys())
         self.num_decisions = len(self.decisions)
         self.num_blocks = len(self.blocks)
 
+        self._is_initialized = True
+
     def get_size(self):
+        assert self._is_initialized, "set_cfg should be called before calling other methods." 
         # currently, only support discrete choice
         return np.prod([decision.search_space_size for decision in self.decisions.values()])
 
@@ -53,6 +67,7 @@ class GermSearchSpace(SearchSpace):
         return string
 
     def random_sample(self):
+        assert self._is_initialized, "set_cfg should be called before calling other methods." 
         # generate a random sample for each decision
         arch = OrderedDict([
             (decision_id, decision.random_sample())
@@ -60,10 +75,12 @@ class GermSearchSpace(SearchSpace):
         return GermRollout(arch, search_space=self)
 
     def rollout_from_genotype(self, genotype):
+        assert self._is_initialized, "set_cfg should be called before calling other methods." 
         arch = eval(genotype) #pylint: disable=eval-used
         return GermRollout(arch, self, candidate_net=None)
 
     def mutate(self, rollout, mutate_num=None, mutate_proportion=None, mutate_prob=None):
+        assert self._is_initialized, "set_cfg should be called before calling other methods." 
         expect(
             sum([value is not None for value in [mutate_num, mutate_proportion, mutate_prob]]) == 1,
             "One and only one of `mutate_num, mutate_proportion, mutate_prob` should be specified.",
@@ -100,6 +117,7 @@ class GermSearchSpace(SearchSpace):
         return NotImplementedError()
 
     def on_epoch_start(self, epoch):
+        assert self._is_initialized, "set_cfg should be called before calling other methods." 
         # call on_epoch_start of all decisions
         [decision.on_epoch_start(epoch) for decision in self.decisions.values()]
 
@@ -113,6 +131,7 @@ class GermRollout(BaseRollout):
     def __init__(self, decision_dict, search_space, candidate_net=None):
         super().__init__()
         self.arch = decision_dict
+        self.masks = OrderedDict() # for grouped convlutions
         self.search_space = search_space
         self.candidate_net = candidate_net
         self._perf = OrderedDict()
@@ -130,13 +149,16 @@ class GermRollout(BaseRollout):
     def plot_arch(self, filename, label="", edge_labels=None):
         return self.search_space.plot_arch(self.genotype, filename=filename, label=label)
 
+    def reset_masks(self):
+        self.masks = OrderedDict()
+
 # ---- Searchable Blocks ----
-class SearchableBlock(nn.Module, Component):
+class SearchableBlock(Component, nn.Module):
     REGISTRY = "searchable_block"
 
     def __init__(self, ctx):
-        super(SearchableBlock, self).__init__()
-        Component.__init__(self, schedule_cfg=None)
+        super(SearchableBlock, self).__init__(schedule_cfg=None)
+        nn.Module.__init__(self)
         self._decisions = OrderedDict()
         self.ctx = ctx
 
@@ -188,29 +210,34 @@ class SearchableBlock(nn.Module, Component):
 
     def _get_decision(self, decision_obj, rollout):
         if isinstance(decision_obj, BaseDecision):
-            return rollout.arch[decision_obj.decision_id]
+            if decision_obj.decision_id in rollout.arch:
+                return rollout.arch[decision_obj.decision_id]
+            else:
+                return max(decision_obj.choices)
         return decision_obj
 
-    def forward(self, *args, **kwargs):
-        if self.ctx is None or not hasattr(self.ctx, "rollout"):
-            # must be a finalized searchable block
-            return self.forward_rollout(self.finalized_rollout, *args, **kwargs)
-        return self.forward_rollout(self.ctx.rollout, *args, **kwargs)
-
-    @abc.abstractmethod
     def forward_rollout(self, rollout, *args, **kwargs):
-        pass
+        self.ctx.rollout = rollout
+        return self(*args, **kwargs)
 
-    def finalize_rollout_outplace(self, rollout):
-        new_mod = copy.deepcopy(self)
-        return new_mod.finalize_rollout(rollout)
+    #def finalize_rollout_outplace(self, rollout):
+    #    new_mod = copy.deepcopy(self)
+    #    return new_mod.finalize_rollout(rollout)
+
+    @contextlib.contextmanager
+    def finalize_context(self, rollout):
+        self.ctx.rollout = rollout
+        yield
+        self.ctx.rollout = None
 
     def finalize_rollout(self, rollout):
         """
         In-place change into a finalized block.
         Can be overrided.
         """
-        return finalize_rollout(self, rollout)
+        self.ctx.rollout = rollout
+        mod = finalize_rollout(self, rollout)
+        return mod
 
 
 def finalize_rollout(final_mod, rollout):
@@ -218,98 +245,24 @@ def finalize_rollout(final_mod, rollout):
     for mod_name, mod in final_mod._modules.items():
         if isinstance(mod, SearchableBlock):
             final_sub_mod = mod.finalize_rollout(rollout)
+        elif isinstance(mod, nn.Sequential):
+            final_sub_mod = nn.Sequential(
+                *[m.finalize_rollout(rollout) if isinstance(mod, SearchableBlock) else
+                    finalize_rollout(m, rollout) for m in mod]
+            )
+        elif isinstance(mod, nn.ModuleList):
+            final_sub_mod = nn.ModuleList(
+                [m.finalize_rollout(rollout) if isinstance(mod, SearchableBlock) else
+                    finalize_rollout(m, rollout) for m in mod]
+            )
         else:
             final_sub_mod = finalize_rollout(mod, rollout)
         final_mod._modules[mod_name] = final_sub_mod
     if isinstance(final_mod, SearchableBlock):
         final_mod.finalized_rollout = rollout
+
     return final_mod
 
-
-class SearchableConvBNBlock(SearchableBlock):
-    NAME = "conv_bn"
-
-    def __init__(self, ctx, in_channels, out_channels, kernel_size, stride=1, **kwargs):
-        super().__init__(ctx)
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.kernel_size = kernel_size
-        self.stride = stride
-        if isinstance(out_channels, BaseDecision):
-            self.max_out_channels = out_channels.range()[1]
-            assert isinstance(out_channels, Choices)
-            # only support Choice decision for now, use discretized channel/kernel mask
-            # init feature mask for channel cohices
-            self.register_buffer(
-                "channel_masks", torch.zeros(out_channels.num_choices, self.max_out_channels))
-            for i in range(out_channels.num_choices):
-                self.channel_masks[i][:out_channels.choices[i]] = 1.0
-            self._out_channels_choice_to_ind = {c: i for i, c in enumerate(out_channels.choices)}
-        else:
-            self.max_out_channels = out_channels
-            self.channel_masks = None
-
-        if isinstance(kernel_size, BaseDecision):
-            # use centered mask
-            self.max_kernel_size = kernel_size.range()[1]
-            assert isinstance(kernel_size, Choices)
-            expect(all(choice % 2 == 1 for choice in kernel_size.choices),
-                   "Only support odd kernel_size choices.")
-
-            # init weight mask for kernel size choices
-            mask = np.abs(np.arange(-(self.max_kernel_size-1)//2, (self.max_kernel_size+1)//2)) \
-                   <= np.array([(c-1)//2 for c in kernel_size.choices])[:, None]
-            mask = mask.astype(np.float32)
-            masks = torch.tensor(np.expand_dims(mask, -2) * np.expand_dims(mask, -1))
-            self.register_buffer("kernel_masks", masks)
-            self._kernel_size_choice_to_ind = {c: i for i, c in enumerate(kernel_size.choices)}
-        else:
-            self.max_kernel_size = kernel_size
-            self.kernel_masks = None
-
-        self.conv = nn.Conv2d(
-            in_channels=self.in_channels,
-            out_channels=self.max_out_channels,
-            kernel_size=self.max_kernel_size,
-            stride=self.stride,
-            **kwargs
-        )
-        self.bn = nn.BatchNorm2d(self.max_out_channels)
-        
-    def forward_rollout(self, rollout, inputs):
-        # stride
-        r_s = self._get_decision(self.stride, rollout)
-        # kernel size
-        r_k_s = self._get_decision(self.kernel_size, rollout)
-        padding = ((r_k_s - 1) // 2, (r_k_s - 1) // 2)
-
-        if self.kernel_masks is not None:
-            w_mask = self.kernel_masks[self._kernel_size_choice_to_ind[r_k_s]]
-            object.__setattr__(self.conv, "weight", w_mask * self.conv._parameters["weight"])
-
-        # forward conv and bn
-        out = F.conv2d(inputs, self.conv.weight, self.conv.bias, (r_s, r_s),
-                       padding, self.conv.dilation, self.conv.groups)
-        out = self.bn(out)
-
-        if self.kernel_masks is not None:
-            # set back conv.weights to the full kernel
-            object.__setattr__(self.conv, "weight", self.conv._parameters["weight"])
-
-        # mask output channels
-        if self.channel_masks is not None:
-            r_o_c = self._get_decision(self.out_channels, rollout)
-            f_mask = self.channel_masks[self._out_channels_choice_to_ind[r_o_c]].reshape(
-                1, -1, 1, 1)
-            out = out * f_mask
-        # Should we mask before bn?
-        # Currently not important, since this decision is only relevant
-        # when bn statistics need to be used without calibration/retraining
-        return out
-
-    def finalize_rollout(self, rollout):
-        # TODO: return a finalized convbn nn.module
-        pass
 # ---- End Searchable Blocks ----
 
 # ---- Decision Container ----
@@ -371,4 +324,14 @@ class DecisionDict(SearchableBlock):
 
     def forward_rollout(self, rollout, inputs):
         raise Exception("Should not be called")
+
+    def finalize_rollout(self, rollout):
+        """
+        In-place change into a finalized block.
+        Can be overrided.
+        """
+        mod = finalize_rollout(self, rollout)
+        return mod
+
+
 # ---- End Decision Containers ----

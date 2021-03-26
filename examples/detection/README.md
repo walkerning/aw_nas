@@ -32,6 +32,7 @@ from aw_nas.utils.parallel_utils import parallelize
 
 @parallelize()
 class CustomWeightsManager(object):
+    
     def __init__(self, *args, **kwargs):
         """
         It is unnecessary to define `multiprocess` in `__init__` argument list.

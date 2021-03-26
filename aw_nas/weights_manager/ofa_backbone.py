@@ -1008,5 +1008,5 @@ class ShuffleNetV2Arch(BaseBackboneArch):
         return [features[level_indexes[p]] for p in p_levels], out
 
     def get_feature_channel_num(self, p_levels):
-        level_indexes = feature_level_to_stage_index(self.strides, 2)
+        level_indexes = feature_level_to_stage_index(self.strides + [1], 2)
         return [self.channels[level_indexes[p] + 1] for p in p_levels]

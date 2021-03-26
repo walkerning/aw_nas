@@ -407,7 +407,8 @@ class MobileNetV2Block(nn.Module):
             )
         
         self.depth_wise = depth_wise or nn.Sequential(
-            nn.Conv2d(self.C_inner, self.C_inner, self.kernel_size, stride, padding=self.kernel_size // 2, bias=False),
+            nn.Conv2d(self.C_inner, self.C_inner, self.kernel_size, stride, padding=self.kernel_size
+                // 2, bias=False, groups=self.C_inner),
             nn.BatchNorm2d(self.C_inner),
             self.act_fn
         )

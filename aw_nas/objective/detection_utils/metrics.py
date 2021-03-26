@@ -261,9 +261,10 @@ __all__ = ["VOCMetrics", "COCODetectionMetrics"]
 class VOCMetrics(Metrics):
     NAME = "voc"
 
-    def __init__(self, class_names=None, eval_dir=None, schedule_cfg=None):
+    def __init__(self, has_background=True, class_names=None, eval_dir=None, schedule_cfg=None):
         super(VOCMetrics, self).__init__(schedule_cfg)
         self.class_names = class_names or (
+            "__background__",
             "aeroplane",
             "bicycle",
             "bird",
@@ -290,6 +291,8 @@ class VOCMetrics(Metrics):
         self.mAP = None
         self._init_gt_recs()
 
+        self.has_background = has_background
+
     def _init_gt_recs(self):
         self.gt_recs = {cls_name: {} for cls_name in self.class_names}
 
@@ -301,7 +304,7 @@ class VOCMetrics(Metrics):
             is_difficult = info["is_difficult"]
             bboxes = bboxes.cpu() if hasattr(bboxes, "cpu") else bboxes
             for bbox, label, is_diff in zip(bboxes, labels, is_difficult):
-                class_recs = self.gt_recs[self.class_names[label]]
+                class_recs = self.gt_recs[self.class_names[label + int(not self.has_background)]]
                 class_recs.setdefault(image_id, {})
                 class_recs[image_id].setdefault("bbox", []).append(bbox)
                 class_recs[image_id].setdefault("det", []).append(False)

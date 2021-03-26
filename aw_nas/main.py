@@ -31,6 +31,8 @@ from aw_nas.utils import RegistryMeta
 from aw_nas.utils import logger as _logger
 from aw_nas.utils.exception import expect
 
+torch.multiprocessing.set_sharing_strategy('file_system')
+
 # patch click.option to show the default values
 click.option = functools.partial(click.option, show_default=True)
 
@@ -842,6 +844,8 @@ def mptrain(seed, cfg_file, load, load_state_dict, save_every, train_dir):
               help="the gpus to run training on, split by single comma")
 @click.option("--seed", default=None, type=int,
               help="the random seed to run training")
+@click.option("--load-supernet", default=None, type=str,
+              help="load supernet weights before finalized")
 @click.option("--load", default=None, type=str,
               help="the checkpoint to load")
 @click.option("--load-state-dict", default=None, type=str,
@@ -850,7 +854,7 @@ def mptrain(seed, cfg_file, load, load_state_dict, save_every, train_dir):
               help="the number of epochs to save checkpoint every")
 @click.option("--train-dir", default=None, type=str,
               help="the directory to save checkpoints")
-def train(gpus, seed, cfg_file, load, load_state_dict, save_every, train_dir):
+def train(gpus, seed, cfg_file, load_supernet, load, load_state_dict, save_every, train_dir):
     if train_dir:
         # backup config file, and if in `develop` mode, also backup the aw_nas source code
         train_dir = utils.makedir(train_dir, remove=True)
@@ -881,11 +885,16 @@ def train(gpus, seed, cfg_file, load, load_state_dict, save_every, train_dir):
         np.random.seed(seed)
         random.seed(seed)
         torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
 
     # load components config
     LOGGER.info("Loading configuration files.")
     with open(cfg_file, "r") as f:
         cfg = yaml.safe_load(f)
+
+    if load_supernet is not None:
+        # load supernet weights and finetune
+        cfg["final_model_cfg"]["supernet_state_dict"] = load_supernet
 
     # initialize components
     LOGGER.info("Initializing components.")

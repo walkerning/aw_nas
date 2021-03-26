@@ -3,9 +3,10 @@ import abc
 import torch
 from torch import nn
 
+from aw_nas.rollout import BaseRollout
 from aw_nas.weights_manager.base import (BaseWeightsManager, CandidateNet)
 
-__all__ = ["Neck", "NeckCandidateNet"]
+__all__ = ["BaseNeck", "BaseNeckCandidateNet"]
 
 class BaseNeck(BaseWeightsManager, nn.Module):
     NAME = "neck"
@@ -22,7 +23,6 @@ class BaseNeck(BaseWeightsManager, nn.Module):
     def finalize(self, rollout):
         raise NotImplementedError()
 
-    @abc.abstractmethod
     def get_feature_channel_num(self):
         raise NotImplementedError()
 
@@ -31,7 +31,7 @@ class BaseNeck(BaseWeightsManager, nn.Module):
 
     @classmethod
     def supported_rollout_types(cls):
-        return []
+        return list(BaseRollout.all_classes_().keys()) + [None]
 
     @classmethod
     def supported_data_types(cls):

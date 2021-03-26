@@ -556,9 +556,9 @@ def prepare_data_queues(dataset, queue_cfg_lst, data_type="image", drop_last=Fal
         callback = cfg.get("callback", None)
         other_kwargs = cfg.get("kwargs", {})
 
-        if portion == 0:
-            queues.append([])
-            continue
+        #if portion == 0:
+        #    queues.append([])
+        #    continue
 
         used_portion = used_portions[split]
         indices = dset_indices[same_dset_mapping.get(split, split)]
