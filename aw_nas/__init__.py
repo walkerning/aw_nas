@@ -33,6 +33,7 @@ from aw_nas import final
 from aw_nas import hardware
 
 from aw_nas import btcs
+from aw_nas import germ
 
 from .plugin import _reload_plugins, AwnasPlugin
 _reload_plugins()

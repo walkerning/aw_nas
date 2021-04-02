@@ -1,4 +1,4 @@
-#pylint: disable=unused-import
+#pylint: disable=unused-import,wrong-import-position
 
 from aw_nas.utils import getLogger
 _LOGGER = getLogger("final")

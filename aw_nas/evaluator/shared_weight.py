@@ -167,12 +167,9 @@ class SharedweightEvaluator(
         else:
             self.eval_step_current = False
 
-        # initialize the data queues
-        self._init_data_queues_and_hidden(self._data_type, data_portion)
-
         # to make pylint happy, actual initialization in _init_criterions method
-        self._dataset_related_attrs = None
-        self._criterions_related_attrs = None
+        self._dataset_related_attrs = []
+        self._criterions_related_attrs = []
         self._all_perf_names = None
         self._all_perf_names_update_evaluator = None
         self._reward_func = None
@@ -183,6 +180,9 @@ class SharedweightEvaluator(
         self._eval_loss_func = None
         self._report_loss_funcs = None
         self._report_perf_funcs = None
+
+        # initialize the data queues
+        self._init_data_queues_and_hidden(self._data_type, data_portion)
         # initialize reward criterions used by `get_rollout_reward`
         self._init_criterions(self.rollout_type)
 
@@ -530,7 +530,6 @@ class SharedweightEvaluator(
         pass
 
     def _init_data_queues_and_hidden(self, data_type, data_portion):
-        self._dataset_related_attrs = []
         if data_type == "image":
             queue_cfgs = [
                 {
@@ -731,9 +730,6 @@ class SharedweightEvaluator(
 class DiscreteSharedweightEvaluator(SharedweightEvaluator):
     NAME = "discrete_shared_weights"
 
-    def __init__(self, *args, **kwargs):
-        super(DiscreteSharedweightEvaluator, self).__init__(*args, **kwargs)
-
     def _init_criterions(self, rollout_type):
         # criterion and forward keyword arguments for evaluating rollout in `evaluate_rollout`
 
@@ -781,9 +777,6 @@ class DiscreteSharedweightEvaluator(SharedweightEvaluator):
 
 class DifferentiableEvaluator(SharedweightEvaluator):
     NAME = "differentiable_shared_weights"
-
-    def __init__(self, *args, **kwargs):
-        super(DifferentiableEvaluator, self).__init__(*args, **kwargs)
 
     def _init_criterions(self, rollout_type):
         # criterion and forward keyword arguments for evaluating rollout in `evaluate_rollout`

@@ -23,7 +23,7 @@ from torch.backends import cudnn
 
 import aw_nas
 from aw_nas.dataset import AVAIL_DATA_TYPES
-from aw_nas import btcs, utils, BaseRollout
+from aw_nas import btcs, germ, utils, BaseRollout
 from aw_nas.common import rollout_from_genotype_str
 from aw_nas.utils.common_utils import _OrderedCommandGroup, _dump, _dump_with_perf
 from aw_nas.utils.vis_utils import WrapWriter
