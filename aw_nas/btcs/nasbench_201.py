@@ -1511,7 +1511,7 @@ class NB201DiffSharedCell(nn.Module):
 
 class NB201SharedCell(nn.Module):
     def __init__(
-        self, op_cls, search_space, layer_index, num_channels, num_out_channels, stride
+            self, op_cls, search_space, layer_index, num_channels, num_out_channels, stride, bn_affine=False
     ):
         super(NB201SharedCell, self).__init__()
         self.search_space = search_space
@@ -1533,6 +1533,7 @@ class NB201SharedCell(nn.Module):
                     self.num_out_channels,
                     stride=self.stride,
                     primitives=self._primitives,
+                    bn_affine=bn_affine
                 )
                 self.edge_mod.add_module(
                     "f_{}_t_{}".format(from_, to_), self.edges[from_][to_]
@@ -1595,13 +1596,13 @@ class NB201SharedOp(nn.Module):
     The operation on an edge, consisting of multiple primitives.
     """
 
-    def __init__(self, C, C_out, stride, primitives):
+    def __init__(self, C, C_out, stride, primitives, bn_affine=False):
         super(NB201SharedOp, self).__init__()
         self.primitives = primitives
         self.stride = stride
         self.p_ops = nn.ModuleList()
         for primitive in self.primitives:
-            op = ops.get_op(primitive)(C, C_out, stride, False)
+            op = ops.get_op(primitive)(C, C_out, stride, affine=bn_affine)
             self.p_ops.append(op)
 
     def forward(self, x, op_type):
@@ -1778,6 +1779,8 @@ class BaseNB201SharedNet(BaseWeightsManager, nn.Module):
         use_stem="conv_bn_3x3",
         stem_stride=1,
         stem_affine=True,
+        reduce_affine=True,
+        cell_bn_affine=False,
         candidate_member_mask=True,
         candidate_cache_named_members=False,
         candidate_eval_no_grad=True,
@@ -1847,10 +1850,11 @@ class BaseNB201SharedNet(BaseWeightsManager, nn.Module):
                     num_channels=_num_channels,
                     num_out_channels=_num_out_channels,
                     stride=stride,
+                    bn_affine=cell_bn_affine
                 )
             else:
                 cell = ops.get_op("NB201ResidualBlock")(
-                    _num_channels, _num_out_channels, stride=2, affine=True
+                    _num_channels, _num_out_channels, stride=2, affine=reduce_affine
                 )
             self.cells.append(cell)
         self.lastact = nn.Sequential(
@@ -2008,6 +2012,8 @@ class NB201SharedNet(BaseNB201SharedNet):
         use_stem="conv_bn_3x3",
         stem_stride=1,
         stem_affine=True,
+        reduce_affine=True,
+        cell_bn_affine=False,
         candidate_member_mask=True,
         candidate_cache_named_members=False,
         candidate_eval_no_grad=True,
@@ -2027,6 +2033,8 @@ class NB201SharedNet(BaseNB201SharedNet):
             use_stem=use_stem,
             stem_stride=stem_stride,
             stem_affine=stem_affine,
+            reduce_affine=reduce_affine,
+            cell_bn_affine=cell_bn_affine,
             candidate_member_mask=candidate_member_mask,
             candidate_cache_named_members=candidate_cache_named_members,
             candidate_eval_no_grad=candidate_eval_no_grad,
@@ -2050,6 +2058,7 @@ class NB201DiffSharedNet(BaseNB201SharedNet):
         use_stem="conv_bn_3x3",
         stem_stride=1,
         stem_affine=True,
+        reduce_affine=True,
         candidate_member_mask=True,
         candidate_cache_named_members=False,
         candidate_eval_no_grad=True,
@@ -2069,6 +2078,7 @@ class NB201DiffSharedNet(BaseNB201SharedNet):
             use_stem=use_stem,
             stem_stride=stem_stride,
             stem_affine=stem_affine,
+            reduce_affine=reduce_affine,
             candidate_member_mask=candidate_member_mask,
             candidate_cache_named_members=candidate_cache_named_members,
             candidate_eval_no_grad=candidate_eval_no_grad,
@@ -2093,6 +2103,7 @@ class NB201GenotypeModel(FinalModel):
         use_stem="conv_bn_3x3",
         stem_stride=1,
         stem_affine=True,
+        reduce_affine=True,
         schedule_cfg=None,
     ):
         super(NB201GenotypeModel, self).__init__(schedule_cfg)
@@ -2157,7 +2168,7 @@ class NB201GenotypeModel(FinalModel):
                 )
             else:
                 cell = ops.get_op("NB201ResidualBlock")(
-                    _num_channels, _num_out_channels, stride=2, affine=True
+                    _num_channels, _num_out_channels, stride=2, affine=reduce_affine
                 )
             # TODO: support specify concat explicitly
             self.cells.append(cell)
@@ -2246,6 +2257,7 @@ class NB201GenotypeCell(nn.Module):
         num_channels,
         num_out_channels,
         stride,
+        bn_affine=False
     ):
         super(NB201GenotypeCell, self).__init__()
         self.search_space = search_space
@@ -2269,7 +2281,7 @@ class NB201GenotypeCell(nn.Module):
                     self.num_channels,
                     self.num_out_channels,
                     stride=self.stride,
-                    affine=False,
+                    affine=bn_affine
                 )
 
                 self.edge_mod.add_module(

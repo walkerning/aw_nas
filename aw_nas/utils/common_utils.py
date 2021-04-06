@@ -352,7 +352,7 @@ def _parse_derive_file(input_f):
                               r"(?P<perfstr># Perfs: [^\n]+\n)?\n*- (?P<genotype>[^#]+)",
                               content)
 
-    genotype_perf_dict = {}
+    genotype_perf_dict = OrderedDict()
     for match in regexp_iter:
         genotype = yaml.load(io.StringIO(match.group("genotype")))
         if match.group("perfstr"):
