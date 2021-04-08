@@ -415,6 +415,7 @@ class NasBench201RSController(BaseController):
         op_type=0,
         pickle_file="",
         text_file="",
+            shuffle_indices_avoid_repeat=True,
         schedule_cfg=None,
     ):
         super(NasBench201RSController, self).__init__(
@@ -433,6 +434,7 @@ class NasBench201RSController(BaseController):
         self.deiso = deiso
         self.pickle_file = pickle_file
         self.text_file = text_file
+        self.shuffle_indices_avoid_repeat = shuffle_indices_avoid_repeat
         self.lines = None
         if self.text_file:
             with open(self.text_file) as rf:
@@ -451,6 +453,16 @@ class NasBench201RSController(BaseController):
                     self.lines = rf.readlines()
         if self.lines is not None:
             self.arch_num = len(self.lines)
+        else:
+            self.arch_num = 15625
+
+        if self.deiso:
+            print("Deiso arch num: ", self.arch_num)
+
+        self.index = 0
+        self.indices = np.arange(self.arch_num)
+        if self.shuffle_indices_avoid_repeat:
+            np.random.shuffle(self.indices)
 
     def random_sample_nonisom(self):
         ind = np.random.randint(low=0, high=self.arch_num)
@@ -497,25 +509,38 @@ class NasBench201RSController(BaseController):
                 for line in self.lines:
                     rollouts.append(NasBench201Rollout(line[0], self.search_space))
             else:
-                # indexes = np.random.choice(np.arange(15625), size=n, replace=False)
                 next_index = self.index + n
-                rollouts = [NasBench201Rollout(
-                    self.search_space.api.str2matrix(
-                        self.search_space.api.query_by_index(self.indices[i]).arch_str
-                    ),
-                    self.search_space,
-                ) for i in range(self.index, min(next_index, 15625))]
-
-                if next_index >= 15625:
-                    # reshuffle the indices
-                    np.random.shuffle(self.indices)
-                    next_index = next_index - 15625
-                    rollouts += [NasBench201Rollout(
+                # indexes = np.random.choice(np.arange(15625), size=n, replace=False)
+                if self.text_file:
+                    rollouts = [NasBench201Rollout(
+                        self.search_space.str2matrix(self.lines[self.indices[i]].strip()),
+                        self.search_space)
+                                for i in range(self.index, min(next_index, 15625))]
+                else:
+                    rollouts = [NasBench201Rollout(
                         self.search_space.api.str2matrix(
                             self.search_space.api.query_by_index(self.indices[i]).arch_str
                         ),
                         self.search_space,
-                    ) for i in range(0, next_index)]
+                    ) for i in range(self.index, min(next_index, 15625))]
+
+                if next_index >= 15625:
+                    # reshuffle the indices
+                    if self.shuffle_indices_avoid_repeat:
+                        np.random.shuffle(self.indices)
+                    next_index = next_index - 15625
+                    if self.text_file:
+                        rollouts += [NasBench201Rollout(
+                            self.search_space.str2matrix(self.lines[self.indices[i]].strip()),
+                            self.search_space)
+                                     for i in range(0, next_index)]
+                    else:
+                        rollouts += [NasBench201Rollout(
+                            self.search_space.api.str2matrix(
+                                self.search_space.api.query_by_index(self.indices[i]).arch_str
+                            ),
+                            self.search_space)
+                                     for i in range(0, next_index)]
 
                 self.index = next_index
             return rollouts

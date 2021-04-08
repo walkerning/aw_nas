@@ -18,8 +18,13 @@ keys = ckpt["weights_manager"].keys()
 for fname in ckpts[1:]:
     ckpt = torch.load(fname, map_location=torch.device("cpu"))
     for key in keys:
-        average_ckpt["weights_manager"][key] += ckpt["weights_manager"][key]
+        if not "num_batches_tracked" in key:
+            average_ckpt["weights_manager"][key] += ckpt["weights_manager"][key]
+        else:
+            average_ckpt["weights_manager"][key] = max(ckpt["weights_manager"][key], average_ckpt["weights_manager"][key])
+
 for key in keys:
-    average_ckpt["weights_manager"][key] /= num_ckpts
+    if not "num_batches_tracked" in key:
+        average_ckpt["weights_manager"][key] /= num_ckpts
 
 torch.save(average_ckpt, args.out_file)
