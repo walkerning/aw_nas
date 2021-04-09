@@ -5,11 +5,12 @@ import subprocess
 import multiprocessing
 import argparse
 
-GPUs = [0, 3, 5]
+GPUs = [0]
 parser = argparse.ArgumentParser()
 parser.add_argument("--result-dir", required=True)
 parser.add_argument("--seed", default=20)
 parser.add_argument("--save-every", required=True)
+parser.add_argument("--load", default=None)
 args, cfgs = parser.parse_known_args()
 
 cfgs = [os.path.abspath(cfg) for cfg in cfgs]
@@ -33,9 +34,10 @@ def _worker(p_id, gpu_id, queue):
         cfg_file, res_dir = token
         # os.makedirs(res_dir, exist_ok=True)
         # log_file = os.path.join(res_dir, "search_tail.log")
-        cmd = ("awnas search {} --gpu {} --seed {} --save-every {} --train-dir {}"
+        load_str = "" if args.load is None else "--load {}".format(args.load)
+        cmd = ("awnas search {} --gpu {} --seed {} --save-every {} --train-dir {} {}"
                " >/dev/null 2>&1").format(
-                   cfg_file, gpu_id, args.seed, args.save_every, res_dir) #, log_file)
+                   cfg_file, gpu_id, args.seed, args.save_every, res_dir, load_str) #, log_file)
         print("Process #{}: cfg {}; CMD: {}".format(p_id, cfg_file, cmd))
         subprocess.check_call(cmd, shell=True)
     print("Process #{} end".format(p_id))

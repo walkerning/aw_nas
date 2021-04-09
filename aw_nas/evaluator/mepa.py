@@ -30,7 +30,7 @@ def _patch_dropout_forward(model):
     yield
     for _, module in model.named_modules():
         if isinstance(module, nn.Dropout):
-            module.forward = nn.Dropout.forward
+            module.forward = partial(nn.Dropout.forward, module)
 
 def _summary_inner_diagnostics(t_accs,
                                t_losses,
@@ -655,7 +655,8 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
                         expect(0.0 < portion < 1.0)
                         eval_steps = int(portion * eval_steps)
 
-                for rollout in eval_rollouts:
+                for i_rollout, rollout in enumerate(eval_rollouts):
+                    print("\r{}/{}".format(i_rollout, len(eval_rollouts)), end="")
                     cand_net = self.weights_manager.assemble_candidate(rollout)
                     if return_candidate_net:
                         rollout.candidate_net = cand_net

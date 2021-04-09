@@ -416,7 +416,9 @@ class SimpleTrainer(BaseTrainer):
                 with open(derive_out_file) as r_f:
                     save_dict = _parse_derive_file(r_f)
             else:
-                os.makedirs(os.path.dirname(derive_out_file), exist_ok=True)
+                dir_name = os.path.dirname(derive_out_file)
+                if dir_name:
+                    os.makedirs(os.path.dirname(derive_out_file), exist_ok=True)
                 save_dict = {}
             out_f = open(derive_out_file, "w")
             yield out_f, save_dict
@@ -459,9 +461,15 @@ class SimpleTrainer(BaseTrainer):
         checkpoint = torch.load(path, map_location=torch.device("cpu"))
         self.last_epoch = self.epoch = checkpoint["epoch"]
         if self.controller_optimizer is not None:
-            self.controller_optimizer.load_state_dict(checkpoint["controller_optimizer"])
+            if checkpoint["controller_optimizer"] is not None:
+                self.controller_optimizer.load_state_dict(checkpoint["controller_optimizer"])
+            else:
+                self.logger.info("Controller optimizer state not exist, not loaded")
         if self.controller_scheduler is not None:
-            self.controller_scheduler.load_state_dict(checkpoint["controller_scheduler"])
+            if checkpoint["controller_scheduler"] is not None:
+                self.controller_scheduler.load_state_dict(checkpoint["controller_scheduler"])
+            else:
+                self.logger.info("Controller scheduler state not exist, not loaded")
         self.on_epoch_start(self.last_epoch)
 
     def on_epoch_start(self, epoch):

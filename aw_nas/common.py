@@ -278,6 +278,24 @@ class CNNSearchSpace(CellSearchSpace):
             self._num_primitives if not self.cellwise_primitives else self._num_primitives_list),
                        info={}, search_space=self)
 
+    def crossover(self, rollout_1, rollout_2, prob_1=0.5,
+                  per_cell_group=True, per_node=True, per_connection=False, sep_node_op=False):
+        dim_cell_group = self.num_cell_groups if per_cell_group else 1
+        dim_node_op = 2 if sep_node_op else 1
+        dim_conn = self.num_node_inputs if per_connection else 1
+        assert isinstance(self.num_steps, int), \
+            "For now, crossover only support using the same `num_steps` for all cell groups"
+        use_rollout_2 = np.random.rand(
+            dim_cell_group, dim_node_op, self.num_steps, dim_conn) > prob_1
+        new_arch = np.where(
+            use_rollout_2,
+            np.array(rollout_1.arch).reshape(
+                [self.num_cell_groups, 2, self.num_steps, self.num_node_inputs]),
+            np.array(rollout_2.arch).reshape(
+                [self.num_cell_groups, 2, self.num_steps, self.num_node_inputs])
+        ).reshape([self.num_cell_groups, 2, -1])
+        return Rollout(new_arch, info={}, search_space=self)
+
     def mutate(self, rollout, node_mutate_prob=0.5):
         new_arch = copy.deepcopy(rollout.arch)
         # randomly select a cell gorup to modify

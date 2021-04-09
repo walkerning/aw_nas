@@ -549,3 +549,35 @@ def test_pareto_evo_controller_find_opt():
         json.dump({"fx":np.array(fx).tolist(), "fy": np.array(fy).tolist(),
             "nx": nx, "ny": ny, "paretos": paretos}, fw)
 
+
+def test_cars():
+    from aw_nas.controller.base import BaseController
+    ss = get_search_space("cnn")
+    controller = BaseController.get_class_("cars")(
+        ss, "cuda", rollout_type="discrete", **{
+            "population_size": 10,
+            "perf_names": ["reward", "param_size"],
+            "eval_sample_strategy": "n",
+            "prefill_population": True,
+            "avoid_repeat": True
+        })
+    # eval mode sample, use to train supernet
+    controller.set_mode("eval")
+    rollouts = controller.sample(n=3)
+    controller.set_mode("train")
+    with pytest.raises(AssertionError):
+        controller.sample(n=3)
+    rollouts = controller.sample(n=20)
+    random_perfs = np.random.rand(20)
+    random_param_sizes = np.random.rand(20) * 10
+    [rollout.set_perfs({
+        "reward": perf,
+        "param_size": param_size
+    }) for rollout, perf, param_size in zip(rollouts, random_perfs, random_param_sizes)]
+    controller.step(rollouts)
+    dominated = set([rollout.genotype for rollout in rollouts]).difference(
+        set(controller.population.keys()))
+    rollout_perfs = {rollout.genotype: rollout.perf for rollout in rollouts}
+    print("Population perfs: ", list(controller.population.values()))
+    print("Dominated: ", [(rollout_perfs[geno]["reward"],
+                           rollout_perfs[geno]["param_size"]) for geno in dominated])

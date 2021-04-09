@@ -31,7 +31,7 @@ except Exception as e:
 nb201_dir = os.path.join(utils.get_awnas_dir("AWNAS_DATA", "data"), "nasbench-201")
 
 parser = argparse.ArgumentParser()
-parser.add_argument("-t","--type", default="deiso", choices=["deiso", "iso", "iso2deiso", "nb301"])
+parser.add_argument("-t","--type", default="deiso", choices=["deiso", "iso", "iso2deiso", "iso2deiso_withoutpost", "nb301"])
 parser.add_argument("--model", default=None)
 parser.add_argument("--save", help="Pickle all evaluation result to this file.", default=None)
 args, derive_files = parser.parse_known_args()
@@ -39,7 +39,7 @@ args, derive_files = parser.parse_known_args()
 
 
 # Calculate the BR@K, WR@K
-def minmax_n_at_k(predict_scores, true_scores, ks=[0.01, 0.05, 0.10, 0.20]):
+def minmax_n_at_k(predict_scores, true_scores, ks=[0.001, 0.005, 0.01, 0.05, 0.10, 0.20]):
     true_scores = np.array(true_scores)
     predict_scores = np.array(predict_scores)
     num_archs = len(true_scores)
@@ -49,6 +49,8 @@ def minmax_n_at_k(predict_scores, true_scores, ks=[0.01, 0.05, 0.10, 0.20]):
     minn_at_ks = []
     for k in ks:
         ranks = true_ranks[predict_best_inds[:int(k * len(true_scores))]]
+        if len(ranks) < 1:
+            continue
         minn = int(np.min(ranks)) + 1
         maxn = int(np.max(ranks)) + 1
         minn_at_ks.append((k, minn, float(minn) / num_archs, maxn, float(maxn) / num_archs))
@@ -130,7 +132,7 @@ def get_iso_dict():
     return query_dict
 
 # Read the De-isomorphic ground truth
-def get_deiso_dict():
+def get_deiso_dict(return_deiso_query_dict=False):
     ss = NasBench201SearchSpace(17, 4, load_nasbench=False)
     query_dict = {}
     iso_group = []
@@ -150,6 +152,10 @@ def get_deiso_dict():
             for name_ in name_list:
                 query_dict[name_] = np.mean(acc_list)
             iso_group.append(name_list)
+    if return_deiso_query_dict:
+        with open(os.path.join(nb201_dir, "non-isom.txt"), "r") as r_f:
+            deiso_archs = r_f.read().strip().split("\n")
+        query_dict = {arch: query_dict[arch] for arch in deiso_archs}
     return query_dict, iso_group
 
 criteria = {
@@ -162,22 +168,29 @@ criteria = {
 }
 
 # Print the evaluation results 
-def get_info(final_arch_dict, query_dict, gt_threshold=0., info_names=["oneshot average", "linear", "kd", "spearmanr", "BWR@K", "P@tbK"]):
-    query_list, oneshot_acc_list, oneshot_loss_list = zip(*[(query_dict[arch], final_arch_dict[arch]["acc"], final_arch_dict[arch]["loss"]) for arch in final_arch_dict])
+def get_info(final_arch_dict, query_dict, gt_threshold=0., info_names=["oneshot average", "linear", "kd", "spearmanr", "BWR@K", "P@tbK"], acc_name="acc", cal_loss=True):
+    if cal_loss:
+        query_list, oneshot_acc_list, oneshot_loss_list = zip(*[(query_dict[arch], final_arch_dict[arch][acc_name], final_arch_dict[arch]["loss"]) for arch in final_arch_dict])
+        oneshot_loss_list = - np.array(oneshot_loss_list)
+    else:
+        query_list, oneshot_acc_list = zip(*[(query_dict[arch], final_arch_dict[arch][acc_name] if acc_name else final_arch_dict[arch]) for arch in final_arch_dict if arch in query_dict])
+    print("len of list: ", len(query_list))
     query_list = np.array(query_list) / 100
     oneshot_acc_list = np.array(oneshot_acc_list)
-    oneshot_loss_list = - np.array(oneshot_loss_list)
 
     if gt_threshold > 0:
         query_list = np.round(query_list / gt_threshold)
 
-    res = {"oneshot_acc": {}, "oneshot_loss": {}}
+
+    res = {"oneshot_acc": {}}
     for info_name in info_names:
         res["oneshot_acc"][info_name] = criteria[info_name](oneshot_acc_list, query_list)
-    for info_name in info_names:
-        res["oneshot_loss"][info_name] = criteria[info_name](oneshot_loss_list, query_list)
-        if info_name == "oneshot average":
-            res["oneshot_loss"][info_name] = - res["oneshot_loss"][info_name]
+    if cal_loss:
+        res["oneshot_loss"] = {}
+        for info_name in info_names:
+            res["oneshot_loss"][info_name] = criteria[info_name](oneshot_loss_list, query_list)
+            if info_name == "oneshot average":
+                res["oneshot_loss"][info_name] = - res["oneshot_loss"][info_name]
     return res
 
 # Post De-isomorphism
@@ -190,7 +203,7 @@ def iso_to_deiso(iso_dict, iso_group):
         acc_list = []
         name_ = group_[0]
         for ele_ in group_:
-            acc_list.append(iso_dict[ele_])
+            acc_list.append(iso_dict[ele_]["reward"])
             if ele_ in lines:
                 name_ = ele_
         deiso_dict[name_] = np.mean(acc_list)
@@ -212,13 +225,19 @@ def main():
             # nb201
             if args.type == "iso2deiso":
                 query_dict, iso_group = get_deiso_dict()
-                info = get_info(iso_to_deiso(final_arch_dict, iso_group), query_dict)
+                info = get_info(iso_to_deiso(final_arch_dict, iso_group), query_dict,
+                                acc_name=None, cal_loss=False)
             elif args.type == "deiso":
                 query_dict, iso_group = get_deiso_dict()
                 info = get_info(final_arch_dict, query_dict)
-            else: # iso
+            elif args.type == "iso": # iso
                 iso_dict = get_iso_dict()
-                info = get_info(final_arch_dict, iso_dict)
+                info = get_info(final_arch_dict, iso_dict,
+                                acc_name="reward", cal_loss=False)
+            elif args.type == "iso2deiso_withoutpost":
+                query_dict, iso_group = get_deiso_dict(return_deiso_query_dict=True)
+                print("len query dict: ", len(query_dict))
+                info = get_info(final_arch_dict, query_dict, acc_name="reward", cal_loss=False)
         print("Save to {}".format(log_path), info)
         with open(log_path, "wb") as fw:
             pickle.dump(info, fw)

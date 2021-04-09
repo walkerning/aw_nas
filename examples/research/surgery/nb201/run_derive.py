@@ -8,11 +8,12 @@ import subprocess
 import multiprocessing
 import argparse
 
-GPUs = [5, 5, 5, 5, 7, 7, 7, 7, 3, 6]
+GPUs = [0,1,2,3,4]
 parser = argparse.ArgumentParser()
 parser.add_argument("ckpt_dir")
 parser.add_argument("--result-dir", required=True)
 parser.add_argument("--iso", default=False, action="store_true")
+parser.add_argument("--subset", default=False, action="store_true")
 args = parser.parse_args()
 
 # Generate derive config file, add "avoid_repeat: true"
@@ -21,11 +22,27 @@ if not os.path.exists(derive_cfg_fname):
     with open(os.path.join(args.ckpt_dir, "config.yaml"), "r") as rf:
         search_cfg = yaml.load(rf)
     derive_cfg = copy.deepcopy(search_cfg)
+    if args.subset:
+        if derive_cfg["controller_cfg"]["text_file"]:
+            with open(derive_cfg["controller_cfg"]["text_file"], "r") as rf2:
+                arch_num = len(rf2.read().strip().split("\n"))
+        else:
+            arch_num = 15625 if args.iso else 6466
+    else:
+        # derive 6466 or 15625
+        if args.deiso:
+            derive_cfg["controller_cfg"]["text_file"] = "/home/foxfi/awnas/data/nasbench-201/non-isom.txt"
+            arch_num = 6466
+        else:
+            derive_cfg["controller_cfg"]["text_file"] = "/home/foxfi/awnas/data/nasbench-201/iso.txt"
+            arch_num = 15625
     derive_cfg["controller_cfg"]["avoid_repeat"] = True
     with open(derive_cfg_fname, "w") as wf:
         yaml.dump(derive_cfg, wf)
 
-derive_epochs = list(range(40, 1001, 40))
+#derive_epochs = [1000, 800, 600, 400, 200]
+#derive_epochs = [1000]#, 800, 600, 400, 200]
+derive_epochs = ["1000_3ensemble", "800_3ensemble", "600_3ensemble", "400_3ensemble", "200_3ensemble"]
 num_processes = len(GPUs)
 queue = multiprocessing.Queue(maxsize=num_processes)
 log_dir = os.path.join(args.result_dir, "logs")

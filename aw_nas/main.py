@@ -229,7 +229,8 @@ def search(cfg_file, gpu, seed, load, save_every, save_controller_every, interle
     trainer = _init_components_from_cfg(cfg, device)[-1]
 
     # setup trainer and train
-    trainer.setup(load, save_every, save_controller_every if save_controller_every is not None else save_every,
+    trainer.setup(load, save_every,
+                  save_controller_every if save_controller_every is not None else save_every,
                   train_dir, writer=writer,
                   interleave_report_every=interleave_report_every)
     trainer.train()

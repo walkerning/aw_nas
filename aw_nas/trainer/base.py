@@ -128,18 +128,20 @@ class BaseTrainer(Component):
     def maybe_save(self):
         rank = os.environ.get("LOCAL_RANK")
         if self.save_every is not None and self.train_dir:
-            assert self.save_controller_every is not None # when save-eevery is not None, save-controller every should also not be None, since its default value should be save-every
+            assert self.save_controller_every is not None, \
+                ("when save-every is not None, save-controller every should also not be None,"
+                 " since its default value should be save-every")
             if self.epoch % self.save_every == 0:
-                if rank is None or rank == '0':
+                if rank is None or rank == "0":
                     self.controller.save(self._save_path("controller"))
                     self.evaluator.save(self._save_path("evaluator"))
                     self.save(self._save_path("trainer"))
                     self.logger.info("Epoch %3d: Save all checkpoints to directory %s",
                                     self.epoch, self._save_path())
             elif self.epoch % self.save_controller_every == 0:
-                    self.controller.save(self._save_path("controller"))
-                    self.logger.info("Epoch %3d: Save Controller to directory %s",
-                                    self.epoch, self._save_path())
+                self.controller.save(self._save_path("controller"))
+                self.logger.info("Epoch %3d: Save Controller to directory %s",
+                                 self.epoch, self._save_path())
 
     def _save_path(self, name=""):
         if self.train_dir is None:

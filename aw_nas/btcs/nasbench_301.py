@@ -17,7 +17,14 @@ from aw_nas.rollout.base import Rollout
 class NB301SearchSpace(CNNSearchSpace):
     NAME = "nb301"
 
-    def __init__(self):
+    def __init__(self, shared_primitives=(
+            "sep_conv_3x3",
+            "sep_conv_5x5",
+            "dil_conv_3x3",
+            "dil_conv_5x5",
+            "max_pool_3x3",
+            "avg_pool_3x3",
+            "skip_connect")):
         super(NB301SearchSpace, self).__init__(
             num_cell_groups=2,
             num_init_nodes=2,
@@ -27,14 +34,7 @@ class NB301SearchSpace(CNNSearchSpace):
             concat_op="concat",
             concat_nodes=None,
             loose_end=False,
-            shared_primitives=(
-                "sep_conv_3x3",
-                "sep_conv_5x5",
-                "dil_conv_3x3",
-                "dil_conv_5x5",
-                "max_pool_3x3",
-                "avg_pool_3x3",
-                "skip_connect"),
+            shared_primitives=shared_primitives,
             derive_without_none_op=False)
 
     def mutate(self, rollout, node_mutate_prob=0.5):
