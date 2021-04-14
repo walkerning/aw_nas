@@ -4,10 +4,14 @@ During the development,
 referred https://github.com/automl/nas_benchmarks/blob/master/tabular_benchmarks/nas_cifar10.py
 """
 
+import abc
+import copy
 import os
 import re
 import random
 import collections
+import itertools
+import yaml
 
 import numpy as np
 import torch
@@ -19,7 +23,7 @@ from nasbench import api
 from nasbench.lib import graph_util, config
 
 from aw_nas import utils
-from aw_nas import ops
+from aw_nas.ops import get_op, Identity
 from aw_nas.utils.exception import expect
 from aw_nas.common import SearchSpace
 from aw_nas.rollout.base import BaseRollout
@@ -31,9 +35,49 @@ from aw_nas.utils import DenseGraphConvolution, DenseGraphFlow
 from aw_nas.weights_manager.shared import SharedCell, SharedOp
 from aw_nas.weights_manager.base import CandidateNet, BaseWeightsManager
 
+
+INPUT = 'input'
+OUTPUT = 'output'
+CONV1X1 = 'conv1x1-bn-relu'
+CONV3X3 = 'conv3x3-bn-relu'
+MAXPOOL3X3 = 'maxpool3x3'
+OUTPUT_NODE = 6
+
 VERTICES = 7
 MAX_EDGES = 9
 _nasbench_cfg = config.build_config()
+
+
+def parent_combinations_old(adjacency_matrix, node, n_parents=2):
+    """Get all possible parent combinations for the current node."""
+    if node != 1:
+        # Parents can only be nodes which have an index that is lower than the current index,
+        # because of the upper triangular adjacency matrix and because the index is also a
+        # topological ordering in our case.
+        return itertools.combinations(np.argwhere(adjacency_matrix[:node, node] == 0).flatten(),
+                                      n_parents)  # (e.g. (0, 1), (0, 2), (1, 2), ...
+    else:
+        return [[0]]
+
+
+def parent_combinations(node, num_parents):
+    if node == 1 and num_parents == 1:
+        return [(0,)]
+    else:
+        return list(itertools.combinations(list(range(int(node))), num_parents))
+
+
+def upscale_to_nasbench_format(adjacency_matrix):
+    """
+    The search space uses only 4 intermediate nodes, rather than 5 as used in nasbench
+    This method adds a dummy node to the graph which is never used to be compatible with nasbench.
+    :param adjacency_matrix:
+    :return:
+    """
+    return np.insert(
+        np.insert(adjacency_matrix,
+                  5, [0, 0, 0, 0, 0, 0], axis=1),
+        5, [0, 0, 0, 0, 0, 0, 0], axis=0)
 
 
 def _literal_np_array(arr):
@@ -68,7 +112,8 @@ class NasBench101SearchSpace(SearchSpace):
     ):
         super(NasBench101SearchSpace, self).__init__()
 
-        self.ops_choices = ["conv1x1-bn-relu", "conv3x3-bn-relu", "maxpool3x3", "none"]
+        self.ops_choices = ["conv1x1-bn-relu",
+                            "conv3x3-bn-relu", "maxpool3x3", "none"]
 
         awnas_ops = [
             "conv_bn_relu_1x1",
@@ -92,7 +137,8 @@ class NasBench101SearchSpace(SearchSpace):
         self.num_vertices = VERTICES
         self.max_edges = MAX_EDGES
         self.none_op_ind = self.ops_choices.index("none")
-        self.num_possible_edges = self.num_vertices * (self.num_vertices - 1) // 2
+        self.num_possible_edges = self.num_vertices * \
+            (self.num_vertices - 1) // 2
         self.num_op_choices = len(self.ops_choices)  # 3 + 1 (none)
         self.num_ops = self.num_vertices - 2  # 5
         self.idx = np.triu_indices(self.num_vertices, k=1)
@@ -184,10 +230,15 @@ class NasBench101SearchSpace(SearchSpace):
 
     # optional API
     def genotype_from_str(self, genotype_str):
+        return eval(genotype_str)
         return eval(re.search("(_ModelSpec\(.+);", genotype_str).group(1) + ")")
 
     # ---- APIs ----
     def random_sample(self):
+        m, ops = self.sample(True)
+        if len(ops) < len(m) - 2:
+            ops.append("none")
+        return NasBench101Rollout(m, [self.ops_choices.index(op) for op in ops], search_space=self)
         return self._random_sample_ori()
 
     def genotype(self, arch):
@@ -228,7 +279,8 @@ class NasBench101SearchSpace(SearchSpace):
             )
 
     def edges_to_matrix(self, edges):
-        matrix = np.zeros([self.num_vertices, self.num_vertices], dtype=np.int8)
+        matrix = np.zeros(
+            [self.num_vertices, self.num_vertices], dtype=np.int8)
         matrix[self.idx] = edges
         return matrix
 
@@ -359,9 +411,189 @@ class NasBench101OneShotSearchSpace(NasBench101SearchSpace):
 
     def _is_valid(self, matrix):
         assert self.num_parents is not None, \
-                "Do no use nasbench-101-1shot directly, please use nasbench-101-1shot-1, "\
-                "nasbench-101-1shot-2 or nasbench-101-1shot-3 search space instead."
-        return all([p == k for p, k in zip(self.num_parents, matrix.sum(axis=1))])
+            "Do no use nasbench-101-1shot directly, please use nasbench-101-1shot-1, "\
+            "nasbench-101-1shot-2 or nasbench-101-1shot-3 search space instead."
+        num_node = list(matrix.sum(0))
+        if len(num_node) == VERTICES - 1:
+            num_node.insert(-2, 0)
+        return all([p == k for p, k in zip(self.num_parents, num_node)])
+
+    @abc.abstractmethod
+    def create_nasbench_adjacency_matrix(self, parents, **kwargs):
+        """Based on given connectivity pattern create the corresponding adjacency matrix."""
+        pass
+
+    def sample(self, with_loose_ends, upscale=True):
+        if with_loose_ends:
+            adjacency_matrix_sample = self._sample_adjacency_matrix_with_loose_ends()
+        else:
+            adjacency_matrix_sample = self._sample_adjacency_matrix_without_loose_ends(
+                adjacency_matrix=np.zeros(
+                    [self.num_intermediate_nodes + 2, self.num_intermediate_nodes + 2]),
+                node=self.num_intermediate_nodes + 1)
+            assert self._check_validity_of_adjacency_matrix(
+                adjacency_matrix_sample), 'Incorrect graph'
+
+        if upscale and self.NAME[-1] in ["1", "2"]:
+            adjacency_matrix_sample = upscale_to_nasbench_format(
+                adjacency_matrix_sample)
+        return adjacency_matrix_sample, random.choices(self.ops_choices[:-1], k=self.num_intermediate_nodes)
+
+    def _sample_adjacency_matrix_with_loose_ends(self):
+        parents_per_node = [random.sample(list(itertools.combinations(list(range(int(node))), num_parents)), 1) for
+                            node, num_parents in self.num_parents_per_node.items()][2:]
+        parents = {
+            '0': [],
+            '1': [0]
+        }
+        for node, node_parent in enumerate(parents_per_node, 2):
+            parents[str(node)] = node_parent
+        adjacency_matrix = self._create_adjacency_matrix_with_loose_ends(
+            parents)
+        return adjacency_matrix
+
+    def _sample_adjacency_matrix_without_loose_ends(self, adjacency_matrix, node):
+        req_num_parents = self.num_parents_per_node[str(node)]
+        current_num_parents = np.sum(adjacency_matrix[:, node], dtype=np.int)
+        num_parents_left = req_num_parents - current_num_parents
+        sampled_parents = \
+            random.sample(list(parent_combinations_old(
+                adjacency_matrix, node, n_parents=num_parents_left)), 1)[0]
+        for parent in sampled_parents:
+            adjacency_matrix[parent, node] = 1
+            adjacency_matrix = self._sample_adjacency_matrix_without_loose_ends(
+                adjacency_matrix, parent)
+        return adjacency_matrix
+
+    @abc.abstractmethod
+    def generate_adjacency_matrix_without_loose_ends(self, **kwargs):
+        """Returns every adjacency matrix in the search space without loose ends."""
+        pass
+
+    def convert_config_to_nasbench_format(self, config):
+        parents = {node: config["choice_block_{}_parents".format(node)] for node in
+                   list(self.num_parents_per_node.keys())[1:]}
+        parents['0'] = []
+        adjacency_matrix = self.create_nasbench_adjacency_matrix_with_loose_ends(
+            parents)
+        ops = [config["choice_block_{}_op".format(node)] for node in list(
+            self.num_parents_per_node.keys())[1:-1]]
+        return adjacency_matrix, ops
+
+    def generate_search_space_without_loose_ends(self):
+        # Create all possible connectivity patterns
+        for iter, adjacency_matrix in enumerate(self.generate_adjacency_matrix_without_loose_ends()):
+            print(iter)
+            # Print graph
+            # Evaluate every possible combination of node ops.
+            n_repeats = int(np.sum(np.sum(adjacency_matrix, axis=1)[1:-1] > 0))
+            for combination in itertools.product([CONV1X1, CONV3X3, MAXPOOL3X3], repeat=n_repeats):
+                # Create node labels
+                # Add some op as node 6 which isn't used, here conv1x1
+                ops = [INPUT]
+                combination = list(combination)
+                for i in range(5):
+                    if np.sum(adjacency_matrix, axis=1)[i + 1] > 0:
+                        ops.append(combination.pop())
+                    else:
+                        ops.append(CONV1X1)
+                assert len(combination) == 0, 'Something is wrong'
+                ops.append(OUTPUT)
+
+                # Create nested list from numpy matrix
+                nasbench_adjacency_matrix = adjacency_matrix.astype(
+                    np.int).tolist()
+
+                # Assemble the model spec
+                model_spec = api.ModelSpec(
+                    # Adjacency matrix of the module
+                    matrix=nasbench_adjacency_matrix,
+                    # Operations at the vertices of the module, matches order of matrix
+                    ops=ops)
+
+                yield adjacency_matrix, ops, model_spec
+
+    def _generate_adjacency_matrix(self, adjacency_matrix, node):
+        if self._check_validity_of_adjacency_matrix(adjacency_matrix):
+            # If graph from search space then yield.
+            yield adjacency_matrix
+        else:
+            req_num_parents = self.num_parents_per_node[str(node)]
+            current_num_parents = np.sum(
+                adjacency_matrix[:, node], dtype=np.int)
+            num_parents_left = req_num_parents - current_num_parents
+
+            for parents in parent_combinations_old(adjacency_matrix, node, n_parents=num_parents_left):
+                # Make copy of adjacency matrix so that when it returns to this stack
+                # it can continue with the unmodified adjacency matrix
+                adjacency_matrix_copy = copy.copy(adjacency_matrix)
+                for parent in parents:
+                    adjacency_matrix_copy[parent, node] = 1
+                    for graph in self._generate_adjacency_matrix(adjacency_matrix=adjacency_matrix_copy, node=parent):
+                        yield graph
+
+    def _create_adjacency_matrix(self, parents, adjacency_matrix, node):
+        if self._check_validity_of_adjacency_matrix(adjacency_matrix):
+            # If graph from search space then yield.
+            return adjacency_matrix
+        else:
+            for parent in parents[str(node)]:
+                adjacency_matrix[parent, node] = 1
+                if parent != 0:
+                    adjacency_matrix = self._create_adjacency_matrix(parents=parents, adjacency_matrix=adjacency_matrix,
+                                                                     node=parent)
+            return adjacency_matrix
+
+    def _create_adjacency_matrix_with_loose_ends(self, parents):
+        # Create the adjacency_matrix on a per node basis
+        adjacency_matrix = np.zeros([len(parents), len(parents)])
+        for node, node_parents in parents.items():
+            for parent in node_parents:
+                adjacency_matrix[parent, int(node)] = 1
+        return adjacency_matrix
+
+    def _check_validity_of_adjacency_matrix(self, adjacency_matrix):
+        """
+        Checks whether a graph is a valid graph in the search space.
+        1. Checks that the graph is non empty
+        2. Checks that every node has the correct number of inputs
+        3. Checks that if a node has outgoing edges then it should also have incoming edges
+        4. Checks that input node is connected
+        5. Checks that the graph has no more than 9 edges
+        :param adjacency_matrix:
+        :return:
+        """
+        # Check that the graph contains nodes
+        num_intermediate_nodes = sum(
+            np.array(np.sum(adjacency_matrix, axis=1) > 0, dtype=int)[1:-1])
+        if num_intermediate_nodes == 0:
+            return False
+
+        # Check that every node has exactly the right number of inputs
+        col_sums = np.sum(adjacency_matrix[:, :], axis=0)
+        for col_idx, col_sum in enumerate(col_sums):
+            # important FIX!
+            if col_idx > 0:
+                if col_sum != self.num_parents_per_node[str(col_idx)]:
+                    return False
+
+        # Check that if a node has outputs then it should also have incoming edges (apart from zero)
+        col_sums = np.sum(np.sum(adjacency_matrix, axis=0) > 0)
+        row_sums = np.sum(np.sum(adjacency_matrix, axis=1) > 0)
+        if col_sums != row_sums:
+            return False
+
+        # Check that the input node is always connected. Otherwise the graph is disconnected.
+        row_sum = np.sum(adjacency_matrix, axis=1)
+        if row_sum[0] == 0:
+            return False
+
+        # Check that the graph returned has no more than 9 edges.
+        num_edges = np.sum(adjacency_matrix.flatten())
+        if num_edges > 9:
+            return False
+
+        return True
 
     def get_layer_num_steps(self, layer_index):
         return self.get_num_steps(self.cell_layout[layer_index])
@@ -428,8 +660,48 @@ class NasBench101OneShot1SearchSpace(NasBench101OneShotSearchSpace):
         )
 
         self.num_parents = [0, 1, 2, 2, 2, 0, 2]
+        self.num_parents_per_node = {
+            '0': 0,
+            '1': 1,
+            '2': 2,
+            '3': 2,
+            '4': 2,
+            '5': 2
+        }
+        self.num_intermediate_nodes = 4
 
         assert sum(self.num_parents) == 9, "The num of edges must equal to 9."
+
+    def create_nasbench_adjacency_matrix(self, parents, **kwargs):
+        adjacency_matrix = self._create_adjacency_matrix(parents, adjacency_matrix=np.zeros([6, 6]),
+                                                         node=OUTPUT_NODE - 1)
+        # Create nasbench compatible adjacency matrix
+        return upscale_to_nasbench_format(adjacency_matrix)
+
+    def create_nasbench_adjacency_matrix_with_loose_ends(self, parents):
+        return upscale_to_nasbench_format(self._create_adjacency_matrix_with_loose_ends(parents))
+
+    def generate_adjacency_matrix_without_loose_ends(self):
+        for adjacency_matrix in self._generate_adjacency_matrix(adjacency_matrix=np.zeros([6, 6]),
+                                                                node=OUTPUT_NODE - 1):
+            yield upscale_to_nasbench_format(adjacency_matrix)
+
+    def generate_with_loose_ends(self):
+        for _, parent_node_3, parent_node_4, output_parents in itertools.product(
+                *[itertools.combinations(list(range(int(node))), num_parents) for node, num_parents in
+                  self.num_parents_per_node.items()][2:]):
+            parents = {
+                '0': [],
+                '1': [0],
+                '2': [0, 1],
+                '3': parent_node_3,
+                '4': parent_node_4,
+                '5': output_parents
+            }
+            adjacency_matrix = self.create_nasbench_adjacency_matrix_with_loose_ends(
+                parents)
+            yield adjacency_matrix
+
 
 class NasBench101OneShot2SearchSpace(NasBench101OneShotSearchSpace):
     NAME = "nasbench-101-1shot-2"
@@ -461,8 +733,48 @@ class NasBench101OneShot2SearchSpace(NasBench101OneShotSearchSpace):
         )
 
         self.num_parents = [0, 1, 1, 2, 2, 0, 3]
+        self.num_parents_per_node = {
+            '0': 0,
+            '1': 1,
+            '2': 1,
+            '3': 2,
+            '4': 2,
+            '5': 3
+        }
+        self.num_intermediate_nodes = 4
 
         assert sum(self.num_parents) == 9, "The num of edges must equal to 9."
+
+    def create_nasbench_adjacency_matrix(self, parents, **kwargs):
+        adjacency_matrix = self._create_adjacency_matrix(parents, adjacency_matrix=np.zeros([6, 6]),
+                                                         node=OUTPUT_NODE - 1)
+        # Create nasbench compatible adjacency matrix
+        return upscale_to_nasbench_format(adjacency_matrix)
+
+    def create_nasbench_adjacency_matrix_with_loose_ends(self, parents):
+        return upscale_to_nasbench_format(self._create_adjacency_matrix_with_loose_ends(parents))
+
+    def generate_adjacency_matrix_without_loose_ends(self):
+        for adjacency_matrix in self._generate_adjacency_matrix(adjacency_matrix=np.zeros([6, 6]),
+                                                                node=OUTPUT_NODE - 1):
+            yield upscale_to_nasbench_format(adjacency_matrix)
+
+    def generate_with_loose_ends(self):
+        for parent_node_2, parent_node_3, parent_node_4, output_parents in itertools.product(
+                *[itertools.combinations(list(range(int(node))), num_parents) for node, num_parents in
+                  self.num_parents_per_node.items()][2:]):
+            parents = {
+                '0': [],
+                '1': [0],
+                '2': parent_node_2,
+                '3': parent_node_3,
+                '4': parent_node_4,
+                '5': output_parents
+            }
+            adjacency_matrix = self.create_nasbench_adjacency_matrix_with_loose_ends(
+                parents)
+            yield adjacency_matrix
+
 
 class NasBench101OneShot3SearchSpace(NasBench101OneShotSearchSpace):
     NAME = "nasbench-101-1shot-3"
@@ -495,9 +807,51 @@ class NasBench101OneShot3SearchSpace(NasBench101OneShotSearchSpace):
 
         self.num_parents = [0, 1, 1, 1, 2, 2, 2]
 
+        self.num_parents_per_node = {
+            '0': 0,
+            '1': 1,
+            '2': 1,
+            '3': 1,
+            '4': 2,
+            '5': 2,
+            '6': 2
+        }
+
+        self.num_intermediate_nodes = 5
+
         assert sum(self.num_parents) == 9, "The num of edges must equal to 9."
 
-    
+    def create_nasbench_adjacency_matrix(self, parents, **kwargs):
+        # Create nasbench compatible adjacency matrix
+        adjacency_matrix = self._create_adjacency_matrix(
+            parents, adjacency_matrix=np.zeros([7, 7]), node=OUTPUT_NODE)
+        return adjacency_matrix
+
+    def create_nasbench_adjacency_matrix_with_loose_ends(self, parents):
+        return self._create_adjacency_matrix_with_loose_ends(parents)
+
+    def generate_adjacency_matrix_without_loose_ends(self):
+        for adjacency_matrix in self._generate_adjacency_matrix(adjacency_matrix=np.zeros([7, 7]), node=OUTPUT_NODE):
+            yield adjacency_matrix
+
+    def generate_with_loose_ends(self):
+        for parent_node_2, parent_node_3, parent_node_4, parent_node_5, output_parents in itertools.product(
+                *[itertools.combinations(list(range(int(node))), num_parents) for node, num_parents in
+                  self.num_parents_per_node.items()][2:]):
+            parents = {
+                '0': [],
+                '1': [0],
+                '2': parent_node_2,
+                '3': parent_node_3,
+                '4': parent_node_4,
+                '5': parent_node_5,
+                '6': output_parents
+            }
+            adjacency_matrix = self.create_nasbench_adjacency_matrix_with_loose_ends(
+                parents)
+            yield adjacency_matrix
+
+
 class NasBench101Rollout(BaseRollout):
     NAME = "nasbench-101"
     supported_components = [("evaluator", "mepa"), ("trainer", "simple")]
@@ -591,7 +945,8 @@ class NasBench101CompareController(BaseController):
                 ]
                 rollout_2 = NasBench101Rollout(
                     fixed_stat_2["module_adjacency"],
-                    self.search_space.op_to_idx(fixed_stat_2["module_operations"]),
+                    self.search_space.op_to_idx(
+                        fixed_stat_2["module_operations"]),
                     search_space=self.search_space,
                 )
                 rollouts.append(
@@ -671,7 +1026,8 @@ class NasBench101Controller(BaseController):
             # Return n archs seen(self.gt_rollouts) with best rewards
             # If number of the evaluated rollouts is smaller than n,
             # return random sampled rollouts
-            self.logger.info("Return the best {} rollouts in the population".format(n))
+            #self.logger.info(
+            #    "Return the best {} rollouts in the population".format(n))
             sampled_rollouts = []
             n_evaled = len(self.gt_rollouts)
             if n_evaled < n:
@@ -689,7 +1045,8 @@ class NasBench101Controller(BaseController):
                 rollouts.append(
                     NasBench101Rollout(
                         fixed_stat["module_adjacency"],
-                        self.search_space.op_to_idx(fixed_stat["module_operations"]),
+                        self.search_space.op_to_idx(
+                            fixed_stat["module_operations"]),
                         search_space=self.search_space,
                     )
                 )
@@ -715,7 +1072,118 @@ class NasBench101Controller(BaseController):
     def step(self, rollouts, optimizer, perf_name):
         num_rollouts_to_keep = 200
         self.gt_rollouts = self.gt_rollouts + rollouts
-        self.gt_scores = self.gt_scores + [r.get_perf(perf_name) for r in rollouts]
+        self.gt_scores = self.gt_scores + \
+            [r.get_perf(perf_name) for r in rollouts]
+        if len(self.gt_rollouts) >= num_rollouts_to_keep:
+            best_inds = np.argpartition(self.gt_scores, -num_rollouts_to_keep)[
+                -num_rollouts_to_keep:
+            ]
+            self.gt_rollouts = [self.gt_rollouts[ind] for ind in best_inds]
+            self.gt_scores = [self.gt_scores[ind] for ind in best_inds]
+        return 0.0
+
+    def summary(self, rollouts, log=False, log_prefix="", step=None):
+        return collections.OrderedDict()
+
+    def save(self, path):
+        pass
+
+    def load(self, path):
+        pass
+
+
+class NasBench101FileSampleController(BaseController):
+    NAME = "file-sampler"
+
+    def __init__(
+        self,
+        search_space,
+        device,
+        archs_path,
+        rollout_type="nasbench-101",
+        mode="eval",
+        shuffle_indexes=True,
+        avoid_repeat=False,
+        schedule_cfg=None,
+    ):
+        super(NasBench101FileSampleController, self).__init__(
+            search_space, rollout_type, mode, schedule_cfg
+        )
+
+        self.shuffle_indexes = shuffle_indexes
+        self.avoid_repeat = avoid_repeat
+        self.archs_path = archs_path
+
+        with open(archs_path, "r") as fr:
+            self.fixed_statistics = [eval(arch) for arch in yaml.load(fr)]
+
+        self.num_data = len(self.fixed_statistics)
+        self.indexes = list(np.arange(self.num_data))
+        self.cur_ind = 0
+
+        self.gt_rollouts = []
+        self.gt_scores = []
+
+    def sample(self, n, batch_size=None):
+        rollouts = []
+        genotypes = np.random.choice(self.fixed_statistics, n)
+        rollouts = [
+            NasBench101Rollout(
+                g.matrix,
+                self.search_space.op_to_idx(g.ops),
+                search_space=self.search_space
+            ) for g in genotypes
+        ]
+        if self.mode == "eval":
+            # Return n archs seen(self.gt_rollouts) with best rewards
+            # If number of the evaluated rollouts is smaller than n,
+            # return random sampled rollouts
+            sampled_rollouts = []
+            n_evaled = len(self.gt_rollouts)
+            if n_evaled < n:
+                sampled_rollouts = [
+                    self.search_space.random_sample() for _ in range(n - n_evaled)
+                ]
+            best_inds = np.argpartition(self.gt_scores, -n)[-n:]
+            return sampled_rollouts + [self.gt_rollouts[ind] for ind in best_inds]
+
+        if self.avoid_repeat:
+            # assert batch_size is None
+            n_r = 0
+            while n_r < n:
+                fixed_stat = self.fixed_statistics[self.indexes[self.cur_ind]]
+                rollouts.append(
+                    NasBench101Rollout(
+                        fixed_stat["module_adjacency"],
+                        self.search_space.op_to_idx(
+                            fixed_stat["module_operations"]),
+                        search_space=self.search_space,
+                    )
+                )
+                self.cur_ind += 1
+                n_r += 1
+                if self.cur_ind >= self.num_data:
+                    self.logger.info("One epoch end")
+                    self.cur_ind = 0
+                    if self.shuffle_indexes:
+                        random.shuffle(self.indexes)
+        else:
+            rollouts = [self.search_space.random_sample() for _ in range(n)]
+        return rollouts
+
+    @classmethod
+    def supported_rollout_types(cls):
+        return ["nasbench-101"]
+
+    # ---- APIs that is not necessary ----
+    def set_device(self, device):
+        pass
+
+    def step(self, rollouts, optimizer, perf_name):
+        num_rollouts_to_keep = 200
+        self.gt_rollouts = self.gt_rollouts + rollouts
+        self.gt_scores = self.gt_scores + \
+            [r.get_perf(perf_name) for r in rollouts]
         if len(self.gt_rollouts) >= num_rollouts_to_keep:
             best_inds = np.argpartition(self.gt_scores, -num_rollouts_to_keep)[
                 -num_rollouts_to_keep:
@@ -794,7 +1262,8 @@ class NasBench101EvoController(BaseController):
         # assert batch_size is None
         if self.mode == "eval":
             # Return n archs seen(self.gt_rollouts) with best rewards
-            self.logger.info("Return the best {} rollouts in the population".format(n))
+            self.logger.info(
+                "Return the best {} rollouts in the population".format(n))
             best_inds = np.argpartition(self.gt_scores, -n)[-n:]
             return [self.gt_rollouts[ind] for ind in best_inds]
 
@@ -849,7 +1318,8 @@ class NasBench101EvoController(BaseController):
         #     if r.get_perf(perf_name) > best_rollout.get_perf(perf_name):
         #         best_rollout = r
         for best_rollout in rollouts:
-            self.population[best_rollout.genotype] = best_rollout.get_perf(perf_name)
+            self.population[best_rollout.genotype] = best_rollout.get_perf(
+                perf_name)
         if len(self.population) > self.population_nums:
             for key in list(self.population.keys())[
                 : len(self.population) - self.population_nums
@@ -859,7 +1329,8 @@ class NasBench101EvoController(BaseController):
         # Save the best rollouts
         num_rollouts_to_keep = 200
         self.gt_rollouts = self.gt_rollouts + rollouts
-        self.gt_scores = self.gt_scores + [r.get_perf(perf_name) for r in rollouts]
+        self.gt_scores = self.gt_scores + \
+            [r.get_perf(perf_name) for r in rollouts]
         if len(self.gt_rollouts) >= num_rollouts_to_keep:
             best_inds = np.argpartition(self.gt_scores, -num_rollouts_to_keep)[
                 -num_rollouts_to_keep:
@@ -932,7 +1403,8 @@ class NasBench101SAController(BaseController):
         if self.mode == "eval":
             # return the current rollout
             return [
-                NasBench101Rollout(*self.cur_solution, search_space=self.search_space)
+                NasBench101Rollout(*self.cur_solution,
+                                   search_space=self.search_space)
             ] * n
 
         assert batch_size is None
@@ -942,15 +1414,18 @@ class NasBench101SAController(BaseController):
         for n_r in range(n):
             if np.random.rand() < self.mutation_edges_prob:
                 while 1:
-                    edge_ind = np.random.randint(0, ss.num_possible_edges, size=1)
+                    edge_ind = np.random.randint(
+                        0, ss.num_possible_edges, size=1)
                     while (
                         graph_util.num_edges(cur_matrix) == ss.max_edges
                         and cur_matrix[ss.idx[0][edge_ind], ss.idx[1][edge_ind]] == 0
                     ):
-                        edge_ind = np.random.randint(0, ss.num_possible_edges, size=1)
+                        edge_ind = np.random.randint(
+                            0, ss.num_possible_edges, size=1)
                     new_matrix = cur_matrix.copy()
                     new_matrix[ss.idx[0][edge_ind], ss.idx[1][edge_ind]] = (
-                        1 - cur_matrix[ss.idx[0][edge_ind], ss.idx[1][edge_ind]]
+                        1 - cur_matrix[ss.idx[0][edge_ind],
+                                       ss.idx[1][edge_ind]]
                     )
                     new_rollout = NasBench101Rollout(
                         new_matrix, cur_ops, search_space=self.search_space
@@ -967,10 +1442,12 @@ class NasBench101SAController(BaseController):
                 ops_ind = np.random.randint(0, ss.num_ops, size=1)[0]
                 new_ops = np.random.randint(0, ss.num_op_choices, size=1)[0]
                 while new_ops == cur_ops[ops_ind]:
-                    new_ops = np.random.randint(0, ss.num_op_choices, size=1)[0]
+                    new_ops = np.random.randint(
+                        0, ss.num_op_choices, size=1)[0]
                 cur_ops[ops_ind] = new_ops
             rollouts.append(
-                NasBench101Rollout(cur_matrix, cur_ops, search_space=self.search_space)
+                NasBench101Rollout(cur_matrix, cur_ops,
+                                   search_space=self.search_space)
             )
         return rollouts
 
@@ -1051,13 +1528,15 @@ class NasBench101Evaluator(BaseEvaluator):
         callback=None,
     ):
         if self.rollout_type == "compare":
-            eval_rollouts = sum([[r.rollout_1, r.rollout_2] for r in rollouts], [])
+            eval_rollouts = sum([[r.rollout_1, r.rollout_2]
+                                 for r in rollouts], [])
         else:
             eval_rollouts = rollouts
 
         for rollout in eval_rollouts:
             if not self.use_mean_valid_as_reward:
-                query_res = rollout.search_space.nasbench.query(rollout.genotype)
+                query_res = rollout.search_space.nasbench.query(
+                    rollout.genotype)
                 # could use other performance, this functionality is not compatible with objective
                 rollout.set_perf(query_res["validation_accuracy"])
 
@@ -1072,7 +1551,8 @@ class NasBench101Evaluator(BaseEvaluator):
             if self.use_mean_valid_as_reward:
                 rollout.set_perf(mean_valid_acc)
             rollout.set_perf(mean_valid_acc, name="mean_valid_acc")
-            mean_test_acc = np.mean([s_res["final_test_accuracy"] for s_res in res])
+            mean_test_acc = np.mean(
+                [s_res["final_test_accuracy"] for s_res in res])
             rollout.set_perf(mean_test_acc, name="mean_test_acc")
 
         if self.rollout_type == "compare":
@@ -1131,7 +1611,8 @@ class NasBench101_LSTMSeqEmbedder(ArchEmbedder):
         self.use_mean = use_mean
         self.use_hid = use_hid
 
-        self.op_emb = nn.Embedding(self.search_space.num_op_choices, self.emb_hid)
+        self.op_emb = nn.Embedding(
+            self.search_space.num_op_choices, self.emb_hid)
         self.conn_emb = nn.Embedding(2, self.emb_hid)
 
         self.rnn = nn.LSTM(
@@ -1148,8 +1629,10 @@ class NasBench101_LSTMSeqEmbedder(ArchEmbedder):
         x_1 = np.array([arch[0][self._triu_indices] for arch in archs])
         x_2 = np.array([arch[1] for arch in archs])
 
-        conn_embs = self.conn_emb(torch.LongTensor(x_1).to(self.op_emb.weight.device))
-        op_embs = self.op_emb(torch.LongTensor(x_2).to(self.op_emb.weight.device))
+        conn_embs = self.conn_emb(torch.LongTensor(
+            x_1).to(self.op_emb.weight.device))
+        op_embs = self.op_emb(torch.LongTensor(
+            x_2).to(self.op_emb.weight.device))
         emb = torch.cat((conn_embs, op_embs), dim=-2)
 
         out, (h_n, _) = self.rnn(emb)
@@ -1251,7 +1734,8 @@ class NasBench101ReNASEmbedder(ArchEmbedder):
         # the dst vertex. Summing over 0 gives the in-degree count of each vertex.
         in_degree = np.sum(matrix[1:], axis=0)
         interior_channels = output_channels // in_degree[num_vertices - 1]
-        correction = output_channels % in_degree[num_vertices - 1]  # Remainder to add
+        # Remainder to add
+        correction = output_channels % in_degree[num_vertices - 1]
 
         # Set channels of vertices that flow directly to output
         for v in range(1, num_vertices - 1):
@@ -1321,7 +1805,8 @@ class NasBench101ReNASEmbedder(ArchEmbedder):
                 )
             else:
                 arch_feats.append(np.expand_dims(op_inds * arch[0], axis=0))
-        ims = torch.FloatTensor(np.stack(arch_feats)).to(self.conv1.weight.device)
+        ims = torch.FloatTensor(np.stack(arch_feats)).to(
+            self.conv1.weight.device)
         return ims
 
     def forward(self, archs):
@@ -1365,7 +1850,8 @@ class NasBench101ArchEmbedder(ArchEmbedder):
         self.output_op_emb = nn.Parameter(torch.zeros((1, self.embedding_dim)))
         # requires_grad=False)
         if self.use_global_node:
-            self.global_op_emb = nn.Parameter(torch.zeros((1, self.embedding_dim)))
+            self.global_op_emb = nn.Parameter(
+                torch.zeros((1, self.embedding_dim)))
 
         self.op_emb = nn.Embedding(self.num_op_choices, self.embedding_dim)
         self.x_hidden = nn.Linear(self.embedding_dim, self.hid_dim)
@@ -1374,7 +1860,8 @@ class NasBench101ArchEmbedder(ArchEmbedder):
         self.gcns = []
         in_dim = self.hid_dim
         for dim in self.gcn_out_dims:
-            self.gcns.append(DenseGraphConvolution(in_dim, dim, **(gcn_kwargs or {})))
+            self.gcns.append(DenseGraphConvolution(
+                in_dim, dim, **(gcn_kwargs or {})))
             in_dim = dim
         self.gcns = nn.ModuleList(self.gcns)
         self.num_gcn_layers = len(self.gcns)
@@ -1382,7 +1869,8 @@ class NasBench101ArchEmbedder(ArchEmbedder):
 
     def embed_and_transform_arch(self, archs):
         adjs = self.input_op_emb.weight.new([arch[0].T for arch in archs])
-        op_inds = self.input_op_emb.weight.new([arch[1] for arch in archs]).long()
+        op_inds = self.input_op_emb.weight.new(
+            [arch[1] for arch in archs]).long()
         if self.use_global_node:
             tmp_ones = torch.ones((adjs.shape[0], 1, 1), device=adjs.device)
             tmp_cat = torch.cat(
@@ -1407,7 +1895,8 @@ class NasBench101ArchEmbedder(ArchEmbedder):
         if self.use_global_node:
             node_embs = torch.cat(
                 (
-                    self.input_op_emb.weight.unsqueeze(0).repeat([b_size, 1, 1]),
+                    self.input_op_emb.weight.unsqueeze(
+                        0).repeat([b_size, 1, 1]),
                     node_embs,
                     self.output_op_emb.unsqueeze(0).repeat([b_size, 1, 1]),
                     self.global_op_emb.unsqueeze(0).repeat([b_size, 1, 1]),
@@ -1417,7 +1906,8 @@ class NasBench101ArchEmbedder(ArchEmbedder):
         else:
             node_embs = torch.cat(
                 (
-                    self.input_op_emb.weight.unsqueeze(0).repeat([b_size, 1, 1]),
+                    self.input_op_emb.weight.unsqueeze(
+                        0).repeat([b_size, 1, 1]),
                     node_embs,
                     self.output_op_emb.unsqueeze(0).repeat([b_size, 1, 1]),
                 ),
@@ -1446,7 +1936,8 @@ class NasBench101ArchEmbedder(ArchEmbedder):
             y = torch.cat(
                 (
                     y[:, :-1, :]
-                    * (op_inds != self.none_op_ind)[:, :, None].to(torch.float32),
+                    * (op_inds != self.none_op_ind)[:,
+                                                    :, None].to(torch.float32),
                     y[:, -1:, :],
                 ),
                 dim=1,
@@ -1513,7 +2004,8 @@ class NasBench101FlowArchEmbedder(ArchEmbedder):
         self.op_emb = nn.Embedding(self.num_op_choices, self.op_embedding_dim)
         self.output_op_emb = nn.Embedding(1, self.op_embedding_dim)
         if self.use_global_node:
-            self.global_op_emb = nn.Parameter(torch.zeros((1, self.op_embedding_dim)))
+            self.global_op_emb = nn.Parameter(
+                torch.zeros((1, self.op_embedding_dim)))
             self.vertices += 1
 
         self.x_hidden = nn.Linear(self.node_embedding_dim, self.hid_dim)
@@ -1522,7 +2014,8 @@ class NasBench101FlowArchEmbedder(ArchEmbedder):
             assert (
                 len(np.unique(self.gcn_out_dims)) == 1
             ), "If share op attention, all the gcn-flow layers should have the same dimension"
-            self.op_attention = nn.Linear(self.op_embedding_dim, self.gcn_out_dims[0])
+            self.op_attention = nn.Linear(
+                self.op_embedding_dim, self.gcn_out_dims[0])
 
         # init graph convolutions
         self.gcns = []
@@ -1563,11 +2056,13 @@ class NasBench101FlowArchEmbedder(ArchEmbedder):
             adjs = torch.cat(
                 (
                     torch.cat((adjs, tmp_cat), dim=1),
-                    torch.zeros((adjs.shape[0], self.vertices, 1), device=adjs.device),
+                    torch.zeros(
+                        (adjs.shape[0], self.vertices, 1), device=adjs.device),
                 ),
                 dim=2,
             )
-        op_embs = self.op_emb(op_inds)  # (batch_size, vertices - 2, op_emb_dim)
+        # (batch_size, vertices - 2, op_emb_dim)
+        op_embs = self.op_emb(op_inds)
         b_size = op_embs.shape[0]
         # the input one should not be relevant
         if self.use_global_node:
@@ -1575,7 +2070,8 @@ class NasBench101FlowArchEmbedder(ArchEmbedder):
                 (
                     self.input_op_emb.unsqueeze(0).repeat([b_size, 1, 1]),
                     op_embs,
-                    self.output_op_emb.weight.unsqueeze(0).repeat([b_size, 1, 1]),
+                    self.output_op_emb.weight.unsqueeze(
+                        0).repeat([b_size, 1, 1]),
                     self.global_op_emb.unsqueeze(0).repeat([b_size, 1, 1]),
                 ),
                 dim=1,
@@ -1585,14 +2081,16 @@ class NasBench101FlowArchEmbedder(ArchEmbedder):
                 (
                     self.input_op_emb.unsqueeze(0).repeat([b_size, 1, 1]),
                     op_embs,
-                    self.output_op_emb.weight.unsqueeze(0).repeat([b_size, 1, 1]),
+                    self.output_op_emb.weight.unsqueeze(
+                        0).repeat([b_size, 1, 1]),
                 ),
                 dim=1,
             )
         node_embs = torch.cat(
             (
                 self.input_node_emb.weight.unsqueeze(0).repeat([b_size, 1, 1]),
-                self.other_node_emb.unsqueeze(0).repeat([b_size, self.vertices - 1, 1]),
+                self.other_node_emb.unsqueeze(0).repeat(
+                    [b_size, self.vertices - 1, 1]),
             ),
             dim=1,
         )
@@ -1630,7 +2128,8 @@ class NasBench101FlowArchEmbedder(ArchEmbedder):
                 y = torch.cat(
                     (
                         y[:, :-2, :]
-                        * (op_inds != self.none_op_ind)[:, :, None].to(torch.float32),
+                        * (op_inds !=
+                           self.none_op_ind)[:, :, None].to(torch.float32),
                         y[:, -2:, :],
                     ),
                     dim=1,
@@ -1639,7 +2138,8 @@ class NasBench101FlowArchEmbedder(ArchEmbedder):
                 y = torch.cat(
                     (
                         y[:, :-1, :]
-                        * (op_inds != self.none_op_ind)[:, :, None].to(torch.float32),
+                        * (op_inds !=
+                           self.none_op_ind)[:, :, None].to(torch.float32),
                         y[:, -1:, :],
                     ),
                     dim=1,
@@ -1671,7 +2171,8 @@ class NasBench101SuperNet(BaseWeightsManager, nn.Module):
         cell_group_kwargs=None,
     ):
 
-        super(NasBench101SuperNet, self).__init__(search_space, device, rollout_type)
+        super(NasBench101SuperNet, self).__init__(
+            search_space, device, rollout_type)
         nn.Module.__init__(self)
 
         self.gpus = gpus
@@ -1700,7 +2201,7 @@ class NasBench101SuperNet(BaseWeightsManager, nn.Module):
             for i, stem_type in enumerate(self.use_stem):
                 c_in = 3 if i == 0 else c_stem
                 self.stems.append(
-                    ops.get_op(stem_type)(
+                    get_op(stem_type)(
                         c_in, c_stem, stride=stem_stride, affine=stem_affine
                     )
                 )
@@ -1708,7 +2209,7 @@ class NasBench101SuperNet(BaseWeightsManager, nn.Module):
             init_strides = [stem_stride] * self._num_init
         else:
             c_stem = self.stem_multiplier * self.init_channels
-            self.stem = ops.get_op(self.use_stem)(
+            self.stem = get_op(self.use_stem)(
                 3, c_stem, stride=stem_stride, affine=stem_affine
             )
             init_strides = [1] * self._num_init
@@ -1732,9 +2233,11 @@ class NasBench101SuperNet(BaseWeightsManager, nn.Module):
             # A patch: Can specificy input/output channels by hand in configuration,
             # instead of relying on the default
             # "whenever stride/2, channelx2 and mapping with preprocess operations" assumption
-            _num_channels = num_channels if "C_in" not in kwargs else kwargs.pop("C_in")
+            _num_channels = num_channels if "C_in" not in kwargs else kwargs.pop(
+                "C_in")
             _num_out_channels = (
-                num_channels * stride if "C_out" not in kwargs else kwargs.pop("C_out")
+                num_channels *
+                stride if "C_out" not in kwargs else kwargs.pop("C_out")
             )
             cell = NasBench101SharedCell(
                 NasBench101SharedOp,
@@ -1750,7 +2253,7 @@ class NasBench101SuperNet(BaseWeightsManager, nn.Module):
             if stride > 1:
                 num_channels *= stride
 
-        self.post_process = ops.get_op(post_process_op)(
+        self.post_process = get_op(post_process_op)(
             num_channels * self.search_space.get_num_steps(i_layer),
             _num_out_channels,
             1,
@@ -1761,7 +2264,7 @@ class NasBench101SuperNet(BaseWeightsManager, nn.Module):
         if self.dropout_rate and self.dropout_rate > 0:
             self.dropout = nn.Dropout(p=self.dropout_rate)
         else:
-            self.dropout = ops.Identity()
+            self.dropout = Identity()
         self.classifier = nn.Linear(_num_out_channels, self.num_classes)
 
         self.to(self.device)
@@ -1784,7 +2287,8 @@ class NasBench101SuperNet(BaseWeightsManager, nn.Module):
 
     def step_current_gradients(self, optimizer):
         if self.max_grad_norm is not None:
-            torch.nn.utils.clip_grad_norm_(self.parameters(), self.max_grad_norm)
+            torch.nn.utils.clip_grad_norm_(
+                self.parameters(), self.max_grad_norm)
         optimizer.step()
 
     def step(self, gradients, optimizer):
@@ -1794,7 +2298,8 @@ class NasBench101SuperNet(BaseWeightsManager, nn.Module):
             named_params[k].grad = grad
         if self.max_grad_norm is not None:
             # clip the gradients
-            torch.nn.utils.clip_grad_norm_(self.parameters(), self.max_grad_norm)
+            torch.nn.utils.clip_grad_norm_(
+                self.parameters(), self.max_grad_norm)
         # apply the gradients
         optimizer.step()
 
@@ -1838,7 +2343,8 @@ class NasBench101SuperNet(BaseWeightsManager, nn.Module):
 
 class NasBench101CandidateNet(CandidateNet):
     def __init__(self, super_net, rollout, gpus=tuple(), eval_no_grad=True):
-        super(NasBench101CandidateNet, self).__init__(eval_no_grad=eval_no_grad)
+        super(NasBench101CandidateNet, self).__init__(
+            eval_no_grad=eval_no_grad)
         self.super_net = super_net
         self._device = super_net.device
         self.gpus = gpus
@@ -1861,7 +2367,8 @@ class NasBench101CandidateNet(CandidateNet):
     def _forward(self, inputs):
         return self.super_net.forward(
             inputs,
-            (self.rollout.genotype.original_matrix, self.rollout.genotype.original_ops),
+            (self.rollout.genotype.original_matrix,
+             self.rollout.genotype.original_ops),
         )
 
 
@@ -1886,7 +2393,8 @@ class NasBench101SharedCell(nn.Module):
         self._steps = steps
         self.stride = stride
 
-        self._primitives = [op for op in self.search_space.ops_choices if op != "none"]
+        self._primitives = [
+            op for op in self.search_space.ops_choices if op != "none"]
         self.reducer = nn.Sequential()
         if stride == 2:
             self.reducer = nn.MaxPool2d(kernel_size=2, stride=2, padding=1)
@@ -1906,14 +2414,14 @@ class NasBench101SharedCell(nn.Module):
             )
             self.shared_ops.append(shared_op)
 
-            projection = ops.get_op("conv_bn_relu_1x1")(
+            projection = get_op("conv_bn_relu_1x1")(
                 C_in, self.num_out_channels, 1, False
             )
             self.projections.append(projection)
 
         # from input node to output node
         self.projections.append(
-            ops.get_op("conv_bn_relu_1x1")(
+            get_op("conv_bn_relu_1x1")(
                 C=C_in,
                 C_out=self.num_out_channels * self._steps,
                 stride=1,
@@ -1926,7 +2434,8 @@ class NasBench101SharedCell(nn.Module):
         states = [inputs]
 
         ops_idx = self.search_space.op_to_idx(ops)
-        connections, concat_nodes = self.search_space.matrix_to_connection(matrix)
+        connections, concat_nodes = self.search_space.matrix_to_connection(
+            matrix)
 
         states[0] = self.reducer(states[0])
 
@@ -1967,7 +2476,8 @@ class NasBench101SharedOp(nn.Module):
 
         self.p_ops = nn.ModuleList()
         for primitive in self.primitives:
-            op = ops.get_op(op_mapping.get(primitive, primitive))(C, C_out, 1, False)
+            op = get_op(op_mapping.get(primitive, primitive))(
+                C, C_out, 1, False)
             if "pool" in primitive:
                 op = nn.Sequential(op, nn.BatchNorm2d(C_out, affine=False))
             self.p_ops.append(op)
