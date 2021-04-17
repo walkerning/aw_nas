@@ -1,10 +1,14 @@
+#pylint: disable=invalid-name
 import os
+
+import pytest
 import numpy as np
 import torch
 
-def _cnn_data(device="cuda", batch_size=2, shape=28):
+
+def _cnn_data(device="cuda", batch_size=2, shape=28, input_c=3):
     return (
-        torch.rand(batch_size, 3, shape, shape, dtype=torch.float, device=device),
+        torch.rand(batch_size, input_c, shape, shape, dtype=torch.float, device=device),
         torch.tensor(np.random.randint(0, high=10, size=batch_size)).long().to(device),
     )
 
@@ -99,6 +103,7 @@ def test_germ_supernet(tmp_path):
     assert len(ss_cfg["decisions"]) == 6
     assert len(ss_cfg["blocks"]) == 5
     ss_cfg_path = os.path.join(str(tmp_path), "ss_cfg.yaml")
+    print("ss_cfg_path: ", ss_cfg_path)
     super_net.generate_search_space_cfg_to_file(ss_cfg_path)
 
     ss = get_search_space("germ", search_space_cfg_file=ss_cfg_path)
@@ -132,3 +137,190 @@ def test_germ_supernet(tmp_path):
     data = _cnn_data(device="cuda", batch_size=2)
     outputs = cand_net(data[0])
     assert outputs.shape == (2, 10)
+
+def test_germ_nb201_and_finalize(tmp_path):
+    from aw_nas.germ.nb201 import GermNB201Net
+    from aw_nas.germ import GermSearchSpace
+    # ---- test ss generate ----
+    net = GermNB201Net(num_layers=5, dropout_rate=0.).cuda()
+    ss_cfg_path = os.path.join(str(tmp_path), "ss_cfg.yaml")
+    net.generate_search_space_cfg_to_file(ss_cfg_path)
+    ss = GermSearchSpace(ss_cfg_path)
+    rollout = ss.random_sample()
+    assert ss.get_size() == 15625
+    print("search space size: ", ss.get_size())
+
+    # ---- cannot forward a supernet without rollout context ----
+    data = _cnn_data(device="cuda", batch_size=2)
+    with pytest.raises(AttributeError):
+        outputs = net(data[0])
+
+    # ---- test weights manager forward ----
+    from aw_nas.weights_manager.base import BaseWeightsManager
+    wm = BaseWeightsManager.get_class_("germ")(ss, "cuda", rollout_type="germ",
+                                               germ_supernet_type="nb201",
+                                               germ_supernet_cfg={
+                                                   "num_layers": 5,
+                                                   "dropout_rate": 0.
+                                               })
+    print(wm)
+
+    # ---- test finalize ----
+    final_net = wm.super_net.finalize_rollout(rollout)
+    print(final_net)
+    outputs = final_net(data[0])
+    assert outputs.shape == (2, 10)
+
+    with pytest.raises(AttributeError):
+        outputs_2 = wm.super_net(data[0])
+    cand_net = wm.assemble_candidate(rollout)
+    outputs_2 = cand_net(data[0])
+    assert outputs_2.shape == (2, 10)
+    assert (outputs == outputs_2).all().item()
+
+def test_op_on_edge_finalize(tmp_path):
+    from aw_nas import germ
+
+    class _tmp_supernet(germ.GermSuperNet):
+        NAME = "tmp"
+
+        def __init__(self):
+            super().__init__()
+            with self.begin_searchable() as ctx:
+                self.node_1 = germ.GermOpOnEdge(
+                    ctx,
+                    from_nodes=[0],
+                    num_input_nodes=1,
+                    op_list=["sep_conv_3x3", "max_pool_3x3", "skip_connect"],
+                    aggregation="sum",
+                    allow_repeat_choice=False,
+                    # op_kwargs
+                    C=32,
+                    C_out=32,
+                    stride=1,
+                    affine=False
+                )
+                self.node_2 = germ.GermOpOnEdge(
+                    ctx,
+                    from_nodes=[0, 1],
+                    num_input_nodes=1,
+                    op_list=["sep_conv_3x3", "max_pool_3x3"],
+                    aggregation="sum",
+                    allow_repeat_choice=False,
+                    # op_kwargs
+                    C=32,
+                    C_out=32,
+                    stride=1,
+                    affine=False
+                )
+                self.node_3 = germ.GermOpOnEdge(
+                    ctx,
+                    from_nodes=[0, 1],
+                    from_nodes_choices=self.node_2.from_nodes_choices,
+                    num_input_nodes=1,
+                    op_list=["sep_conv_3x3", "max_pool_3x3"],
+                    edgeops_choices_dict=self.node_2.edgeops_choices_dict,
+                    aggregation="sum",
+                    allow_repeat_choice=False,
+                    # op_kwargs
+                    C=32,
+                    C_out=32,
+                    stride=1,
+                    affine=False
+                )
+
+        def forward(self, inputs):
+            nodes = [inputs]
+            for node in [self.node_1, self.node_2, self.node_3]:
+                nodes.append(node(nodes))
+            return nodes[-1]
+    net = _tmp_supernet().cuda()
+    ss_cfg_path = os.path.join(str(tmp_path), "ss_cfg.yaml")
+    print("ss_cfg_path: ", ss_cfg_path)
+    net.generate_search_space_cfg_to_file(ss_cfg_path)
+    ss = germ.GermSearchSpace(ss_cfg_path)
+    rollout = ss.random_sample()
+    for i_mutate in range(5):
+        rollout = ss.mutate(rollout, mutate_num=1)
+        finalized_net = net.finalize_rollout(rollout)
+        print("Mutate {}".format(i_mutate), rollout.arch, finalized_net)
+        data = _cnn_data(device="cuda", batch_size=2, input_c=32)
+        finalized_net(data[0])
+
+def test_op_on_node_finalize(tmp_path):
+    from aw_nas import germ
+
+    class _tmp_supernet(germ.GermSuperNet):
+        NAME = "tmp"
+
+        def __init__(self):
+            super().__init__()
+            with self.begin_searchable() as ctx:
+                self.node_1 = germ.GermOpOnNode(
+                    ctx,
+                    num_input_nodes=1,
+                    from_nodes=[0],
+                    op_list=["sep_conv_3x3", "max_pool_3x3", "skip_connect"],
+                    aggregation=["mul", "sum"],
+
+                    allow_repeat_choice=False,
+                    # op_kwargs
+                    C=32,
+                    C_out=32,
+                    stride=1,
+                    affine=False
+                )
+                self.node_2 = germ.GermOpOnNode(
+                    ctx,
+                    num_input_nodes=1,
+                    from_nodes=[0, 1],
+                    op_list=["sep_conv_3x3", "max_pool_3x3", "skip_connect"],
+                    aggregation="sum",
+
+                    # would choose the same op as node_1
+                    op_choice=self.node_1.op_choice,
+
+                    # would have no effect, since aggregation is not a list/tuple
+                    aggregation_op_choice=self.node_1.aggregation_op_choice,
+
+                    allow_repeat_choice=False,
+                    # op_kwargs
+                    C=32,
+                    C_out=32,
+                    stride=1,
+                    affine=False
+                )
+                self.node_3 = germ.GermOpOnNode(
+                    ctx,
+                    num_input_nodes=2,
+                    from_nodes=[0, 1, 2],
+                    op_list=["sep_conv_3x3", "max_pool_3x3", "skip_connect"],
+                    aggregation="concat",
+
+                    op_choice=self.node_1.op_choice,
+
+                    allow_repeat_choice=False,
+                    # op_kwargs
+                    C=64,
+                    C_out=32,
+                    stride=1,
+                    affine=False
+                )
+
+        def forward(self, inputs):
+            nodes = [inputs]
+            for node in [self.node_1, self.node_2, self.node_3]:
+                nodes.append(node(nodes))
+            return nodes[-1]
+    net = _tmp_supernet().cuda()
+    ss_cfg_path = os.path.join(str(tmp_path), "ss_cfg.yaml")
+    print("ss_cfg_path: ", ss_cfg_path)
+    net.generate_search_space_cfg_to_file(ss_cfg_path)
+    ss = germ.GermSearchSpace(ss_cfg_path)
+    rollout = ss.random_sample()
+    for i_mutate in range(5):
+        rollout = ss.mutate(rollout, mutate_num=1)
+        finalized_net = net.finalize_rollout(rollout)
+        print("Mutate {}".format(i_mutate), rollout.arch, finalized_net)
+        data = _cnn_data(device="cuda", batch_size=2, input_c=32)
+        finalized_net(data[0])

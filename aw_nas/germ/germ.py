@@ -1,24 +1,27 @@
 # -*- coding: utf-8 -*-
-#pylint: disable=arguments-differ
+#pylint: disable=arguments-differ,invalid-name
 """
 Decision, search space, rollout.
 And searchable block primitives.
 """
 
-import re
 import abc
 import copy
 from collections import OrderedDict
+from collections import abc as collection_abcs
 
+import six
 import yaml
 import numpy as np
+
 import torch
 from torch import nn
 import torch.nn.functional as F
 
 from aw_nas.base import Component
 from aw_nas.common import BaseRollout, SearchSpace
-from aw_nas.utils import abstractclassmethod, expect, ConfigException
+from aw_nas.utils import expect, ConfigException
+from aw_nas.germ.decisions import BaseDecision
 
 
 class GermSearchSpace(SearchSpace):
@@ -38,6 +41,10 @@ class GermSearchSpace(SearchSpace):
         self.decision_ids = list(self.decisions.keys())
         self.num_decisions = len(self.decisions)
         self.num_blocks = len(self.blocks)
+
+    def get_size(self):
+        # currently, only support discrete choice
+        return np.prod([decision.search_space_size for decision in self.decisions.values()])
 
     def genotype(self, arch):
         return str(arch)
@@ -61,16 +68,20 @@ class GermSearchSpace(SearchSpace):
             sum([value is not None for value in [mutate_num, mutate_proportion, mutate_prob]]) == 1,
             "One and only one of `mutate_num, mutate_proportion, mutate_prob` should be specified.",
             ConfigException)
-
+        # filter the trivial Decisions
+        _nontrivial_decision_ids = [
+            d_id for d_id, dec in self.decisions.items() if dec.search_space_size != 1]
+        num_nontrivial_decisions = len(_nontrivial_decision_ids)
         if mutate_proportion is not None:
-            mutate_num = int(self.num_decisions * mutate_proportion)
+            # mutate_num = int(self.num_decisions * mutate_proportion)
+            mutate_num = int(num_nontrivial_decisions * mutate_proportion)
         if mutate_num is not None:
             idxes = np.random.choice(
-                self.decision_ids, size=mutate_num, replace=False)
+                _nontrivial_decision_ids, size=mutate_num, replace=False)
         elif mutate_prob is not None:
             idxes = [
-                self.decision_ids[ind]
-                for ind in np.where(np.random.rand(self.num_decisions) < mutate_prob)[0]]
+                _nontrivial_decision_ids[ind]
+                for ind in np.where(np.random.rand(num_nontrivial_decisions) < mutate_prob)[0]]
         new_arch = copy.deepcopy(rollout.arch)
         for idx in idxes:
             new_arch[idx] = self.decisions[idx].mutate(new_arch[idx])
@@ -129,12 +140,30 @@ class SearchableBlock(nn.Module, Component):
         self._decisions = OrderedDict()
         self.ctx = ctx
 
+        # A simple finalize mechanism by just store the finalized rollout.
+        # However, this mechanism would cause redundant module initialization and computation.
+        # Thus, it is recommended to override the `finalize_rollout` method wherever needed.
+        self.finalized_rollout = None
+
+    def register_decision(self, name, value):
+        decisions = self.__dict__.get("_decisions")
+        if decisions is None:
+            raise Exception("cannot assign decision before SearchableBlock.__init__() call")
+        elif not isinstance(name, six.string_types):
+            raise TypeError("parameter name should be a string. "
+                            "Got {}".format(torch.typename(name)))
+        elif '.' in name:
+            raise KeyError("parameter name can't contain \".\"")
+        elif name == '':
+            raise KeyError("parameter name can't be empty string \"\"")
+        elif hasattr(self, name) and name not in self._parameters:
+            raise KeyError("attribute '{}' already exists".format(name))
+
+        decisions[name] = value
+
     def __setattr__(self, name, value):
         if isinstance(value, BaseDecision):
-            decisions = self.__dict__.get("_decisions")
-            if decisions is None:
-                raise Exception("cannot assign decision before SearchableBlock.__init__() call")
-            decisions[name] = value
+            self.register_decision(name, value)
         return super().__setattr__(name, value)
 
     def __getattr__(self, name):
@@ -143,7 +172,7 @@ class SearchableBlock(nn.Module, Component):
                 return self.__dict__["_decisions"][name]
         return super().__getattr__(name)
 
-    def named_decisions(self, prefix="", recurse=False):
+    def named_decisions(self, prefix="", recurse=False, avoid_repeat=True):
         # By default, not recursive
         _get_named_decisions = lambda mod: mod._decisions.items()
         memo = set()
@@ -151,7 +180,7 @@ class SearchableBlock(nn.Module, Component):
         for mod_name, mod in mod_list:
             if isinstance(mod, SearchableBlock):
                 for d_id, d_obj in _get_named_decisions(mod):
-                    if d_obj is None or d_obj in memo:
+                    if d_obj is None or (avoid_repeat and d_obj in memo):
                         continue
                     memo.add(d_obj)
                     d_name = mod_name + ("." if mod_name else "") + d_id
@@ -163,19 +192,38 @@ class SearchableBlock(nn.Module, Component):
         return decision_obj
 
     def forward(self, *args, **kwargs):
+        if self.ctx is None or not hasattr(self.ctx, "rollout"):
+            # must be a finalized searchable block
+            return self.forward_rollout(self.finalized_rollout, *args, **kwargs)
         return self.forward_rollout(self.ctx.rollout, *args, **kwargs)
 
     @abc.abstractmethod
     def forward_rollout(self, rollout, *args, **kwargs):
         pass
 
-    @abc.abstractmethod
-    def finalize_rollout(self, rollout):
-        pass
+    def finalize_rollout_outplace(self, rollout):
+        new_mod = copy.deepcopy(self)
+        return new_mod.finalize_rollout(rollout)
 
-    @abstractclassmethod
-    def searchable_dimensions(cls):
-        pass
+    def finalize_rollout(self, rollout):
+        """
+        In-place change into a finalized block.
+        Can be overrided.
+        """
+        return finalize_rollout(self, rollout)
+
+
+def finalize_rollout(final_mod, rollout):
+    # call `finalize_rollout` for all the 1-level submodules
+    for mod_name, mod in final_mod._modules.items():
+        if isinstance(mod, SearchableBlock):
+            final_sub_mod = mod.finalize_rollout(rollout)
+        else:
+            final_sub_mod = finalize_rollout(mod, rollout)
+        final_mod._modules[mod_name] = final_sub_mod
+    if isinstance(final_mod, SearchableBlock):
+        final_mod.finalized_rollout = rollout
+    return final_mod
 
 
 class SearchableConvBNBlock(SearchableBlock):
@@ -251,7 +299,8 @@ class SearchableConvBNBlock(SearchableBlock):
         # mask output channels
         if self.channel_masks is not None:
             r_o_c = self._get_decision(self.out_channels, rollout)
-            f_mask = self.channel_masks[self._out_channels_choice_to_ind[r_o_c]].reshape(1, -1, 1, 1)
+            f_mask = self.channel_masks[self._out_channels_choice_to_ind[r_o_c]].reshape(
+                1, -1, 1, 1)
             out = out * f_mask
         # Should we mask before bn?
         # Currently not important, since this decision is only relevant
@@ -259,67 +308,67 @@ class SearchableConvBNBlock(SearchableBlock):
         return out
 
     def finalize_rollout(self, rollout):
-        # TODO: return a finalized convbn nn.module @tcc
+        # TODO: return a finalized convbn nn.module
         pass
-
-    @classmethod
-    def searchable_dimensions(cls):
-        return ["out_channels", "kernel_size", "stride"]
 # ---- End Searchable Blocks ----
 
+# ---- Decision Container ----
+class DecisionDict(SearchableBlock):
+    def __init__(self, decisions=None):
+        super(DecisionDict, self).__init__(None)
+        if decisions is not None:
+            self.update(decisions)
 
-# ---- Decisions ----
-class BaseDecision(Component):
-    REGISTRY = "decision"
+    def __getitem__(self, key):
+        return self._decisions[key]
 
-    def __repr__(self):
-        return self.to_string()
+    def __setitem__(self, key, parameter):
+        self.register_decision(key, parameter)
 
-    @abc.abstractmethod
-    def random_sample(self):
-        pass
+    def __delitem__(self, key):
+        del self._decisions[key]
 
-    @abc.abstractmethod
-    def mutate(self, old):
-        pass
+    def __len__(self):
+        return len(self._decisions)
 
-    @abc.abstractmethod
-    def range(self):
-        pass
+    def __iter__(self):
+        return iter(self._decisions.keys())
 
-    @abc.abstractmethod
-    def to_string(self):
-        pass
+    def __contains__(self, key):
+        return key in self._decisions
 
-    @abstractclassmethod
-    def from_string(cls, string):
-        pass
+    def clear(self):
+        self._decisions.clear()
 
+    def pop(self, key):
+        v = self[key]
+        del self[key]
+        return v
 
-class Choices(BaseDecision):
-    NAME = "choices"
+    def __getattr__(self, name):
+        # other methods/attributes proxied to `self._decisions`
+        return getattr(self._decisions, name)
 
-    def __init__(self, choices, schedule_cfg=None):
-        super().__init__(schedule_cfg=schedule_cfg)
-        self.choices = choices
-        self.num_choices = len(choices)
+    def update(self, decisions):
+        if isinstance(decisions, collection_abcs.Mapping):
+            if isinstance(decisions, (OrderedDict, DecisionDict)):
+                for key, decision in decisions.items():
+                    self[key] = decision
+            else:
+                for key, decision in sorted(decisions.items()):
+                    self[key] = decision
+        else:
+            for j, p in enumerate(decisions):
+                if not isinstance(p, collection_abcs.Iterable):
+                    raise TypeError("DecisionDict update sequence element "
+                                    "#" + str(j) + " should be Iterable; is" +
+                                    type(p).__name__)
+                if not len(p) == 2:
+                    raise ValueError("DecisionyDict update sequence element "
+                                     "#" + str(j) + " has length " + str(len(p)) +
+                                     "; 2 is required")
+                self[p[0]] = p[1]
 
-    def random_sample(self):
-        return np.random.choice(self.choices, size=1)[0]
-
-    def mutate(self, old):
-        old_ind = self.choices.index(old)
-        bias = np.random.randint(1, self.num_choices)
-        new_ind = (old_ind + bias) % self.num_choices
-        return self.choices[new_ind]
-
-    def range(self):
-        return (min(self.choices), max(self.choices))
-
-    def to_string(self):
-        return "Choices({})".format(self.choices)
-
-    @classmethod
-    def from_string(cls, string):
-        return cls(eval(re.search(r"Choices\((.+)\)", string).group(1)))
-# ---- End Decisions ----
+    def forward_rollout(self, rollout, inputs):
+        raise Exception("Should not be called")
+# ---- End Decision Containers ----

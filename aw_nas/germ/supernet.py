@@ -1,3 +1,4 @@
+import copy
 import contextlib
 from functools import partial
 from collections import defaultdict
@@ -10,7 +11,7 @@ from aw_nas.base import Component
 from aw_nas.utils.registry import RegistryMeta
 from aw_nas.utils import expect
 from aw_nas.weights_manager.base import BaseWeightsManager, CandidateNet
-from aw_nas.germ.germ import SearchableBlock
+from aw_nas.germ.germ import SearchableBlock, finalize_rollout
 
 
 class SearchableContext(object):
@@ -52,7 +53,7 @@ class GermSuperNet(Component, nn.Module):
         for name, mod in supernet.named_modules():
             if isinstance(mod, SearchableBlock):
                 mod.block_id = name
-                for d_name, decision in mod.named_decisions():
+                for d_name, decision in mod.named_decisions(avoid_repeat=False):
                     if decision not in all_decisions:
                         abs_name = name + "." + d_name
                         decision.decision_id = all_decisions[decision] = abs_name
@@ -97,6 +98,14 @@ class GermSuperNet(Component, nn.Module):
             "blocks": self._blockid_to_dimension2decision
         }
 
+    def finalize_rollout(self, rollout):
+        """
+        The default implementation: Make a copy of the germ supernet.
+        Then, call finalize_rollout of all SearchableBlocks.
+        """
+        final_mod = copy.deepcopy(self)
+        return finalize_rollout(final_mod, rollout)
+
 
 class GermWeightsManager(BaseWeightsManager, nn.Module):
     NAME = "germ"
@@ -124,7 +133,12 @@ class GermWeightsManager(BaseWeightsManager, nn.Module):
         self.super_net = GermSuperNet.get_class_(germ_supernet_type)(**(germ_supernet_cfg or {}))
 
         self.to(self.device)
+        # hook flops calculation
+        self.set_hook()
+        self._flops_calculated = False
+        self.total_flops = 0
 
+    # ---- APIs ----
     def set_device(self, device):
         self.device = device
         self.to(device)
@@ -167,6 +181,32 @@ class GermWeightsManager(BaseWeightsManager, nn.Module):
     @classmethod
     def supported_data_types(cls):
         return ["image"]
+
+    # ---- flops hook ----
+    def reset_flops(self):
+        self._flops_calculated = False
+        self.total_flops = 0
+
+    def set_hook(self):
+        for _, module in self.named_modules():
+            module.register_forward_hook(self._hook_intermediate_feature)
+
+    def _hook_intermediate_feature(self, module, inputs, outputs):
+        if not self._flops_calculated:
+            if isinstance(module, nn.Conv2d):
+                self.total_flops += (
+                    inputs[0].size(1)
+                    * outputs.size(1)
+                    * module.kernel_size[0]
+                    * module.kernel_size[1]
+                    * inputs[0].size(2)
+                    * inputs[0].size(3)
+                    / (module.stride[0] * module.stride[1] * module.groups)
+                )
+            elif isinstance(module, nn.Linear):
+                self.total_flops += inputs[0].size(1) * outputs.size(1)
+        else:
+            pass
 
 
 class GermCandidateNet(CandidateNet):

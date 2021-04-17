@@ -597,10 +597,22 @@ class ElementwiseMean(nn.Module):
     def forward(self, states):
         return sum(states) / len(states)
 
+class ElementwiseMul(nn.Module):
+    @property
+    def is_elementwise(self):
+        return True
+
+    def forward(self, states):
+        res = states[0]
+        for state in states[1:]:
+            res *= state
+        return res
+
 CONCAT_OPS = {
     "concat": ChannelConcat,
     "sum": ElementwiseAdd,
-    "mean": ElementwiseMean
+    "mean": ElementwiseMean,
+    "mul": ElementwiseMul,
 }
 
 def get_concat_op(type_):

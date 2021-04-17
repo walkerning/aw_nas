@@ -9,7 +9,7 @@ The `aw_nas.germ` subpackage supports a workflow as follows.
 
 
 
-The `scripts/generate_germ_search_cfg.py` script helps do part of the work of the 2nd and 3rd step. Try run `python scripts.generate_germ_search_cfg.py examples/germ/example_code_snippet.py examples/germ/try_generate.yaml`, and you would see a generated __partial__ search configuration file `examples/germ/try_generate.yaml`. At this time, this file contains configurations of the **Germ** search space and **Germ** weights manager. Then, one should manually add the configurations of other components (i.e., dataset, trainer, evaluator, controller, objective) to this search configuration file. A complete search configuration using **Germ** components is in `examples/germ/example_code_snippet_search.yaml`. One could try run `awnas search examples/germ/example_code_snippet_search.yaml --gpu 0`.
+The `scripts/generate_germ_search_cfg.py` script helps do part of the work of the 2nd and 3rd step. Try run `python scripts/generate_germ_search_cfg.py examples/germ/example_code_snippet.py examples/germ/try_generate.yaml`, and you would see a generated __partial__ search configuration file `examples/germ/try_generate.yaml`. At this time, this file contains configurations of the **Germ** search space and **Germ** weights manager. Then, one should manually add the configurations of other components (i.e., dataset, trainer, evaluator, controller, objective) to this search configuration file. A complete search configuration using **Germ** components is in `examples/germ/example_code_snippet_search.yaml`. One could try run `awnas search examples/germ/example_code_snippet_search.yaml --gpu 0`.
 
 
 
