@@ -289,16 +289,24 @@ class CarsParetoEvoController(ParetoEvoController):
                     "Stop random sample, start sampling from the pareto population"
                 )
         else:
-            # only save the pareto front in the population
-            # the first perf is the fitness
-            fitness_list = np.array([
-                rollout.get_perf(self.perf_names[0]) for rollout in rollouts
-            ])
-            other_obj_lists = [
-                np.array([rollout.get_perf(perf_name) for rollout in rollouts])
-                for perf_name in self.perf_names[1:]
-            ]
-            keep = CARS_NSGA(fitness_list, other_obj_lists, self.population_size)
+            if len(self.perf_names) > 1:
+                # only save the pareto front in the population
+                # the first perf is the fitness
+                fitness_list = np.array([
+                    rollout.get_perf(self.perf_names[0]) for rollout in rollouts
+                ])
+                other_obj_lists = [
+                    np.array([rollout.get_perf(perf_name) for rollout in rollouts])
+                    for perf_name in self.perf_names[1:]
+                ]
+                keep = CARS_NSGA(fitness_list, other_obj_lists, self.population_size)
+            else:
+                # only use fitness
+                fitness_list = np.array([
+                    rollout.get_perf(self.perf_names[0]) for rollout in rollouts
+                ])
+                keep = np.argpartition(fitness_list, -self.population_size)[-self.population_size:]
+
             self.population = collections.OrderedDict()
             for ind in keep:
                 rollout = rollouts[ind]
