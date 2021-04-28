@@ -155,6 +155,7 @@ class NasBench101SearchSpace(SearchSpace):
     def __setstate__(self, state):
         super(NasBench101SearchSpace, self).__setstate__(state)
         if self.load_nasbench:
+            # slow, comment this if do not need to load nasbench API when pickle load from disk
             self._init_nasbench()
 
     def pad_archs(self, archs):

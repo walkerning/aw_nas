@@ -8,9 +8,11 @@ import torch.nn as nn
 
 from aw_nas.objective.base import BaseObjective
 
+# from aw_nas.objective.zerocost import get_measures
+
 
 def parameters_saliency(model, batch_inputs, saliency_fn):
-    saliency = 0.
+    saliency = 0.0
     for _, module in model.named_modules():
         if isinstance(module, nn.Conv2d) and module.weight.grad is not None:
             saliency += saliency_fn(module.weight, module.weight.grad)
@@ -21,12 +23,15 @@ def parameters_saliency(model, batch_inputs, saliency_fn):
 def grad_norm(params, grads):
     return grads.abs().sum().item()
 
+
 def snip(params, grads):
     return (params * grads).abs().sum().item()
+
 
 def grasp(params, grads):
     # Hassian Matrix need to be calculated
     raise NotImplementedError()
+
 
 def synflow(params, grads):
     # TODO: NOT sure whether it is right implementation
@@ -35,6 +40,7 @@ def synflow(params, grads):
 
 def activation_saliency(model, batch_inputs, saliency_fn):
     saliency = []
+
     def _hooker(self, module, inputs, outputs):
         if isinstance(module, (nn.ReLU, nn.ReLU6)):
             saliency += [saliency_fn(module, inputs, outputs)]
@@ -47,7 +53,10 @@ def activation_saliency(model, batch_inputs, saliency_fn):
 
 
 def fisher(module, inputs, activations):
-    raise NotImplementedError("To be solved how to extract the gradient of activation layer")
+    raise NotImplementedError(
+        "To be solved how to extract the gradient of activation layer"
+    )
+
 
 def jacob_covariance(model, batch_inputs):
     # model.zero_grad()
@@ -60,25 +69,26 @@ def jacob_covariance(model, batch_inputs):
     # del l
     return jacob
 
+
 def correlation(jacob, eps=1e-5):
     corrs = np.corrcoef(jacob.reshape(jacob.shape[0], -1))
     v, _ = np.linalg.eig(corrs)
     v += eps
-    return np.sum(np.log(v) + 1. / v)
+    return np.sum(np.log(v) + 1.0 / v)
+
 
 def jacob_score(model, batch_inputs):
     jacob = jacob_covariance(model, batch_inputs)
     try:
         return -correlation(jacob)
     except:
-        return 0.
+        return 0.0
 
-def calc_scores(model, batch_inputs, perfs=["snip", "synflow", "grad_norm", "jacob", "vote"]):
-    saliency_fns = {
-        "snip": snip,
-        "synflow": synflow,
-        "grad_norm": grad_norm
-    }
+
+def calc_scores(
+    model, batch_inputs, perfs=["snip", "synflow", "grad_norm", "jacob", "vote"]
+):
+    saliency_fns = {"snip": snip, "synflow": synflow, "grad_norm": grad_norm}
 
     # get the gradients (currently, only parameters)
     model.zero_grad()
@@ -86,7 +96,9 @@ def calc_scores(model, batch_inputs, perfs=["snip", "synflow", "grad_norm", "jac
     loss = model(batch_inputs)
     loss.backward(torch.ones_like(loss))
 
-    saliency_fns = {k: partial(parameters_saliency, saliency_fn=v) for k, v in saliency_fns.items()}
+    saliency_fns = {
+        k: partial(parameters_saliency, saliency_fn=v) for k, v in saliency_fns.items()
+    }
     saliency_fns["jacob"] = jacob_score
 
     scores = {k: saliency_fns[k](model, batch_inputs) for k in perfs if k != "vote"}
@@ -101,7 +113,9 @@ def calc_scores(model, batch_inputs, perfs=["snip", "synflow", "grad_norm", "jac
 class ZeroShot(BaseObjective):
     NAME = "zero-shot"
 
-    def __init__(self, search_space, perf_names, aggregate_as_list=False, schedule_cfg=None):
+    def __init__(
+        self, search_space, perf_names, aggregate_as_list=False, schedule_cfg=None
+    ):
         super(ZeroShot, self).__init__(search_space, schedule_cfg=schedule_cfg)
 
         self.aggregate_as_list = aggregate_as_list
@@ -115,16 +129,25 @@ class ZeroShot(BaseObjective):
         return self._perf_names
 
     def get_perfs(self, inputs, outputs, targets, cand_net):
-        scores = calc_scores(cand_net, inputs, self.perf_names())
-        return [scores[p] for p in self.perf_names()]
+        # scores = calc_scores(cand_net, inputs, self.perf_names())
+        # return [scores[p] for p in self.perf_names()]
+        measures = get_measures(cand_net, inputs.device, inputs, targets)
+        return [measures[p] for p in self.perf_names()]
 
     def get_reward(self, inputs, outputs, targets, cand_net):
         return self.get_perfs(inputs, outputs, targets, cand_net)[0]
 
-    def get_loss(self, inputs, outputs, targets, cand_net,
-                 add_controller_regularization=True, add_evaluator_regularization=True):
+    def get_loss(
+        self,
+        inputs,
+        outputs,
+        targets,
+        cand_net,
+        add_controller_regularization=True,
+        add_evaluator_regularization=True,
+    ):
 
-        return torch.tensor(0.)
+        return torch.tensor(0.0)
 
     def aggregate_fn(self, perf_name, is_training=True):
         if self.aggregate_as_list:

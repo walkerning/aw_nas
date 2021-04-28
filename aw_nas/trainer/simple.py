@@ -66,6 +66,7 @@ class SimpleTrainer(BaseTrainer):
                  controller_steps=None,
                  controller_train_every=1,
                  controller_train_begin=1,
+                 addi_controller_train_epochs=tuple(),
                  interleave_controller_every=None,
 
                  schedule_cfg=None):
@@ -110,6 +111,7 @@ class SimpleTrainer(BaseTrainer):
         self.controller_steps = controller_steps
         self.controller_train_every = controller_train_every
         self.controller_train_begin = controller_train_begin
+        self.addi_controller_train_epochs = addi_controller_train_epochs
         self.interleave_controller_every = interleave_controller_every
 
         # prepare `self.controller_steps`
@@ -286,7 +288,8 @@ class SimpleTrainer(BaseTrainer):
                     finished_e_steps += evaluator_steps
 
                 if epoch >= self.controller_train_begin and \
-                   epoch % self.controller_train_every == 0 and controller_steps > 0:
+                   (epoch % self.controller_train_every == 0 or \
+                    epoch in self.addi_controller_train_epochs) and controller_steps > 0:
                     # controller training
                     c_loss, rollout_stats, c_stats \
                         = self._controller_update(controller_steps,

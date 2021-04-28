@@ -107,6 +107,8 @@ def CARS_NSGA(target, objs, N):
                 selected[i] = 1
         stage += 1
     return np.where(selected == 1)[0]
+
+
 # ---- End code from VEGA https://github.com/huawei-noah/vega/ ----
 
 
@@ -127,9 +129,13 @@ class CarsParetoEvoController(ParetoEvoController):
         population_size=100,
         perf_names=["reward", "param_size"],
         mutate_kwargs={},
-        crossover_kwargs={"per_cell_group": False, "per_node": True,
-                          "per_connection": False, "sep_node_op": False,
-                          "prob_1": 0.5},
+        crossover_kwargs={
+            "per_cell_group": False,
+            "per_node": True,
+            "per_connection": False,
+            "sep_node_op": False,
+            "prob_1": 0.5,
+        },
         eval_sample_strategy="n",
         avoid_repeat=True,
         avoid_mutate_repeat=False,
@@ -143,14 +149,17 @@ class CarsParetoEvoController(ParetoEvoController):
         schedule_cfg=None,
     ):
         super(CarsParetoEvoController, self).__init__(
-            search_space, device=device, rollout_type=rollout_type,
-            mode=mode, schedule_cfg=schedule_cfg
+            search_space,
+            device=device,
+            rollout_type=rollout_type,
+            mode=mode,
+            schedule_cfg=schedule_cfg,
         )
 
         expect(
-            eval_sample_strategy in {"all", "n"},
+            eval_sample_strategy in {"all", "n", "half_random"},
             "Invalid `eval_sample_strategy` {}, choices: {}".format(
-                eval_sample_strategy, ["all", "n"]
+                eval_sample_strategy, ["all", "n", "half_random"]
             ),
             ConfigException,
         )
@@ -158,6 +167,7 @@ class CarsParetoEvoController(ParetoEvoController):
         self.perf_names = perf_names
         self.mutate_kwargs = mutate_kwargs
         self.crossover_kwargs = crossover_kwargs
+        self.has_crossover = hasattr(self.search_space, "crossover")
         self.eval_sample_strategy = eval_sample_strategy
         self.avoid_repeat = avoid_repeat
         self.avoid_mutate_repeat = avoid_mutate_repeat
@@ -184,25 +194,27 @@ class CarsParetoEvoController(ParetoEvoController):
 
     def _sample_one(self, population_items, population_size, prob=None):
         rand = np.random.rand()
-        if rand < 0.25:
-            parent_ind = np.random.randint(0, population_size)
-            parent_geno = population_items[parent_ind][0]
-            parent_rollout = self.search_space.rollout_from_genotype(parent_geno)
-            new_rollout = self._mutate(parent_rollout, **self.mutate_kwargs)
-        elif rand < 0.5:
-            parent_ind = np.random.randint(0, population_size)
-            parent_ind_2 = np.random.randint(0, population_size)
-            parent_rollout = self.search_space.rollout_from_genotype(
-                population_items[parent_ind][0]
-            )
-            parent_rollout_2 = self.search_space.rollout_from_genotype(
-                population_items[parent_ind_2][0]
-            )
-            # `crossover` only implement for cnn search space now
-            new_rollout = self.search_space.crossover(parent_rollout, parent_rollout_2,
-                                                      **self.crossover_kwargs)
-        else:
+        if rand >= 0.5:
             new_rollout = self.search_space.random_sample()
+        else:
+            if self.has_crossover and rand > 0.25:
+                parent_ind = np.random.randint(0, population_size)
+                parent_ind_2 = np.random.randint(0, population_size)
+                parent_rollout = self.search_space.rollout_from_genotype(
+                    population_items[parent_ind][0]
+                )
+                parent_rollout_2 = self.search_space.rollout_from_genotype(
+                    population_items[parent_ind_2][0]
+                )
+                # `crossover` only implement for cnn search space now
+                new_rollout = self.search_space.crossover(
+                    parent_rollout, parent_rollout_2, **self.crossover_kwargs
+                )
+            else:
+                parent_ind = np.random.randint(0, population_size)
+                parent_geno = population_items[parent_ind][0]
+                parent_rollout = self.search_space.rollout_from_genotype(parent_geno)
+                new_rollout = self._mutate(parent_rollout, **self.mutate_kwargs)
         return new_rollout
 
     def sample(self, n, batch_size=1):
@@ -218,6 +230,16 @@ class CarsParetoEvoController(ParetoEvoController):
                     ind_choices = np.random.choice(
                         np.arange(len(items)),
                         size=min(n, len(self.population)),
+                        replace=False,
+                    )
+                    choices = [items[ind] for ind in ind_choices]
+                elif self.eval_sample_strategy == "half_random":
+                    rand = np.random.rand()
+                    pop_n = (n // 2) if rand >= 0.5 else (n + 1) // 2
+                    items = list(self.population.items())
+                    ind_choices = np.random.choice(
+                        np.arange(len(items)),
+                        size=min(pop_n, len(self.population)),
                         replace=False,
                     )
                     choices = [items[ind] for ind in ind_choices]
@@ -277,42 +299,32 @@ class CarsParetoEvoController(ParetoEvoController):
         Note that `perf_name` argument will be ignored.
         Use `perf_names` in cfg file/`__init__` call to configure.
         """
-        if len(self.population) < self.population_size:
-            # save all perfs in the population
-            for rollout in rollouts:
-                self.population[rollout.genotype] = np.array(
-                    [rollout.get_perf(perf_name) for perf_name in self.perf_names]
-                )
-            if len(self.population) >= self.population_size:
-                # finish random sample, start mutation from pareto front
-                self.logger.info(
-                    "Stop random sample, start sampling from the pareto population"
-                )
+        if len(self.perf_names) > 1:
+            # only save the pareto front in the population
+            # the first perf is the fitness
+            fitness_list = np.array(
+                [rollout.get_perf(self.perf_names[0]) for rollout in rollouts]
+            )
+            other_obj_lists = [
+                np.array([rollout.get_perf(perf_name) for rollout in rollouts])
+                for perf_name in self.perf_names[1:]
+            ]
+            keep = CARS_NSGA(fitness_list, other_obj_lists, self.population_size)
         else:
-            if len(self.perf_names) > 1:
-                # only save the pareto front in the population
-                # the first perf is the fitness
-                fitness_list = np.array([
-                    rollout.get_perf(self.perf_names[0]) for rollout in rollouts
-                ])
-                other_obj_lists = [
-                    np.array([rollout.get_perf(perf_name) for rollout in rollouts])
-                    for perf_name in self.perf_names[1:]
-                ]
-                keep = CARS_NSGA(fitness_list, other_obj_lists, self.population_size)
-            else:
-                # only use fitness
-                fitness_list = np.array([
-                    rollout.get_perf(self.perf_names[0]) for rollout in rollouts
-                ])
-                keep = np.argpartition(fitness_list, -self.population_size)[-self.population_size:]
+            # only use fitness
+            fitness_list = np.array(
+                [rollout.get_perf(self.perf_names[0]) for rollout in rollouts]
+            )
+            keep = np.argpartition(fitness_list, -self.population_size)[
+                -self.population_size :
+            ]
 
-            self.population = collections.OrderedDict()
-            for ind in keep:
-                rollout = rollouts[ind]
-                self.population[rollout.genotype] = np.array(
-                    [rollout.get_perf(perf_name) for perf_name in self.perf_names]
-                )
+        self.population = collections.OrderedDict()
+        for ind in keep:
+            rollout = rollouts[ind]
+            self.population[rollout.genotype] = np.array(
+                [rollout.get_perf(perf_name) for perf_name in self.perf_names]
+            )
         return 0
 
     def save(self, path):

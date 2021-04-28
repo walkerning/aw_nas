@@ -13,6 +13,7 @@ from typing import List, Optional, NamedTuple
 from collections import defaultdict, OrderedDict
 
 import six
+import yaml
 import numpy as np
 import torch
 from torch import nn
@@ -547,19 +548,19 @@ class NasBench201RSController(BaseController):
 
         if self.fair:
             assert n == self.num_op_choices
-            archs = np.zeros([self.num_ops, self.num_op_choices])
-            for i in range(self.num_ops):
-                archs[i, :] = np.random.permutation(np.arange(self.num_op_choices))
+            archs = np.zeros([self.num_op_choices,
+                              self.search_space.num_vertices,
+                              self.search_space.num_vertices])
+            ops = np.array([
+                np.random.permutation(np.arange(self.num_op_choices))
+                for _ in range(self.num_ops)
+            ]).T
             for i in range(self.num_op_choices):
-                arch = np.zeros([self.num_vertices, self.num_vertices])
-                ind = 0
-                for from_ in range(self.num_vertices - 1):
-                    for to_ in range(from_ + 1, self.num_vertices):
-                        arch[to_, from_] = archs[ind, i]
-                        ind += 1
-                if self.check_valid_arch(arch) or not self.check_valid:
-                    rollouts.append(NasBench201Rollout(arch, self.search_space))
+                archs[i][self.search_space.idx] = ops[i]
+            rollouts = [NasBench201Rollout(arch, self.search_space) for arch in archs
+                        if self.check_valid_arch(arch) or not self.check_valid]
             return rollouts
+
         for i in range(n):
             while 1:
                 if self.deiso:
@@ -597,7 +598,7 @@ class NasBench201RSController(BaseController):
         pass
 
     def load(self, path):
-        pass
+        self.logger.info("nasbench-201-rs controller would not be loaded from the disk")
 
 
 class GCN(nn.Module):
@@ -1809,9 +1810,16 @@ class BaseNB201SharedNet(BaseWeightsManager, nn.Module):
         candidate_member_mask=True,
         candidate_cache_named_members=False,
         candidate_eval_no_grad=True,
+        iso_mapping_file=None
     ):
         super(BaseNB201SharedNet, self).__init__(search_space, device, rollout_type)
         nn.Module.__init__(self)
+
+        if iso_mapping_file is not None:
+            with open(iso_mapping_file, "r") as rf:
+                self.iso_mapping = yaml.load(rf)
+        else:
+            self.iso_mapping = None
 
         # optionally data parallelism in SharedNet
         self.gpus = gpus
@@ -1973,6 +1981,11 @@ class BaseNB201SharedNet(BaseWeightsManager, nn.Module):
         self.to(device)
 
     def forward(self, inputs, genotype, **kwargs):  # pylint: disable=arguments-differ
+        if self.iso_mapping:
+            # map to the representing arch
+            genotype = self.search_space.rollout_from_genotype(
+                self.iso_mapping[NasBench201Rollout(
+                    genotype, search_space=self.search_space).genotype]).arch
         if not self.use_stem:
             states = inputs
         elif isinstance(self.use_stem, (list, tuple)):
@@ -2042,6 +2055,7 @@ class NB201SharedNet(BaseNB201SharedNet):
         candidate_member_mask=True,
         candidate_cache_named_members=False,
         candidate_eval_no_grad=True,
+        iso_mapping_file=None
     ):
         super(NB201SharedNet, self).__init__(
             search_space,
@@ -2063,6 +2077,7 @@ class NB201SharedNet(BaseNB201SharedNet):
             candidate_member_mask=candidate_member_mask,
             candidate_cache_named_members=candidate_cache_named_members,
             candidate_eval_no_grad=candidate_eval_no_grad,
+            iso_mapping_file=iso_mapping_file
         )
 
 
