@@ -82,9 +82,20 @@ def p_at_tb_k(predict_scores, true_scores, ratios=[0.001, 0.005, 0.01, 0.05, 0.1
 
 # Parse the derive results
 def parse_derive(filename):
+    if args.type == "nb301":
+        with open(filename, "rb") as fr:
+            rollouts = pickle.load(fr)
+        arch_dict = {str(r.genotype): r.perf for r in rollouts}
+        return arch_dict
+    if args.type == "nb101":
+        with open(filename, "rb") as fr:
+            rollouts = pickle.load(fr)
+        return {r.genotype: r.perf for r in rollouts}
+    # nb201
     with open(filename, "r") as r_f:
         arch_dict = _parse_derive_file(r_f)
     return arch_dict
+
 
 class Model(object):
     def __init__(self, path, tabular_path):
@@ -112,10 +123,12 @@ class Model(object):
 
     def __getitem__(self, key):
         if key in self.tabular:
-            return self.tabular[key]
+    	    return self.tabular[key]
         geno = genotype_from_str(key, self.search_space)
         res = self.model.predict(config=self.genotype_type(
-                representation="genotype", with_noise=False))
+            normal=[g[:2] for g in geno.normal_0], normal_concat=[2,3,4,5],
+            reduce=[g[:2] for g in geno.reduce_1], reduce_concat=[2,3,4,5]),
+                representation="genotype", with_noise=False)
         self.tabular[key] = res
         return res
 
@@ -214,7 +227,7 @@ def main():
     for derive_file in derive_files:
         final_arch_dict = parse_derive(derive_file)
         print("Arch num:", len(final_arch_dict))
-        log_path = str(derive_file).replace(".yaml", "_statistic.pkl")
+        log_path = str(derive_file).rsplit(".", 1)[0] + "_statistic.pkl"
         if args.type == "nb301":
             query_dict = get_nb301_iso_dict(args.model)
             non_sparse = get_info(final_arch_dict, query_dict)
