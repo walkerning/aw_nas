@@ -11,6 +11,7 @@ from scipy.stats import stats, spearmanr
 import pickle
 
 from collections import namedtuple
+from aw_nas.btcs.nasbench_101 import NasBench101SearchSpace
 
 try:
     from aw_nas.btcs.nasbench_201 import NasBench201SearchSpace
@@ -31,8 +32,10 @@ except Exception as e:
 nb201_dir = os.path.join(utils.get_awnas_dir("AWNAS_DATA", "data"), "nasbench-201")
 
 parser = argparse.ArgumentParser()
-parser.add_argument("-t","--type", default="deiso", choices=["deiso", "iso", "iso2deiso", "iso2deiso_withoutpost", "nb301"])
+parser.add_argument("-t","--type", default="deiso", choices=["deiso", "iso", "iso2deiso",
+"iso2deiso_withoutpost", "nb301", "nb101"])
 parser.add_argument("--model", default=None)
+parser.add_argument("--oneshot", action="store_true")
 parser.add_argument("--save", help="Pickle all evaluation result to this file.", default=None)
 args, derive_files = parser.parse_known_args()
 
@@ -123,7 +126,7 @@ class Model(object):
 
     def __getitem__(self, key):
         if key in self.tabular:
-    	    return self.tabular[key]
+            return self.tabular[key]
         geno = genotype_from_str(key, self.search_space)
         res = self.model.predict(config=self.genotype_type(
             normal=[g[:2] for g in geno.normal_0], normal_concat=[2,3,4,5],
@@ -136,6 +139,18 @@ class Model(object):
 def get_nb301_iso_dict(model_dir, tabular_path=None):
     model = Model(model_dir, tabular_path)
     return model
+
+
+class NB101Model(object):
+    def __init__(self, model):
+        self.model = model
+
+    def __getitem__(self, key):
+        key.matrix = key.matrix.astype(int)
+        return self.model.query(key)["test_accuracy"]
+
+def get_nb101_dict(model):
+    return NB101Model(model)
 
 
 # Read the isomorphic ground truth
@@ -206,6 +221,34 @@ def get_info(final_arch_dict, query_dict, gt_threshold=0., info_names=["oneshot 
                 res["oneshot_loss"][info_name] = - res["oneshot_loss"][info_name]
     return res
 
+def get_zeroshot_info(final_arch_dict, query_dict, gt_threshold=0.,
+        info_names=["oneshot average", "linear", "kd", "spearmanr", "BWR@K",
+            "P@tbK"], bs=1):
+    keys = list(list(final_arch_dict.values())[0].keys())
+    keys = [k for k in keys if k != "model"]
+    negative_keys = ["loss"]
+    query_list, *oneshot_perfs = zip(*[(query_dict[arch],
+        *[final_arch_dict[arch][k] for k in keys]) for arch in final_arch_dict])
+    query_list = np.array(query_list) / 100
+    oneshot_perfs = {k: v[:, :bs].mean(-1) for k, v in zip(keys, np.array(oneshot_perfs))}
+    for k in negative_keys:
+        oneshot_perfs[k] = -oneshot_perfs[k]
+
+    if gt_threshold > 0:
+        query_list = np.round(query_list / gt_threshold)
+
+    res = {f"oneshot_{k}": {} for k in keys}
+    for k in keys:
+        for info_name in info_names:
+            res[f"oneshot_{k}"][info_name] = \
+                criteria[info_name](oneshot_perfs[k], query_list)
+            if info_name == "oneshot average" and k in negative_keys:
+                res[f"oneshot_{k}"][info_name] = - res[f"oneshot_{k}"][info_name]
+    return res
+
+
+
+
 # Post De-isomorphism
 def iso_to_deiso(iso_dict, iso_group):
     with open(os.path.join(nb201_dir, "non-isom.txt")) as fiso:
@@ -224,6 +267,9 @@ def iso_to_deiso(iso_dict, iso_group):
 
 def main():
     all_res = {}
+    if args.type == "nb101":
+        ss = NasBench101SearchSpace()
+        ss._init_nasbench()
     for derive_file in derive_files:
         final_arch_dict = parse_derive(derive_file)
         print("Arch num:", len(final_arch_dict))
@@ -232,8 +278,22 @@ def main():
             query_dict = get_nb301_iso_dict(args.model)
             non_sparse = get_info(final_arch_dict, query_dict)
             query_dict.save()
-            sparse = get_info(final_arch_dict, query_dict, gt_threshold=0.01)
-            info = {"non_sparse": non_sparse, "sparse": sparse}
+            if args.oneshot:
+                sparse = get_info(final_arch_dict, query_dict, gt_threshold=0.01)
+                info = {"non_sparse": non_sparse, "sparse": sparse}
+            else:
+                info = {}
+                for bs in [1, 3, 5]:
+                    non_sparse = get_zeroshot_info(final_arch_dict, query_dict, bs=bs)
+                    info.update({bs: non_sparse})
+        elif args.type == "nb101":
+            model = ss.nasbench
+            query_dict = get_nb101_dict(model)
+            if args.oneshot:
+                info = get_info(final_arch_dict, query_dict)
+            else:
+                info = {bs: get_zeroshot_info(final_arch_dict, query_dict, bs=bs)
+                        for bs in [1, 3, 5]}
         else:
             # nb201
             if args.type == "iso2deiso":
