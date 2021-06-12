@@ -1578,19 +1578,26 @@ class NB201SharedCell(nn.Module):
             from_, to_ = self._edge_name_pattern.match(edge_name).groups()
             self.edges[int(from_)][int(to_)] = edge_mod
 
-    def forward(self, inputs, genotype):
+    def forward(self, inputs, genotype, **kwargs):
         states_ = [inputs]
-        valid_input = [0]
-        for to_ in range(1, self.search_space.num_vertices):
-            for input_ in valid_input:
-                if genotype[to_][input_] > 0:
-                    valid_input.append(to_)
-                    break
-        valid_output = [self.search_space.num_vertices - 1]
-        for from_ in range(self.search_space.num_vertices - 2, -1, -1):
-            for output_ in valid_output:
-                if genotype[output_][from_] > 0:
-                    valid_output.append(from_)
+        if "valid_input" in kwargs:
+            valid_input = kwargs["valid_input"]
+        else:
+            valid_input = [0]
+            for to_ in range(1, self.search_space.num_vertices):
+                for input_ in valid_input:
+                    if genotype[to_][input_] > 0:
+                        valid_input.append(to_)
+                        break
+        if "valid_output" in kwargs:
+            valid_output = kwargs["valid_output"]
+        else:
+            valid_output = [self.search_space.num_vertices - 1]
+            for from_ in range(self.search_space.num_vertices - 2, -1, -1):
+                for output_ in valid_output:
+                    if genotype[output_][from_] > 0:
+                        valid_output.append(from_)
+
         for to_ in range(1, self._vertices):
             state_ = torch.zeros(inputs.shape).to(inputs.device)
             for from_ in range(to_):
@@ -1650,7 +1657,7 @@ class NB201CandidateNet(CandidateNet):
         member_mask,
         gpus=tuple(),
         cache_named_members=False,
-        eval_no_grad=True,
+        eval_no_grad=True
     ):
         super(NB201CandidateNet, self).__init__(eval_no_grad=eval_no_grad)
         self.super_net = super_net
@@ -1667,6 +1674,21 @@ class NB201CandidateNet(CandidateNet):
 
         self.genotype_arch = rollout.arch
         self.genotype = rollout.genotype
+
+        # get valid input/output
+        valid_input = [0]
+        for to_ in range(1, self.search_space.num_vertices):
+            for input_ in valid_input:
+                if self.genotype_arch[to_][input_] > 0:
+                    valid_input.append(to_)
+                    break
+        valid_output = [self.search_space.num_vertices - 1]
+        for from_ in range(self.search_space.num_vertices - 2, -1, -1):
+            for output_ in valid_output:
+                if self.genotype_arch[output_][from_] > 0:
+                    valid_output.append(from_)
+        self.valid_input = set(valid_input)
+        self.valid_output = set(valid_output)
 
     def reset_flops(self):
         self._flops_calculated = False
@@ -1685,7 +1707,8 @@ class NB201CandidateNet(CandidateNet):
             ]
         else:
             arch = self.genotype_arch
-        return self.super_net.forward(inputs, arch)
+        return self.super_net.forward(
+            inputs, arch, valid_input=self.valid_input, valid_output=self.valid_output)
 
     def forward(self, inputs, single=False, **kwargs):  # pylint: disable=arguments-differ
         if single or not self.gpus or len(self.gpus) == 1:

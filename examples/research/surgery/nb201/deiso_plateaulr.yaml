@@ -26,7 +26,6 @@ controller_cfg:
   rollout_type: nasbench-201
   mode: eval
   deiso: true
-  text_file: /home/foxfi/projects/aw_nas_clones/aw_nas_dev/examples/research/surgery/nb201/data/non-isom.txt
 ## ---- End Component controller ----
 
 ## ---- Component evaluator ----
