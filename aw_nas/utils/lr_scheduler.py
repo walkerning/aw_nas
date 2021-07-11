@@ -5,6 +5,77 @@ import torch.optim.lr_scheduler
 
 __all__ = ["CosineWithRestarts", "get_scheduler_cls"]
 
+class WarmupCosineWithRestarts(_LRScheduler):  # pylint: disable=protected-access
+
+    """
+    Cosine annealing with restarts.
+     This is decribed in the paper https://arxiv.org/abs/1608.03983.
+     Parameters
+    ----------
+    optimizer : ``torch.optim.Optimizer``
+     T_0 : ``int``
+        The maximum number of iterations within the first cycle.
+     eta_min : ``float``, optional (default=0)
+        The minimum learning rate.
+     last_epoch : ``int``, optional (default=-1)
+        The index of the last epoch. This is used when restarting.
+     factor : ``float``, optional (default=1)
+        The factor by which the cycle length (``T_max``) increases after each restart.
+     """
+    def __init__(self,
+                 optimizer,
+                 T_0,
+                 warmup_epochs=0,
+                 eta_min=0.,
+                 last_epoch=-1,
+                 factor=1.,
+                 base_lr_factor=1.):
+        self.t_max = T_0
+        self.warmup_epochs = warmup_epochs
+        self.eta_min = eta_min
+        self.factor = factor
+        self.base_lr_factor = base_lr_factor
+        self._last_restart = 0
+        self._cycle_counter = 0
+        self._cycle_factor = 1.
+        self._updated_cycle_len = T_0
+        self._initialized = False
+        self._base_lrs = None
+        super(WarmupCosineWithRestarts, self).__init__(optimizer, last_epoch)
+
+    def get_lr(self):
+        """Get updated learning rate."""
+        # HACK: We need to check if this is the first time ``self.get_lr()`` was called,
+        # since ``torch.optim.lr_scheduler._LRScheduler`` will call ``self.get_lr()``
+        # when first initialized, but the learning rate should remain unchanged
+        # for the first epoch.
+        if not self._initialized:
+            self._initialized = True
+            self._base_lrs = self.base_lrs
+            return self._base_lrs
+        step = self.last_epoch
+        self._cycle_counter = step - self._last_restart
+        lrs = [
+            self.eta_min + ((lr - self.eta_min) / 2) * (
+                np.cos(
+                    np.pi *
+                    (self._cycle_counter % self._updated_cycle_len) /
+                    self._updated_cycle_len
+                ) + 1
+            ) if (self._cycle_counter % self._updated_cycle_len) >= self.warmup_epochs 
+            else self._base_lrs[0] * (self._cycle_counter % self._updated_cycle_len + 1) / self.warmup_epochs 
+            for lr in self._base_lrs
+        ]
+        if self._cycle_counter != 0 and self._cycle_counter % self._updated_cycle_len == 0:
+            # Adjust the cycle length.
+            self._cycle_factor *= self.factor
+            self._cycle_counter = 0
+            self._updated_cycle_len = int(self._cycle_factor * self.t_max)
+            self._last_restart = step
+            self._base_lrs = [lr * self.base_lr_factor for lr in self._base_lrs]
+        return lrs
+
+
 class CosineWithRestarts(_LRScheduler):  # pylint: disable=protected-access
 
     """
@@ -122,6 +193,6 @@ class WarmupCosineAnnealingLR(_LRScheduler):
                 for group in self.optimizer.param_groups]
 
 def get_scheduler_cls(type_):
-    if type_ in {"WarmupCosineAnnealingLR", "CosineWithRestarts", "ExpDecay"}:
+    if type_ in {"WarmupCosineAnnealingLR", "WarmupCosineWithRestarts", "CosineWithRestarts", "ExpDecay"}:
         return globals()[type_]
     return getattr(torch.optim.lr_scheduler, type_)

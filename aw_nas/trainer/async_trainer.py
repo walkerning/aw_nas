@@ -390,14 +390,14 @@ class AsyncTrainer(BaseTrainer):
         # stop the dispatcher
         self.dispatcher.stop()
 
-    def setup(self, load=None, save_every=None, train_dir=None, writer=None, load_components=None,
+    def setup(self, load=None, save_every=None, save_controller_every=None, train_dir=None, writer=None, load_components=None,
               interleave_report_every=None):
         # TODO: handle load components
         assert train_dir is not None, \
             ("You'd better provide a path using `--train-dir` to save all the checkpoint "
              "when using async trainer")
 
-        super(AsyncTrainer, self).setup(load, save_every, train_dir, writer, load_components,
+        super(AsyncTrainer, self).setup(load, save_every, save_controller_every, train_dir, writer, load_components,
                 interleave_report_every)
         self.train_dir = train_dir
         ckpt_dir = utils.makedir(os.path.join(train_dir, "checkpoints"))

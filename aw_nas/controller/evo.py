@@ -363,7 +363,7 @@ class ParetoEvoController(BaseController):
 
     def sample(self, n, batch_size=1):
         if self.mode == "eval":
-            self.pareto_frontier = self.find_pareto_opt()
+            self.pareto_frontier = self.find_pareto_opt(self.population)
             if self.eval_sample_strategy == "all":
                 # return all archs on the pareto curve,
                 # note that number of sampled rollouts does not necessarily equals `n`
@@ -490,10 +490,11 @@ class ParetoEvoController(BaseController):
         distances = self._euclidean_distance(perfs, pareto).min(-1)
         return distances
 
-    def find_pareto_opt(self):
-        pop_keys = list(self.population.keys())
+    @classmethod
+    def find_pareto_opt(cls, population):
+        pop_keys = list(population.keys())
         pop_size = len(pop_keys)
-        population = {k: v for k, v in self.population.items()}
+        population = {k: v for k, v in population.items()}
         for ind1 in range(pop_size):
             key1 = pop_keys[ind1]
             if key1 not in population:

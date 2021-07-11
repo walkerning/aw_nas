@@ -23,7 +23,7 @@ from torch.backends import cudnn
 
 import aw_nas
 from aw_nas.dataset import AVAIL_DATA_TYPES
-from aw_nas import btcs, utils, BaseRollout
+from aw_nas import btcs, germ, utils, BaseRollout
 from aw_nas.common import rollout_from_genotype_str
 from aw_nas.utils.common_utils import _OrderedCommandGroup, _dump, _dump_with_perf
 from aw_nas.utils.vis_utils import WrapWriter
@@ -31,10 +31,22 @@ from aw_nas.utils import RegistryMeta
 from aw_nas.utils import logger as _logger
 from aw_nas.utils.exception import expect
 
+torch.multiprocessing.set_sharing_strategy('file_system')
+
 # patch click.option to show the default values
 click.option = functools.partial(click.option, show_default=True)
 
 LOGGER = _logger.getChild("main")
+
+
+# To be compatible with MMDet config which assert tuple as input
+def construct_python_tuple(loader, node):
+    return tuple(loader.construct_sequence(node))
+
+yaml.SafeLoader.add_constructor(
+    u'tag:yaml.org,2002:python/tuple',
+    construct_python_tuple)
+
 
 def _onlycopy_py(src, names):
     return [name for name in names if not \
@@ -349,13 +361,13 @@ def mpsearch(cfg_file, seed, load, save_every, save_controller_every, interleave
         weights_manager = _init_component(cfg, "weights_manager",
                                 search_space=search_space,
                                 device=device,
-                                gpus=[device],
+                                #gpus=[device],
                                 rollout_type=rollout_type,
                                 num_tokens=num_tokens)
     else:
         weights_manager = _init_component(cfg, "weights_manager",
                                 search_space=search_space,
-                                device=device, gpus=[device],
+                                device=device, #gpus=[device],
                                 rollout_type=rollout_type)
     # check model support for data type
     expect(_data_type in weights_manager.supported_data_types())
@@ -849,6 +861,8 @@ def mptrain(seed, cfg_file, load, load_state_dict, save_every, train_dir):
               help="the gpus to run training on, split by single comma")
 @click.option("--seed", default=None, type=int,
               help="the random seed to run training")
+@click.option("--load-supernet", default=None, type=str,
+              help="load supernet weights before finalized")
 @click.option("--load", default=None, type=str,
               help="the checkpoint to load")
 @click.option("--load-state-dict", default=None, type=str,
@@ -857,7 +871,7 @@ def mptrain(seed, cfg_file, load, load_state_dict, save_every, train_dir):
               help="the number of epochs to save checkpoint every")
 @click.option("--train-dir", default=None, type=str,
               help="the directory to save checkpoints")
-def train(gpus, seed, cfg_file, load, load_state_dict, save_every, train_dir):
+def train(gpus, seed, cfg_file, load_supernet, load, load_state_dict, save_every, train_dir):
     if train_dir:
         # backup config file, and if in `develop` mode, also backup the aw_nas source code
         train_dir = utils.makedir(train_dir, remove=True)
@@ -888,11 +902,16 @@ def train(gpus, seed, cfg_file, load, load_state_dict, save_every, train_dir):
         np.random.seed(seed)
         random.seed(seed)
         torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
 
     # load components config
     LOGGER.info("Loading configuration files.")
     with open(cfg_file, "r") as f:
         cfg = yaml.safe_load(f)
+
+    if load_supernet is not None:
+        # load supernet weights and finetune
+        cfg["final_model_cfg"]["supernet_state_dict"] = load_supernet
 
     # initialize components
     LOGGER.info("Initializing components.")
@@ -974,6 +993,7 @@ def test(cfg_file, load, load_state_dict, split, gpus, seed): #pylint: disable=r
     LOGGER.info("Initializing components.")
     whole_dataset = _init_component(cfg, "dataset")
     search_space = _init_component(cfg, "search_space")
+
     objective = _init_component(cfg, "objective", search_space=search_space)
     trainer = _init_component(cfg, "final_trainer",
                               dataset=whole_dataset,

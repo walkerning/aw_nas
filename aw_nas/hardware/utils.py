@@ -118,7 +118,8 @@ def assemble_profiling_nets(profiling_primitives,
                             base_cfg_template,
                             num_sample=None,
                             image_size=224,
-                            max_layers=20):
+                            max_layers=20,
+                            fix_stem_layer=True):
     """
     Args:
         profiling_primitives: (list of dict)
@@ -171,16 +172,18 @@ def assemble_profiling_nets(profiling_primitives,
         # the first conv layer reduing the size of feature map.
         sampled_prim = profiling_primitives[available_idx[0]]
         cur_channel = int(sampled_prim["C"])
-        first_cov_op = {
-            "prim_type": "conv_3x3",
-            "spatial_size": image_size,
-            "C": 3,
-            "C_out": cur_channel,
-            "stride": 2,
-            "affine": True,
-        }
+        if fix_stem_layer:
+            first_cov_op = {
+                "prim_type": "conv_3x3",
+                "spatial_size": image_size,
+                "C": 3,
+                "C_out": cur_channel,
+                "stride": 2,
+                "affine": True,
+            }
+            geno.append(first_cov_op)
+        
         cur_size = round(image_size / 2)
-        geno.append(first_cov_op)
 
         for _ in range(max_layers):
             if len(available_idx) == 0:
