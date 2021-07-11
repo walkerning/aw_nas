@@ -2,6 +2,7 @@ import numpy as np
 
 from aw_nas.dataset.det_augmentation import Preproc
 from aw_nas.utils import getLogger
+
 _LOGGER = getLogger("det_transform")
 
 try:
@@ -11,7 +12,7 @@ except ImportError as e:
 
 
 class TrainAugmentation(object):
-    def __init__(self, pipeline, size, mean, std, norm_factor=255., bias=0.):
+    def __init__(self, pipeline, size, mean, std, norm_factor=255.0, bias=0.0):
         """
         Args:
             size: the size the of final image.
@@ -37,13 +38,17 @@ class TrainAugmentation(object):
             labels: labels of boxes.
         """
         if self.pipeline is not None:
-            return {k: v for k, v in
-                    self.pipeline({
+            return {
+                k: v
+                for k, v in self.pipeline(
+                    {
                         "img": img,
                         "gt_bboxes": boxes,
                         "gt_labels": labels,
-                        "bbox_fields": ["gt_bboxes"]
-                    }).items()}
+                        "bbox_fields": ["gt_bboxes"],
+                    }
+                ).items()
+            }
 
         img, boxes, labels = self.preproc(img, boxes, labels)
         img /= self.norm_factor
@@ -54,7 +59,7 @@ class TrainAugmentation(object):
 
 
 class TestTransform(object):
-    def __init__(self, pipeline, size, mean=0.0, std=1.0, norm_factor=255., bias=0.):
+    def __init__(self, pipeline, size, mean=0.0, std=1.0, norm_factor=255.0, bias=0.0):
         self.mean = mean
         self.std = std
         self.norm_factor = norm_factor
@@ -69,13 +74,17 @@ class TestTransform(object):
 
     def __call__(self, img, boxes, labels):
         if self.pipeline is not None:
-            return {k: v[0] for k, v in
-                    self.pipeline({
+            return {
+                k: v[0]
+                for k, v in self.pipeline(
+                    {
                         "img": img,
                         "gt_bboxes": boxes,
                         "gt_labels": labels,
-                        "bbox_fields": ["gt_bboxes"]
-                    }).items()}
+                        "bbox_fields": ["gt_bboxes"],
+                    }
+                ).items()
+            }
 
         img, boxes, labels = self.preproc(img, boxes, labels)
         img /= self.norm_factor

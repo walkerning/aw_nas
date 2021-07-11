@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-#pylint: disable=arguments-differ,invalid-name
+# pylint: disable=arguments-differ,invalid-name
 
 import re
 import abc
@@ -22,7 +22,7 @@ class BaseDecision(Component):
         return self.to_string()
 
     @property
-    @abc.abstractmethod # python3.3+
+    @abc.abstractmethod  # python3.3+
     def search_space_size(self):
         # only relevant for discrete variable
         pass
@@ -51,13 +51,22 @@ class BaseDecision(Component):
 class Choices(BaseDecision):
     NAME = "choices"
 
-    def __init__(self, choices, size=1, replace=True, p=None, epoch_callback=None, post_mul_fn=None, schedule_cfg=None):
+    def __init__(
+        self,
+        choices,
+        size=1,
+        replace=True,
+        p=None,
+        epoch_callback=None,
+        post_mul_fn=None,
+        schedule_cfg=None,
+    ):
         super().__init__(schedule_cfg=schedule_cfg)
         self._choices = choices
-        self.size = size # choose size
+        self.size = size  # choose size
         self.replace = replace
         self.p = p
-        self.post_mul_fn = post_mul_fn # ensure choices are divisible
+        self.post_mul_fn = post_mul_fn  # ensure choices are divisible
 
         if epoch_callback is not None:
             epoch_callback = partial(epoch_callback, self)
@@ -71,7 +80,9 @@ class Choices(BaseDecision):
         if self.is_leaf():
             return self._choices
         else:
-            assert len(self._choices) == 2, "Non-leaf choices node must have only 2 subnodes."
+            assert (
+                len(self._choices) == 2
+            ), "Non-leaf choices node must have only 2 subnodes."
 
             subchoices = []
             for c in self._choices:
@@ -83,7 +94,10 @@ class Choices(BaseDecision):
                     raise ValueError("Only support numerical or Choices operator.")
                 subchoices.append(choices)
             fn = self.post_mul_fn or (lambda x: x)
-            choices = [reduce(lambda a, b: fn(a * b), x) for x in itertools.product(*subchoices)]
+            choices = [
+                reduce(lambda a, b: fn(a * b), x)
+                for x in itertools.product(*subchoices)
+            ]
             return choices
 
     @choices.setter
@@ -101,11 +115,13 @@ class Choices(BaseDecision):
     def p(self):
         if self.is_leaf():
             if self._p is None:
-                return [(1 / self.num_choices), ] * self.num_choices 
+                return [(1 / self.num_choices),] * self.num_choices
             assert np.isclose(sum(self._p), 1.0) and len(self._p) == self.num_choices
             return self._p
         else:
-            assert len(self._choices) == 2, "Non-leaf choices node must have only 2 subnodes."
+            assert (
+                len(self._choices) == 2
+            ), "Non-leaf choices node must have only 2 subnodes."
             probs = []
             for c in self._choices:
                 if isinstance(c, Choices):
@@ -128,9 +144,18 @@ class Choices(BaseDecision):
     def __mul__(self, choices):
         if isinstance(choices, (int, float, Choices)):
             if isinstance(choices, Choices):
-                assert self.size == choices.size, "Only support __mul__ between two choices have the same size."
-            return  Choices((self, choices), self.size, self.replace, None, None,
-                    post_mul_fn=self.post_mul_fn, schedule_cfg=self.schedule_cfg)
+                assert (
+                    self.size == choices.size
+                ), "Only support __mul__ between two choices have the same size."
+            return Choices(
+                (self, choices),
+                self.size,
+                self.replace,
+                None,
+                None,
+                post_mul_fn=self.post_mul_fn,
+                schedule_cfg=self.schedule_cfg,
+            )
         else:
             raise ValueError("Only support numerical or Choices operator.")
 
@@ -141,8 +166,8 @@ class Choices(BaseDecision):
 
         is_bound = True
         if not hasattr(self, "decision_id"):
-             self.logger.warning(f"choice {self} is not bound to any module.")
-             is_bound = False
+            self.logger.warning(f"choice {self} is not bound to any module.")
+            is_bound = False
 
         for i, c in enumerate(self._choices):
             if isinstance(c, Choices):
@@ -155,10 +180,14 @@ class Choices(BaseDecision):
         # do not consider p
         # consider the choices as a set not list, this might not be the case
         # for some search space construction
-        return scipy.special.comb(self.num_choices, self.size, exact=False, repetition=self.replace)
+        return scipy.special.comb(
+            self.num_choices, self.size, exact=False, repetition=self.replace
+        )
 
     def random_sample(self):
-        chosen = np.random.choice(self.choices, size=self.size, replace=self.replace, p=self.p)
+        chosen = np.random.choice(
+            self.choices, size=self.size, replace=self.replace, p=self.p
+        )
         if self.size == 1:
             return chosen[0]
         return chosen
@@ -188,8 +217,10 @@ class Choices(BaseDecision):
             whole_p = 1 - self.p[old_ind]
             if whole_p == 0:
                 raise Exception("Choice {} cannot mutate from {}".format(self, old))
-            mutate_p = [self.p[(old_ind + bias) % self.num_choices] / whole_p
-                        for bias in range(1, self.num_choices)]
+            mutate_p = [
+                self.p[(old_ind + bias) % self.num_choices] / whole_p
+                for bias in range(1, self.num_choices)
+            ]
             mutate_thresh = np.cumsum(mutate_p)
             bias = np.where(np.random.rand() < mutate_thresh)[0][0] + 1
         else:
@@ -202,7 +233,11 @@ class Choices(BaseDecision):
 
     def to_string(self):
         return "Choices(choices: {}, size: {}, replace: {}, p: {})".format(
-            self.choices, self.size, self.replace, self.p if self.p is not None else "null")
+            self.choices,
+            self.size,
+            self.replace,
+            self.p if self.p is not None else "null",
+        )
 
     @classmethod
     def from_string(cls, string):
@@ -210,6 +245,7 @@ class Choices(BaseDecision):
         sub_stringio = StringIO("{" + sub_string + "}")
         kwargs = yaml.load(sub_stringio)
         return cls(**kwargs)
+
 
 # ---- Non-leaf Decisions ----
 class NonLeafDecision(object):

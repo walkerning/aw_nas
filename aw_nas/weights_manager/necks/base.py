@@ -4,14 +4,17 @@ import torch
 from torch import nn
 
 from aw_nas.rollout import BaseRollout
-from aw_nas.weights_manager.base import (BaseWeightsManager, CandidateNet)
+from aw_nas.weights_manager.base import BaseWeightsManager, CandidateNet
 
 __all__ = ["BaseNeck", "BaseNeckCandidateNet"]
+
 
 class BaseNeck(BaseWeightsManager, nn.Module):
     NAME = "neck"
 
-    def __init__(self, search_space, device, rollout_type, gpus=tuple(), schedule_cfg=None):
+    def __init__(
+        self, search_space, device, rollout_type, gpus=tuple(), schedule_cfg=None
+    ):
         super(BaseNeck, self).__init__(search_space, device, rollout_type, schedule_cfg)
         nn.Module.__init__(self)
 
@@ -52,7 +55,7 @@ class BaseNeck(BaseWeightsManager, nn.Module):
 
     def step_current_gradients(self, optimizer):
         optimizer.step()
-    
+
     def set_device(self, device):
         self.device = device
         self.to(device)
@@ -83,5 +86,3 @@ class BaseNeckCandidateNet(CandidateNet):
             return self.super_net.parallel_model.forward(inputs, self.rollout)
         else:
             return self.super_net.forward(inputs, self.rollout)
-
-

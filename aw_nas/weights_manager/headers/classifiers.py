@@ -1,4 +1,3 @@
-
 from torch import nn
 
 from aw_nas.weights_manager.necks.bifpn import BiFPNSepConv
@@ -97,23 +96,38 @@ class Classifier(nn.Module):
 
 
 class BiFPNClassifier(nn.Module):
-    def __init__(self, in_channels, num_anchors, num_classes, num_layers, activation="swish", onnx_export=False):
+    def __init__(
+        self,
+        in_channels,
+        num_anchors,
+        num_classes,
+        num_layers,
+        activation="swish",
+        onnx_export=False,
+    ):
         super(Classifier, self).__init__()
         self.num_anchors = num_anchors
         self.num_classes = num_classes
         self.num_layers = num_layers
-        self.conv_list = nn.ModuleList([
-            BiFPNSepConv(in_channels, in_channels, norm=False) for i in range(num_layers)
-        ])
+        self.conv_list = nn.ModuleList(
+            [
+                BiFPNSepConv(in_channels, in_channels, norm=False)
+                for i in range(num_layers)
+            ]
+        )
 
-        self.bn_list = nn.ModuleList([
-            nn.ModuleList([
-                FlexibleBatchNorm2d(in_channels, momentum=0.01, eps=1e-3) for i in range(num_layers)
-            ])
-            for j in range(5)
-        ])
-        self.header = BiFPNSepConv(
-            in_channels, num_anchors * num_classes, norm=False)
+        self.bn_list = nn.ModuleList(
+            [
+                nn.ModuleList(
+                    [
+                        FlexibleBatchNorm2d(in_channels, momentum=0.01, eps=1e-3)
+                        for i in range(num_layers)
+                    ]
+                )
+                for j in range(5)
+            ]
+        )
+        self.header = BiFPNSepConv(in_channels, num_anchors * num_classes, norm=False)
         self.act = ops.get_op(activation)()
 
     def forward(self, inputs, post_process=False):
@@ -126,5 +140,3 @@ class BiFPNClassifier(nn.Module):
             feat = self.header(feat)
             feats.append(feat)
         return feats
-
-

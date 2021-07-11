@@ -13,11 +13,13 @@ __all__ = ["SSDAnchorsGenerator"]
 class SSDAnchorsGenerator(AnchorsGenerator):
     NAME = "ssd_anchors_generator"
 
-    def __init__(self,
-                 aspect_ratios=[[2], [2, 3], [2, 3], [2, 3], [2], [2]],
-                 scales=[0.15, 0.3, 0.45, 0.6, 0.75, 0.9, 1.05],
-                 clip=True,
-                 schedule_cfg=None):
+    def __init__(
+        self,
+        aspect_ratios=[[2], [2, 3], [2, 3], [2, 3], [2], [2]],
+        scales=[0.15, 0.3, 0.45, 0.6, 0.75, 0.9, 1.05],
+        clip=True,
+        schedule_cfg=None,
+    ):
 
         super(SSDAnchorsGenerator, self).__init__(schedule_cfg)
         self.aspect_ratios = aspect_ratios
@@ -35,7 +37,7 @@ class SSDAnchorsGenerator(AnchorsGenerator):
         means = []
         steps = [(float(1 / f[0]), float(1 / f[1])) for f in feature_maps]
         offset = [(step[0] * 0.5, step[1] * 0.5) for step in steps]
-        for k, f in enumerate(feature_maps): 
+        for k, f in enumerate(feature_maps):
             mean = []
             for i, j in product(range(int(f[0])), range(int(f[1]))):
                 cx = j * steps[k][1] + offset[k][1]
@@ -55,7 +57,6 @@ class SSDAnchorsGenerator(AnchorsGenerator):
             if self.clip:
                 mean.clamp_(max=1, min=0)
             mean = point_form(mean)
-            means += [mean] 
+            means += [mean]
         self.anchors_boxes[feature_maps] = means
         return means
-

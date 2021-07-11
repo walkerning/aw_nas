@@ -33,11 +33,18 @@ except ImportError as e:
 
 
 else:
+
     class COCODetectionMetrics(Metrics):
         NAME = "coco"
 
-        def __init__(self, class_names=None, remove_invalid_labels=False,
-                has_background=True, eval_dir=None, schedule_cfg=None):
+        def __init__(
+            self,
+            class_names=None,
+            remove_invalid_labels=False,
+            has_background=True,
+            eval_dir=None,
+            schedule_cfg=None,
+        ):
             super(COCODetectionMetrics, self).__init__(eval_dir, schedule_cfg)
 
             self.remove_invalid_labels = remove_invalid_labels
@@ -142,11 +149,14 @@ else:
             )
 
             if remove_invalid_labels:
-                self.index_mapping = {i: j for i, j in
-                        zip([i for i, n in enumerate(self.class_names) if n],
-                            range(len(self.class_names)))}
-                self.invert_mapping = {j: i for i, j in
-                        self.index_mapping.items()}
+                self.index_mapping = {
+                    i: j
+                    for i, j in zip(
+                        [i for i, n in enumerate(self.class_names) if n],
+                        range(len(self.class_names)),
+                    )
+                }
+                self.invert_mapping = {j: i for i, j in self.index_mapping.items()}
             else:
                 self.index_mapping = {i: i for i in range(len(self.class_names))}
                 self.invert_mapping = self.index_mapping
@@ -156,15 +166,17 @@ else:
         def __call__(self, det_boxes):
             if self.mAP is not None and len(self.eval_ids) == 0:
                 return self.mAP
-            self.mAP = self._do_eval(det_boxes, self.gt_recs, self.class_names,
-                    self.eval_dir)
+            self.mAP = self._do_eval(
+                det_boxes, self.gt_recs, self.class_names, self.eval_dir
+            )
             self._init_gt_recs()
             return self.mAP
 
         def _init_gt_recs(self):
             self._COCO = COCO()
             self._COCO.dataset["categories"] = [
-                {"id": i, "name": name} for i, name in enumerate(self.class_names)
+                {"id": i, "name": name}
+                for i, name in enumerate(self.class_names)
                 if name != "__background__"
             ]
             self._COCO.dataset.setdefault("images", [])
@@ -183,8 +195,9 @@ else:
                     {
                         "bbox": box,
                         "image_id": image_id,
-                        "category_id": self.invert_mapping[int(label) +
-                            int(not self.has_background)],
+                        "category_id": self.invert_mapping[
+                            int(label) + int(not self.has_background)
+                        ],
                         "id": anno_id,
                         "height": int(height),
                         "width": int(width),
@@ -202,7 +215,8 @@ else:
                     continue
                 results.extend(
                     self._coco_results_one_category(
-                        det_boxes[self.index_mapping[cls_ind] - 1], cls_ind)
+                        det_boxes[self.index_mapping[cls_ind] - 1], cls_ind
+                    )
                 )
             ann_type = "bbox"
             self._COCO.dataset["images"] = [
@@ -220,9 +234,17 @@ else:
             coco_eval.accumulate()
             coco_eval.summarize()
             stats = coco_eval.stats
-            #stats = self._print_detection_eval_metrics(coco_eval)
-            self.logger.info(", ".join(["%s: %.3f" % x for x
-                in zip(["mAP", "AP50", "AP75", "AP_s", "AP_m", "AP_l"], stats)]))
+            # stats = self._print_detection_eval_metrics(coco_eval)
+            self.logger.info(
+                ", ".join(
+                    [
+                        "%s: %.3f" % x
+                        for x in zip(
+                            ["mAP", "AP50", "AP75", "AP_s", "AP_m", "AP_l"], stats
+                        )
+                    ]
+                )
+            )
             if output_dir:
                 eval_file = os.path.join(output_dir, "detection_results.pkl")
                 with open(eval_file, "wb") as fid:
@@ -261,7 +283,9 @@ __all__ = ["VOCMetrics", "COCODetectionMetrics"]
 class VOCMetrics(Metrics):
     NAME = "voc"
 
-    def __init__(self, has_background=True, class_names=None, eval_dir=None, schedule_cfg=None):
+    def __init__(
+        self, has_background=True, class_names=None, eval_dir=None, schedule_cfg=None
+    ):
         super(VOCMetrics, self).__init__(schedule_cfg)
         self.class_names = class_names or (
             "__background__",
@@ -304,12 +328,13 @@ class VOCMetrics(Metrics):
             is_difficult = info["is_difficult"]
             bboxes = bboxes.cpu() if hasattr(bboxes, "cpu") else bboxes
             for bbox, label, is_diff in zip(bboxes, labels, is_difficult):
-                class_recs = self.gt_recs[self.class_names[label + int(not self.has_background)]]
+                class_recs = self.gt_recs[
+                    self.class_names[label + int(not self.has_background)]
+                ]
                 class_recs.setdefault(image_id, {})
                 class_recs[image_id].setdefault("bbox", []).append(bbox)
                 class_recs[image_id].setdefault("det", []).append(False)
-                class_recs[image_id].setdefault(
-                    "difficult", []).append(is_diff)
+                class_recs[image_id].setdefault("difficult", []).append(is_diff)
 
     def voc_ap(self, rec, prec, use_07_metric=True):
         """ ap = voc_ap(rec, prec, [use_07_metric])
@@ -405,8 +430,7 @@ class VOCMetrics(Metrics):
                 bb = BB[d, :].astype(float)
                 ovmax = -np.inf
                 if len(R["bbox"]) > 0:
-                    BBGT = np.concatenate(
-                        R["bbox"], 0).reshape(-1, 4).astype(float)
+                    BBGT = np.concatenate(R["bbox"], 0).reshape(-1, 4).astype(float)
                     # compute overlaps
                     # intersection
                     ixmin = np.maximum(BBGT[:, 0], bb[0])
@@ -469,8 +493,7 @@ class VOCMetrics(Metrics):
         self.logger.info(
             "--------------------------------------------------------------"
         )
-        self.logger.info(
-            "Results computed with the **unofficial** Python eval code.")
+        self.logger.info("Results computed with the **unofficial** Python eval code.")
         self.logger.info(
             "Results should be very close to the official MATLAB eval code."
         )
@@ -480,8 +503,7 @@ class VOCMetrics(Metrics):
         return np.mean(aps)
 
     def __call__(self, det_boxes):
-        if self.mAP is not None and all([len(gt) == 0 for gt in
-            self.gt_recs.values()]):
+        if self.mAP is not None and all([len(gt) == 0 for gt in self.gt_recs.values()]):
             return self.mAP
         self.mAP = self.do_python_eval(det_boxes, self.gt_recs, True)
         self._init_gt_recs()

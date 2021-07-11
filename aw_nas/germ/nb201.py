@@ -2,7 +2,7 @@
 Run `python scripts/generate_germ_search_cfg.py aw_nas/germ/nb201.py aw_nas/germ/nb201.yaml`
 to generate the search space cfg and the partial search cfg
 """
-#pylint: disable=arguments-differ
+# pylint: disable=arguments-differ
 
 import torch
 from torch import nn
@@ -30,7 +30,7 @@ class GermNB201Net(germ.GermSuperNet):
         dropout_rate=0.1,
         use_stem="conv_bn_3x3",
         stem_stride=1,
-        stem_affine=True
+        stem_affine=True,
     ):
         super(GermNB201Net, self).__init__(search_space)
 
@@ -57,7 +57,9 @@ class GermNB201Net(germ.GermSuperNet):
         for from_ in range(self._vertices):
             for to_ in range(from_ + 1, self._vertices):
                 key = "f_{}_t_{}".format(from_, to_)
-                self.op_choices_dict[key] = germ.Choices(choices=list(range(self.num_op)), size=1)
+                self.op_choices_dict[key] = germ.Choices(
+                    choices=list(range(self.num_op)), size=1
+                )
 
         ## initialize sub modules
         if not self.use_stem:
@@ -83,7 +85,8 @@ class GermNB201Net(germ.GermSuperNet):
             self.cells = nn.ModuleList()
             num_channels = self.init_channels
             strides = [
-                2 if self._is_reduce(i_layer) else 1 for i_layer in range(self.num_layers)
+                2 if self._is_reduce(i_layer) else 1
+                for i_layer in range(self.num_layers)
             ]
 
             for i_layer, stride in enumerate(strides):
@@ -166,8 +169,14 @@ class GermNB201Net(germ.GermSuperNet):
 
 class GermNB201Cell(germ.SearchableBlock):
     def __init__(
-            self, ctx, layer_index, op_list, num_channels, num_out_channels, stride,
-            op_choices=None
+        self,
+        ctx,
+        layer_index,
+        op_list,
+        num_channels,
+        num_out_channels,
+        stride,
+        op_choices=None,
     ):
         super(GermNB201Cell, self).__init__(ctx)
         self.stride = stride
@@ -175,7 +184,9 @@ class GermNB201Cell(germ.SearchableBlock):
         self.num_channels = num_channels
         self.num_out_channels = num_out_channels
         self.layer_index = layer_index
-        self.op_choices = op_choices # None indicates independent cell arch for each layer
+        self.op_choices = (
+            op_choices  # None indicates independent cell arch for each layer
+        )
 
         self._vertices = 4
         self.op_list = op_list
@@ -187,11 +198,13 @@ class GermNB201Cell(germ.SearchableBlock):
                 edge = germ.GermMixedOp(
                     ctx,
                     op_list=self.op_list,
-                    op_choice=self.op_choices[key] if self.op_choices is not None else None,
+                    op_choice=self.op_choices[key]
+                    if self.op_choices is not None
+                    else None,
                     C=self.num_channels,
                     C_out=self.num_out_channels,
                     stride=self.stride,
-                    affine=False
+                    affine=False,
                 )
                 self.edges[key] = edge
 

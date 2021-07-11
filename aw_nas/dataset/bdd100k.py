@@ -21,13 +21,15 @@ def collate_fn(batch):
 
 
 class BDD100kDataset(object):
-    def __init__(self,
-                 data_dir,
-                 image_set="train",
-                 transform=None,
-                 is_test=False,
-                 keep_difficult=False,
-                 label_file=None):
+    def __init__(
+        self,
+        data_dir,
+        image_set="train",
+        transform=None,
+        is_test=False,
+        keep_difficult=False,
+        label_file=None,
+    ):
         """Dataset for BDD100k data.
         Args:
             root: the root of the BDD100k dataset, 
@@ -38,14 +40,12 @@ class BDD100kDataset(object):
         self.data_dir = data_dir
         self.root = pathlib.Path(self.data_dir)
         self.transform = transform
-        self.anno_path = os.path.join(data_dir, 'Annotations', image_set, '%s.xml')
-        self._imgpath = os.path.join(data_dir, 'images', '100k', image_set, '%s.jpg')
+        self.anno_path = os.path.join(data_dir, "Annotations", image_set, "%s.xml")
+        self._imgpath = os.path.join(data_dir, "images", "100k", image_set, "%s.jpg")
         self.ids = []
 
-        self.image_sets_file = self.root / ("ImageSets/Main/%s.txt" %
-                                                image_set)
-        self.ids.extend(
-                BDD100kDataset._read_image_ids(self.image_sets_file))
+        self.image_sets_file = self.root / ("ImageSets/Main/%s.txt" % image_set)
+        self.ids.extend(BDD100kDataset._read_image_ids(self.image_sets_file))
         self.keep_difficult = keep_difficult
         self.is_test = is_test
 
@@ -54,40 +54,58 @@ class BDD100kDataset(object):
 
         if os.path.isfile(label_file_name):
             class_string = ""
-            with open(label_file_name, 'r') as infile:
+            with open(label_file_name, "r") as infile:
                 for line in infile:
                     class_string += line.rstrip()
 
             # classes should be a comma separated list
 
-            classes = class_string.split(',')
+            classes = class_string.split(",")
             classes = [elem.replace(" ", "") for elem in classes]
             self.class_names = tuple(classes)
             logging.info("BDD100k Labels read from file: " + str(self.class_names))
 
         else:
             logging.info("No labels file, using default BDD100k classes.")
-            self.class_names = ("__background__", "car", "bus", "person",
-                    "bike", "truck", "motor", "rider")
+            self.class_names = (
+                "__background__",
+                "car",
+                "bus",
+                "person",
+                "bike",
+                "truck",
+                "motor",
+                "rider",
+            )
 
         self.class_dict = {
-            class_name: i
-            for i, class_name in enumerate(self.class_names)
+            class_name: i for i, class_name in enumerate(self.class_names)
         }
 
         self.kwargs = {"collate_fn": collate_fn}
 
     def __getitem__(self, index):
-        img_id, image, boxes, labels, height, width, is_difficult, ori_boxes = self._getitem(
-            index)
-        return image, {
-            "ori_boxes": ori_boxes,
-            "boxes": boxes,
-            "labels": labels,
-            "image_id": img_id,
-            "shape": [height, width],
-            "is_difficult": is_difficult
-        }
+        (
+            img_id,
+            image,
+            boxes,
+            labels,
+            height,
+            width,
+            is_difficult,
+            ori_boxes,
+        ) = self._getitem(index)
+        return (
+            image,
+            {
+                "ori_boxes": ori_boxes,
+                "boxes": boxes,
+                "labels": labels,
+                "image_id": img_id,
+                "shape": [height, width],
+                "is_difficult": is_difficult,
+            },
+        )
 
     def _getitem(self, index):
         img_id, (ori_boxes, labels, is_difficult) = self.get_annotation(index)
@@ -131,26 +149,27 @@ class BDD100kDataset(object):
         labels = []
         is_difficult = []
         for object in objects:
-            class_name = object.find('name').text.lower().strip()
+            class_name = object.find("name").text.lower().strip()
             # we're only concerned with clases in our list
             if class_name in self.class_dict:
-                bbox = object.find('bndbox')
+                bbox = object.find("bndbox")
 
                 # BDD100k dataset format follows Matlab, in which indexes start from 0
-                x1 = float(bbox.find('xmin').text) - 1
-                y1 = float(bbox.find('ymin').text) - 1
-                x2 = float(bbox.find('xmax').text) - 1
-                y2 = float(bbox.find('ymax').text) - 1
+                x1 = float(bbox.find("xmin").text) - 1
+                y1 = float(bbox.find("ymin").text) - 1
+                x2 = float(bbox.find("xmax").text) - 1
+                y2 = float(bbox.find("ymax").text) - 1
                 boxes.append([x1, y1, x2, y2])
 
                 labels.append(self.class_dict[class_name])
-                is_difficult_str = object.find('difficult').text
-                is_difficult.append(
-                    int(is_difficult_str) if is_difficult_str else 0)
+                is_difficult_str = object.find("difficult").text
+                is_difficult.append(int(is_difficult_str) if is_difficult_str else 0)
 
-        return (np.array(boxes,
-                         dtype=np.float32), np.array(labels, dtype=np.int64),
-                np.array(is_difficult, dtype=np.uint8))
+        return (
+            np.array(boxes, dtype=np.float32),
+            np.array(labels, dtype=np.int64),
+            np.array(is_difficult, dtype=np.uint8),
+        )
 
     def _read_image(self, image_id):
         image_file = self._imgpath % image_id
@@ -162,48 +181,58 @@ class BDD100kDataset(object):
 class BDD100k(BaseDataset):
     NAME = "bdd100k"
 
-    def __init__(self,
-                 load_train_only=False,
-                 class_name_file=None,
-                 random_choose=False,
-                 random_seed=123,
-                 train_set="train",
-                 test_set="val",
-                 train_crop_size=300,
-                 test_crop_size=300,
-                 image_mean=[0.485, 0.456, 0.406],
-                 image_std=[0.229, 0.224, 0.225],
-                 image_norm_factor=255.,
-                 image_bias=0.,
-                 iou_threshold=0.5,
-                 keep_difficult=False,
-                 relative_dir=None):
+    def __init__(
+        self,
+        load_train_only=False,
+        class_name_file=None,
+        random_choose=False,
+        random_seed=123,
+        train_set="train",
+        test_set="val",
+        train_crop_size=300,
+        test_crop_size=300,
+        image_mean=[0.485, 0.456, 0.406],
+        image_std=[0.229, 0.224, 0.225],
+        image_norm_factor=255.0,
+        image_bias=0.0,
+        iou_threshold=0.5,
+        keep_difficult=False,
+        relative_dir=None,
+    ):
         super(BDD100k, self).__init__(relative_dir)
 
         self.load_train_only = load_train_only
         self.class_name_file = class_name_file
         self.data_dir = os.path.join(self.data_dir, "BDD100K")
 
-        train_transform = TrainAugmentation(train_crop_size,
-                                            np.array(image_mean),
-                                            np.array(image_std),
-                                            image_norm_factor, image_bias)
-        test_transform = TestTransform(test_crop_size, np.array(image_mean),
-                                       np.array(image_std), image_norm_factor,
-                                       image_bias)
+        train_transform = TrainAugmentation(
+            train_crop_size,
+            np.array(image_mean),
+            np.array(image_std),
+            image_norm_factor,
+            image_bias,
+        )
+        test_transform = TestTransform(
+            test_crop_size,
+            np.array(image_mean),
+            np.array(image_std),
+            image_norm_factor,
+            image_bias,
+        )
 
         self.datasets = {}
-        self.datasets['train'] = BDD100kDataset(self.data_dir, train_set,
-                                            train_transform)
-        self.datasets['train_testTransform'] = BDD100kDataset(self.data_dir, train_set,
-                                                          test_transform)
+        self.datasets["train"] = BDD100kDataset(
+            self.data_dir, train_set, train_transform
+        )
+        self.datasets["train_testTransform"] = BDD100kDataset(
+            self.data_dir, train_set, test_transform
+        )
         self.grouped_annotation = {}
 
         if not self.load_train_only:
-            self.datasets['test'] = BDD100kDataset(self.data_dir,
-                                               test_set,
-                                               test_transform,
-                                               is_test=True)
+            self.datasets["test"] = BDD100kDataset(
+                self.data_dir, test_set, test_transform, is_test=True
+            )
 
     def same_data_split_mapping(self):
         return {"train_testTransform": "train"}
@@ -228,6 +257,6 @@ class BDD100k(BaseDataset):
     def evaluate_detections(self, box_list, output_dir):
         dataset = self.datasets["test"]
         write_voc_results_file(output_dir, box_list, dataset)
-        return do_python_eval(dataset.anno_path,
-                              dataset.image_sets_file, dataset.class_names,
-                              output_dir)
+        return do_python_eval(
+            dataset.anno_path, dataset.image_sets_file, dataset.class_names, output_dir
+        )

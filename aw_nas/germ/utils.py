@@ -42,10 +42,11 @@ class MaskHandler(object):
         self._attrs = set()
 
         # duplicates check
-        #hash_code = hash(module)
+        # hash_code = hash(module)
         if (id(module), name) in MaskHandler.REGISTRED:
-            raise ValueError(f"name `{name}` has already been registried on "
-                             f"module {module}.")
+            raise ValueError(
+                f"name `{name}` has already been registried on " f"module {module}."
+            )
 
         MaskHandler.REGISTRED.add((id(module), name))
 
@@ -60,7 +61,8 @@ class MaskHandler(object):
 
         if extra_attrs is not None:
             assert isinstance(
-                extra_attrs, dict), "extra_attrs: {attr_name: attr_format, ...}"
+                extra_attrs, dict
+            ), "extra_attrs: {attr_name: attr_format, ...}"
             for k, v in self.extra_attrs.items():
                 self.registry(self, k, v)
 
@@ -73,7 +75,7 @@ class MaskHandler(object):
         setattr(self, f"{attr_name}_attr", attr_format.format(self.name))
         self._attrs.add(attr_name)
 
-        #setattr(self, attr_name, attr_val[1])
+        # setattr(self, attr_name, attr_val[1])
 
     def __getattr__(self, attr):
         if "_attrs" in self.__dict__:
@@ -98,17 +100,19 @@ class MaskHandler(object):
 
 
 class KernelMaskHandler(MaskHandler):
-
     def __init__(self, ctx, module, name, choices, extra_attrs=None):
         super().__init__(ctx, module, name, choices, extra_attrs)
 
         if isinstance(choices, germ.Choices):
             kernel_sizes = sorted(self.choices.choices)
             self.kernel_sizes = kernel_sizes
-            for smaller, larger in reversed(list(zip(kernel_sizes[:-1], kernel_sizes[1:]))):
+            for smaller, larger in reversed(
+                list(zip(kernel_sizes[:-1], kernel_sizes[1:]))
+            ):
                 if self.max >= larger:
                     kernel_transform_matrix = nn.Linear(
-                        smaller * smaller, smaller * smaller, bias=False)
+                        smaller * smaller, smaller * smaller, bias=False
+                    )
                     torch.nn.init.eye_(kernel_transform_matrix.weight.data)
 
                     attr = "linear_{}to{}".format(larger, smaller)
@@ -128,50 +132,62 @@ class KernelMaskHandler(MaskHandler):
                 yield
                 return
 
-            assert choice in self.kernel_sizes, f"except kernel size in {self.kernel_sizes}, got {choice} instead."
+            assert (
+                choice in self.kernel_sizes
+            ), f"except kernel size in {self.kernel_sizes}, got {choice} instead."
 
             ori_weight = conv.weight
             new_weight = self._transform_kernel(ori_weight, choice)
             if detach:
                 new_weight = nn.Parameter(new_weight)
             conv._parameters["weight"] = new_weight
-            conv.padding = (choice // 2, ) * 2
-            conv.kernel_size = (choice, ) * 2
+            conv.padding = (choice // 2,) * 2
+            conv.kernel_size = (choice,) * 2
             yield
 
             if detach:
                 return
 
             conv._parameters["weight"] = ori_weight
-            conv.padding = (ori_weight.shape[-1] // 2, ) * 2
-            conv.kernel_size = (ori_weight.shape[-1], ) * 2
+            conv.padding = (ori_weight.shape[-1] // 2,) * 2
+            conv.kernel_size = (ori_weight.shape[-1],) * 2
 
     def _transform_kernel(self, origin_filter, kernel_size):
         if origin_filter.shape[-1] == kernel_size:
             return origin_filter
         cur_filter = origin_filter
-        expect(cur_filter.shape[-1] > kernel_size, "The kernel size must be less than origin kernel size {}, got {} instead.".format(
-            origin_filter.shape[-1], kernel_size), ValueError)
-        for smaller, larger in reversed(list(zip(self.kernel_sizes[:-1], self.kernel_sizes[1:]))):
+        expect(
+            cur_filter.shape[-1] > kernel_size,
+            "The kernel size must be less than origin kernel size {}, got {} instead.".format(
+                origin_filter.shape[-1], kernel_size
+            ),
+            ValueError,
+        )
+        for smaller, larger in reversed(
+            list(zip(self.kernel_sizes[:-1], self.kernel_sizes[1:]))
+        ):
             if cur_filter.shape[-1] < larger:
                 continue
             if kernel_size >= larger:
                 break
             sub_filter = get_sub_kernel(origin_filter, smaller).view(
-                cur_filter.shape[0], cur_filter.shape[1], -1)
+                cur_filter.shape[0], cur_filter.shape[1], -1
+            )
             sub_filter = sub_filter.view(-1, sub_filter.shape[-1])
-            sub_filter = self.__getattr__(
-                "linear_{}to{}".format(larger, smaller))(sub_filter)
+            sub_filter = self.__getattr__("linear_{}to{}".format(larger, smaller))(
+                sub_filter
+            )
             sub_filter = sub_filter.view(
-                origin_filter.shape[0], origin_filter.shape[1], smaller ** 2)
+                origin_filter.shape[0], origin_filter.shape[1], smaller ** 2
+            )
             sub_filter = sub_filter.view(
-                origin_filter.shape[0], origin_filter.shape[1], smaller, smaller)
+                origin_filter.shape[0], origin_filter.shape[1], smaller, smaller
+            )
             cur_filter = sub_filter
         return cur_filter
 
 
 class ChannelMaskHandler(MaskHandler):
-
     def __init__(self, ctx, module, name, choices, extra_attrs=None):
         super().__init__(ctx, module, name, choices, extra_attrs)
 
@@ -193,19 +209,21 @@ class ChannelMaskHandler(MaskHandler):
                 return
 
             assert hasattr(
-                self.ctx, "rollout"), "context should have rollout attribute."
+                self.ctx, "rollout"
+            ), "context should have rollout attribute."
             mask_idx = self.ctx.rollout.masks.get(self.choices.decision_id)
             if mask_idx is None:
                 if isinstance(module, nn.BatchNorm2d):
-                    raise ValueError("BN-based channel selection is not supported yet, please apply BN "
-                                     "mask after convolution.")
+                    raise ValueError(
+                        "BN-based channel selection is not supported yet, please apply BN "
+                        "mask after convolution."
+                    )
 
                 elif isinstance(module, nn.Conv2d) and module.groups > 1 and axis == 1:
                     # no need to calculate mask idx
                     pass
                 else:
-                    mask_idx = _get_channel_mask(
-                        module.weight.data, choice, axis)
+                    mask_idx = _get_channel_mask(module.weight.data, choice, axis)
                     self.ctx.rollout.masks[self.choices.decision_id] = mask_idx
 
             if isinstance(module, nn.Conv2d):
@@ -287,12 +305,13 @@ class ChannelMaskHandler(MaskHandler):
                     else:
                         module._buffers[k] = ori[k]
             else:
-                raise ValueError("ChannelMaskHandler only support nn.Conv2d and "
-                                 "nn.BatchNorm2d now.")
+                raise ValueError(
+                    "ChannelMaskHandler only support nn.Conv2d and "
+                    "nn.BatchNorm2d now."
+                )
 
 
 class StrideMaskHandler(MaskHandler):
-
     def __init__(self, ctx, module, name, choices, extra_attrs=None):
         super().__init__(ctx, module, name, choices, extra_attrs)
 
@@ -307,7 +326,7 @@ class StrideMaskHandler(MaskHandler):
             if isinstance(stride, (tuple, list)):
                 pass
             else:
-                stride = (int(stride), ) * 2
+                stride = (int(stride),) * 2
             ori_stride = module.stride
             module.stride = stride
 

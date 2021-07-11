@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-#pylint: disable=arguments-differ,invalid-name
+# pylint: disable=arguments-differ,invalid-name
 """
 Decision, search space, rollout.
 And searchable block primitives.
@@ -28,11 +28,11 @@ class GermSearchSpace(SearchSpace):
 
     def __init__(self, search_space_cfg_file=None):
         super().__init__()
-        
+
         self.decisions = OrderedDict()
         self._is_initialized = False
-        
-        if search_space_cfg_file is not None: 
+
+        if search_space_cfg_file is not None:
             with open(search_space_cfg_file, "r") as r_f:
                 ss_cfg = yaml.load(r_f)
             self.set_cfg(ss_cfg)
@@ -44,8 +44,10 @@ class GermSearchSpace(SearchSpace):
             elif isinstance(value[1], BaseDecision.get_class_(value[0])):
                 decision = value[1]
             else:
-                raise ValueError("Except str or {} type in ss_cfg['decisions'], got {} "
-                        "instead.".format(value[0], type(value[1])))
+                raise ValueError(
+                    "Except str or {} type in ss_cfg['decisions'], got {} "
+                    "instead.".format(value[0], type(value[1]))
+                )
             self.decisions[decision_id] = decision
         self.blocks = ss_cfg["blocks"]
 
@@ -56,9 +58,13 @@ class GermSearchSpace(SearchSpace):
         self._is_initialized = True
 
     def get_size(self):
-        assert self._is_initialized, "set_cfg should be called before calling other methods." 
+        assert (
+            self._is_initialized
+        ), "set_cfg should be called before calling other methods."
         # currently, only support discrete choice
-        return np.prod([decision.search_space_size for decision in self.decisions.values()])
+        return np.prod(
+            [decision.search_space_size for decision in self.decisions.values()]
+        )
 
     def genotype(self, arch):
         return str(arch)
@@ -67,38 +73,61 @@ class GermSearchSpace(SearchSpace):
         return string
 
     def random_sample(self):
-        assert self._is_initialized, "set_cfg should be called before calling other methods." 
+        assert (
+            self._is_initialized
+        ), "set_cfg should be called before calling other methods."
         # generate a random sample for each decision
-        arch = OrderedDict([
-            (decision_id, decision.random_sample())
-            for decision_id, decision in self.decisions.items()])
+        arch = OrderedDict(
+            [
+                (decision_id, decision.random_sample())
+                for decision_id, decision in self.decisions.items()
+            ]
+        )
         return GermRollout(arch, search_space=self)
 
     def rollout_from_genotype(self, genotype):
-        assert self._is_initialized, "set_cfg should be called before calling other methods." 
-        arch = eval(genotype) #pylint: disable=eval-used
+        assert (
+            self._is_initialized
+        ), "set_cfg should be called before calling other methods."
+        arch = eval(genotype)  # pylint: disable=eval-used
         return GermRollout(arch, self, candidate_net=None)
 
-    def mutate(self, rollout, mutate_num=None, mutate_proportion=None, mutate_prob=None):
-        assert self._is_initialized, "set_cfg should be called before calling other methods." 
+    def mutate(
+        self, rollout, mutate_num=None, mutate_proportion=None, mutate_prob=None
+    ):
+        assert (
+            self._is_initialized
+        ), "set_cfg should be called before calling other methods."
         expect(
-            sum([value is not None for value in [mutate_num, mutate_proportion, mutate_prob]]) == 1,
+            sum(
+                [
+                    value is not None
+                    for value in [mutate_num, mutate_proportion, mutate_prob]
+                ]
+            )
+            == 1,
             "One and only one of `mutate_num, mutate_proportion, mutate_prob` should be specified.",
-            ConfigException)
+            ConfigException,
+        )
         # filter the trivial Decisions
         _nontrivial_decision_ids = [
-            d_id for d_id, dec in self.decisions.items() if dec.search_space_size != 1]
+            d_id for d_id, dec in self.decisions.items() if dec.search_space_size != 1
+        ]
         num_nontrivial_decisions = len(_nontrivial_decision_ids)
         if mutate_proportion is not None:
             # mutate_num = int(self.num_decisions * mutate_proportion)
             mutate_num = int(num_nontrivial_decisions * mutate_proportion)
         if mutate_num is not None:
             idxes = np.random.choice(
-                _nontrivial_decision_ids, size=mutate_num, replace=False)
+                _nontrivial_decision_ids, size=mutate_num, replace=False
+            )
         elif mutate_prob is not None:
             idxes = [
                 _nontrivial_decision_ids[ind]
-                for ind in np.where(np.random.rand(num_nontrivial_decisions) < mutate_prob)[0]]
+                for ind in np.where(
+                    np.random.rand(num_nontrivial_decisions) < mutate_prob
+                )[0]
+            ]
         new_arch = copy.deepcopy(rollout.arch)
         for idx in idxes:
             new_arch[idx] = self.decisions[idx].mutate(new_arch[idx])
@@ -117,21 +146,26 @@ class GermSearchSpace(SearchSpace):
         return NotImplementedError()
 
     def on_epoch_start(self, epoch):
-        assert self._is_initialized, "set_cfg should be called before calling other methods." 
+        assert (
+            self._is_initialized
+        ), "set_cfg should be called before calling other methods."
         # call on_epoch_start of all decisions
         [decision.on_epoch_start(epoch) for decision in self.decisions.values()]
+
 
 class GermRollout(BaseRollout):
     NAME = "germ"
     supported_components = [
-        ("trainer", "simple"), ("evaluator", "mepa"),
+        ("trainer", "simple"),
+        ("evaluator", "mepa"),
         ("evaluator", "discrete_shared_weights"),
-        ("evaluator", "differentiable_shared_weights")]
+        ("evaluator", "differentiable_shared_weights"),
+    ]
 
     def __init__(self, decision_dict, search_space, candidate_net=None):
         super().__init__()
         self.arch = decision_dict
-        self.masks = OrderedDict() # for grouped convlutions
+        self.masks = OrderedDict()  # for grouped convlutions
         self.search_space = search_space
         self.candidate_net = candidate_net
         self._perf = OrderedDict()
@@ -147,10 +181,13 @@ class GermRollout(BaseRollout):
         self.candidate_net = c_net
 
     def plot_arch(self, filename, label="", edge_labels=None):
-        return self.search_space.plot_arch(self.genotype, filename=filename, label=label)
+        return self.search_space.plot_arch(
+            self.genotype, filename=filename, label=label
+        )
 
     def reset_masks(self):
         self.masks = OrderedDict()
+
 
 # ---- Searchable Blocks ----
 class SearchableBlock(Component, nn.Module):
@@ -170,14 +207,18 @@ class SearchableBlock(Component, nn.Module):
     def register_decision(self, name, value):
         decisions = self.__dict__.get("_decisions")
         if decisions is None:
-            raise Exception("cannot assign decision before SearchableBlock.__init__() call")
+            raise Exception(
+                "cannot assign decision before SearchableBlock.__init__() call"
+            )
         elif not isinstance(name, six.string_types):
-            raise TypeError("parameter name should be a string. "
-                            "Got {}".format(torch.typename(name)))
-        elif '.' in name:
-            raise KeyError("parameter name can't contain \".\"")
-        elif name == '':
-            raise KeyError("parameter name can't be empty string \"\"")
+            raise TypeError(
+                "parameter name should be a string. "
+                "Got {}".format(torch.typename(name))
+            )
+        elif "." in name:
+            raise KeyError('parameter name can\'t contain "."')
+        elif name == "":
+            raise KeyError('parameter name can\'t be empty string ""')
         elif hasattr(self, name) and name not in self._parameters:
             raise KeyError("attribute '{}' already exists".format(name))
 
@@ -220,7 +261,7 @@ class SearchableBlock(Component, nn.Module):
         self.ctx.rollout = rollout
         return self(*args, **kwargs)
 
-    #def finalize_rollout_outplace(self, rollout):
+    # def finalize_rollout_outplace(self, rollout):
     #    new_mod = copy.deepcopy(self)
     #    return new_mod.finalize_rollout(rollout)
 
@@ -247,13 +288,21 @@ def finalize_rollout(final_mod, rollout):
             final_sub_mod = mod.finalize_rollout(rollout)
         elif isinstance(mod, nn.Sequential):
             final_sub_mod = nn.Sequential(
-                *[m.finalize_rollout(rollout) if isinstance(mod, SearchableBlock) else
-                    finalize_rollout(m, rollout) for m in mod]
+                *[
+                    m.finalize_rollout(rollout)
+                    if isinstance(mod, SearchableBlock)
+                    else finalize_rollout(m, rollout)
+                    for m in mod
+                ]
             )
         elif isinstance(mod, nn.ModuleList):
             final_sub_mod = nn.ModuleList(
-                [m.finalize_rollout(rollout) if isinstance(mod, SearchableBlock) else
-                    finalize_rollout(m, rollout) for m in mod]
+                [
+                    m.finalize_rollout(rollout)
+                    if isinstance(mod, SearchableBlock)
+                    else finalize_rollout(m, rollout)
+                    for m in mod
+                ]
             )
         else:
             final_sub_mod = finalize_rollout(mod, rollout)
@@ -262,6 +311,7 @@ def finalize_rollout(final_mod, rollout):
         final_mod.finalized_rollout = rollout
 
     return final_mod
+
 
 # ---- End Searchable Blocks ----
 
@@ -313,13 +363,15 @@ class DecisionDict(SearchableBlock):
         else:
             for j, p in enumerate(decisions):
                 if not isinstance(p, collection_abcs.Iterable):
-                    raise TypeError("DecisionDict update sequence element "
-                                    "#" + str(j) + " should be Iterable; is" +
-                                    type(p).__name__)
+                    raise TypeError(
+                        "DecisionDict update sequence element "
+                        "#" + str(j) + " should be Iterable; is" + type(p).__name__
+                    )
                 if not len(p) == 2:
-                    raise ValueError("DecisionyDict update sequence element "
-                                     "#" + str(j) + " has length " + str(len(p)) +
-                                     "; 2 is required")
+                    raise ValueError(
+                        "DecisionyDict update sequence element "
+                        "#" + str(j) + " has length " + str(len(p)) + "; 2 is required"
+                    )
                 self[p[0]] = p[1]
 
     def forward_rollout(self, rollout, inputs):

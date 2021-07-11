@@ -19,31 +19,33 @@ except ImportError as e:
 class MMDetectionHeadObjective(BaseObjective):
     NAME = "mmdetection_head"
 
-    def __init__(self,
-                 search_space,
-                 num_classes,
-                 head_type,
-                 metrics_type,
-                 head_cfg,
-                 metrics_cfg={},
-                 teacher=None,
-                 schedule_cfg=None):
-        super(MMDetectionHeadObjective, self).__init__(search_space,
-                                                       schedule_cfg=schedule_cfg)
+    def __init__(
+        self,
+        search_space,
+        num_classes,
+        head_type,
+        metrics_type,
+        head_cfg,
+        metrics_cfg={},
+        teacher=None,
+        schedule_cfg=None,
+    ):
+        super(MMDetectionHeadObjective, self).__init__(
+            search_space, schedule_cfg=schedule_cfg
+        )
         # not including background
         self.num_classes = num_classes
 
-        self.head = build_head(ConfigDict({
-            "type": head_type,
-            "num_classes": num_classes,
-            **head_cfg
-        }))
+        self.head = build_head(
+            ConfigDict({"type": head_type, "num_classes": num_classes, **head_cfg})
+        )
 
         self.teacher = None
         if isinstance(teacher, str):
             self.teacher = torch.load(teacher, "cpu")
-            self.soft_loss_cls = Losses.get_class_("adaptive_distillation_loss")(beta=1.5, gamma=1.,
-                    temperature=1.)
+            self.soft_loss_cls = Losses.get_class_("adaptive_distillation_loss")(
+                beta=1.5, gamma=1.0, temperature=1.0
+            )
 
         self.metrics = Metrics.get_class_(metrics_type)(**metrics_cfg)
 
@@ -81,7 +83,7 @@ class MMDetectionHeadObjective(BaseObjective):
                         continue
                     self.all_boxes[j][_id] = o
             return self.metrics(self.all_boxes)
-        return 0.
+        return 0.0
 
     def aggregate_fn(self, perf_name, is_training=True):
         assert perf_name in ["reward", "loss"] + self.perf_names()
@@ -90,7 +92,7 @@ class MMDetectionHeadObjective(BaseObjective):
         return super().aggregate_fn(perf_name, is_training)
 
     def get_acc(self, inputs, outputs, annotations, cand_net):
-        return torch.tensor(0.), torch.tensor(0.)
+        return torch.tensor(0.0), torch.tensor(0.0)
         conf_t, _, _ = self.batch_transform(inputs, outputs, annotations)
         # target: [batch_size, anchor_num, 5], boxes + labels
         keep = conf_t > 0
@@ -104,20 +106,25 @@ class MMDetectionHeadObjective(BaseObjective):
         # This method does not actually calculate mAP, but detection boxes
         # of current batch only. After all batch's boxes are calculated, passing them
         # to method `evaluate_detections`
-        bboxes = self.head.get_bboxes(*outputs,
-                                      img_metas=annotations, rescale=True)
-        results = [bbox2result(box.detach().cpu(), label, self.num_classes) for box, label in
-                   bboxes]
+        bboxes = self.head.get_bboxes(*outputs, img_metas=annotations, rescale=True)
+        results = [
+            bbox2result(box.detach().cpu(), label, self.num_classes)
+            for box, label in bboxes
+        ]
         self.results.extend(results)
         self.annotations.extend(annotations)
-        return [0.]
+        return [0.0]
 
     def get_anchors(self, featmap_sizes, img_metas, device="cpu"):
         anchor = self.anchors(featmap_sizes)
-        valid = [torch.ones(a.shape[0]).to(torch.bool).to(device)
-                 for a in anchor]
-        return [[a.to(device) * img_meta["img_shape"][0] for a in anchor] for
-                img_meta in img_metas], [valid] * len(img_metas)
+        valid = [torch.ones(a.shape[0]).to(torch.bool).to(device) for a in anchor]
+        return (
+            [
+                [a.to(device) * img_meta["img_shape"][0] for a in anchor]
+                for img_meta in img_metas
+            ],
+            [valid] * len(img_metas),
+        )
 
     def get_perfs(self, inputs, outputs, annotations, cand_net):
         if not self.is_training:
@@ -130,20 +137,22 @@ class MMDetectionHeadObjective(BaseObjective):
             cand_net.total_flops = 0
         else:
             flops = 0
-        return [0., -flops]
+        return [0.0, -flops]
 
     def get_reward(self, inputs, outputs, annotations, cand_net):
         # mAP is actually calculated using aggregate_fn
         # return self.get_perfs(inputs, outputs, annotations, cand_net)[0]
-        return 0.
+        return 0.0
 
-    def get_loss(self,
-                 inputs,
-                 outputs,
-                 annotations,
-                 cand_net,
-                 add_controller_regularization=True,
-                 add_evaluator_regularization=True):
+    def get_loss(
+        self,
+        inputs,
+        outputs,
+        annotations,
+        cand_net,
+        add_controller_regularization=True,
+        add_evaluator_regularization=True,
+    ):
         """
         Get the cross entropy loss *tensor*, optionally add regluarization loss.
 
@@ -155,17 +164,25 @@ class MMDetectionHeadObjective(BaseObjective):
 
     def _criterion(self, inputs, outputs, annotations, cand_net):
         device = inputs.device
-        gt_bboxes = [anno["gt_bboxes"].data.to(device).to(
-            torch.float32) for anno in annotations]
-        gt_labels = [anno["gt_labels"].data.to(device).to(
-            torch.long) for anno in annotations]
-        losses = self.head.loss(*outputs, gt_bboxes=gt_bboxes, gt_labels=gt_labels,
-                              img_metas=annotations, gt_bboxes_ignore=None)
+        gt_bboxes = [
+            anno["gt_bboxes"].data.to(device).to(torch.float32) for anno in annotations
+        ]
+        gt_labels = [
+            anno["gt_labels"].data.to(device).to(torch.long) for anno in annotations
+        ]
+        losses = self.head.loss(
+            *outputs,
+            gt_bboxes=gt_bboxes,
+            gt_labels=gt_labels,
+            img_metas=annotations,
+            gt_bboxes_ignore=None
+        )
 
-        loss = {k: sum(l) for k, l in losses.items()} 
+        loss = {k: sum(l) for k, l in losses.items()}
         if self.teacher is not None:
-            loss.update({"soft_loss": 
-                self.soft_loss(inputs, outputs, annotations, cand_net)})
+            loss.update(
+                {"soft_loss": self.soft_loss(inputs, outputs, annotations, cand_net)}
+            )
         return loss
 
     def set_mode(self, mode):
@@ -178,7 +195,6 @@ class MMDetectionHeadObjective(BaseObjective):
             self.head.eval()
             self.is_training = False
 
-
     def soft_loss(self, inputs, outputs, annotations, cand_net):
         img_metas = annotations
         cls_scores, bbox_pred, centerness_pred = outputs
@@ -189,8 +205,11 @@ class MMDetectionHeadObjective(BaseObjective):
 
             device = inputs.device
             anchor_list, valid_flag_list = self.head.get_anchors(
-                featmap_sizes, img_metas, device=device)
-            label_channels = self.head.cls_out_channels if self.head.use_sigmoid_cls else 1
+                featmap_sizes, img_metas, device=device
+            )
+            label_channels = (
+                self.head.cls_out_channels if self.head.use_sigmoid_cls else 1
+            )
 
             cls_reg_targets = self.head.get_targets(
                 anchor_list,
@@ -199,47 +218,79 @@ class MMDetectionHeadObjective(BaseObjective):
                 img_metas,
                 gt_bboxes_ignore_list=None,
                 gt_labels_list=gt_labels,
-                label_channels=label_channels)
+                label_channels=label_channels,
+            )
 
-            anchor_list, labels_list, label_weights_list, bbox_targets_list, bbox_weights_list, num_total_pos, num_total_neg = cls_reg_targets
+            (
+                anchor_list,
+                labels_list,
+                label_weights_list,
+                bbox_targets_list,
+                bbox_weights_list,
+                num_total_pos,
+                num_total_neg,
+            ) = cls_reg_targets
 
             with torch.no_grad():
                 soft_cls, soft_reg, soft_center = self.teacher(inputs)
 
-            losses_cls, = multi_apply(
-                    self.soft_loss_single,
-                    anchor_list,
-                    outputs[0],
-                    outputs[1],
-                    soft_cls,
-                    soft_reg,
-                    labels_list,
-                    num_total_samples=num_total_pos)
+            (losses_cls,) = multi_apply(
+                self.soft_loss_single,
+                anchor_list,
+                outputs[0],
+                outputs[1],
+                soft_cls,
+                soft_reg,
+                labels_list,
+                num_total_samples=num_total_pos,
+            )
             return sum(losses_cls)
 
-        return torch.tensor(0.).to(inputs.device)
+        return torch.tensor(0.0).to(inputs.device)
 
-    def soft_loss_single(self, anchors, cls_score, bbox_pred, labels,
-                    bbox_targets, hard_labels, num_total_samples):
+    def soft_loss_single(
+        self,
+        anchors,
+        cls_score,
+        bbox_pred,
+        labels,
+        bbox_targets,
+        hard_labels,
+        num_total_samples,
+    ):
 
         anchors = anchors.reshape(-1, 4)
-        cls_score = cls_score.permute(0, 2, 3, 1).reshape(
-            -1, self.head.cls_out_channels).contiguous()
+        cls_score = (
+            cls_score.permute(0, 2, 3, 1)
+            .reshape(-1, self.head.cls_out_channels)
+            .contiguous()
+        )
         centerness = centerness.permute(0, 2, 3, 1).reshape(-1)
         centerness_targets = centerness_targets.permute(0, 2, 3, 1).reshape(-1)
-        labels = labels.permute(0, 2, 3, 1).reshape(-1, self.head.cls_out_channels).contiguous()
+        labels = (
+            labels.permute(0, 2, 3, 1)
+            .reshape(-1, self.head.cls_out_channels)
+            .contiguous()
+        )
         hard_labels = hard_labels.reshape(-1)
 
         bg_class_ind = self.num_classes
-        pos_inds = ((hard_labels >= 0) & (hard_labels < bg_class_ind)).nonzero().squeeze(1)
+        pos_inds = (
+            ((hard_labels >= 0) & (hard_labels < bg_class_ind)).nonzero().squeeze(1)
+        )
 
         if len(pos_inds) > 0:
             # classification loss
-            loss_cls = sum(self.soft_loss_cls((None, cls_score), (None, labels), (None, pos_inds), (1.,
-                len(pos_inds))).values())
+            loss_cls = sum(
+                self.soft_loss_cls(
+                    (None, cls_score),
+                    (None, labels),
+                    (None, pos_inds),
+                    (1.0, len(pos_inds)),
+                ).values()
+            )
 
         else:
             loss_cls = cls_score.sum() * 0
 
-        return loss_cls, 
-
+        return (loss_cls,)

@@ -1,4 +1,3 @@
-
 from aw_nas.weights_manager.headers.classifiers import Classifier
 from aw_nas.weights_manager.wrapper import BaseHead
 
@@ -33,5 +32,3 @@ class AnchorHead(BaseHead):
 
     def forward(self, features):
         return self.classification(features), self.regression(features)
-
-

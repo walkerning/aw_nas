@@ -38,8 +38,7 @@ class SearchableFPN(BaseNeck, GermSuperNet):
         gpus=tuple(),
         schedule_cfg=None,
     ):
-        super().__init__(search_space, device, rollout_type, gpus,
-                         schedule_cfg)
+        super().__init__(search_space, device, rollout_type, gpus, schedule_cfg)
         GermSuperNet.__init__(self, search_space)
 
         self.in_channels = in_channels
@@ -54,12 +53,12 @@ class SearchableFPN(BaseNeck, GermSuperNet):
             self.lateral_convs = nn.ModuleList()
             self.fpn_convs = nn.ModuleList()
             for c in in_channels:
-                l_conv = SearchableSepConv(
-                    ctx, c, out_channels, 1, 1, activation)
+                l_conv = SearchableSepConv(ctx, c, out_channels, 1, 1, activation)
 
                 kernel = Choices(kernel_sizes)
                 fpn_conv = SearchableSepConv(
-                    ctx, out_channels, out_channels, kernel, 1, activation)
+                    ctx, out_channels, out_channels, kernel, 1, activation
+                )
                 self.lateral_convs.append(l_conv)
                 self.fpn_convs.append(fpn_conv)
 
@@ -70,8 +69,14 @@ class SearchableFPN(BaseNeck, GermSuperNet):
             if extra_levels >= 1:
                 for i in range(extra_levels):
                     kernel = Choices(kernel_sizes)
-                    extra_fpn_conv = SearchableSepConv(ctx, out_channels, out_channels, kernel,
-                                                       stride=2, activation=activation)
+                    extra_fpn_conv = SearchableSepConv(
+                        ctx,
+                        out_channels,
+                        out_channels,
+                        kernel,
+                        stride=2,
+                        activation=activation,
+                    )
                     self.fpn_convs.append(extra_fpn_conv)
         self.init_weights()
 
@@ -87,8 +92,7 @@ class SearchableFPN(BaseNeck, GermSuperNet):
 
     def forward(self, features):
         assert len(features) == len(self.in_channels)
-        laterals = [l_conv(f)
-                    for f, l_conv in zip(features, self.lateral_convs)]
+        laterals = [l_conv(f) for f, l_conv in zip(features, self.lateral_convs)]
 
         for i in range(len(laterals) - 1, 0, -1):
             prev_shape = laterals[i - 1].shape[2:]
@@ -96,8 +100,7 @@ class SearchableFPN(BaseNeck, GermSuperNet):
                 laterals[i], size=prev_shape, **self.upsample_cfg
             )
 
-        outs = [fpn_conv(lat)
-                for fpn_conv, lat in zip(self.fpn_convs, laterals)]
+        outs = [fpn_conv(lat) for fpn_conv, lat in zip(self.fpn_convs, laterals)]
 
         if self.pyramid_layers > len(outs):
             outs.append(self.fpn_convs[len(outs)](outs[-1]))

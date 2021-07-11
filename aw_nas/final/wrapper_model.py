@@ -10,37 +10,42 @@ from aw_nas.weights_manager.wrapper import BaseHead, BaseBackboneWeightsManager
 from aw_nas.rollout.wrapper import WrapperSearchSpace, WrapperRollout
 from aw_nas.utils import RegistryMeta
 
+
 class WrapperFinalModel(FinalModel):
     NAME = "wrapper_final_model"
     SCHEDULABLE_ATTRS = []
 
-    def __init__(self,
-                 search_space,
-                 device,
-                 rollout_type,
-                 genotypes,
-                 backbone_type,
-                 backbone_cfg,
-                 neck_type=None,
-                 neck_cfg=None,
-                 head_type=None,
-                 head_cfg=None,
-                 feature_levels=[4, 5],
-                 supernet_state_dict=None,
-                 schedule_cfg=None):
+    def __init__(
+        self,
+        search_space,
+        device,
+        rollout_type,
+        genotypes,
+        backbone_type,
+        backbone_cfg,
+        neck_type=None,
+        neck_cfg=None,
+        head_type=None,
+        head_cfg=None,
+        feature_levels=[4, 5],
+        supernet_state_dict=None,
+        schedule_cfg=None,
+    ):
         super(WrapperFinalModel, self).__init__(schedule_cfg=schedule_cfg)
         self.search_space = search_space
         self.device = device
         self.feature_levels = feature_levels
-        
+
         # check search space type
         if isinstance(search_space, WrapperSearchSpace):
             backbone_ss = search_space.backbone
             backbone_rollout_type = search_space.backbone_rollout_type
             neck_ss = search_space.neck
             neck_rollout_type = search_space.neck_rollout_type
-            expect(rollout_type == "wrapper",
-                   "WrapperSearchSpace corresponds to `wrapper` rollout")
+            expect(
+                rollout_type == "wrapper",
+                "WrapperSearchSpace corresponds to `wrapper` rollout",
+            )
         else:
             # search_space should be compatible with backbone weights manager
             backbone_ss = search_space
@@ -51,16 +56,23 @@ class WrapperFinalModel(FinalModel):
             neck_rollout_type = None
 
         self.backbone = BaseBackboneWeightsManager.get_class_(backbone_type)(
-            backbone_ss, self.device, backbone_rollout_type, **(backbone_cfg or {}))
+            backbone_ss, self.device, backbone_rollout_type, **(backbone_cfg or {})
+        )
         feature_channel_nums = self.backbone.get_feature_channel_num(feature_levels)
         if neck_type is not None:
             self.neck = BaseNeck.get_class_(neck_type)(
-                neck_ss, self.device, neck_rollout_type, feature_channel_nums, **(neck_cfg or {}))
+                neck_ss,
+                self.device,
+                neck_rollout_type,
+                feature_channel_nums,
+                **(neck_cfg or {})
+            )
             feature_channel_nums = self.neck.get_feature_channel_num()
         else:
             self.neck = None
         self.head = BaseHead.get_class_(head_type)(
-            self.device, feature_channel_nums, **(head_cfg or {}))
+            self.device, feature_channel_nums, **(head_cfg or {})
+        )
 
         if supernet_state_dict:
             self.load_supernet_state_dict(supernet_state_dict)
@@ -95,9 +107,16 @@ class WrapperFinalModel(FinalModel):
     def _hook_intermediate_feature(self, module, inputs, outputs):
         if not self._flops_calculated:
             if isinstance(module, nn.Conv2d):
-                self.total_flops += 2 * inputs[0].size(1) * outputs.size(1) * \
-                    module.kernel_size[0] * module.kernel_size[1] * \
-                    outputs.size(2) * outputs.size(3) / module.groups
+                self.total_flops += (
+                    2
+                    * inputs[0].size(1)
+                    * outputs.size(1)
+                    * module.kernel_size[0]
+                    * module.kernel_size[1]
+                    * outputs.size(2)
+                    * outputs.size(3)
+                    / module.groups
+                )
             elif isinstance(module, nn.Linear):
                 self.total_flops += 2 * inputs[0].size(1) * outputs.size(1)
         else:
@@ -106,7 +125,7 @@ class WrapperFinalModel(FinalModel):
     @classmethod
     def supported_data_types(cls):
         return ["image"]
-    
+
     @staticmethod
     def _extract_backbone_and_neck_rollout(rollout):
         if isinstance(rollout, WrapperRollout):
@@ -126,4 +145,3 @@ class WrapperFinalModel(FinalModel):
         if self.neck is not None:
             features = self.neck(features)
         return self.head(features)
-

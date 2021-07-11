@@ -3,7 +3,7 @@ import copy
 from torch import nn
 
 from aw_nas.common import assert_rollout_type
-from aw_nas.weights_manager.ofa_backbone import (FlexibleBlock, FlexibleMobileNetV3Block)
+from aw_nas.weights_manager.ofa_backbone import FlexibleBlock, FlexibleMobileNetV3Block
 
 from .base import BaseNeck
 
@@ -26,8 +26,9 @@ class SSD(BaseNeck, FlexibleBlock):
         gpus=tuple(),
         schedule_cfg=None,
     ):
-        super(SSD, self).__init__(search_space, device, rollout_type, gpus,
-                schedule_cfg)
+        super(SSD, self).__init__(
+            search_space, device, rollout_type, gpus, schedule_cfg
+        )
         FlexibleBlock.__init__(self)
 
         self.expansions = expansions
@@ -82,5 +83,3 @@ class SSD(BaseNeck, FlexibleBlock):
     @classmethod
     def supported_rollout_types(cls):
         return [None]
-
-

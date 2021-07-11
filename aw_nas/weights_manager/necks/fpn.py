@@ -14,10 +14,12 @@ except ImportError as e:
     _getLogger("det_neck").warn(
         "Cannot import mmdet_head, detection NAS might not work: {}".format(e)
     )
+
     def xavier_init(mod, distribution):
         getattr(torch.nn.init, "xavier_{}_".format(distribution))(mod.weight)
 
-__all__ = ["FPN"]#, "SearchableFPN"]
+
+__all__ = ["FPN"]  # , "SearchableFPN"]
 
 
 class FPN(BaseNeck, FlexibleBlock):
@@ -38,8 +40,9 @@ class FPN(BaseNeck, FlexibleBlock):
         gpus=tuple(),
         schedule_cfg=None,
     ):
-        super(FPN, self).__init__(search_space, device, rollout_type, gpus,
-                schedule_cfg)
+        super(FPN, self).__init__(
+            search_space, device, rollout_type, gpus, schedule_cfg
+        )
         FlexibleBlock.__init__(self)
 
         self.in_channels = in_channels
@@ -160,5 +163,3 @@ class FPN(BaseNeck, FlexibleBlock):
     @classmethod
     def supported_rollout_types(cls):
         return [None]
-
-

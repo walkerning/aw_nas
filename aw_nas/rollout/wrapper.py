@@ -13,18 +13,19 @@ import numpy as np
 from aw_nas.common import SearchSpace, genotype_from_str
 from aw_nas.rollout.base import BaseRollout
 
+
 class WrapperSearchSpace(SearchSpace):
     NAME = "wrapper"
 
     def __init__(
-            self,
-            backbone_search_space_type="cnn",
-            backbone_search_space_cfg={},
-            backbone_rollout_type="discrete",
-            neck_search_space_type=None,
-            neck_search_space_cfg={},
-            neck_rollout_type=None,
-            schedule_cfg=None,
+        self,
+        backbone_search_space_type="cnn",
+        backbone_search_space_cfg={},
+        backbone_rollout_type="discrete",
+        neck_search_space_type=None,
+        neck_search_space_cfg={},
+        neck_rollout_type=None,
+        schedule_cfg=None,
     ):
         super().__init__(schedule_cfg)
 
@@ -97,7 +98,9 @@ class WrapperSearchSpace(SearchSpace):
         return new_rollout
 
     def genotype_from_str(self, genotype_str):
-        match = re.search(r"\((.+Genotype\(.+\)), (.+Genotype\(.+\)|None)\)", genotype_str)
+        match = re.search(
+            r"\((.+Genotype\(.+\)), (.+Genotype\(.+\)|None)\)", genotype_str
+        )
         b_genotype_str = match.group(1)
         n_genotype_str = match.group(2)
         b_genotype = genotype_from_str(b_genotype_str, self.backbone)
@@ -111,11 +114,15 @@ class WrapperSearchSpace(SearchSpace):
 class WrapperRollout(BaseRollout):
     NAME = "wrapper"
     supported_components = [
-        ("trainer", "simple"), ("evaluator", "mepa"),
+        ("trainer", "simple"),
+        ("evaluator", "mepa"),
         ("evaluator", "discrete_shared_weights"),
-        ("evaluator", "differentiable_shared_weights")]
+        ("evaluator", "differentiable_shared_weights"),
+    ]
 
-    def __init__(self, backbone_rollout, neck_rollout, search_space, candidate_net=None):
+    def __init__(
+        self, backbone_rollout, neck_rollout, search_space, candidate_net=None
+    ):
         super().__init__()
 
         self.backbone = backbone_rollout
@@ -158,7 +165,7 @@ class WrapperRollout(BaseRollout):
 
 class GermWrapperSearchSpace(WrapperSearchSpace):
     NAME = "germ_wrapper"
-    
+
     def random_sample(self):
         rollout = super().random_sample()
         br, nr = rollout.backbone, rollout.neck
@@ -166,4 +173,3 @@ class GermWrapperSearchSpace(WrapperSearchSpace):
             duplicate_r = {k: v for k, v in br.arch.items() if k in nr.arch}
             nr.arch.update(duplicate_r)
         return rollout
-

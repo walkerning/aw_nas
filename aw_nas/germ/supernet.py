@@ -34,8 +34,7 @@ class SearchableContext(object):
             return partial(RegistryMeta.get_classes("searchable_block", name), ctx=self)
         elif name in dict_cls_names:
             return partial(dict_cls_names[name], ctx=self)
-        raise AttributeError('{}.{} is invalid.'.format(
-            self.__class__.__name__, name))
+        raise AttributeError("{}.{} is invalid.".format(self.__class__.__name__, name))
 
 
 class GermSuperNet(Component, nn.Module):
@@ -65,7 +64,10 @@ class GermSuperNet(Component, nn.Module):
                 mod.block_id = name
                 for d_name, decision in mod.named_decisions(avoid_repeat=False):
                     if decision not in all_decisions:
-                        if hasattr(decision, "decision_id") and decision.decision_id is not None:
+                        if (
+                            hasattr(decision, "decision_id")
+                            and decision.decision_id is not None
+                        ):
                             all_decisions[decision] = abs_name = decision.decision_id
                         else:
                             abs_name = name + "." + d_name
@@ -81,10 +83,11 @@ class GermSuperNet(Component, nn.Module):
 
     def named_decisions(self, prefix="", recurse=False):
         # By default, not recursive
-        def _get_named_decisions(mod): return mod._decisions.items()
+        def _get_named_decisions(mod):
+            return mod._decisions.items()
+
         memo = set()
-        mod_list = self.named_modules(prefix=prefix) if recurse else [
-            (prefix, self)]
+        mod_list = self.named_modules(prefix=prefix) if recurse else [(prefix, self)]
         for mod_name, mod in mod_list:
             if isinstance(mod, SearchableBlock):
                 for d_id, d_obj in _get_named_decisions(mod):
@@ -117,21 +120,27 @@ class GermSuperNet(Component, nn.Module):
             yaml.dump(cfg, w_f)
 
     def generate_search_space_cfg(self):
-        expect(self._begin_searchable_called,
-               "self.begin_searchable() is not called yet")
+        expect(
+            self._begin_searchable_called, "self.begin_searchable() is not called yet"
+        )
         return {
-            "decisions": {decision_id: (decision.NAME, str(decision))
-                          for decision, decision_id in self._searchable_decisions.items()},
-            "blocks": self._blockid_to_dimension2decision
+            "decisions": {
+                decision_id: (decision.NAME, str(decision))
+                for decision, decision_id in self._searchable_decisions.items()
+            },
+            "blocks": self._blockid_to_dimension2decision,
         }
 
     def generate_search_space_ref(self):
-        expect(self._begin_searchable_called,
-               "self.begin_searchable() is not called yet")
+        expect(
+            self._begin_searchable_called, "self.begin_searchable() is not called yet"
+        )
         return {
-            "decisions": {decision_id: (decision.NAME, decision)
-                          for decision, decision_id in self._searchable_decisions.items()},
-            "blocks": self._blockid_to_dimension2decision
+            "decisions": {
+                decision_id: (decision.NAME, decision)
+                for decision, decision_id in self._searchable_decisions.items()
+            },
+            "blocks": self._blockid_to_dimension2decision,
         }
 
     def finalize_rollout(self, rollout):
@@ -154,14 +163,19 @@ class GermSuperNet(Component, nn.Module):
 class GermWeightsManager(BaseBackboneWeightsManager, nn.Module):
     NAME = "germ"
 
-    def __init__(self, search_space, device, rollout_type="germ",
-                 # initalize from registry
-                 germ_supernet_type=None,
-                 germ_supernet_cfg=None,
-                 # support load a code snippet
-                 germ_def_file=None,
-                 max_grad_norm=None,
-                 schedule_cfg=None):
+    def __init__(
+        self,
+        search_space,
+        device,
+        rollout_type="germ",
+        # initalize from registry
+        germ_supernet_type=None,
+        germ_supernet_cfg=None,
+        # support load a code snippet
+        germ_def_file=None,
+        max_grad_norm=None,
+        schedule_cfg=None,
+    ):
         super().__init__(search_space, device, rollout_type, schedule_cfg)
         nn.Module.__init__(self)
         self.germ_def_file = germ_def_file
@@ -175,7 +189,8 @@ class GermWeightsManager(BaseBackboneWeightsManager, nn.Module):
 
         self.max_grad_norm = max_grad_norm
         self.super_net = GermSuperNet.get_class_(germ_supernet_type)(
-            search_space, **(germ_supernet_cfg or {}))
+            search_space, **(germ_supernet_cfg or {})
+        )
 
         self.to(self.device)
         # hook flops calculation
@@ -224,8 +239,7 @@ class GermWeightsManager(BaseBackboneWeightsManager, nn.Module):
         optimizer.step()
 
     def save(self, path):
-        torch.save({"epoch": self.epoch,
-                    "state_dict": self.state_dict()}, path)
+        torch.save({"epoch": self.epoch, "state_dict": self.state_dict()}, path)
 
     def load(self, path):
         checkpoint = torch.load(path, map_location=torch.device("cpu"))
