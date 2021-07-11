@@ -16,6 +16,7 @@ from aw_nas.common import assert_rollout_type, group_and_sort_by_to_node, BaseRo
 from aw_nas.weights_manager.base import CandidateNet
 from aw_nas.weights_manager.shared import SharedNet, SharedCell, SharedOp
 from aw_nas.utils import data_parallel, use_params
+from aw_nas.utils.parallel_utils import _check_support_candidate_member_mask
 
 __all__ = ["SubCandidateNet", "SuperNet"]
 
@@ -221,6 +222,8 @@ class SuperNet(SharedNet):
                 `begin_virtual` will only store/restore parameters, not buffers (e.g. running
                 mean/running std in BN layer).
         """
+        _check_support_candidate_member_mask(gpus, candidate_member_mask, self.NAME)
+
         super(SuperNet, self).__init__(search_space, device, rollout_type,
                                        cell_cls=DiscreteSharedCell, op_cls=DiscreteSharedOp,
                                        gpus=gpus,

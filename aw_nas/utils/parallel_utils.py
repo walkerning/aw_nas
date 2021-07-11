@@ -344,4 +344,13 @@ def get_dist_info():
     return rank, world_size
 
 
-
+def _check_support_candidate_member_mask(gpus, candidate_member_mask, wm_name):
+    """
+    Helper function for checking that `candidate_member_mask` cannot be used for
+    supernet weights managers, when using torch>=1.4.0.
+    """
+    if len(gpus) > 1:
+        if not (_torch_version_major == 1 and _torch_version_minor <= 3):
+            assert not candidate_member_mask, \
+                ("When torch>=1.4.0 and data parallel is used, "
+                 "{} weights manager do not suport candidate_member_mask=True".format(wm_name))

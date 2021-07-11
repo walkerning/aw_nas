@@ -34,6 +34,7 @@ from aw_nas.utils import (
     use_params,
     softmax,
 )
+from aw_nas.utils.parallel_utils import _check_support_candidate_member_mask
 from aw_nas.weights_manager.base import BaseWeightsManager, CandidateNet
 from aw_nas.final.base import FinalModel
 
@@ -1846,6 +1847,7 @@ class BaseNB201SharedNet(BaseWeightsManager, nn.Module):
 
         # optionally data parallelism in SharedNet
         self.gpus = gpus
+        _check_support_candidate_member_mask(self.gpus, candidate_member_mask, self.NAME)
 
         self.num_classes = num_classes
         # init channel number of the first cell layers,
