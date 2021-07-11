@@ -352,7 +352,7 @@ class NasBench101SearchSpace(SearchSpace):
 
 
 class NasBench101OneShotSearchSpace(NasBench101SearchSpace):
-    NAME = "nasbench-101-1shot"
+    # NAME = "nasbench-101-1shot"
 
     def __init__(
         self,

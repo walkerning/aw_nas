@@ -6,6 +6,7 @@ Nasbench-201
 1. Install the NB201 package following instructions [here](https://github.com/D-X-Y/NAS-Bench-201).
 2. Download the data file `NAS-Bench-201-v1_0-e61699.pth`, and put it under the path `$AWNAS_HOME/data/nasbench-201/` (without AWNAS_HOME explicitly overrode, this path is `$HOME/awnas/data/nasbench-201/`).
 3. Several other data files are used in the evaluation script and the de-isomorphism sampling (`examples/research/surgery/data/non-isom.txt`). These files (`non-isom.txt`, `iso_dict.yaml`, `iso_dct.txt`, `deiso_dict.txt`) should be downloaded from [this url](https://cloud.tsinghua.edu.cn/d/97a8f29e58cc4e87a3d3/), and also put under the path `$AWNAS_HOME/data/nasbench-201/`.
+Also, run `ln -s $AWNAS_HOME/data/nasbench-201/non-isom.txt $AWNAS_HOME/data/nasbench-201/non-isom5.txt`.
 
 ### Train one-shot supernets
 
