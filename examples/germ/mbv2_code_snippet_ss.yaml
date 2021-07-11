@@ -1,0 +1,87 @@
+controller_cfg:
+  rollout_type: germ
+  schedule_cfg: null
+controller_type: random_sample
+dataset_cfg: {cutout: null}
+dataset_type: cifar10
+evaluator_cfg:
+  batch_size: 256
+  bptt_steps: 35
+  data_portion: [0.95, [train_testTransform, 0.05]]
+  disable_step_current: false
+  eval_optimizer: {lr: 0.05, momentum: 0.9, type: SGD, weight_decay: 0.0004}
+  eval_samples: 1
+  eval_scheduler: {eta_min: 0.0, T_max: 60, type: CosineAnnealingLR}
+  evaluate_with_whole_queue: false
+  load_optimizer: true
+  load_scheduler: true
+  rollout_batch_size: 1
+  rollout_type: germ
+  schedule_cfg: null
+  schedule_every_batch: false
+  shuffle_data_before_split: false
+  shuffle_data_before_split_seed: null
+  shuffle_indice_file: null
+  strict_load_weights_manager: true
+  update_evaluator_report_perfs: true
+  workers_per_queue: 2
+evaluator_type: discrete_shared_weights
+objective_cfg:
+    schedule_cfg:
+        soft_loss_coeff:
+            type: value
+            boundary: [1, 61]
+            value: [0.0, 6.0]
+    soft_loss_coeff: 0.0
+objective_type: ofa_classification
+rollout_type: germ
+search_space_cfg: {} 
+search_space_type: germ
+trainer_cfg: {controller_optimizer: null, controller_samples: 1, controller_scheduler: null,
+  controller_steps: null, controller_train_begin: 1000, controller_train_every: 1, derive_samples: 8,
+  epochs: 500, evaluator_steps: null, interleave_controller_every: null, is_differentiable: false,
+  rollout_batch_size: 1, rollout_type: germ, schedule_cfg: null, test_every: 500}
+trainer_type: simple
+weights_manager_cfg:
+    #germ_def_file: /home/tangchangcheng/projects/aw_nas_private/aw_nas/germ/mbv2.py,
+  germ_supernet_type: mbv2 
+  germ_supernet_cfg:
+        num_classes: 10
+        depth_choices: [2, 3, 4]
+        strides: [2, 1, 2, 1, 1, 1]
+        mult_ratio_choices: [0.5, 0.75, 1.0]
+        kernel_sizes: [3, 5, 7]
+        expansion_choices: [2, 3, 4, 6]
+        stem_stride: 1
+        schedule_cfg:
+            kernel_sizes:
+                - epoch: 0
+                  choices: [7, 5]
+                - epoch: 61
+                  choices: [5, 7]
+                - epoch: 91
+                  choices: [3, 5, 7]
+            expansion_choices:
+                - epoch: 0
+                  choices: [6]
+                - epoch: 121
+                  choices: [4, 6]
+                - epoch: 181
+                  choices: [2, 3, 4, 6]
+            mult_ratio_choices:
+                - epoch: 0
+                  choices: [1.0]
+                - epoch: 241
+                  choices: [0.75, 1]
+                - epoch: 301
+                  choices: [0.5, 0.75, 1]
+            depth_choices:
+                - epoch: 0
+                  choices: [4]
+                - epoch: 361
+                  choices: [3, 4]
+                - epoch: 421
+                  choices: [2, 3, 4]
+  rollout_type: germ
+
+weights_manager_type: germ

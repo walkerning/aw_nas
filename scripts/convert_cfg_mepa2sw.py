@@ -1,3 +1,4 @@
+#pylint: disable-all
 import sys
 import copy
 import yaml

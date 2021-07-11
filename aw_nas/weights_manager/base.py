@@ -175,7 +175,7 @@ class CandidateNet(nn.Module):
                      if v.grad is not None]
 
         if eval_criterions:
-            eval_res = utils.flatten_list(
+            eval_res = [loss.item()] + utils.flatten_list(
                 [c(data[0], outputs, targets) for c in eval_criterions])
             return grads, eval_res
         return grads

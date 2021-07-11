@@ -2,9 +2,10 @@ import torch
 import torch.nn.functional as F
 
 from aw_nas.objective.detection_utils.base import Losses
-from aw_nas.utils import box_utils
+from aw_nas.utils import box_utils, getLogger
 
-__all__ = ["MultiBoxLoss"]
+
+__all__ = ["MultiBoxLoss", "FocalLoss"]
 
 
 class MultiBoxLoss(Losses):
@@ -21,7 +22,8 @@ class MultiBoxLoss(Losses):
             N: number of matched default boxes
         See: https://arxiv.org/pdf/1512.02325.pdf for more details.
     """
-    def __init__(self, num_classes, neg_pos=3, loc_coef=1., schedule_cfg=None):
+
+    def __init__(self, num_classes, neg_pos=3, loc_coef=1.0, schedule_cfg=None):
         super(MultiBoxLoss, self).__init__(schedule_cfg)
         self.num_classes = num_classes
         self.negpos_ratio = neg_pos
@@ -39,7 +41,8 @@ class MultiBoxLoss(Losses):
 
         batch_conf = conf_data.view(-1, self.num_classes + 1)
         loss_c = box_utils.log_sum_exp(batch_conf) - batch_conf.gather(
-            1, conf_t.view(-1, 1))
+            1, conf_t.view(-1, 1)
+        )
         # Hard Negative Mining
         tmp = pos_idx.reshape(loss_c.shape)
         loss_c[tmp] = 0  # filter out pos boxes for now
@@ -47,8 +50,9 @@ class MultiBoxLoss(Losses):
         loss_c = loss_c.view(batch_size, -1)
         _, loss_idx = loss_c.sort(1, descending=True)
         _, idx_rank = loss_idx.sort(1)
-        num_neg = torch.clamp(self.negpos_ratio * num_pos.to(torch.long),
-                              max=pos_idx.size(1) - 1)
+        num_neg = torch.clamp(
+            self.negpos_ratio * num_pos.to(torch.long), max=pos_idx.size(1) - 1
+        )
         neg_idx = idx_rank < num_neg.expand_as(idx_rank)
         # Confidence Loss Including Positive and Negative Examples
         cls_idx = (pos_idx + neg_idx).gt(0)
@@ -91,7 +95,15 @@ class MultiBoxLoss(Losses):
 class FocalLoss(Losses):
     NAME = "focal_loss"
 
-    def __init__(self, num_classes, alpha, gamma, background_label=0, loc_coef=1., schedule_cfg=None):
+    def __init__(
+        self,
+        num_classes,
+        alpha,
+        gamma,
+        background_label=0,
+        loc_coef=1.0,
+        schedule_cfg=None,
+    ):
         super().__init__(schedule_cfg)
         self.num_classes = num_classes
         self.alpha = alpha
@@ -112,8 +124,7 @@ class FocalLoss(Losses):
         normalizer = normalizer.repeat(1, positive_indices.shape[-1])
         cls_normalizer = normalizer[reserved_indices]
         reg_normalizer = normalizer[positive_indices]
-        return (reserved_indices, positive_indices), (cls_normalizer,
-                                                      reg_normalizer)
+        return (reserved_indices, positive_indices), (cls_normalizer, reg_normalizer)
 
     def forward(self, predicts, targets, indices, normalizer):
         _, logits, regressions = predicts
@@ -130,44 +141,58 @@ class FocalLoss(Losses):
 
         # convert label to one-hot encoding.
         conf_t = conf_t[reserved_indices]
-        assert 0 < conf_t.max() < confidences.shape[-1], \
-            "The number of classes exceeds the number of predicted classes, " \
+        assert 0 < conf_t.max() < confidences.shape[-1], (
+            "The number of classes exceeds the number of predicted classes, "
             "please ensure the correction of configuration."
-        conf_t = torch.zeros_like(confidences).to(device).scatter_(
-            1, conf_t.reshape(-1, 1), 1).to(torch.float)
+        )
+        conf_t = (
+            torch.zeros_like(confidences)
+            .to(device)
+            .scatter_(1, conf_t.reshape(-1, 1), 1)
+            .to(torch.float)
+        )
         conf_t[:, 0] = self.background_label
         loc_t = loc_t[positive_indices]
 
         alpha_factor = torch.ones_like(confidences) * self.alpha
-        alpha_factor = torch.where(torch.eq(conf_t, 1.), alpha_factor,
-                                   1. - alpha_factor)
-        focal_weight = torch.where(torch.eq(conf_t, 1.), 1. - confidences,
-                                   confidences)
+        alpha_factor = torch.where(
+            torch.eq(conf_t, 1.0), alpha_factor, 1.0 - alpha_factor
+        )
+        focal_weight = torch.where(
+            torch.eq(conf_t, 1.0), 1.0 - confidences, confidences
+        )
         focal_weight = alpha_factor * torch.pow(focal_weight, self.gamma)
-        bce = -(conf_t * torch.log(confidences) +
-                (1.0 - conf_t) * torch.log(1.0 - confidences))
+        bce = -(
+            conf_t * torch.log(confidences)
+            + (1.0 - conf_t) * torch.log(1.0 - confidences)
+        )
         classification_losses = focal_weight * bce
-        classfication_loss = (classification_losses / torch.unsqueeze(
-            cls_normalizer, 1)).sum() / batch_size
+        classfication_loss = (
+            classification_losses / torch.unsqueeze(cls_normalizer, 1)
+        ).sum() / batch_size
 
         regression_diff = torch.abs(loc_t - regressions)
         regression_losses = torch.where(
-            torch.le(regression_diff,
-                     1. / 9.), 0.5 * 9. * torch.pow(regression_diff, 2),
-            regression_diff - 0.5 / 9.)
-        regression_loss = (regression_losses.mean(-1) /
-                           reg_normalizer).sum() / batch_size
+            torch.le(regression_diff, 1.0 / 9.0),
+            0.5 * 9.0 * torch.pow(regression_diff, 2),
+            regression_diff - 0.5 / 9.0,
+        )
+        regression_loss = (
+            regression_losses.mean(-1) / reg_normalizer
+        ).sum() / batch_size
 
         return {
             "cls_loss": classfication_loss,
-            "reg_loss": regression_loss * self.loc_coef
+            "reg_loss": regression_loss * self.loc_coef,
         }
 
 
 def sigmoid_cross_entropy_with_logits(logits, labels):
-    return torch.where(logits > 0, logits,
-                       torch.zeros_like(logits)) - logits * labels + torch.log(
-                           1 + torch.exp(-torch.abs(logits)))
+    return (
+        torch.where(logits > 0, logits, torch.zeros_like(logits))
+        - logits * labels
+        + torch.log(1 + torch.exp(-torch.abs(logits)))
+    )
 
 
 class AdaptiveDistillationLoss(Losses):
@@ -175,10 +200,11 @@ class AdaptiveDistillationLoss(Losses):
     ref: [Learning Efficient Detector with Semi-supervised Adaptive Distillation]
     (https://arxiv.org/abs/1901.00366)
     """
+
     NAME = "adaptive_distillation_loss"
     SCHEDULABLE_ATTRS = ["loss_coef"]
 
-    def __init__(self, beta, gamma, temperature, loss_coef=1., schedule_cfg=None):
+    def __init__(self, beta, gamma, temperature, loss_coef=1.0, schedule_cfg=None):
         super().__init__(schedule_cfg)
         self.beta = beta
         self.gamma = gamma
@@ -187,10 +213,7 @@ class AdaptiveDistillationLoss(Losses):
 
     def forward(self, predictions, targets, indices, normalizer):
         if self.loss_coef == 0:
-            return {
-                "adaptive_soft_loss":
-                torch.tensor(0.).to(predictions[-1].device)
-            }
+            return {"adaptive_soft_loss": torch.tensor(0.0).to(predictions[-1].device)}
         _, positive_indices = indices
         _, pos_normalizer = normalizer
 
@@ -204,14 +227,14 @@ class AdaptiveDistillationLoss(Losses):
         teacher_entropy = sigmoid_cross_entropy_with_logits(logit_t, conf_t)
 
         kullback_leiber_dist = -teacher_entropy + soft_cross_entropy
-        adaptive_weight = 1 - torch.exp(-kullback_leiber_dist -
-                                        self.beta * teacher_entropy)
-        if self.gamma != 1.:
+        adaptive_weight = 1 - torch.exp(
+            -kullback_leiber_dist - self.beta * teacher_entropy
+        )
+        if self.gamma != 1.0:
             adaptive_weight = torch.pow(adaptive_weight, self.gamma)
 
         adaptive_soft_loss = adaptive_weight * kullback_leiber_dist
         return {
-            "adaptive_soft_loss":
-            (adaptive_soft_loss.sum(-1) / pos_normalizer).sum() *
-            self.loss_coef
+            "adaptive_soft_loss": (adaptive_soft_loss.sum(-1) / pos_normalizer).sum()
+            * self.loss_coef
         }

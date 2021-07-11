@@ -296,6 +296,7 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
             # If true, `evaluate_rollout` evaluates using the whole controller queue
             # rather a batch during training
             evaluate_with_whole_queue=False,
+            update_evaluator_report_perfs=True,
             # data queue configs: (surrogate, mepa, controller)
             data_portion=(0.1, 0.4, 0.5),
             mepa_as_surrogate=False,
@@ -425,6 +426,7 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
         self.strict_load_weights_manager = strict_load_weights_manager
         self.report_inner_diagnostics = report_inner_diagnostics
         self.report_cont_data_diagnostics = report_cont_data_diagnostics
+        self.update_evaluator_report_perfs = update_evaluator_report_perfs
 
         # rnn specific configs
         self.bptt_steps = bptt_steps
@@ -727,8 +729,12 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
             cand_net = self.weights_manager.assemble_candidate(rollout)
 
             # prepare criterions
-            eval_criterions = [self._scalar_reward_func
-                               ] + self._report_loss_funcs
+            if self.update_evaluator_report_perfs:
+                # report get_perfs results
+                eval_criterions = [self._scalar_reward_func] + self._report_perf_funcs
+            else:
+                eval_criterions = [self._scalar_reward_func]
+
             eval_criterions = [
                 partial(func, cand_net=cand_net) for func in eval_criterions
             ]
@@ -819,7 +825,7 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
             self.plateau_scheduler_loss.append(report_stats[0][1])
         # return stats
         return OrderedDict(
-            zip(self._all_perf_names, np.mean(report_stats, axis=0)))
+            zip(self._all_perf_names_update_evaluator, np.mean(report_stats, axis=0)))
 
     def on_epoch_start(self, epoch):
         super(MepaEvaluator, self).on_epoch_start(epoch)
@@ -1256,11 +1262,16 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
         self._perf_names = self.objective.perf_names()
         self._all_perf_names = utils.flatten_list(
             ["reward", "loss", self._perf_names])
+        self._all_perf_names_update_evaluator = utils.flatten_list(
+            ["loss", "reward", self._perf_names])
         # criterion funcs for meta parameter training
         self._mepa_loss_func = partial(self.objective.get_loss,
                                        add_controller_regularization=False,
                                        add_evaluator_regularization=True)
         # criterion funcs for log/report
+        self._report_perf_funcs = [
+            self.objective.get_perfs
+        ]
         self._report_loss_funcs = [
             partial(self.objective.get_loss_item,
                     add_controller_regularization=False,
@@ -1270,7 +1281,7 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
         self._criterions_related_attrs = [
             "_reward_func", "_reward_kwargs", "_scalar_reward_func",
             "_reward_kwargs", "_perf_names", "_mepa_loss_func",
-            "_report_loss_funcs"
+            "_report_perf_funcs", "_report_loss_funcs"
         ]
 
     def _init_data_queues_and_hidden(self, data_type, data_portion,
@@ -1426,8 +1437,15 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
     def set_dataset(self, dataset):
         self.dataset = dataset
         self._data_type = self.dataset.data_type()
-        self._init_data_queues_and_hidden(self._data_type, self.data_portion,
-                                          self.mepa_as_surrogate)
+        if self.multiprocess:
+            self.logger.warning(
+                "When loading a multiprocess evaluator from a pickle file, "
+                "if no process group is initialized, "
+                "the data queues cannot be initialized properly, evaluator methods might not work. "
+                "However, `evaluator.weights_manager` can be used without problem.")
+        else:
+            self._init_data_queues_and_hidden(
+                self._data_type, self.data_portion, self.mepa_as_surrogate)
 
     def __setstate__(self, state):
         super(MepaEvaluator, self).__setstate__(state)

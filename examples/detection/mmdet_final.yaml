@@ -1,0 +1,178 @@
+rollout_type: ssd_ofa
+
+## ---- Component search_space ----
+# ---- Type ofa ----
+search_space_type: ssd_ofa
+search_space_cfg:
+  num_cell_groups: [1, 4, 4, 4, 4, 4, 1]
+  expansions: [1, 6, 6, 6, 6, 6, 6]
+  image_size_choice: [300]
+  num_head: 4
+  head_width_choice: [0.5]
+  schedule_cfg:
+    width_choice:
+      type: value
+      boundary: [1, 60, 120]
+      value: [[6], [6,5,4], [6,5,4,3,2]]
+    depth_choice:
+      type: value
+      boundary: [1, 180, 240]
+      value: [[4], [4,3], [4,3,2]]
+# ---- End Type mnsanet_ofa ----
+## ---- End Component search_space ----
+
+## ---- Component dataset ----
+# ---- Type cifar10 ----
+dataset_type: coco
+dataset_cfg:
+  load_train_only: false
+  random_choose: false
+  train_crop_size: [800, 480]
+  test_crop_size: [800, 480]
+  image_mean: 0.
+  image_std: 1.
+  image_norm_factor: 128.
+  image_bias: -1
+  remove_no_anno: true
+  remove_invalid_labels: true
+  has_background: false
+  train_pipeline:
+    - type: Resize
+      img_scale: !!python/tuple [800, 480]
+      keep_ratio: true
+    - type: RandomFlip
+      flip_ratio: 0.5
+    - type: Normalize
+      mean: [123.675, 116.28, 103.53]
+      std: [58.395, 57.12, 57.375]
+      to_rgb: true
+    - type: Pad
+      size_divisor: 32
+    - type: DefaultFormatBundle
+  test_pipeline: 
+    - type: MultiScaleFlipAug
+      img_scale: !!python/tuple [800, 480]
+      flip: false
+      transforms: 
+        - type: Resize
+          keep_ratio: true
+        - type: RandomFlip
+        - type: Normalize
+          mean: [123.675, 116.28, 103.53]
+          std: [58.395, 57.12, 57.375]
+          to_rgb: true
+        - type: Pad
+          size_divisor: 32
+        - type: DefaultFormatBundle
+# ---- End Type cifar10 ----
+## ---- End Component dataset ----
+
+objective_type: mmdetection_head
+objective_cfg:
+  # Schedulable attributes:
+  num_classes: 80
+  metrics_type: coco
+  metrics_cfg:
+      remove_invalid_labels: true
+      has_background: false
+  head_type: ATSSHead
+  head_cfg:
+      num_classes: 80
+      in_channels: 64
+      stacked_convs: 3
+      feat_channels: 64
+      norm_cfg:
+          type: BN
+          requires_grad: true
+      anchor_generator:
+          type: AnchorGenerator
+          ratios: [1.0]
+          octave_base_scale: 5
+          scales_per_octave: 1
+          strides: [8, 16, 32, 64, 128]
+      bbox_coder:
+          type: DeltaXYWHBBoxCoder
+          target_means: [.0, .0, .0, .0]
+          target_stds: [0.1, 0.1, 0.2, 0.2]
+      loss_cls:
+          type: FocalLoss
+          use_sigmoid: True
+          gamma: 2.0
+          alpha: 0.25
+          loss_weight: 1.0
+      loss_bbox:
+          type: GIoULoss
+          loss_weight: 2.0
+      loss_centerness:
+          type: CrossEntropyLoss
+          use_sigmoid: True
+          loss_weight: 1.0
+      train_cfg:
+        assigner:
+          type: ATSSAssigner
+          topk: 9
+        allowed_border: -1
+        smoothl1_beta: 1.
+        pos_weight: -1
+        debug: false
+      test_cfg:
+          nms_pre: 1000
+          min_bbox_size: 0
+          nms:
+              type: nms
+              iou_threshold: 0.6
+          min_bbox_size: 0
+          score_thr: 0.05
+          max_per_img: 100
+  # latency_coeff: 1.0
+#   latency_file: latency_block.txt
+
+final_model_type: det_final_model
+final_model_cfg:
+  feature_levels: [3, 4, 5]
+  genotypes: "image_size=480, cell_0=1,cell_1=4,cell_2=4,cell_3=4,cell_4=4,cell_5=4, cell_6=1, cell_0_block_0=(1, 3),cell_1_block_0=(6, 7),cell_1_block_1=(6, 7),cell_1_block_2=(6, 7), cell_1_block_3=(6, 7), cell_2_block_0=(6, 7),cell_2_block_1=(6, 7),cell_2_block_2=(6, 7),cell_2_block_3=(6, 7),cell_3_block_0=(6, 7),cell_3_block_1=(6, 7),cell_3_block_2=(6, 7),cell_3_block_3=(6, 7),cell_4_block_0=(6, 7),cell_4_block_1=(6, 7),cell_4_block_2=(6, 7),cell_4_block_3=(6, 7),cell_5_block_0=(6, 7),cell_5_block_1=(6, 7),cell_5_block_2=(6, 7),cell_5_block_3=(6, 7), cell_6_block_0=(6, 7), head_0=(0.5, 3), head_1=(0.5, 3), head_2=(0.5, 3), head_3=(0.5, 3)"
+  backbone_type: ofa_final_model
+  backbone_cfg:
+    backbone_type: mbv2_backbone
+    backbone_cfg:
+      layer_channels: [32, 16, 24, 40, 80, 96, 192, 320, 1280]
+      blocks: [1, 4, 4, 4, 4, 4, 1]
+      expansions: [1, 6, 6, 6, 6, 6, 6]
+      strides: [1, 2, 2, 2, 1, 2, 1]
+      mult_ratio: 0.35
+      kernel_sizes: [3, 5, 7]
+      activation: relu6
+  neck_type: fpn
+  neck_cfg:
+    out_channels: 64
+    pyramid_layers: 5
+    kernel_sizes: [3]
+  head_type: atss
+  head_cfg:
+      num_anchors: 1
+      stacked_convs: 3
+      has_background: false
+      activation: relu
+      num_classes: 80
+
+final_trainer_type: det_final_trainer
+final_trainer_cfg:
+  batch_size: 28
+  epochs: 24
+  optimizer_scheduler:
+    type: MultiStepLR
+    milestones: [15, 21]
+    gamma: 0.1
+  schedule_cfg: null
+  weight_decay: 0.0001
+  learning_rate: 0.1
+  #warmup_epochs: 3
+  warmup_steps: 500
+  warmup_ratio: 0.001
+  momentum: 0.9
+  freeze_base_net: false
+  base_net_lr: 0.0005
+  save_as_state_dict: true
+  eval_every: 12
+  workers_per_queue: 2
+  calib_bn_setup: false

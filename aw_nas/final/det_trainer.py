@@ -1,17 +1,22 @@
-# -*- coding: utf-8 -*-
-
 import os
-
+import numpy as np
 import torch
 from torch import nn
 
 from aw_nas import utils
-from aw_nas.final.cnn_trainer import CNNFinalTrainer
+from aw_nas.final.cnn_trainer import CNNFinalTrainer #, _warmup_update_lr
 from aw_nas.utils.common_utils import nullcontext
 from aw_nas.utils.exception import expect
 
 
-class DetectionFinalTrainer(CNNFinalTrainer):  #pylint: disable=too-many-instance-attributes
+def _warmup_update_lr(optimizer, epoch, init_lr, warmup_epochs, warmup_ratio=0.0):
+    k = (1 - epoch / warmup_epochs) * (1 - warmup_ratio)
+    lr = init_lr * (1 - k)
+    for param_group in optimizer.param_groups:
+        param_group["lr"] = lr
+    return lr
+
+class DetectionFinalTrainer(CNNFinalTrainer):  # pylint: disable=too-many-instance-attributes
     NAME = "det_final_trainer"
 
     def __init__(
@@ -20,7 +25,7 @@ class DetectionFinalTrainer(CNNFinalTrainer):  #pylint: disable=too-many-instanc
             dataset,
             device,
             gpus,
-            objective,  #pylint: disable=dangerous-default-value
+            objective,  # pylint: disable=dangerous-default-value
             multiprocess=False,
             epochs=600,
             batch_size=96,
@@ -31,6 +36,8 @@ class DetectionFinalTrainer(CNNFinalTrainer):  #pylint: disable=too-many-instanc
             freeze_base_net=False,
             base_net_lr=1e-4,
             warmup_epochs=0,
+            warmup_steps=0,
+            warmup_ratio=0.,
             optimizer_scheduler={
                 "type": "CosineAnnealingLR",
                 "T_max": 600,
@@ -45,9 +52,11 @@ class DetectionFinalTrainer(CNNFinalTrainer):  #pylint: disable=too-many-instanc
             save_as_state_dict=False,
             workers_per_queue=2,
             eval_every=10,
+            eval_batch_size=1,
             eval_no_grad=True,
             eval_dir=None,
             calib_bn_setup=False,
+            seed=None,
             schedule_cfg=None):
 
         self.freeze_base_net = freeze_base_net
@@ -60,19 +69,14 @@ class DetectionFinalTrainer(CNNFinalTrainer):  #pylint: disable=too-many-instanc
                              no_bias_decay, grad_clip, auxiliary_head,
                              auxiliary_weight, add_regularization,
                              save_as_state_dict, workers_per_queue,
-                             eval_no_grad, eval_every, calib_bn_setup, schedule_cfg)
+                             eval_no_grad, eval_every, eval_batch_size, calib_bn_setup, seed, schedule_cfg)
 
-        self.predictor = self.objective.predictor
         self._criterion = self.objective._criterion
         self._acc_func = self.objective.get_acc
         self._perf_func = self.objective.get_perfs
 
-        if eval_dir is None:
-            eval_dir = os.environ['HOME']
-            pid = os.getpid()
-            eval_dir = os.path.join(eval_dir, '.det_exp', str(pid))
-            os.makedirs(eval_dir, exist_ok=True)
-        self.eval_dir = eval_dir
+        self.warmup_steps = warmup_steps
+        self.warmup_ratio = warmup_ratio
 
     def _init_optimizer(self):
         optim_cls = getattr(torch.optim, self.optimizer_type)
@@ -84,7 +88,7 @@ class DetectionFinalTrainer(CNNFinalTrainer):  #pylint: disable=too-many-instanc
         backbone = self.model.backbone
         head = self.model.head
         if not self.freeze_base_net:
-            params = self.model.parameters()
+            params = [{"params": self.model.parameters()}]
         else:
             params = [{
                 "params": backbone.parameters(),
@@ -100,6 +104,9 @@ class DetectionFinalTrainer(CNNFinalTrainer):  #pylint: disable=too-many-instanc
     def evaluate_split(self, split):
         # if len(self.gpus) >= 2:
         #     self._forward_once_for_flops(self.model)
+        rank = os.environ.get("LOCAL_RANK")
+        if rank is not None and rank != '0':
+            return 0., 0.
         assert split in {"train", "test"}
         if split == "test":
             queue = self.valid_queue
@@ -123,20 +130,27 @@ class DetectionFinalTrainer(CNNFinalTrainer):  #pylint: disable=too-many-instanc
         top5 = utils.AverageMeter()
         losses_obj = utils.OrderedStats()
         model.train()
+        self.objective.set_mode("train")
 
         for step, (inputs, targets) in enumerate(train_queue):
-            inputs = inputs.to(self.device)
+            cur_step = step + len(train_queue) * (epoch - 1)
+            if 0 <= cur_step < self.warmup_steps:
+                lr = _warmup_update_lr(optimizer, cur_step,
+                                       self.learning_rate, self.warmup_steps, self.warmup_ratio)
+                if cur_step % self.report_every == 0:
+                    self.logger.info("Step {} LR: {}".format(step, lr))
 
+            inputs = inputs.to(self.device)
             optimizer.zero_grad()
             predictions = model.forward(inputs)
             losses = criterion(inputs, predictions, targets, model)
             loss = sum(losses.values())
             loss.backward()
-            nn.utils.clip_grad_norm_(model.parameters(), self.grad_clip)
+
+            if self.grad_clip is not None:
+                nn.utils.clip_grad_norm_(model.parameters(), self.grad_clip)
             optimizer.step()
-
             prec1, prec5 = self._acc_func(inputs, predictions, targets, model)
-
             n = inputs.size(0)
             losses_obj.update(losses)
             top1.update(prec1.item(), n)
@@ -145,7 +159,7 @@ class DetectionFinalTrainer(CNNFinalTrainer):  #pylint: disable=too-many-instanc
             if step % self.report_every == 0:
                 self.logger.info("train %03d %.2f%%; %.2f%%; %s",
                                  step, top1.avg, top5.avg, "; ".join(
-                                     ["{}: {:.3f}".format(perf_n, v) \
+                                     ["{}: {:.3f}".format(perf_n, v)
                                       for perf_n, v in losses_obj.avgs().items()]))
         return top1.avg, sum(losses_obj.avgs().values())
 
@@ -157,14 +171,15 @@ class DetectionFinalTrainer(CNNFinalTrainer):  #pylint: disable=too-many-instanc
         losses_obj = utils.OrderedStats()
         all_perfs = []
         model.eval()
+        self.objective.set_mode("eval")
 
         context = torch.no_grad if self.eval_no_grad else nullcontext
         with context():
             for step, (inputs, targets) in enumerate(valid_queue):
                 inputs = inputs.to(device)
-                # targets = targets.to(device)
+                #targets = targets.to(device)
 
-                predictions = model.forward(inputs)
+                predictions = model(inputs)
                 losses = criterion(inputs, predictions, targets, model)
                 prec1, prec5 = self._acc_func(inputs, predictions, targets,
                                               model)
@@ -178,14 +193,15 @@ class DetectionFinalTrainer(CNNFinalTrainer):  #pylint: disable=too-many-instanc
 
                 if step % self.report_every == 0:
                     self.logger.info(
-                        "valid %03d %.2f%%; %.2f%%; %s", step, top1.avg, top5.avg,
+                        "valid %03d; %s, %s", step, ";".join(
+                            ["%s: %.3f" % l for l in losses.items()]),
                         "; ".join([
-                            "{}: {:.3f}".format(perf_n, v) for perf_n, v in \
-                            list(objective_perfs.avgs().items()) + \
-                            list(losses_obj.avgs().items())]))
+                            "{}: {:.3f}".format(perf_n, v) for perf_n, v in
+                            list(objective_perfs.avgs().items())]))
         all_perfs = list(zip(*all_perfs))
         obj_perfs = {
             k: self.objective.aggregate_fn(k, False)(v)
             for k, v in zip(self._perf_names, all_perfs)
         }
+        return 0., 0., obj_perfs
         return top1.avg, sum(losses_obj.avgs().values()), obj_perfs

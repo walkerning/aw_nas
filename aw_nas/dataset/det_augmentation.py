@@ -184,7 +184,8 @@ def preproc_for_test(image, insize):
     interp_methods = [cv2.INTER_LINEAR, cv2.INTER_CUBIC,
                       cv2.INTER_AREA, cv2.INTER_NEAREST, cv2.INTER_LANCZOS4]
     interp_method = interp_methods[random.randrange(5)]
-    image = cv2.resize(image, (insize, insize), interpolation=interp_method)
+    image = cv2.resize(image, insize, interpolation=interp_method)
+    image = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     return image.transpose(2, 0, 1)
 
 
@@ -205,6 +206,7 @@ class Preproc(object):
 
     def __call__(self, image, boxes, labels):
         # some bugs
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         boxes = np.array(boxes)
         if self.p == -2:  # abs_test
             targets = np.zeros((1, 5))

@@ -54,22 +54,21 @@ evaluator_cfg:
     lr: 0.05
     momentum: 0.9
     type: SGD
-    weight_decay: 0.00004
+    weight_decay: 0.0004
   mepa_scheduler:
     eta_min: 0.0
-    T_max: 500
+    T_max: 60
     type: CosineAnnealingLR
   surrogate_optimizer: null
   surrogate_scheduler: null
   mepa_samples: 1
   data_portion:
   - 0.0
-  - 0.5 # train evaluator weights
+  - 0.9 # train evaluator weights
   - 0.1 # for train controller
   mepa_as_surrogate: false
   bptt_steps: 35
   schedule_cfg: null
-  multiprocess: false
 # ---- End Type mepa ----
 ## ---- End Component evaluator ----
 
@@ -90,7 +89,6 @@ weights_manager_cfg:
     num_classes: 10
     block_type: mbv3_block
     stem_stride: 1
-  multiprocess: false
 # ---- End Type supernet ----
 ## ---- End Component weights_manager ----
 
@@ -103,10 +101,6 @@ objective_cfg:
       boundary: [1, 60]
       value: [0.0, 6.0]
   soft_loss_coeff: 0.0
-  latency_coeff: 1.0
-  expect_latency: 20
-  reward: mult
-  punishment: hard
 #   latency_file: latency_block.txt
 
 ## ---- Component trainer ----

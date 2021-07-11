@@ -377,6 +377,8 @@ class Transition(nn.Module):
         out = F.avg_pool2d(out, 2)
         return out
 
+
+# ---------------------- OFA Blocks --------------------------
 class MobileNetV2Block(nn.Module):
     def __init__(self, expansion, C, C_out, 
                 stride, 
@@ -405,7 +407,8 @@ class MobileNetV2Block(nn.Module):
             )
         
         self.depth_wise = depth_wise or nn.Sequential(
-            nn.Conv2d(self.C_inner, self.C_inner, self.kernel_size, stride, padding=self.kernel_size // 2, bias=False),
+            nn.Conv2d(self.C_inner, self.C_inner, self.kernel_size, stride, padding=self.kernel_size
+                // 2, bias=False, groups=self.C_inner),
             nn.BatchNorm2d(self.C_inner),
             self.act_fn
         )
@@ -417,13 +420,8 @@ class MobileNetV2Block(nn.Module):
 
         self.shortcut = nn.Sequential()
         self.has_conv_shortcut = False
-        if stride == 1 and C != C_out:
+        if stride == 1 and C == C_out:
             self.has_conv_shortcut = True
-            self.shortcut = nn.Sequential(
-                    nn.Conv2d(C, C_out, kernel_size=1,
-                            stride=1, padding=0, bias=False),
-                    nn.BatchNorm2d(C_out),
-                )
 
     def forward(self, inputs, drop_connect_rate=0.0):
         out = inputs
@@ -431,7 +429,7 @@ class MobileNetV2Block(nn.Module):
             out = self.inv_bottleneck(out)
         out = self.depth_wise(out)
         out = self.point_linear(out)
-        if self.stride == 1:
+        if self.has_conv_shortcut:
             if drop_connect_rate > 0:
                 out = drop_connect(out, p=drop_connect_rate, training=self.training)
             out = out + self.shortcut(inputs)
@@ -502,6 +500,49 @@ class MobileNetV3Block(nn.Module):
         return out
 
 
+# ------------------ DPU Friendly operators --------------------
+class FusedConvBlock(nn.Module):
+    def __init__(self, expansion, C, C_out, 
+                stride, 
+                kernel_size,
+                affine,
+                activation="relu",
+                ):
+        super(FusedConvBlock, self).__init__()
+        self.expansion = expansion
+        self.C = C
+        self.C_out = C_out 
+        self.C_inner = make_divisible(C * expansion, 8)
+        self.stride = stride
+        self.kernel_size = kernel_size
+        self.act_fn = get_op(activation)
+        
+        self.fused_conv = nn.Sequential(
+            nn.Conv2d(self.C, self.C_inner, self.kernel_size, stride, padding=self.kernel_size // 2, bias=False),
+            nn.BatchNorm2d(self.C_inner),
+            self.act_fn()
+        )
+
+        self.point_linear = nn.Sequential(
+            nn.Conv2d(self.C_inner, C_out, 1, 1, 0, bias=False),
+            nn.BatchNorm2d(C_out)
+        )
+
+        self.shortcut = nn.Sequential()
+        self.has_conv_shortcut = False
+        if stride == 1 and C == C_out:
+            self.has_conv_shortcut = True
+
+    def forward(self, inputs, drop_connect_rate=0.0):
+        out = self.fused_conv(inputs)
+        out = self.point_linear(out)
+        if self.has_conv_shortcut:
+            if drop_connect_rate > 0:
+                out = drop_connect(out, p=drop_connect_rate, training=self.training)
+            out = out + self.shortcut(inputs)
+        return out
+
+
 register_primitive("mobilenet_block_6_relu6",
                    lambda C, C_out, stride, affine: MobileNetBlock(6, C, C_out,
                                                                    stride, affine, True))
@@ -565,3 +606,5 @@ register_primitive("mobilenet_v2_block",
                    lambda C, C_out, stride, affine, expansion, kernel_size, activation: MobileNetV2Block(expansion, C, C_out, stride, kernel_size, affine=affine, activation=activation))
 register_primitive("mobilenet_v3_block",
                    lambda C, C_out, stride, affine, expansion, kernel_size, activation, use_se: MobileNetV3Block(expansion, C, C_out, stride, kernel_size, affine=affine, activation=activation, use_se=use_se))
+register_primitive("fused_conv_block",
+                   lambda C, C_out, stride, affine, expansion, kernel_size, activation: FusedConvBlock(expansion, C, C_out, stride, kernel_size, affine=affine, activation=activation))

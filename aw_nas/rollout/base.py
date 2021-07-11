@@ -78,7 +78,9 @@ class Rollout(BaseRollout):
         return hash(utils.recur_apply(lambda x: x, self.arch, depth=10, out_type=tuple))
 
     def __eq__(self, other):
-        return tuple(self.arch) == tuple(other.arch)
+        # return tuple(self.arch) == tuple(other.arch)
+        return utils.recur_apply(lambda x: x, self.arch, depth=10, out_type=tuple) == \
+            utils.recur_apply(lambda x: x, other.arch, depth=10, out_type=tuple)
 
     def set_candidate_net(self, c_net):
         self.candidate_net = c_net

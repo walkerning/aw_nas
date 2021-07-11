@@ -10,10 +10,12 @@ from torch import nn
 
 from aw_nas import ops
 from aw_nas.weights_manager.base import BaseWeightsManager
+from aw_nas.weights_manager.wrapper import BaseBackboneWeightsManager
 from aw_nas.utils.common_utils import Context
 from aw_nas.utils.exception import expect, ConfigException
 
-class SharedNet(BaseWeightsManager, nn.Module):
+
+class SharedNet(BaseBackboneWeightsManager, nn.Module):
     def __init__(self, search_space, device, rollout_type,
                  cell_cls, op_cls,
                  gpus=tuple(),
@@ -76,6 +78,7 @@ class SharedNet(BaseWeightsManager, nn.Module):
         self.cells = nn.ModuleList()
         num_channels = self.init_channels
         prev_num_channels = [c_stem] * self._num_init
+        self.all_num_channels = [c_stem]
         strides = [2 if self._is_reduce(i_layer) else 1 for i_layer in range(self._num_layers)]
 
         for i_layer, stride in enumerate(strides):
@@ -109,6 +112,8 @@ class SharedNet(BaseWeightsManager, nn.Module):
                             **kwargs)
             prev_num_channel = cell.num_out_channel()
             prev_num_channels.append(prev_num_channel)
+            # currently, add all stem and cell outputs
+            self.all_num_channels.append(prev_num_channel)
             prev_num_channels = prev_num_channels[1:]
             self.cells.append(cell)
 
@@ -128,7 +133,18 @@ class SharedNet(BaseWeightsManager, nn.Module):
         self.device = device
         self.to(device)
 
-    def forward(self, inputs, genotypes, **kwargs): #pylint: disable=arguments-differ
+    def get_feature_channel_num(self, feature_levels=None):
+        if feature_levels is None:
+            return self.all_num_channels
+        return [self.all_num_channels[level] for level in feature_levels]
+
+    def extract_features(self, inputs, genotypes, keep_all=True, **kwargs):
+        # only support use genotypes/arch
+        # the two subclasses (diff_)supernet support using rollout
+        # * genotypes: for the commonly-used classification NAS API
+        # * rollout (discrete) / arch (diff):
+        #    used as the backbone weights manager in the wrapper weights manager
+
         if not self.use_stem:
             stemed = inputs
             states = [inputs] * self._num_init
@@ -142,11 +158,22 @@ class SharedNet(BaseWeightsManager, nn.Module):
             stemed = self.stem(inputs)
             states = [stemed] * self._num_init
 
+        if keep_all:
+            all_states = [stemed]
+
         for cg_idx, cell in zip(self._cell_layout, self.cells):
             genotype = genotypes[cg_idx]
             states.append(cell(states, genotype, **kwargs))
             states = states[1:]
+            if keep_all:
+                all_states.append(states[-1])
+        return all_states if keep_all else states
 
+    def forward(self, inputs, genotypes, **kwargs): #pylint: disable=arguments-differ
+        states = self.extract_features(inputs, genotypes, keep_all=False, **kwargs)
+        # classification head
+        # for compatibility of old checkpoints,
+        # we do not reuse aw_nas.weights_manager.wrapper.ClassificationHead
         out = self.global_pooling(states[-1])
         out = self.dropout(out)
         logits = self.classifier(out.view(out.size(0), -1))
@@ -207,6 +234,11 @@ class SharedNet(BaseWeightsManager, nn.Module):
     @classmethod
     def supported_data_types(cls):
         return ["image"]
+
+    def finalize(self, rollout):
+        # TODO: implement this
+        raise NotImplementedError()
+
 
 class SharedCell(nn.Module):
     def __init__(self, op_cls, search_space, layer_index, num_channels, num_out_channels,
