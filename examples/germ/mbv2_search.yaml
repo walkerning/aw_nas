@@ -1,5 +1,5 @@
 controller_cfg:
-  rollout_type: germ
+  rollout_type: wrapper
   schedule_cfg: null
 controller_type: random_sample
 dataset_cfg:
@@ -21,7 +21,7 @@ dataset_cfg:
       #std: [1, 1, 1]
       std: [58.395, 57.12, 57.375]
       to_rgb: true
-      - type: Pad
+    - type: Pad
       size_divisor: 32
     - type: DefaultFormatBundle
       #- type: Collect
@@ -40,7 +40,7 @@ dataset_cfg:
           #std: [1, 1, 1]
           std: [58.395, 57.12, 57.375]
           to_rgb: true
-          - type: Pad
+        - type: Pad
           size_divisor: 32
         - type: DefaultFormatBundle
 
@@ -58,7 +58,7 @@ evaluator_cfg:
   load_optimizer: true
   load_scheduler: true
   rollout_batch_size: 1
-  rollout_type: germ
+  rollout_type: wrapper
   schedule_cfg: null
   schedule_every_batch: false
   shuffle_data_before_split: false
@@ -125,17 +125,22 @@ objective_cfg:
           min_bbox_size: 0
           score_thr: 0.05
           max_per_img: 100
+rollout_type: wrapper
+search_space_cfg:
+    backbone_search_space_type: germ
+    backbone_search_space_cfg: {}
+    backbone_rollout_type: germ
+    neck_search_space_type: germ
+    neck_search_space_cfg: {}
+    neck_rollout_type: germ
+search_space_type: germ_wrapper
 
-rollout_type: germ
-search_space_cfg: {} 
-search_space_type: germ
 trainer_cfg: {controller_optimizer: null, controller_samples: 1, controller_scheduler: null,
   controller_steps: null, controller_train_begin: 1000, controller_train_every: 1, derive_samples: 8,
   epochs: 500, evaluator_steps: null, interleave_controller_every: null, is_differentiable: false,
-  rollout_batch_size: 1, rollout_type: germ, schedule_cfg: null, test_every: 500}
+  rollout_batch_size: 1, rollout_type: wrapper, schedule_cfg: null, test_every: 500}
 trainer_type: simple
 weights_manager_cfg:
-    #germ_def_file: /home/tangchangcheng/projects/aw_nas_private/aw_nas/germ/mbv2.py,
   backbone_type: germ
   backbone_cfg:
     germ_supernet_type: mbv2 
@@ -177,8 +182,8 @@ weights_manager_cfg:
                   choices: [3, 4]
                 - epoch: 421
                   choices: [2, 3, 4]
-  rollout_type: germ
-  neck_type: fpn
+  rollout_type: wrapper
+  neck_type: fpn_germ
   neck_cfg:
     out_channels: 256
     pyramid_layers: 5
@@ -186,7 +191,7 @@ weights_manager_cfg:
   head_type: atss
   head_cfg:
     num_classes: 80
-    num_anchors: 3
+    num_anchors: 1
     stacked_convs: 3
     has_background: false
     in_channels: 256

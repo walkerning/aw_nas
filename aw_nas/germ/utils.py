@@ -235,7 +235,7 @@ class ChannelMaskHandler(MaskHandler):
                     # only change groups number
                     # weight is sliced when axis == 0
                     ori_groups = module.groups
-                    module.groups = len(mask_idx)
+                    module.groups = int(choice)
                     module.in_channels = module.groups
                     module.out_channels = module.groups
 

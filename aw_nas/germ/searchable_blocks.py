@@ -293,9 +293,9 @@ class SearchableConv(germ.SearchableBlock, nn.Conv2d):
         self.s_choices = stride
         self.g_choices = groups
 
-        assert groups == 1 or out_channels == in_channels, (
+        assert groups == 1 or out_channels == in_channels == groups, (
             "Only support Depthwise and regular"
-            " conv currently, either set groups = 1 or out_channels == in_channels."
+            " conv currently, either set groups = 1 or out_channels == in_channels == groups."
         )
 
         if isinstance(groups, germ.Choices):
@@ -331,10 +331,7 @@ class SearchableConv(germ.SearchableBlock, nn.Conv2d):
         r_o_c = self._get_decision(self.co_handler.choices, rollout)
         r_i_c = self._get_decision(self.ci_handler.choices, rollout)
 
-        if self.groups == 1:
-            ctx = self.ci_handler.apply(self, r_i_c, axis=1, detach=detach)
-        else:
-            ctx = nullcontext()
+        ctx = self.ci_handler.apply(self, r_i_c, axis=1, detach=detach)
         ctx = self.co_handler.apply(self, r_o_c, axis=0, ctx=ctx, detach=detach)
         ctx = self.k_handler.apply(self, r_k_s, ctx=ctx, detach=detach)
         ctx = self.s_handler.apply(self, r_s, ctx=ctx, detach=detach)

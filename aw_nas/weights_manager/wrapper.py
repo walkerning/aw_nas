@@ -194,7 +194,7 @@ class WrapperWeightsManager(BaseWeightsManager, nn.Module):
         features = self.backbone.extract_features(inputs, b_rollout)
         features = self._pickout_features(features, self.feature_levels)
         if self.neck is not None:
-            features = self.neck(features, n_rollout)
+            features = self.neck.forward_rollout(n_rollout, features)
         return self.head(features)
 
     def assemble_candidate(self, rollout):
