@@ -1,0 +1,163 @@
+rollout_type: differentiable
+## ---- Component search_space ----
+# ---- Type cnn ----
+search_space_type: cnn
+search_space_cfg:
+  # Schedulable attributes:
+  num_cell_groups: 2
+  num_init_nodes: 2
+  num_layers: 2
+  cell_layout: [0, 1]
+  reduce_cell_groups:
+  - 1
+  num_steps: 4
+  num_node_inputs: 2
+  concat_op: concat
+  concat_nodes: null
+  loose_end: false
+  shared_primitives:
+  - none
+  - max_pool_3x3
+  - avg_pool_3x3
+  - skip_connect
+  - sep_conv_3x3
+  - sep_conv_5x5
+  - dil_conv_3x3
+  - dil_conv_5x5
+  cell_shared_primitives: null
+# ---- End Type cnn ----
+## ---- End Component search_space ----
+
+## ---- Component dataset ----
+# ---- Type miniimagenet ----
+dataset_type: miniimagenet
+dataset_cfg:
+  # Schedulable attributes:
+  n_way: 5
+  k_shot: 1
+  k_query: 15
+  train_shot: 10
+  resize: 84
+  batch_size: 5000
+  load_val: true
+  batch_size_val: 100
+  load_test: false
+  batch_size_test: 1000
+## ---- End Component dataset ----
+
+## ---- Component controller ----
+# ---- Type differentiable ----
+controller_type: differentiable
+controller_cfg:
+  # Schedulable attributes: gumbel_temperature, entropy_coeff, force_uniform
+  rollout_type: differentiable
+  use_prob: true
+  gumbel_hard: false
+  gumbel_temperature: 1.0
+  entropy_coeff: 0.00
+  max_grad_norm: null
+  force_uniform: false
+  schedule_cfg: null
+# ---- End Type differentiable ----
+## ---- End Component controller ----
+
+## ---- Component evaluator ----
+# ---- Type differentiable_few_shot_shared_weights ----
+evaluator_type: differentiable_few_shot_shared_weights
+evaluator_cfg:
+  # Schedulable attributes: controller_surrogate_steps, mepa_surrogate_steps, mepa_samples
+  rollout_type: differentiable
+  batch_size: 1
+  eval_base_optimizer:
+    lr: 0.01
+    type: SGD
+  eval_base_scheduler: null
+  eval_meta_optimizer:
+    lr: 0.001
+    type: Adam
+  eval_meta_scheduler: null
+  schedule_every_batch: false
+  load_optimizer: true
+  load_scheduler: true
+  strict_load_weights_manager: true
+  data_portion:
+  - [train, [0.0, 1.0], {}]
+  - [train, [0.0, 1.0], {}]
+  - [val, [0.0, 1.0], {shuffle: false}]
+  shuffle_data_before_split: false
+  workers_per_queue: 8
+  rollout_batch_size: 1
+  bptt_steps: 35
+  multiprocess: false
+  schedule_cfg: null
+# ---- End Type differentiable_few_shot_shared_weights ----
+## ---- End Component evaluator ----
+
+## ---- Component weights_manager ----
+# ---- Type diff_supernet ----
+weights_manager_type: diff_supernet
+weights_manager_cfg:
+  # Schedulable attributes:
+  rollout_type: differentiable
+  gpus: [0]
+  num_classes: 5
+  init_channels: 16
+  stem_multiplier: 3
+  max_grad_norm: 5.0
+  dropout_rate: 0.1
+  use_stem: tnas
+  stem_stride: 1
+  stem_affine: true
+  preprocess_op_type: null
+  cell_use_preprocess: true
+  cell_group_kwargs: null
+  candidate_virtual_parameter_only: false
+  candidate_eval_no_grad: true
+# ---- End Type diff_supernet ----
+## ---- End Component weights_manager ----
+
+## ---- Component objective ----
+# ---- Type classification ----
+objective_type: classification
+objective_cfg:
+  # Schedulable attributes:
+  label_smooth: null
+# ---- End Type classification ----
+## ---- End Component objective ----
+
+## ---- Component trainer ----
+# ---- Type meta ----
+trainer_type: meta
+trainer_cfg:
+  # Schedulable attributes: controller_samples, derive_samples
+  rollout_type: differentiable
+  epochs: 10
+  test_every: 1
+  controller_base_optimizer:
+    lr: 30
+    type: SGD
+  controller_base_scheduler: null
+  controller_meta_optimizer:
+    lr: 0.001
+    betas: [0.5, 0.999]
+    weight_decay: 0.001
+    type: Adam
+  controller_meta_scheduler: null
+  train_base_style: together
+  train_base_steps: 5
+  test_base_style: together
+  test_base_steps: 10
+  meta_batch_size: 4
+  meta_update_method: fo_maml
+  controller_samples: 1
+  derive_samples: 8
+  rollout_batch_size: 1
+  evaluator_steps: null
+  controller_steps: null
+  controller_train_every: 1
+  controller_train_begin: 1
+  interleave_controller_every: 1
+  schedule_cfg: null
+# ---- End Type meta ----
+## ---- End Component trainer ----
+

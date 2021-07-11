@@ -14,9 +14,11 @@ from aw_nas import utils
 from aw_nas.evaluator.base import BaseEvaluator
 from aw_nas.utils.exception import expect, ConfigException
 
-__all__ = ["FewshotSharedweightEvaluator",
-           "DiscreteFewshotSharedweightEvaluator",
-           "DifferentiableFewshotEvaluator"]
+__all__ = [
+    "FewshotSharedweightEvaluator",
+    "DiscreteFewshotSharedweightEvaluator",
+    "DifferentiableFewshotEvaluator",
+]
 
 
 class FewshotSharedweightEvaluator(
@@ -151,12 +153,16 @@ class FewshotSharedweightEvaluator(
         self.eval_base_optimizer = utils.init_optimizer(
             self.weights_manager.parameters(), eval_base_optimizer
         )
-        self.eval_base_scheduler = utils.init_scheduler(self.eval_base_optimizer, eval_base_scheduler)
+        self.eval_base_scheduler = utils.init_scheduler(
+            self.eval_base_optimizer, eval_base_scheduler
+        )
 
         self.eval_meta_optimizer = utils.init_optimizer(
             self.weights_manager.parameters(), eval_meta_optimizer
         )
-        self.eval_meta_scheduler = utils.init_scheduler(self.eval_meta_optimizer, eval_meta_scheduler)
+        self.eval_meta_scheduler = utils.init_scheduler(
+            self.eval_meta_optimizer, eval_meta_scheduler
+        )
 
         # for performance when doing 1-sample ENAS in `update_evaluator`
         if not self.disable_step_current and self.eval_samples == 1:
@@ -228,119 +234,14 @@ class FewshotSharedweightEvaluator(
     def suggested_derive_steps_per_epoch(self):
         return len(self.derive_queue)
 
-    """
     def evaluate_rollouts(
         self,
         rollouts,
-        is_training,
-        portion=None,
-        eval_batches=None,
+        task=None,
+        query=False,
         return_candidate_net=False,
-        callback=None
+        callback=None,
     ):
-        
-        #feed in the rollouts abd acquire the reward signal(valid loss) through self.eval_reward_func
-        
-        self.objective.set_mode("train" if is_training else "eval")
-
-        # support CompareRollout
-        if self.rollout_type == "compare":
-            eval_rollouts = sum([[r.rollout_1, r.rollout_2] for r in rollouts], [])
-        else:
-            eval_rollouts = rollouts
-
-        # controller_queue (for updating controller) or derive_queue (for testing rollouts only)
-        data_queue = self.controller_queue if is_training else self.derive_queue
-        hid_kwargs = self.c_hid_kwargs if is_training else self.d_hid_kwargs
-        if not data_queue or not len(data_queue):
-            return rollouts
-
-        if is_training and not self.evaluate_with_whole_queue:
-            # get one data batch from controller/derive queue
-            cont_data = next(data_queue)
-            cont_data = utils.to_device(cont_data, self.device)
-
-            # prepare forward keyword arguments for candidate network
-            _reward_kwargs = {k: v for k, v in self._reward_kwargs.items()}
-            _reward_kwargs.update(hid_kwargs)
-
-            # evaluate these rollouts on one batch of data
-            for rollout in eval_rollouts:
-                cand_net = self.weights_manager.assemble_candidate(rollout)
-                if return_candidate_net:
-                    rollout.candidate_net = cand_net
-                # prepare criterions
-                criterions = [self._reward_func] + self._report_loss_funcs
-                criterions = [partial(func, cand_net=cand_net) for func in criterions]
-
-                # run eval
-                res = self._eval_reward_func(
-                    data=cont_data,
-                    cand_net=cand_net,
-                    criterions=criterions,
-                    kwargs=_reward_kwargs,
-                    callback=callback,
-                    rollout=rollout,
-                )
-
-        else:  # only for test
-            if eval_batches is not None:
-                eval_steps = eval_batches
-            else:
-                eval_steps = len(data_queue)
-                if portion is not None:
-                    expect(0.0 < portion < 1.0)
-                    eval_steps = int(portion * eval_steps)
-
-            for rollout in eval_rollouts:
-                cand_net = self.weights_manager.assemble_candidate(rollout)
-                if return_candidate_net:
-                    rollout.candidate_net = cand_net
-                # prepare criterions
-                criterions = [self._scalar_reward_func] + self._report_loss_funcs
-                criterions = [partial(func, cand_net=cand_net) for func in criterions]
-
-                # NOTE: if virtual buffers, must use train mode here...
-                # if not virtual buffers(virtual parameter only), can use train/eval mode
-                aggregate_fns = [
-                    self.objective.aggregate_fn(name, is_training=False)
-                    for name in self._all_perf_names
-                ]
-                res = cand_net.eval_queue(
-                    data_queue,
-                    criterions=criterions,
-                    steps=eval_steps,
-                    # NOTE: In parameter-sharing evaluation, let's keep using train-mode BN!!!
-                    mode="train",
-                    # if test, differentiable rollout does not need to set detach_arch=True too
-                    aggregate_fns=aggregate_fns,
-                    **hid_kwargs
-                )
-
-                rollout.set_perfs(
-                    OrderedDict(zip(self._all_perf_names, res))
-                )  # res is already flattend
-
-        # support CompareRollout
-        if self.rollout_type == "compare":
-            num_r = len(rollouts)
-            for i_rollout in range(num_r):
-                better = (
-                    eval_rollouts[2 * i_rollout + 1].perf["reward"]
-                    > eval_rollouts[2 * i_rollout].perf["reward"]
-                )
-                rollouts[i_rollout].set_perfs(
-                    OrderedDict([("compare_result", better),])
-                )
-        return rollouts
-    """
-
-    def evaluate_rollouts(
-            self, rollouts,
-            task=None, query=False,
-            return_candidate_net=False,
-            callback=None
-        ):
         """
         feed in the rollouts and the task
         carry out one step evaluation
@@ -373,7 +274,7 @@ class FewshotSharedweightEvaluator(
                 criterions=criterions,
                 kwargs=_reward_kwargs,
                 callback=callback,
-                rollout=rollout
+                rollout=rollout,
             )
         return rollouts
 
@@ -560,23 +461,31 @@ class FewshotSharedweightEvaluator(
 
     def meta_clone(self, include_buffers=False):
         if include_buffers:
-            self.buffers_clone = {k: v.data.clone()
-                                  for k, v in self.weights_manager.named_buffers()}
-        self.params_clone = {k: v.data.clone()
-                             for k, v in self.weights_manager.named_parameters()}
-        self.grad_clone = {k: torch.zeros_like(v.data)
-                           for k, v in self.weights_manager.named_parameters()}
+            self.buffers_clone = {
+                k: v.data.clone() for k, v in self.weights_manager.named_buffers()
+            }
+        self.params_clone = {
+            k: v.data.clone() for k, v in self.weights_manager.named_parameters()
+        }
+        self.grad_clone = {
+            k: torch.zeros_like(v.data)
+            for k, v in self.weights_manager.named_parameters()
+        }
         self.grad_count = 0
 
     def meta_gradient(self, method):
         if method == "fo_maml":
-            self.grad_clone = {k: self.grad_clone[k] + v.grad.clone()
-                               for k, v in self.weights_manager.named_parameters()}
+            self.grad_clone = {
+                k: self.grad_clone[k] + v.grad.clone()
+                for k, v in self.weights_manager.named_parameters()
+            }
         elif method == "reptile":
-            self.grad_clone = {k: self.grad_clone[k] +\
-                               (self.params_clone[k] - v.data.clone()) /
-                               self.eval_base_optimizer.param_groups[0]["lr"]
-                               for k, v in self.weights_manager.named_parameters()}
+            self.grad_clone = {
+                k: self.grad_clone[k]
+                + (self.params_clone[k] - v.data.clone())
+                / self.eval_base_optimizer.param_groups[0]["lr"]
+                for k, v in self.weights_manager.named_parameters()
+            }
         self.grad_count += 1
 
     def meta_recover(self, include_buffers=False):

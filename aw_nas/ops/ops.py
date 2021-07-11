@@ -126,6 +126,15 @@ PRIMITVE_FACTORY = {
         nn.BatchNorm2d(C_out),
         nn.ReLU(inplace=True),
     ),
+    "tnas": lambda C, C_out, stride, affine: nn.Sequential(
+        nn.Conv2d(C, C_out // 2, kernel_size=3, padding=1, bias=False),
+        nn.BatchNorm2d(C_out // 2),
+        nn.MaxPool2d(2, 2),
+        nn.ReLU(inplace=True),
+        nn.Conv2d(C_out // 2, C_out, kernel_size=3, padding=1, bias=False),
+        nn.BatchNorm2d(C_out),
+        nn.MaxPool2d(2, 2)
+    ),
 
     "NB201ResidualBlock": lambda C, C_out, stride, affine: NB201ResidualBlock(C, C_out, stride,
                                                                    affine=affine),

@@ -30,7 +30,9 @@ class MiniImagenetDataset(Dataset):
     sets: conains n_way * k_shot for meta-train set, n_way * n_query for meta-test set.
     """
 
-    def __init__(self, root, mode, batch_size, n_way, k_shot, k_query, resize, transform=None):
+    def __init__(
+        self, root, mode, batch_size, n_way, k_shot, k_query, resize, transform=None
+    ):
         """
 
         :param root: root path of mini-imagenet
@@ -51,35 +53,58 @@ class MiniImagenetDataset(Dataset):
         self.k_shot = k_shot  # k-shot
         self.k_query = k_query  # for evaluation
         self.set_size = self.n_way * self.k_shot  # num of samples per set
-        self.query_size = self.n_way * self.k_query  # number of samples per set for evaluation
+        self.query_size = (
+            self.n_way * self.k_query
+        )  # number of samples per set for evaluation
         self.resize = resize  # resize to
         self.transform = transform
-        print('shuffle Mini-ImageNet:%s, b:%d, %d-way, %d-shot, %d-query, resize:%d' % (
-        mode, batch_size, n_way, k_shot, k_query, resize), end="")
+        print(
+            "shuffle Mini-ImageNet:%s, b:%d, %d-way, %d-shot, %d-query, resize:%d"
+            % (mode, batch_size, n_way, k_shot, k_query, resize),
+            end="",
+        )
 
         # csvdata is a dict, len(csvdata.keys())=64  64*600=38400
-        csvdata = self.loadCSV(os.path.join(root, mode + '.csv'))  # csv path
+        csvdata = self.loadCSV(os.path.join(root, mode + ".csv"))  # csv path
 
         self.data = []  # list of list
         self.img2label = {}  # img2label dict
         for idx, (k, v) in enumerate(csvdata.items()):
             self.data.append(v)  # [[img1, img2, ...], [img601, ...]]
-            self.img2label[k] = idx # {"img_name[:9]":label}
+            self.img2label[k] = idx  # {"img_name[:9]":label}
         self.cls_num = len(self.data)  # 64
 
-        if mode == 'train':
+        if mode == "train":
             self.create_batch(self.batch_size)
             print("")
         else:
-            support_path = os.path.join(root, mode + "_" + str(batch_size) + "_support_" +
-                                        str(n_way) + "_way_" + str(k_shot) + "shot.json")
-            query_path = os.path.join(root, mode + "_" + str(batch_size) + "_query_" +
-                                      str(n_way) + "way_" + str(k_shot) + "shot.json")
+            support_path = os.path.join(
+                root,
+                mode
+                + "_"
+                + str(batch_size)
+                + "_support_"
+                + str(n_way)
+                + "_way_"
+                + str(k_shot)
+                + "shot.json",
+            )
+            query_path = os.path.join(
+                root,
+                mode
+                + "_"
+                + str(batch_size)
+                + "_query_"
+                + str(n_way)
+                + "way_"
+                + str(k_shot)
+                + "shot.json",
+            )
             if not os.path.isfile(os.path.join(support_path)):
                 self.create_batch(self.batch_size)
-                with open(support_path, 'w+') as f_support:
+                with open(support_path, "w+") as f_support:
                     json.dump(self.support_x_batch, f_support)
-                with open(query_path, 'w+') as f_query:
+                with open(query_path, "w+") as f_query:
                     json.dump(self.query_x_batch, f_query)
                 print("")
             else:
@@ -95,7 +120,7 @@ class MiniImagenetDataset(Dataset):
         """
         dictLabels = {}
         with open(csvf) as csvfile:
-            csvreader = csv.reader(csvfile, delimiter=',')
+            csvreader = csv.reader(csvfile, delimiter=",")
             next(csvreader, None)  # skip (filename, label)
             for i, row in enumerate(csvreader):
                 filename = row[0]
@@ -124,24 +149,33 @@ class MiniImagenetDataset(Dataset):
 
             np.random.shuffle(selected_cls)
             support_x = []  # list of list
-            query_x = []       # list of list
+            query_x = []  # list of list
             for cls in selected_cls:
                 # 2. select k_shot + k_query for each class
 
-                selected_imgs_idx = np.random.choice(len(self.data[cls]), self.k_shot + self.k_query, replace=False)
+                selected_imgs_idx = np.random.choice(
+                    len(self.data[cls]), self.k_shot + self.k_query, replace=False
+                )
                 np.random.shuffle(selected_imgs_idx)
-                indexDtrain = np.array(selected_imgs_idx[:self.k_shot])  # idx for Dtrain
-                indexDtest = np.array(selected_imgs_idx[self.k_shot:])  # idx for Dtest
+                indexDtrain = np.array(
+                    selected_imgs_idx[: self.k_shot]
+                )  # idx for Dtrain
+                indexDtest = np.array(selected_imgs_idx[self.k_shot :])  # idx for Dtest
                 support_x.append(
-                    np.array(self.data[cls])[indexDtrain].tolist())  # get all images filename for current Dtrain
+                    np.array(self.data[cls])[indexDtrain].tolist()
+                )  # get all images filename for current Dtrain
                 query_x.append(np.array(self.data[cls])[indexDtest].tolist())
 
             # shuffle the correponding relation between support set and query set
             random.shuffle(support_x)  # 5*1
-            random.shuffle(query_x)    # 5*15
+            random.shuffle(query_x)  # 5*15
 
-            self.support_x_batch.append(support_x)  # append set to current sets, 10000*5*1
-            self.query_x_batch.append(query_x)  # append sets to current sets, 10000*5*15
+            self.support_x_batch.append(
+                support_x
+            )  # append set to current sets, 10000*5*1
+            self.query_x_batch.append(
+                query_x
+            )  # append sets to current sets, 10000*5*15
 
     def __getitem__(self, index):
         """
@@ -149,22 +183,29 @@ class MiniImagenetDataset(Dataset):
         :param index:
         :return:
         """
-        return self.getitem_from_batch(self.support_x_batch[index],
-                                       self.query_x_batch[index])
+        return self.getitem_from_batch(
+            self.support_x_batch[index], self.query_x_batch[index]
+        )
 
     def getitem_from_batch(self, support_x_batch, query_x_batch):
         support_x = torch.FloatTensor(self.set_size, 3, self.resize, self.resize)
         query_x = torch.FloatTensor(self.query_size, 3, self.resize, self.resize)
 
-        flatten_support_x = [os.path.join(self.path, item)
-                             for sublist in support_x_batch for item in sublist]
-        support_y = np.array([item[:9]
-                              for sublist in support_x_batch for item in sublist])
+        flatten_support_x = [
+            os.path.join(self.path, item)
+            for sublist in support_x_batch
+            for item in sublist
+        ]
+        support_y = np.array(
+            [item[:9] for sublist in support_x_batch for item in sublist]
+        )
 
-        flatten_query_x = [os.path.join(self.path, item)
-                           for sublist in query_x_batch for item in sublist]
-        query_y = np.array([item[:9]
-                            for sublist in query_x_batch for item in sublist])
+        flatten_query_x = [
+            os.path.join(self.path, item)
+            for sublist in query_x_batch
+            for item in sublist
+        ]
+        query_y = np.array([item[:9] for sublist in query_x_batch for item in sublist])
 
         # generate relative y in range(0, n_way)
         unique = np.unique(support_y)
@@ -183,7 +224,12 @@ class MiniImagenetDataset(Dataset):
         for i, path in enumerate(flatten_query_x):
             query_x[i] = self.transform(path)
 
-        return support_x, torch.LongTensor(support_y_relative), query_x, torch.LongTensor(query_y_relative)
+        return (
+            support_x,
+            torch.LongTensor(support_y_relative),
+            query_x,
+            torch.LongTensor(query_y_relative),
+        )
 
     def __len__(self):
         # as we have built up to batch_size of sets, you can sample some small batch size of sets.
@@ -193,17 +239,19 @@ class MiniImagenetDataset(Dataset):
 class MiniImageNet(BaseDataset):
     NAME = "miniimagenet"
 
-    def __init__(self,
-                 batch_size,
-                 n_way,
-                 k_shot,
-                 k_query,
-                 train_shot = None,
-                 resize=84,
-                 load_val=True,
-                 batch_size_val=100,
-                 load_test=False,
-                 batch_size_test=1000):
+    def __init__(
+        self,
+        batch_size,
+        n_way,
+        k_shot,
+        k_query,
+        train_shot=None,
+        resize=84,
+        load_val=True,
+        batch_size_val=100,
+        load_test=False,
+        batch_size_test=1000,
+    ):
         super(MiniImageNet, self).__init__()
 
         self.batch_size = batch_size
@@ -222,40 +270,48 @@ class MiniImageNet(BaseDataset):
         mean = [0.485, 0.456, 0.406]
         std = [0.229, 0.224, 0.225]
 
-        transform = transforms.Compose([
-            self.load_image,
-            transforms.Resize((self.resize, self.resize)),
-            transforms.ToTensor(),
-            transforms.Normalize(mean, std)
-        ])
+        transform = transforms.Compose(
+            [
+                self.load_image,
+                transforms.Resize((self.resize, self.resize)),
+                transforms.ToTensor(),
+                transforms.Normalize(mean, std),
+            ]
+        )
 
-        self.datasets["train"] = MiniImagenetDataset(root=self.data_dir,
-                                                     mode="train",
-                                                     batch_size=self.batch_size,
-                                                     n_way=self.n_way,
-                                                     k_shot=self.train_shot,
-                                                     k_query=self.k_query,
-                                                     resize=self.resize,
-                                                     transform=transform)
+        self.datasets["train"] = MiniImagenetDataset(
+            root=self.data_dir,
+            mode="train",
+            batch_size=self.batch_size,
+            n_way=self.n_way,
+            k_shot=self.train_shot,
+            k_query=self.k_query,
+            resize=self.resize,
+            transform=transform,
+        )
 
         if self.load_val:
-            self.datasets["val"] = MiniImagenetDataset(root=self.data_dir,
-                                                       mode="val",
-                                                       batch_size=self.batch_size_val,
-                                                       n_way=self.n_way,
-                                                       k_shot=self.k_shot,
-                                                       k_query=self.k_query,
-                                                       resize=self.resize,
-                                                       transform=transform)
+            self.datasets["val"] = MiniImagenetDataset(
+                root=self.data_dir,
+                mode="val",
+                batch_size=self.batch_size_val,
+                n_way=self.n_way,
+                k_shot=self.k_shot,
+                k_query=self.k_query,
+                resize=self.resize,
+                transform=transform,
+            )
         if self.load_test:
-            self.datasets["test"] = MiniImagenetDataset(root=self.data_dir,
-                                                        mode="test",
-                                                        batch_size=self.batch_size_test,
-                                                        n_way=self.n_way,
-                                                        k_shot=self.k_shot,
-                                                        k_query=self.k_query,
-                                                        resize=self.resize,
-                                                        transform=transform)
+            self.datasets["test"] = MiniImagenetDataset(
+                root=self.data_dir,
+                mode="test",
+                batch_size=self.batch_size_test,
+                n_way=self.n_way,
+                k_shot=self.k_shot,
+                k_query=self.k_query,
+                resize=self.resize,
+                transform=transform,
+            )
 
     def load_image(self, x):
         return Image.open(x).convert("RGB")
@@ -269,4 +325,3 @@ class MiniImageNet(BaseDataset):
 
     def getitem_from_batch(self, support_x_batch, query_x_batch):
         return self.datasets["train"].getitem_from_batch(support_x_batch, query_x_batch)
-

@@ -72,6 +72,27 @@ function download_voc {
     popd
 }
 
+function download_omniglot {
+    echo "- Downloading Omniglot Dataset"
+    DATA_DIR=${DATA_BASE}/omniglot
+    mkdir -p ${DATA_DIR}
+    pushd ${DATA_DIR}
+    wget --continue https://raw.githubusercontent.com/brendenlake/omniglot/master/python/images_background.zip
+    wget --continue https://raw.githubusercontent.com/brendenlake/omniglot/master/python/images_evaluation.zip
+    wget --continue https://raw.githubusercontent.com/google-research/meta-dataset/main/meta_dataset/dataset_conversion/dataset_specs/omniglot_dataset_spec.json
+    echo "- Unzip data..."
+    mkdir -p images
+    unzip -q images_background.zip
+    unzip -q images_evaluation.zip
+    mv images_background/* images/
+    mv images_evaluation/* images/
+    rm -rf images_background/
+    rm -rf images_evaluation/
+    rm images_background.zip
+    rm images_evaluation.zip
+    popd
+}
+
 for d_name in $@; do
     echo "Handling $d_name";
     download_${d_name};
