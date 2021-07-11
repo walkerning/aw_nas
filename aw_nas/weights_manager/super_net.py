@@ -204,6 +204,7 @@ class SuperNet(SharedNet):
                  cell_use_preprocess=True, cell_group_kwargs=None,
                  cell_use_shortcut=False,
                  cell_shortcut_op_type="skip_connect",
+                 bn_affine=False,
                  candidate_member_mask=True, candidate_cache_named_members=False,
                  candidate_virtual_parameter_only=False, candidate_eval_no_grad=True):
         """
@@ -232,7 +233,8 @@ class SuperNet(SharedNet):
                                        cell_use_preprocess=cell_use_preprocess,
                                        cell_group_kwargs=cell_group_kwargs,
                                        cell_use_shortcut=cell_use_shortcut,
-                                       cell_shortcut_op_type=cell_shortcut_op_type)
+                                       cell_shortcut_op_type=cell_shortcut_op_type,
+                                       bn_affine=bn_affine)
 
         # candidate net with/without parameter mask
         self.candidate_member_mask = candidate_member_mask

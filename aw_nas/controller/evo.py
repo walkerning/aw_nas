@@ -79,9 +79,9 @@ class EvoController(BaseController):
         super(EvoController, self).__init__(
             search_space, rollout_type, mode, schedule_cfg)
 
-        expect(eval_sample_strategy in {"population", "all"},
+        expect(eval_sample_strategy in {"population", "all", "population_random"},
                "Invalid `eval_sample_strategy` {}, choices: {}".format(
-                   eval_sample_strategy, ["population", "all"]),
+                   eval_sample_strategy, ["population", "all", "population_random"]),
                ConfigException)
         expect(elimination_strategy in {"regularized", "perf"},
                "Invalid `elimination_strategy` {}, choices: {}".format(
@@ -170,6 +170,13 @@ class EvoController(BaseController):
                 # return n archs with best rewards ever seen
                 best_inds = np.argpartition(self._gt_scores, -n)[-n:]
                 rollouts = [self._gt_rollouts[ind] for ind in best_inds]
+            elif self.eval_sample_strategy == "population_random":
+                size = min(len(self.population), n)
+                genotypes = list(self.population.keys())
+                all_inds = np.arange(len(self.population))
+                inds = np.random.choice(all_inds, size=size)
+                rollouts = [self.search_space.rollout_from_genotype(genotypes[ind])
+                            for ind in inds]
             # if the population size or number of seen rollout is not large enough,
             # fill with random sample
             rollouts += [self.search_space.random_sample() for _ in range(n - len(rollouts))]

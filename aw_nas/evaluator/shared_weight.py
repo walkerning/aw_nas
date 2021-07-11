@@ -13,6 +13,7 @@ import torch
 from aw_nas import utils
 from aw_nas.evaluator.base import BaseEvaluator
 from aw_nas.utils.exception import expect, ConfigException
+from aw_nas.evaluator.mepa import _patch_dropout_forward
 
 __all__ = ["SharedweightEvaluator", "DiscreteSharedweightEvaluator", "DifferentiableEvaluator"]
 
@@ -272,42 +273,43 @@ class SharedweightEvaluator(
 
         else:  # only for test
             self.objective.set_mode("eval")
-            if eval_batches is not None:
-                eval_steps = eval_batches
-            else:
-                eval_steps = len(data_queue)
-                if portion is not None:
-                    expect(0.0 < portion < 1.0)
-                    eval_steps = int(portion * eval_steps)
+            with _patch_dropout_forward(self.weights_manager):
+                if eval_batches is not None:
+                    eval_steps = eval_batches
+                else:
+                    eval_steps = len(data_queue)
+                    if portion is not None:
+                        expect(0.0 < portion < 1.0)
+                        eval_steps = int(portion * eval_steps)
 
-            for rollout in eval_rollouts:
-                cand_net = self.weights_manager.assemble_candidate(rollout)
-                if return_candidate_net:
-                    rollout.candidate_net = cand_net
-                # prepare criterions
-                criterions = [self._scalar_reward_func] + self._report_loss_funcs
-                criterions = [partial(func, cand_net=cand_net) for func in criterions]
+                for rollout in eval_rollouts:
+                    cand_net = self.weights_manager.assemble_candidate(rollout)
+                    if return_candidate_net:
+                        rollout.candidate_net = cand_net
+                    # prepare criterions
+                    criterions = [self._scalar_reward_func] + self._report_loss_funcs
+                    criterions = [partial(func, cand_net=cand_net) for func in criterions]
 
-                # NOTE: if virtual buffers, must use train mode here...
-                # if not virtual buffers(virtual parameter only), can use train/eval mode
-                aggregate_fns = [
-                    self.objective.aggregate_fn(name, is_training=False)
-                    for name in self._all_perf_names
-                ]
-                res = cand_net.eval_queue(
-                    data_queue,
-                    criterions=criterions,
-                    steps=eval_steps,
-                    # NOTE: In parameter-sharing evaluation, let's keep using train-mode BN!!!
-                    mode="train",
-                    # if test, differentiable rollout does not need to set detach_arch=True too
-                    aggregate_fns=aggregate_fns,
-                    **hid_kwargs
-                )
+                    # NOTE: if virtual buffers, must use train mode here...
+                    # if not virtual buffers(virtual parameter only), can use train/eval mode
+                    aggregate_fns = [
+                        self.objective.aggregate_fn(name, is_training=False)
+                        for name in self._all_perf_names
+                    ]
+                    res = cand_net.eval_queue(
+                        data_queue,
+                        criterions=criterions,
+                        steps=eval_steps,
+                        # NOTE: In parameter-sharing evaluation, let's keep using train-mode BN!!!
+                        mode="train",
+                        # if test, differentiable rollout does not need to set detach_arch=True too
+                        aggregate_fns=aggregate_fns,
+                        **hid_kwargs
+                    )
 
-                rollout.set_perfs(
-                    OrderedDict(zip(self._all_perf_names, res))
-                )  # res is already flattend
+                    rollout.set_perfs(
+                        OrderedDict(zip(self._all_perf_names, res))
+                    )  # res is already flattend
 
         # support CompareRollout
         if self.rollout_type == "compare":

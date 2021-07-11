@@ -451,7 +451,7 @@ class NB201ResidualBlock(nn.Module):
         string = '{name}(inC={in_dim}, outC={out_dim}, stride={stride})'.format(name=self.__class__.__name__, **self.__dict__)
         return string
 
-    def forward(self, inputs, genotype=None):
+    def forward(self, inputs, genotype=None, **kwargs):
 
         basicblock = self.conv_a(inputs)
         basicblock = self.conv_b(basicblock)

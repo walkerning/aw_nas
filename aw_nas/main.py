@@ -241,7 +241,8 @@ def search(cfg_file, gpu, seed, load, save_every, save_controller_every, interle
     trainer = _init_components_from_cfg(cfg, device)[-1]
 
     # setup trainer and train
-    trainer.setup(load, save_every, save_controller_every if save_controller_every is not None else save_every,
+    trainer.setup(load, save_every,
+                  save_controller_every if save_controller_every is not None else save_every,
                   train_dir, writer=writer,
                   interleave_report_every=interleave_report_every)
     trainer.train()
@@ -552,7 +553,7 @@ def sample(load, out_file, n, save_plot, gpu, seed, dump_mode, prob_thresh, uniq
 @main.command(help="Eval architecture from file.")
 @click.argument("cfg_file", required=True, type=str)
 @click.argument("arch_file", required=True, type=str)
-@click.option("--load", required=True, type=str,
+@click.option("--load", default=None, type=str,
               help="the directory to load checkpoint")
 @click.option("--gpu", default=0, type=int,
               help="the gpu to run training on")
@@ -565,10 +566,16 @@ def sample(load, out_file, n, save_plot, gpu, seed, dump_mode, prob_thresh, uniq
               "Only tested for CNN now.")
 @click.option("--steps", default=None, type=int,
               help="number of batches to eval for each arch, default to be the whole derive queue.")
+@click.option("--reset-dataloader-each-rollout", default=False, type=bool, is_flag=True,
+              help="This option is useful when you specify `--step n` "
+              "and want to use the same data for every arch rollout. "
+              "If true, would reset the dataloader before evaluating each rollout. "
+              "You should specify proper configuration for the derive queue "
+              "in the cfg file: e.g., `- [train_testTransform, [0.8, 0.9], {shuffle: false}]`.")
 @click.option("--dump-rollouts", default=None, type=str,
               help="dump evaluated rollouts to path")
 def eval_arch(cfg_file, arch_file, load, gpu, seed, save_plot, save_state_dict, steps,
-              dump_rollouts):
+              dump_rollouts, reset_dataloader_each_rollout):
     setproctitle.setproctitle("awnas-eval-arch config: {}; arch_file: {}; load: {}; cwd: {}"\
                               .format(cfg_file, arch_file, load, os.getcwd()))
 
@@ -598,9 +605,15 @@ def eval_arch(cfg_file, arch_file, load, gpu, seed, save_plot, save_state_dict, 
     res = _init_components_from_cfg(cfg, device, evaluator_only=True)
     search_space = res[0] #pylint: disable=unused-variable
     evaluator = res[-1]
-    path = os.path.join(load, "evaluator")
-    LOGGER.info("Loading evalutor from %s", path)
-    evaluator.load(path)
+    if load is not None:
+        path = os.path.join(load, "evaluator")
+        LOGGER.info("Loading evalutor from %s", path)
+        evaluator.load(path)
+    else:
+        LOGGER.warn("No `--load` cmdline argument is specified, currently, this is only reasonable"
+                    " for zero-shot estimations.")
+
+    expect((not reset_dataloader_each_rollout) or hasattr(evaluator, "reset_dataloader"))
 
     # create the directory for saving plots
     if save_plot is not None:
@@ -612,6 +625,10 @@ def eval_arch(cfg_file, arch_file, load, gpu, seed, save_plot, save_state_dict, 
     num_r = len(rollouts)
 
     for i, r in enumerate(rollouts):
+        if reset_dataloader_each_rollout:
+            # reset the derive data queue
+            evaluator.reset_dataloader(is_training=False)
+
         evaluator.evaluate_rollouts([r], is_training=False,
                                     eval_batches=steps,
                                     return_candidate_net=save_state_dict)[0]
@@ -627,7 +644,7 @@ def eval_arch(cfg_file, arch_file, load, gpu, seed, save_plot, save_state_dict, 
             )
         print("Finish test {}/{}\r".format(i+1, num_r), end="")
         LOGGER.info("Arch %3d: %s", i, "; ".join(
-            ["{}: {:.3f}".format(n, v) for n, v in r.perf.items()]))
+            ["{}: {}".format(n, utils.format_as_float(v, "{:.4f}")) for n, v in r.perf.items()]))
 
     if dump_rollouts is not None:
         LOGGER.info("Dump the evaluated rollouts into file %s", dump_rollouts)

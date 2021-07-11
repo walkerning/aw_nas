@@ -352,7 +352,7 @@ def _parse_derive_file(input_f):
                               r"(?P<perfstr># Perfs: [^\n]+\n)?\n*- (?P<genotype>[^#]+)",
                               content)
 
-    genotype_perf_dict = {}
+    genotype_perf_dict = OrderedDict()
     for match in regexp_iter:
         genotype = yaml.load(io.StringIO(match.group("genotype")))
         if match.group("perfstr"):
@@ -544,3 +544,9 @@ def feature_level_to_stage_index(strides, offset=1):
     """
     levels = itertools.accumulate([offset] + list(strides), lambda x, y: x + y - 1)
     return {l: i for i, l in enumerate(levels, -1)}
+
+def format_as_float(container_or_float, float_fmt):
+    if isinstance(container_or_float, (list, tuple)):
+        return "[" + ", ".join([format_as_float(value, float_fmt) for value in container_or_float])\
+            + "]"
+    return float_fmt.format(container_or_float)
