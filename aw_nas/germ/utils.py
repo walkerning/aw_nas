@@ -5,7 +5,7 @@ import functools
 import torch
 import torch.nn as nn
 
-from aw_nas.utils.exception import expect
+from aw_nas.utils.exception import expect, InvalidUseException
 from aw_nas import germ
 from aw_nas.utils import nullcontext
 from aw_nas.utils.common_utils import get_sub_kernel, _get_channel_mask
@@ -66,8 +66,10 @@ class MaskHandler(object):
         self.registry("max", "max_{}")
 
         self.choices = choices
-        if isinstance(choices, germ.Choices):
+        if isinstance(choices, germ.BaseChoices):
             self.max = choices.range()[1]
+        elif isinstance(choices, germ.BaseDecision):
+            raise InvalidUseException("Other decisions not suppported!")
         else:
             self.max = choices
 
@@ -264,7 +266,10 @@ class ChannelMaskHandler(MaskHandler):
                     ori_bias = module.bias
 
                     new_weight = ori_weight.index_select(axis, mask_idx)
-                    new_bias = ori_bias[mask_idx] if ori_bias is not None else None
+                    if axis == 1:
+                        new_bias = ori_bias
+                    else:
+                        new_bias = ori_bias[mask_idx] if ori_bias is not None else None
                     if detach:
                         new_weight = nn.Parameter(new_weight)
                         if new_bias is not None:
@@ -294,7 +299,12 @@ class ChannelMaskHandler(MaskHandler):
             elif isinstance(module, nn.BatchNorm2d):
                 ori = {}
                 module.num_features = len(mask_idx)
-                for k in ["running_mean", "running_var", "weight", "bias"]:
+                if module.affine:
+                    keys = ["running_mean", "running_var", "weight", "bias"]
+                else:
+                    keys = ["running_mean", "running_var"]
+
+                for k in keys:
                     ori[k] = getattr(module, k)
                     if ori[k] is None:
                         continue
@@ -310,8 +320,8 @@ class ChannelMaskHandler(MaskHandler):
                 if detach:
                     return
 
-                module.num_features = len(ori["weight"])
-                for k in ["running_mean", "running_var", "weight", "bias"]:
+                module.num_features = len(ori["running_mean"])
+                for k in keys:
                     if k in module._parameters:
                         module._parameters[k] = ori[k]
                     else:

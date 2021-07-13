@@ -376,15 +376,16 @@ class SimpleTrainer(BaseTrainer):
         other_perfs = {n: [r.perf.get(n, 0.) for r in rollouts] for n in rollouts[0].perf}
 
         save_path = self._save_path("rollout/cell")
-        os.makedirs(self._save_path("rollout"), exist_ok=True)
         if save_path is not None:
             # NOTE: If `train_dir` is None, the image will not be saved to tensorboard too
+            os.makedirs(self._save_path("rollout"), exist_ok=True)
             fnames = rollouts[idx].plot_arch(save_path, label="epoch {}".format(self.epoch))
             if not self.writer.is_none() and fnames is not None:
                 for cg_n, fname in fnames:
                     try:
                         image = imageio.imread(fname)
-                        self.writer.add_image("genotypes/{}".format(cg_n), image, self.epoch, dataformats="HWC")
+                        self.writer.add_image("genotypes/{}".format(cg_n),
+                                              image, self.epoch, dataformats="HWC")
                     except:
                         pass
 

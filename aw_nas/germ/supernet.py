@@ -1,4 +1,3 @@
-import abc
 import copy
 import contextlib
 from functools import partial
@@ -10,12 +9,12 @@ from torch import nn
 
 from aw_nas.weights_manager.base import CandidateNet
 from aw_nas.weights_manager.wrapper import BaseBackboneWeightsManager
-from aw_nas.weights_manager.necks.base import BaseNeck
 
 from aw_nas.base import Component
 from aw_nas.utils.registry import RegistryMeta
 from aw_nas.utils import expect
 from aw_nas.germ.germ import SearchableBlock, finalize_rollout
+from aw_nas.germ.decisions import NonleafDecision
 
 
 class SearchableContext(object):
@@ -55,8 +54,12 @@ class GermSuperNet(Component, nn.Module):
         supernet = self
         if not hasattr(supernet, "_searchable_decisions"):
             supernet._searchable_decisions = {}
+            supernet._nonleaf_decisions = {}
+            supernet._all_decisions = {}
             supernet._blockid_to_dimension2decision = defaultdict(dict)
-        all_decisions = supernet._searchable_decisions
+        leaf_decisions = supernet._searchable_decisions
+        nonleaf_decisions = supernet._nonleaf_decisions
+        all_decisions = supernet._all_decisions
         blockid_to_dimension2decision = supernet._blockid_to_dimension2decision
 
         for name, mod in supernet.named_modules():
@@ -64,14 +67,19 @@ class GermSuperNet(Component, nn.Module):
                 mod.block_id = name
                 for d_name, decision in mod.named_decisions(avoid_repeat=False):
                     if decision not in all_decisions:
+                        if isinstance(decision, NonleafDecision):
+                            sub_dict = nonleaf_decisions
+                        else:
+                            sub_dict = leaf_decisions
                         if (
                             hasattr(decision, "decision_id")
                             and decision.decision_id is not None
                         ):
-                            all_decisions[decision] = abs_name = decision.decision_id
+                            abs_name = decision.decision_id
                         else:
-                            abs_name = name + "." + d_name
-                            decision.decision_id = all_decisions[decision] = abs_name
+                            abs_name = ((name + ".") if name else "") + d_name
+                            decision.decision_id = sub_dict[decision] \
+                                                = all_decisions[decision] = abs_name
                     else:
                         # use existing decision id (abs name)
                         abs_name = all_decisions[decision]
@@ -81,7 +89,7 @@ class GermSuperNet(Component, nn.Module):
         ss_cfg = self.generate_search_space_ref()
         self.search_space.set_cfg(ss_cfg)
 
-    def named_decisions(self, prefix="", recurse=False):
+    def named_decisions(self, prefix="", recurse=False, avoid_repeat=True):
         # By default, not recursive
         def _get_named_decisions(mod):
             return mod._decisions.items()
@@ -91,7 +99,7 @@ class GermSuperNet(Component, nn.Module):
         for mod_name, mod in mod_list:
             if isinstance(mod, SearchableBlock):
                 for d_id, d_obj in _get_named_decisions(mod):
-                    if d_obj is None or d_obj in memo:
+                    if d_obj is None or (avoid_repeat and d_obj in memo):
                         continue
                     memo.add(d_obj)
                     d_name = mod_name + ("." if mod_name else "") + d_id
@@ -128,6 +136,10 @@ class GermSuperNet(Component, nn.Module):
                 decision_id: (decision.NAME, str(decision))
                 for decision, decision_id in self._searchable_decisions.items()
             },
+            "nonleaf_decisions": {
+                decision_id: (decision.NAME, str(decision))
+                for decision, decision_id in self._nonleaf_decisions.items()
+            },
             "blocks": self._blockid_to_dimension2decision,
         }
 
@@ -139,6 +151,10 @@ class GermSuperNet(Component, nn.Module):
             "decisions": {
                 decision_id: (decision.NAME, decision)
                 for decision, decision_id in self._searchable_decisions.items()
+            },
+            "nonleaf_decisions": {
+                decision_id: (decision.NAME, decision)
+                for decision, decision_id in self._nonleaf_decisions.items()
             },
             "blocks": self._blockid_to_dimension2decision,
         }

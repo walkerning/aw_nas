@@ -27,6 +27,7 @@ parser.add_argument(
     help="The relative path of arch file to ckpt dir",
 )
 parser.add_argument("--result-dir", required=True)
+parser.add_argument("--single-result-file", default=None)
 parser.add_argument(
     "--subset",
     default=False,
@@ -166,12 +167,17 @@ if not all(call_derives):
     arch_files = get_arch_files(ckpts, args.arch_file, args.arch_file_ckpt_rel_path)
 
 # ---- result paths ----
-common_path = os.path.commonpath(ckpts)
+if len(ckpts) > 1:
+    assert args.single_result_file is None
+    common_path = os.path.commonpath(ckpts)
 
-res_files = [
-    os.path.relpath(ckpt, common_path).strip("/") + (".yaml" if call_derive else ".pkl")
-    for ckpt, call_derive in zip(ckpts, call_derives)
-]
+    res_files = [
+        os.path.relpath(ckpt, common_path).strip("/") + (".yaml" if call_derive else ".pkl")
+        for ckpt, call_derive in zip(ckpts, call_derives)
+    ]
+else:
+    assert args.single_result_file is not None
+    res_files = [args.single_result_file]
 
 os.makedirs(args.result_dir, exist_ok=True)
 for res_file in res_files:

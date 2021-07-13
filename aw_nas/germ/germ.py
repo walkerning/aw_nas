@@ -6,6 +6,7 @@ And searchable block primitives.
 """
 
 import copy
+import operator
 import contextlib
 from collections import OrderedDict
 from collections import abc as collection_abcs
@@ -20,7 +21,7 @@ from torch import nn
 from aw_nas.base import Component
 from aw_nas.common import BaseRollout, SearchSpace
 from aw_nas.utils import expect, ConfigException
-from aw_nas.germ.decisions import BaseDecision
+from aw_nas.germ.decisions import BaseDecision, NonleafDecision
 
 
 class GermSearchSpace(SearchSpace):
@@ -30,6 +31,7 @@ class GermSearchSpace(SearchSpace):
         super().__init__()
 
         self.decisions = OrderedDict()
+        self.nonleaf_decisions = OrderedDict()
         self._is_initialized = False
 
         if search_space_cfg_file is not None:
@@ -38,6 +40,7 @@ class GermSearchSpace(SearchSpace):
             self.set_cfg(ss_cfg)
 
     def set_cfg(self, ss_cfg):
+        # leaf decisions
         for decision_id, value in ss_cfg["decisions"].items():
             if isinstance(value[1], str):
                 decision = BaseDecision.get_class_(value[0]).from_string(value[1])
@@ -49,10 +52,24 @@ class GermSearchSpace(SearchSpace):
                     "instead.".format(value[0], type(value[1]))
                 )
             self.decisions[decision_id] = decision
+
+        # non-leaf decisions
+        for decision_id, value in ss_cfg.get("nonleaf_decisions", {}).items():
+            if isinstance(value[1], str):
+                decision = BaseDecision.get_class_(value[0]).from_string(value[1])
+            elif isinstance(value[1], BaseDecision.get_class_(value[0])):
+                decision = value[1]
+            else:
+                raise ValueError(
+                    "Except str or {} type in ss_cfg['nonleaf_decisions'], got {} "
+                    "instead.".format(value[0], type(value[1]))
+                )
+            self.nonleaf_decisions[decision_id] = decision
         self.blocks = ss_cfg["blocks"]
 
         self.decision_ids = list(self.decisions.keys())
         self.num_decisions = len(self.decisions)
+        self.num_nonleaf_decisions = len(self.nonleaf_decisions)
         self.num_blocks = len(self.blocks)
 
         self._is_initialized = True
@@ -65,6 +82,26 @@ class GermSearchSpace(SearchSpace):
         return np.prod(
             [decision.search_space_size for decision in self.decisions.values()]
         )
+
+    def get_value(self, rollout, decision_or_id):
+        if not isinstance(decision_or_id, NonleafDecision) and \
+           not (isinstance(decision_or_id, str) and decision_or_id not in rollout.arch):
+            # leaf
+            decision_id = decision_or_id.decision_id \
+                          if isinstance(decision_or_id, BaseDecision) else decision_or_id
+            return rollout.arch[decision_id]
+
+        # non-leaf
+        if not isinstance(decision_or_id, NonleafDecision):
+            # decision id
+            assert decision_or_id in self.nonleaf_decisions
+            nonleaf_decision = self.nonleaf_decisions[decision_or_id]
+        else:
+            nonleaf_decision = decision_or_id
+
+        # recursively inference the values for non-leaf decisions
+        # TODO: if necessary, consider accelerate and caching for this decision inference process
+        return nonleaf_decision.get_value(rollout)
 
     def genotype(self, arch):
         return str(arch)
@@ -171,6 +208,9 @@ class GermRollout(BaseRollout):
         self._perf = OrderedDict()
         self._genotype = None
 
+    def __getitem__(self, decision_or_id):
+        return self.search_space.get_value(self, decision_or_id)
+
     @property
     def genotype(self):
         if self._genotype is None:
@@ -251,10 +291,11 @@ class SearchableBlock(Component, nn.Module):
 
     def _get_decision(self, decision_obj, rollout):
         if isinstance(decision_obj, BaseDecision):
-            if decision_obj.decision_id in rollout.arch:
-                return rollout.arch[decision_obj.decision_id]
-            else:
-                return max(decision_obj.choices)
+            return rollout[decision_obj]
+            # if decision_obj.decision_id in rollout.arch:
+            #     return rollout.arch[decision_obj.decision_id]
+            # else:
+            #     return max(decision_obj.choices)
         return decision_obj
 
     def forward_rollout(self, rollout, *args, **kwargs):
@@ -385,5 +426,122 @@ class DecisionDict(SearchableBlock):
         mod = finalize_rollout(self, rollout)
         return mod
 
+
+class DecisionList(SearchableBlock):
+    r"""Holds decisions in a list.
+
+    :class:`~aw_nas.germ.DecisionList` can be indexed like a regular Python list, but
+    decisions it contains are properly registered.
+
+    Arguments:
+        decisions (iterable, optional): an iterable of decisions to add
+    """
+
+    def __init__(self, decisions=None):
+        super(DecisionList, self).__init__(None)
+        self._all_elements = OrderedDict()
+        if decisions is not None:
+            self += decisions
+
+    def _get_abs_string_index(self, idx):
+        """Get the absolute index for the list of decisions"""
+        idx = operator.index(idx)
+        if not (-len(self) <= idx < len(self)):
+            raise IndexError('index {} is out of range'.format(idx))
+        if idx < 0:
+            idx += len(self)
+        return str(idx)
+
+    def __getitem__(self, idx):
+        if isinstance(idx, slice):
+            return self.__class__([
+                self._all_elements[str(i)] for i in range(len(self._all_elements))][idx]
+            )
+        else:
+            return self._all_elements[self._get_abs_string_index(idx)]
+
+    def __setitem__(self, idx, decision):
+        idx = self._get_abs_string_index(idx)
+        return self.register_element(idx, decision)
+
+    def __delitem__(self, idx):
+        if isinstance(idx, slice):
+            for k in range(len(self._all_elements))[idx]:
+                del self._all_elements[str(k)]
+                if str(k) in self._decisions:
+                    del self._decisions[str(k)]
+        else:
+            to_del = self._get_abs_string_index(idx)
+            del self._all_elements[to_del]
+            if to_del in self._decisions:
+                del self._decisions[to_del]
+        # To preserve numbering,
+        # self._decisions is being reconstructed with decisions after deletion
+        values = [
+            item[1] for item in
+            sorted(self._all_elements.items(), key=lambda item: int(item[0]))
+        ]
+        self._decisions = {}
+        self._all_elements = {}
+        for i, value in enumerate(values):
+            self.register_element(str(i), value)
+
+    def __len__(self):
+        return len(self._all_elements)
+
+    def __iter__(self):
+        return iter([self._all_elements[str(i)] for i in range(len(self._all_elements))])
+
+    def __iadd__(self, decisions):
+        return self.extend(decisions)
+
+    def __dir__(self):
+        keys = super(DecisionList, self).__dir__()
+        keys = [key for key in keys if not key.isdigit()]
+        return keys
+
+    def insert(self, index, decision):
+        r"""Insert a given decision before a given index in the list.
+
+        Arguments:
+            index (int): index to insert.
+            decision (germ.Decision): decision to insert
+        """
+        for i in range(len(self._all_elements), index, -1):
+            self.register_element(str(i), self._all_elements[str(i - 1)])
+        self._decisions.pop(str(index), None)
+        self.register_element(str(index), decision)
+
+    def append(self, decision):
+        r"""Appends a given decision to the end of the list.
+
+        Arguments:
+            decision (germ.Decision): decision to append
+        """
+        self.register_element(str(len(self)), decision)
+        return self
+
+    def extend(self, decisions):
+        r"""Appends decisions from a Python iterable to the end of the list.
+
+        Arguments:
+            decisions (iterable): iterable of decisions to append
+        """
+        if not isinstance(decisions, collection_abcs.Iterable):
+            raise TypeError("DecisionList.extend should be called with an "
+                            "iterable, but got " + type(decisions).__name__)
+        offset = len(self)
+        for i, decision in enumerate(decisions):
+            self.register_element(str(offset + i), decision)
+        return self
+
+    def register_element(self, name, decision):
+        if isinstance(decision, BaseDecision):
+            self.register_decision(name, decision)
+        self._all_elements[name] = decision
+
+    def __repr__(self):
+        return "{}(\n\t{}\n)".format(
+            self.__class__.__name__, ",\n\t".join([str(value) for value in list(self)]))
 
 # ---- End Decision Containers ----

@@ -4,6 +4,9 @@ class NasException(Exception):
 class ConfigException(NasException):
     pass
 
+class InvalidUseException(NasException):
+    pass
+
 class PluginException(NasException):
     pass
 

@@ -1,12 +1,13 @@
 import os
 import copy
 import math
+import pickle
 from contextlib import contextmanager
 
 import six
 import yaml
+
 import numpy as np
-import pickle
 import torch
 from torch import optim, nn
 from torch.autograd import Variable
@@ -1089,3 +1090,10 @@ def max_eig_of_hessian(y, x):
     max_eig = torch.eig(hessian(y, x))[0].norm(dim=1).max()
 
     return max_eig.item()
+
+
+def random_cnn_data(device="cuda", batch_size=2, shape=28, input_c=3, output_c=10):
+    return (
+        torch.rand(batch_size, input_c, shape, shape, dtype=torch.float, device=device),
+        torch.tensor(np.random.randint(0, high=output_c, size=batch_size)).long().to(device),
+    )

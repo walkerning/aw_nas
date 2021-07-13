@@ -1,6 +1,7 @@
 #pylint: disable=invalid-name
 import copy
 import os
+from pprint import pprint
 
 import pytest
 import numpy as np
@@ -145,7 +146,7 @@ def test_germ_nb201_and_finalize(tmp_path):
 
     # ---- cannot forward a supernet without rollout context ----
     data = _cnn_data(device="cuda", batch_size=2)
-    with pytest.raises(AttributeError):
+    with pytest.raises(Exception):
         outputs = net(data[0])
 
     # ---- test weights manager forward ----
@@ -163,8 +164,7 @@ def test_germ_nb201_and_finalize(tmp_path):
     outputs = final_net(data[0])
     assert outputs.shape == (2, 10)
 
-    return
-    with pytest.raises(AttributeError):
+    with pytest.raises(Exception):
         outputs_2 = wm.super_net(data[0])
     cand_net = wm.assemble_candidate(rollout)
     outputs_2 = cand_net(data[0])
@@ -319,7 +319,7 @@ def test_op_on_node_finalize(tmp_path):
             "p": [0.25, 0.35, 0.15, 0.25]
         },
         "b": {"choices": [16, 32, 48, 92]},
-        "mul_len": 16 
+        "mul_len": 12
     },
     {
         "a": {
@@ -346,18 +346,87 @@ def test_choices_mul(choices):
     b = choices["b"]
     if isinstance(b, dict):
         b = Choices(choices["b"]["choices"], p=choices["b"].get("p"))
-    assert a.is_leaf()
     c = a * b
-    assert not c.is_leaf()
     assert len(c.choices) == choices["mul_len"]
-    assert len(c.p) == len(c.choices)
 
     for epoch, nb_c in zip([5, 11, 21, 31], [1, 2, 3, 4]):
-        c.on_epoch_start(epoch)
+        a.on_epoch_start(epoch)
+        if isinstance(b, Choices):
+            b.on_epoch_start(epoch)
         print(c.choices, a.choices)
         assert a.num_choices == nb_c
         if isinstance(b, Choices):
-            assert c.num_choices == a.num_choices * b.num_choices
+            assert c.num_choices == len(np.unique(np.array(a.choices)[:, None] * b.choices))
         else:
             assert c.num_choices == a.num_choices
 
+def test_decision_container():
+    from aw_nas import germ
+    decision_list = germ.DecisionList()
+    decision_list.append(germ.Choices([1, 2, 3]))
+    decision_list.append(2)
+    decision_list.append(germ.Choices([2, 3, 4]))
+    print(decision_list)
+    assert len(dict(decision_list.named_decisions())) == 2
+    assert len(decision_list) == 3
+    decision_list.insert(0, germ.Choices([3, 4, 5]))
+    print(decision_list)
+    assert len(dict(decision_list.named_decisions())) == 3
+    assert len(decision_list) == 4
+
+def test_nonleaf_decisions():
+    from aw_nas import germ
+    from aw_nas.germ import GermSearchSpace
+
+    class _tmp_supernet(germ.GermSuperNet, germ.SearchableBlock):
+        NAME = "tmp_code_snippet_nonleaf_decisions"
+        def __init__(self, search_space):
+            super().__init__(search_space)
+            with self.begin_searchable() as ctx:
+                self.c1 = germ.Choices([4, 8, 16]).apply(lambda value: value + 1)
+                self.c2 = germ.Choices([0.25, 0.5, 1.0])
+                self.c3 = self.c1 * self.c2
+                self.c4 = (self.c1 * self.c2).apply(lambda value: value - 2)
+                self.c5 = self.c4 + self.c1
+                self.c6 = self.c1 + self.c2
+                self.c7 = self.c1 / 2
+                self.c8 = self.c1 - 3.1
+                self.c9 = germ.ChoiceMax(self.c3, self.c7)
+                assert self.c3.search_space_size == 1
+                assert self.c3.num_choices == 5
+                print(self.c3) # use Choice original repr
+                print(self.c5) # use Choice original repr
+                assert self.c5.search_space_size == 1
+            print("c5 choices:", self.c5.choices)
+            print("c6 choices:", self.c6.choices)
+
+    ss = GermSearchSpace()
+    supernet = _tmp_supernet(ss)
+    print(supernet.c5.to_string())
+    print(supernet.c3) # use decision id
+    pprint(supernet.generate_search_space_ref())
+    pprint(supernet.generate_search_space_cfg())
+    rollout = ss.random_sample()
+    print(rollout.arch)
+    print(rollout[supernet.c1], rollout[supernet.c2],
+          rollout[supernet.c3], rollout[supernet.c4],
+          rollout[supernet.c5], rollout[supernet.c6],
+          rollout[supernet.c7], rollout[supernet.c8],
+          rollout[supernet.c9])
+    print("--- after mutate ---")
+    rollout_m = ss.mutate(rollout, mutate_num=2)
+    print(rollout_m[supernet.c1], rollout_m[supernet.c2],
+          rollout_m[supernet.c3], rollout_m[supernet.c4],
+          rollout_m[supernet.c5], rollout_m[supernet.c6],
+          rollout_m[supernet.c7], rollout_m[supernet.c8],
+          rollout_m[supernet.c9])
+
+    # serialize decisions and reload
+    ss2 = GermSearchSpace()
+    ss2.set_cfg(supernet.generate_search_space_cfg())
+    rollout2 = ss2.random_sample()
+    print(rollout2[supernet.c1], rollout2[supernet.c2],
+          rollout2[supernet.c3], rollout2[supernet.c4],
+          rollout2[supernet.c5], rollout2[supernet.c6],
+          rollout2[supernet.c7], rollout2[supernet.c8],
+          rollout2[supernet.c9])
