@@ -6,6 +6,7 @@ from torch import nn
 from aw_nas import ops, germ
 from aw_nas.utils import nullcontext
 from .utils import *
+from aw_nas.utils.common_utils import _get_channel_mask, _get_feature_mask
 
 
 class GermOpOnEdge(germ.SearchableBlock):
@@ -443,6 +444,150 @@ class SearchableConvBNBlock(germ.SearchableBlock):
         out = self.bn(self.conv(inputs))
         return out
 
+class SearchableFC(germ.SearchableBlock, nn.Linear):
+    NAME = "fc"
+
+    def __init__(
+        self,
+        ctx,
+        in_features,
+        out_features,
+    ):
+        super().__init__(ctx)
+        self.fi_choices = in_features
+        self.fo_choices = out_features
+        self.fi_handler = FeatureMaskHandler(ctx, self, "in_features", in_features)
+        self.fo_handler = FeatureMaskHandler(ctx, self, "out_features", out_features)
+        _modules = self._modules
+        nn.Linear.__init__(
+            self,
+            in_features=self.fi_handler.max,
+            out_features=self.fo_handler.max,
+        )
+        self._modules.update(_modules)
+    def rollout_context(self, rollout=None, detach=False):
+        if rollout is None:
+            return nullcontext()
+        # in features and out features
+        r_i_f = self._get_decision(self.fi_handler.choices, rollout)
+        r_o_f = self._get_decision(self.fo_handler.choices, rollout)
+        # apply
+        ctx = self.fi_handler.apply(self, r_i_f, axis=1, detach=detach)
+        ctx = self.fo_handler.apply(self, r_o_f, axis=0, ctx=ctx, detach=detach)
+        return ctx
+    def forward(self, inputs):
+        with self.rollout_context(self.ctx.rollout):
+            out = super().forward(inputs)
+        return out
+    def finalize_rollout(self, rollout):
+        with self.rollout_context(self.ctx.rollout):
+            fc = nn.Linear(self.in_features, self.out_features)
+            fc.weight.data.copy_(self.weight.data)
+            if self.bias is not None:
+                fc.bias.data.copy_(self.bias.data)
+        return fc
+
+class SearchableNAS4RRAMBlock(germ.SearchableBlock):
+    NAME = "nas4rram_block"
+
+    def __init__(
+        self,
+        ctx,
+        in_channels,
+        out_channels,
+        kernel_size,
+        stride=1,
+        groups=1,
+        conv_cfg={},
+        norm_cfg={},
+    ):
+        super().__init__(ctx)
+        self.conv = SearchableConv(
+            ctx,
+            in_channels,
+            out_channels,
+            kernel_size,
+            stride,
+            bias=False,
+            groups=groups,
+            **conv_cfg,
+        )
+        self.bn = SearchableBN(ctx, out_channels, **norm_cfg)
+    def forward(self, inputs):
+        # get max channel
+        c1 = self._get_decision(self.conv.ci_handler.choices, self.ctx.rollout)
+        c2 = self._get_decision(self.conv.co_handler.choices, self.ctx.rollout)
+        c_output = max(c1, c2)
+        # downsample input channel if stride not 1
+        _stride = self._get_decision(self.conv.s_handler.choices, self.ctx.rollout)
+        if not (_stride == 1):
+            down_sample = nn.functional.interpolate(inputs, scale_factor = 0.5, mode = "area")
+        else:
+            down_sample = inputs
+        # get intermediate output
+        inter_outputs = self.bn(self.conv(inputs))
+        # compelete c1 or inter_outpus
+        if c1 < c2:
+            pcd = (0, 0, 0, 0, 0, c_output - c1)
+            out = inter_outputs + nn.functional.pad(down_sample, pcd, "constant", 0)
+        elif c1 == c2:
+            out = inter_outputs + inputs
+        else:
+            pcd = (0, 0, 0, 0, 0, c_output - c2)
+            out = nn.functional.pad(inter_outputs, pcd, "constant", 0) + down_sample
+        return nn.functional.hardtanh(out)
+
+class SearchableNAS4RRAMGroup(germ.SearchableBlock):
+    NAME = "nas4rram_group"
+
+    def __init__(
+        self,
+        ctx,
+        depth,
+        in_channels,
+        out_channels_list,
+        kernel_size_list,
+        stride_list,
+        groups_list,
+        conv_cfg_list,
+        norm_cfg_list,
+    ):
+        super().__init__(ctx)
+        # get depth
+        self.d_choices = depth
+        # get in_channels and out_channels for every block
+        in_channels_list = [in_channels] + out_channels_list[:-1]
+        # init block list
+        max_depth = self.d_choices.range()[1]
+        self.blocks = nn.ModuleList()
+        for i in range(max_depth):
+            self.blocks.append(
+                SearchableNAS4RRAMBlock(
+                    ctx,
+                    in_channels_list[i],
+                    out_channels_list[i],
+                    kernel_size_list[i],
+                    stride_list[i],
+                    groups_list[i],
+                    conv_cfg_list[i],
+                    norm_cfg_list[i],
+                )
+            )
+    def forward(self, inputs):
+        _depth = self._get_decision(self.d_choices, self.ctx.rollout)
+        out = inputs
+        for i in range(_depth):
+            out = self.blocks[i](out)
+            if i < _depth - 1:
+                self.ctx.rollout.arch[self.blocks[i+1].conv.ci_handler.choices.decision_id] = out.shape[1]
+                mask_idx = _get_channel_mask(
+                    self.blocks[i+1].conv.weight.data,
+                    out.shape[1],
+                    1,
+                )
+                self.ctx.rollout.masks[self.blocks[i+1].conv.ci_handler.choices.decision_id] = mask_idx
+        return out
+
 
 class SearchableSepConv(germ.SearchableBlock):
     NAME = "sep_conv"
@@ -716,7 +861,7 @@ class RepConv(germ.SearchableBlock):
         return out
 
     def reparameter(self):
-        """ 
+        """
         call this function after calling finalize_rollout
         """
         conv_w = self.conv.weight.data

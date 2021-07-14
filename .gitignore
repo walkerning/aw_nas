@@ -110,3 +110,5 @@ results/
 ._*
 *.DS_Store
 *.json
+
+output_tmp/

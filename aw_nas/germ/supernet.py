@@ -184,7 +184,7 @@ class GermWeightsManager(BaseBackboneWeightsManager, nn.Module):
         search_space,
         device,
         rollout_type="germ",
-        # initalize from registry
+        # initialize from registry
         germ_supernet_type=None,
         germ_supernet_cfg=None,
         # support load a code snippet

@@ -8,7 +8,7 @@ import torch.nn as nn
 from aw_nas.utils.exception import expect, InvalidUseException
 from aw_nas import germ
 from aw_nas.utils import nullcontext
-from aw_nas.utils.common_utils import get_sub_kernel, _get_channel_mask
+from aw_nas.utils.common_utils import get_sub_kernel, _get_channel_mask, _get_feature_mask
 
 
 def _gcd(a, b):
@@ -30,7 +30,7 @@ class MaskHandler(object):
         registry mask attributes in module
 
         Args:
-            module: pytorch module to registry mask buffer. 
+            module: pytorch module to registry mask buffer.
                 !NOTICE that the mask handler needs to be deleted when you want
                 to release the memory of the module, or it would cause memory
                 leak.
@@ -531,4 +531,74 @@ class OrdinalChannelMaskHandler(MaskHandler):
                 raise ValueError(
                     "OrdinalChannelMaskHandler only support nn.Conv2d and "
                     "nn.BatchNorm2d now."
+                )
+
+class FeatureMaskHandler(MaskHandler):
+    def __init__(self, ctx, module, name, choices, extra_attrs=None):
+        super().__init__(ctx, module, name, choices, extra_attrs)
+
+    @contextlib.contextmanager
+    def apply(self, module, choice, axis=1, ctx=None, detach=False):
+        """
+        Args:
+            module: bound module
+            choice: choice value
+            axis: 0 means applying mask on out features, 1 means applying mask on in features.
+        """
+        assert axis in (0, 1)
+
+        if ctx is None:
+            ctx = nullcontext()
+        with ctx:
+            if self.is_none():
+                yield
+                return
+
+            assert hasattr(
+                self.ctx, "rollout"
+            ), "context should have rollout attribute."
+            mask_idx = self.ctx.rollout.masks.get(self.choices.decision_id)
+            if mask_idx is None:
+                mask_idx = _get_feature_mask(module.weight.data, choice, axis)
+                self.ctx.rollout.masks[self.choices.decision_id] = mask_idx
+
+            if isinstance(module, nn.Linear):
+                ori_weight = module.weight
+                ori_bias = module.bias
+                # regular linear
+                new_weight = ori_weight.index_select(axis, mask_idx)
+                if ori_bias is not None:
+                    if axis == 0:
+                        new_bias = ori_bias[mask_idx]
+                    else:
+                        new_bias = ori_bias
+                else:
+                    new_bias = None
+                if detach:
+                    new_weight = nn.Parameter(new_weight)
+                    if new_bias is not None:
+                        new_bias = nn.Parameter(new_bias)
+
+                if axis == 0:
+                    module.out_features = len(mask_idx)
+                elif axis == 1:
+                    module.in_features = len(mask_idx)
+
+                module._parameters["weight"] = new_weight
+                module._parameters["bias"] = new_bias
+                yield
+
+                if detach:
+                    return
+
+                module._parameters["weight"] = ori_weight
+                module._parameters["bias"] = ori_bias
+
+                if axis == 0:
+                    module.out_features = ori_weight.shape[0]
+                elif axis == 1:
+                    module.in_features = ori_weight.shape[1]
+            else:
+                raise ValueError(
+                    "FeatureMaskHandler only support nn.Linear now."
                 )
