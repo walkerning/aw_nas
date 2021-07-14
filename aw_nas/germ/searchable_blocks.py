@@ -293,18 +293,31 @@ class SearchableConv(germ.SearchableBlock, nn.Conv2d):
         self.s_choices = stride
         self.g_choices = groups
 
-        assert groups == 1 or out_channels == in_channels == groups, (
-            "Only support Depthwise and regular"
-            " conv currently, either set groups = 1 or out_channels == in_channels == groups."
-        )
+        if groups == 1 or out_channels == in_channels == groups:
+            # regular conv or depthwise conv
+            # in case for breaking other code
 
-        if isinstance(groups, germ.Choices):
-            groups = groups.range()[1]
+            if isinstance(groups, germ.Choices):
+                groups = groups.range()[1]
 
-        self.ci_handler = ChannelMaskHandler(ctx, self, "in_channels", in_channels)
-        self.co_handler = ChannelMaskHandler(ctx, self, "out_channels", out_channels)
-        self.k_handler = KernelMaskHandler(ctx, self, "kernel_size", kernel_size)
-        self.s_handler = StrideMaskHandler(ctx, self, "stride", stride)
+            self.g_handler = None
+
+            self.ci_handler = ChannelMaskHandler(ctx, self, "in_channels", in_channels)
+            self.co_handler = ChannelMaskHandler(ctx, self, "out_channels", out_channels)
+            self.k_handler = KernelMaskHandler(ctx, self, "kernel_size", kernel_size)
+            self.s_handler = StrideMaskHandler(ctx, self, "stride", stride)
+
+        else:
+            # group share weight conv
+            assert isinstance(groups, germ.Choices)
+            groups = gcd(*groups.choices)
+
+            self.g_handler = GroupMaskHandler(ctx, self, "groups", self.g_choices)
+
+            self.ci_handler = OrdinalChannelMaskHandler(ctx, self, "in_Channels", in_channels)
+            self.co_handler = OrdinalChannelMaskHandler(ctx, self, "out_channels", out_channels)
+            self.k_handler = KernelMaskHandler(ctx, self, "kernel_size", kernel_size)
+            self.s_handler = StrideMaskHandler(ctx, self, "stride", stride)
 
         _modules = self._modules
         nn.Conv2d.__init__(
@@ -331,7 +344,13 @@ class SearchableConv(germ.SearchableBlock, nn.Conv2d):
         r_o_c = self._get_decision(self.co_handler.choices, rollout)
         r_i_c = self._get_decision(self.ci_handler.choices, rollout)
 
-        ctx = self.ci_handler.apply(self, r_i_c, axis=1, detach=detach)
+        if self.g_handler is not None:
+            r_g = self._get_decision(self.g_handler.choices, rollout)
+            ctx = self.g_handler.apply(self, r_g, detach=detach)
+        else:
+            ctx = nullcontext()
+
+        ctx = self.ci_handler.apply(self, r_i_c, axis=1, ctx=ctx, detach=detach)
         ctx = self.co_handler.apply(self, r_o_c, axis=0, ctx=ctx, detach=detach)
         ctx = self.k_handler.apply(self, r_k_s, ctx=ctx, detach=detach)
         ctx = self.s_handler.apply(self, r_s, ctx=ctx, detach=detach)
