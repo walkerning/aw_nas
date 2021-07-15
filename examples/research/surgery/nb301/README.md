@@ -21,7 +21,7 @@ awnas eval-arch examples/research/surgery/nb301/config.yaml archs.yaml --load [s
 
 The architecture file `arch.yaml` used in our paper can be found under the dir `assets/nb301/nb301_assets` at [this url](https://cloud.tsinghua.edu.cn/d/965b3ae1f80b45e9ba21/).
 
-To run multiple eval-arch processes using multiple different checkpoints in a batched manner (on multiple GPUs), check `examples/research/surgery/run_derive_ckpts.py`.
+To run multiple `eval-arch` processes using multiple different checkpoints in a batched manner (on multiple GPUs), check `examples/research/surgery/run_derive_ckpts.py`.
 
 ### Get the evaluation results
 
