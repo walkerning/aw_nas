@@ -1,7 +1,9 @@
 # pylint: disable=arguments-differ
 from collections import abc as collection_abcs
+from collections import OrderedDict
 
 from torch import nn
+from torch.nn import functional as F
 
 from aw_nas import ops, germ
 from aw_nas.utils import nullcontext
@@ -205,7 +207,7 @@ class GermSelect(germ.SearchableBlock):
     def __init__(self, ctx, from_nodes):
         super().__init__(ctx)
         self.from_nodes = from_nodes
-        if isinstance(from_nodes, germ.Choices):
+        if isinstance(from_nodes, germ.BaseDecision):
             self.num_from_nodes = from_nodes.num_choices
         else:
             self.num_from_nodes = len(from_nodes)
@@ -225,7 +227,6 @@ class GermSelect(germ.SearchableBlock):
 
     def __repr__(self):
         return "GermSelect({})".format(self.from_nodes)
-
 
 class GermMixedOp(germ.SearchableBlock):
     NAME = "mixed_op"
@@ -268,8 +269,10 @@ class GermMixedOp(germ.SearchableBlock):
 
     def finalize_rollout(self, rollout):
         op_index = self._get_decision(self.op_choice, rollout)
-        return self.p_ops[op_index]
-
+        op = self.p_ops[op_index]
+        if isinstance(op, germ.SearchableBlock):
+            op = op.finalize_rollout(rollout)
+        return op
 
 class SearchableConv(germ.SearchableBlock, nn.Conv2d):
     NAME = "conv"
@@ -299,7 +302,7 @@ class SearchableConv(germ.SearchableBlock, nn.Conv2d):
             # regular conv or depthwise conv
             # in case for breaking other code
 
-            if isinstance(groups, germ.Choices):
+            if isinstance(groups, germ.BaseDecision):
                 groups = groups.range()[1]
 
             self.g_handler = None
@@ -315,7 +318,7 @@ class SearchableConv(germ.SearchableBlock, nn.Conv2d):
 
         else:
             # group share weight conv
-            assert isinstance(groups, germ.Choices)
+            assert isinstance(groups, germ.BaseDecision)
             groups = gcd(*groups.choices)
 
             self.g_handler = GroupMaskHandler(ctx, self, "groups", self.g_choices)
@@ -501,7 +504,7 @@ class SearchableMBV2Block(germ.SearchableBlock):
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.kernel_size = kernel_size
-        self.inner_channels = exp_ratio * in_channels
+        self.inner_channels = (exp_ratio * in_channels).apply(divisor_fn)
         self.stride = stride
 
         self.inv_bottleneck = SearchableConvBNBlock(
@@ -528,7 +531,8 @@ class SearchableMBV2Block(germ.SearchableBlock):
         out = self.depth_wise(out)
         out = self.act2(out)
         out = self.point_linear(out)
-        if inputs.shape[-1] == out.shape[-1] and self.in_channels == self.out_channels:
+        if inputs.shape[-1] == out.shape[-1]  and inputs.shape[1] == out.shape[1]:
+            #and self.in_channels == self.out_channels:
             out += inputs
         return out
 
@@ -632,12 +636,12 @@ class SearchableTucker(germ.SearchableBlock):
     ):
         super().__init__(ctx)
         self.in_channels = in_channels
-        self.squeeze_channels = sqz_ratio_1 * in_channels
-        self.expand_channels = sqz_ratio_2 * out_channels
+        self.squeeze_channels = (sqz_ratio_1 * in_channels).apply(divisor_fn)
+        self.expand_channels = (sqz_ratio_2 * out_channels).apply(divisor_fn)
         self.out_channels = out_channels
         self.kernel_size = kernel_size
         self.stride = stride
-        self.activation = activatiion
+        self.activation = activation
 
         bottleneck = SearchableConvBNBlock(ctx, in_channels, self.squeeze_channels, 1)
         regular = SearchableConvBNBlock(
@@ -655,7 +659,8 @@ class SearchableTucker(germ.SearchableBlock):
 
     def forward(self, inputs):
         out = self.tucker(inputs)
-        if self.stride == 1 and self.in_channels == self.out_channels:
+        if self.stride == 1 and inputs.shape[1] == out.shape[1]:
+            #self.in_channels == self.out_channels:
             out += inputs
         return out
 
@@ -673,13 +678,14 @@ class SearchableFusedConv(germ.SearchableBlock):
     ):
         super().__init__(ctx)
         self.in_channels = in_channels
-        self.inner_channels = exp_ratio * in_channels
+        self.inner_channels = (exp_ratio * in_channels).apply(divisor_fn)
         self.out_channels = out_channels
         self.kernel_size = kernel_size
         self.stride = stride
-        self.activation = activatiion
+        self.activation = activation
 
-        bottleneck = SearchableConvBNBlock(ctx, in_channels, self.inner_channels, 1)
+        bottleneck = SearchableConvBNBlock(ctx, in_channels, self.inner_channels, kernel_size,
+                stride=stride)
         point_linear = SearchableConvBNBlock(ctx, self.inner_channels, out_channels, 1)
 
         self.fused_conv = nn.Sequential(
@@ -688,20 +694,10 @@ class SearchableFusedConv(germ.SearchableBlock):
 
     def forward(self, inputs):
         out = self.fused_conv(inputs)
-        if self.stride == 1 and self.in_channels == self.out_channels:
+        if self.stride == 1 and out.shape[1] == inputs.shape[1]: 
+            #self.in_channels == self.out_channels:
             out += inputs
         return out
-
-    def finalize_rollout(self, rollout):
-        self.fused_conv = nn.Sequential(
-            *[
-                m.finalize_rollout(rollout)
-                if isinstance(m, SearchableConvBNBlock)
-                else m
-                for m in self.fused_conv
-            ]
-        )
-        return self
 
 
 class RepConv(germ.SearchableBlock):
@@ -753,3 +749,4 @@ class RepConv(germ.SearchableBlock):
 
         conv.weight.data.copy_(weight)
         return nn.Sequential(conv, self.bn)
+

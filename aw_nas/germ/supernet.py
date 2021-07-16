@@ -14,7 +14,7 @@ from aw_nas.base import Component
 from aw_nas.utils.registry import RegistryMeta
 from aw_nas.utils import expect
 from aw_nas.germ.germ import SearchableBlock, finalize_rollout
-from aw_nas.germ.decisions import NonleafDecision
+from aw_nas.germ.decisions import BaseDecision, NonleafDecision
 
 
 class SearchableContext(object):
@@ -76,10 +76,20 @@ class GermSuperNet(Component, nn.Module):
                             and decision.decision_id is not None
                         ):
                             abs_name = decision.decision_id
+                            if decision not in all_decisions:
+                                all_decisions[decision] = sub_dict[decision] = abs_name
                         else:
                             abs_name = ((name + ".") if name else "") + d_name
                             decision.decision_id = sub_dict[decision] \
                                                 = all_decisions[decision] = abs_name
+                        if isinstance(decision, NonleafDecision):
+                            decs = decision.set_children_id()
+                            for dec in decs:
+                                if isinstance(dec, NonleafDecision):
+                                    sub_dict = nonleaf_decisions
+                                else:
+                                    sub_dict = leaf_decisions
+                                sub_dict[dec] = all_decisions[dec] = dec.decision_id
                     else:
                         # use existing decision id (abs name)
                         abs_name = all_decisions[decision]
@@ -168,13 +178,11 @@ class GermSuperNet(Component, nn.Module):
         final_mod = copy.deepcopy(self)
         final_mod = finalize_rollout(final_mod, rollout)
         self.ctx.rollout = None
-        final_mod.ctx.rollout = None
         return final_mod
 
     def on_epoch_start(self, epoch):
         for _, decs in self.named_decisions(recurse=True):
             decs.on_epoch_start(epoch)
-
 
 class GermWeightsManager(BaseBackboneWeightsManager, nn.Module):
     NAME = "germ"

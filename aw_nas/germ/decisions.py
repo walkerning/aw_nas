@@ -16,7 +16,9 @@ from aw_nas.base import Component
 from aw_nas.utils import abstractclassmethod
 from aw_nas.utils.exception import InvalidUseException
 
-## ---- helper functions ----
+# ---- helper functions ----
+
+
 def _convert_to_number(num_str):
     try:
         res = int(num_str)
@@ -28,6 +30,7 @@ def _convert_to_number(num_str):
         return res, True
     return res, True
 
+
 def _get_value(dec, rollout):
     if isinstance(dec, str):
         decision_id = dec
@@ -37,6 +40,7 @@ def _get_value(dec, rollout):
         return rollout[decision_id]
     return dec
 
+
 def apply_post_fn(func):
     @wraps(func)
     def func_with_post_apply(self, *args, **kwargs):
@@ -44,7 +48,7 @@ def apply_post_fn(func):
         res = self.post_fn(res) if self.post_fn is not None else res
         return res
     return func_with_post_apply
-## ---- END helper functions ----
+# ---- END helper functions ----
 
 
 class BaseDecision(Component):
@@ -145,7 +149,7 @@ class Choices(BaseChoices):
     ):
         super().__init__(post_fn=None, schedule_cfg=schedule_cfg)
         self._choices = choices
-        self._size = size # choose size
+        self._size = size  # choose size
         self.replace = replace
         self.p = p
 
@@ -173,13 +177,15 @@ class Choices(BaseChoices):
     @property
     def p(self):
         if self._p is None:
-            return [(1 / self.num_choices),] * self.num_choices
-        assert np.isclose(sum(self._p), 1.0) and len(self._p) == self.num_choices
+            return [(1 / self.num_choices), ] * self.num_choices
+        assert np.isclose(sum(self._p), 1.0) and len(
+            self._p) == self.num_choices
         return self._p
 
     @p.setter
     def p(self, _p):
-        assert _p is None or np.isclose(sum(_p), 1.0) and len(_p) == self.num_choices
+        assert _p is None or np.isclose(
+            sum(_p), 1.0) and len(_p) == self.num_choices
         self._p = _p
 
     def on_epoch_start(self, epoch):
@@ -187,10 +193,8 @@ class Choices(BaseChoices):
         if self.epoch_callback is not None:
             self.epoch_callback(epoch)
 
-        is_bound = True
         if not hasattr(self, "decision_id"):
             self.logger.warning(f"choice {self} is not bound to any module.")
-            is_bound = False
 
     @property
     def search_space_size(self):
@@ -240,7 +244,8 @@ class Choices(BaseChoices):
         if self.p is not None:
             whole_p = 1 - self.p[old_ind]
             if whole_p == 0:
-                raise Exception("Choice {} cannot mutate from {}".format(self, old))
+                raise Exception(
+                    "Choice {} cannot mutate from {}".format(self, old))
             mutate_p = [
                 self.p[(old_ind + bias) % self.num_choices] / whole_p
                 for bias in range(1, self.num_choices)
@@ -273,10 +278,12 @@ class Choices(BaseChoices):
 
 class NonleafDecision(BaseDecision):
     def random_sample(self):
-        raise InvalidUseException("Cannot call `random_sample` on non-leaf decisions.")
+        raise InvalidUseException(
+            "Cannot call `random_sample` on non-leaf decisions.")
 
     def mutate(self, old):
-        raise InvalidUseException("Cannot call `mutate` on non-leaf decisions.")
+        raise InvalidUseException(
+            "Cannot call `mutate` on non-leaf decisions.")
 
     @property
     def search_space_size(self):
@@ -287,16 +294,21 @@ class NonleafDecision(BaseDecision):
     def get_value(self, rollout):
         pass
 
+    @abc.abstractmethod
+    def set_children_id(self):
+        pass
+
 
 class BinaryNonleafDecision(NonleafDecision):
     def __init__(self, dec1, dec2, binary_op=None):
         super().__init__(schedule_cfg=None)
 
-        assert binary_op is not None # the default value is just to suppress pylint
+        assert binary_op is not None  # the default value is just to suppress pylint
 
         if not (isinstance(dec1, (int, float)) or isinstance(dec2, (int, float))):
             # if neither dec1/dec2 are instant numbers, run a check
-            is_decision_id = int(isinstance(dec1, str)) + int(isinstance(dec2, str))
+            is_decision_id = int(isinstance(dec1, str)) + \
+                int(isinstance(dec2, str))
             assert is_decision_id in {0, 2}, \
                 "Either both operands are `decision_id`, or nor operands are `decision_id`"
 
@@ -325,12 +337,13 @@ class BinaryNonleafDecision(NonleafDecision):
         if cls == BinaryNonleafDecision:
             raise InvalidUseException(
                 "Cannot construct BinaryNonleafDecision from string, construct one subclass of it")
-        match = re.search(r"{}".format(cls.__name__) + r"\(dec1=(.+), dec2=(.+)\)", string)
+        match = re.search(r"{}".format(cls.__name__) +
+                          r"\(dec1=(.+), dec2=(.+)\)", string)
         # only support parse id
         dec1_id, dec2_id = match.group(1), match.group(2)
         dec1_id, _ = _convert_to_number(dec1_id)
         dec2_id, _ = _convert_to_number(dec2_id)
-        return cls(dec1_id, dec2_id) # pylint: disable=no-value-for-parameter
+        return cls(dec1_id, dec2_id)  # pylint: disable=no-value-for-parameter
 
     @apply_post_fn
     def get_value(self, rollout):
@@ -339,6 +352,14 @@ class BinaryNonleafDecision(NonleafDecision):
         val = self.binary_op(dec1_value, dec2_value)
         return val
 
+    def set_children_id(self):
+        decs = []
+        for i, dec in enumerate([self.dec1, self.dec2], 1):
+            if isinstance(dec, BaseDecision):
+                decs.append(dec)
+                if not hasattr(dec, "decision_id") or dec.decision_id is None:
+                    dec.decision_id = ".".join([self.decision_id, str(i)])
+        return decs
 
 class BinaryNonleafChoices(BinaryNonleafDecision, BaseChoices):
     """
@@ -382,7 +403,18 @@ class BinaryNonleafChoices(BinaryNonleafDecision, BaseChoices):
     def num_choices(self):
         return len(self.choices)
 
+
 class BinaryNonleafChoiceGetter(object):
+    """
+    A helper class for pickling non-leaf choices (e.g., ChoiceMul),
+    which are created dynamically as non-top-level classes by
+    `helper_register_nonleaf_binary_choice`.
+
+    See `helper_register_nonleaf_binary_choice`, in the dynamically created classes,
+    the `__reduce__` special method is implemented to return an instance of
+    BinaryNonleafChoiceGetter. Upon unpickling, `BinaryNonleafChoiceGetter().__call__()`
+    is called to create an initial instance of the (dynamically created) non-leaf choice classes.
+    """
     def __call__(self, sub_class_name):
         cls = BinaryNonleafChoices.get_class_(sub_class_name)
         instance = BinaryNonleafChoiceGetter()
@@ -395,20 +427,20 @@ def helper_register_nonleaf_binary_choice(
     """
     helper_register_nonleaf_binary_choice(lambda x, y: max(x,y), "ChoicesMax", None)
     """
+
     def _constructor(self, dec1, dec2):
         BinaryNonleafDecision.__init__(self, dec1, dec2, binary_op)
 
-    def _reduce_decision_cls(self):
-        return (BinaryNonleafChoiceGetter(), ("__" + registry_name + "_decision",), self.__dict__.copy())
-
     def _reduce_choice_cls(self):
-        return (BinaryNonleafChoiceGetter(), (registry_name,), self.__dict__.copy())
+        return (
+            BinaryNonleafChoiceGetter(),
+            (registry_name,),
+            self.__dict__.copy()
+        )
 
     class_name = "Decision{}".format(class_name_suffix.capitalize())
     BinaryNonleafDecisionCls = type(class_name, (BinaryNonleafDecision,), {
         "__init__": _constructor, # constructor
-        "NAME": "__" + registry_name + "_decision",
-        "__reduce__": _reduce_decision_cls
     })
     class_name = "Choice{}".format(class_name_suffix.capitalize())
     BinaryNonleafChoiceCls = type(class_name, (BinaryNonleafDecisionCls, BinaryNonleafChoices), {
@@ -428,12 +460,16 @@ def helper_register_nonleaf_binary_choice(
         setattr(BaseChoices, operator_func_name, _override_operator)
     return BinaryNonleafDecisionCls, BinaryNonleafChoiceCls
 
-DecisionMul, ChoiceMul = helper_register_nonleaf_binary_choice(operator.mul, "mul", "choices_mul")
-DecisionAdd, ChoiceAdd = helper_register_nonleaf_binary_choice(operator.add, "add", "choices_add")
-DecisionMax, ChoiceMax = helper_register_nonleaf_binary_choice(max, "max", "choices_max")
-DecisionMin, ChoiceMin = helper_register_nonleaf_binary_choice(min, "min", "choices_min")
+
+DecisionMul, ChoiceMul = helper_register_nonleaf_binary_choice(
+    operator.mul, "mul", "choices_mul")
+DecisionAdd, ChoiceAdd = helper_register_nonleaf_binary_choice(
+    operator.add, "add", "choices_add")
+DecisionMax, ChoiceMax = helper_register_nonleaf_binary_choice(
+    max, "max", "choices_max")
+DecisionMin, ChoiceMin = helper_register_nonleaf_binary_choice(
+    min, "min", "choices_min")
 DecisionMinus, ChoiceMinus = helper_register_nonleaf_binary_choice(
     operator.sub, "minus", "choices_minus", "__sub__")
 DecisionDiv, ChoiceDiv = helper_register_nonleaf_binary_choice(
     operator.truediv, "div", "choices_div", "__truediv__")
-

@@ -327,7 +327,6 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
     def _parallelize(self):
         if self.multiprocess:
             net = convert_sync_bn(self.model).to(self.device)
-            net = self.model
             self.parallel_model = DistributedDataParallel(
                 net, self.gpus, broadcast_buffers=False, find_unused_parameters=True)
         elif len(self.gpus) >= 2:

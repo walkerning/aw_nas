@@ -7,9 +7,11 @@ import torch.nn as nn
 
 from aw_nas.utils.exception import expect, InvalidUseException
 from aw_nas import germ
-from aw_nas.utils import nullcontext
+from aw_nas.utils import nullcontext, make_divisible
 from aw_nas.utils.common_utils import get_sub_kernel, _get_channel_mask
 
+
+divisor_fn = functools.partial(make_divisible, divisor=8)
 
 def _gcd(a, b):
     a, b = (a, b) if a >= b else (b, a)
@@ -106,7 +108,7 @@ class MaskHandler(object):
         super().__setattr__(attr, val)
 
     def is_none(self):
-        return not isinstance(self.choices, germ.Choices)
+        return not isinstance(self.choices, germ.BaseDecision)
 
     @abc.abstractmethod
     def apply(self, module, choice, ctx=None, detach=False):

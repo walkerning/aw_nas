@@ -5,5 +5,6 @@ from aw_nas.germ.decisions import *
 
 from aw_nas.germ.mbv2 import *
 from aw_nas.germ.shufflev2 import *
+from aw_nas.germ.mobiledet import *
 
 from aw_nas.germ.necks import *
