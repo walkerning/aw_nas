@@ -13,6 +13,9 @@ from pycls.models.anynet import (
 from aw_nas import germ
 
 
+def _round_to_int(float_):
+    return int(round(float_))
+
 def _init_weights(m):
     """
     Performs ResNet-style weight initialization.
@@ -136,12 +139,12 @@ class GermBottleneckTransform(germ.SearchableBlock):
         super(GermBottleneckTransform, self).__init__(ctx)
         self.bot_mul = params["bot_mul"]
         self.se_r = params["se_r"]
-        w_b = self.w_b = (w_out * self.bot_mul).apply(lambda val: int(round(val)))
+        w_b = self.w_b = (w_out * self.bot_mul).apply(_round_to_int)
 
         if self.se_r:
             w_se = w_in * self.se_r
             if isinstance(w_se, germ.BaseDecision):
-                w_se = w_se.apply(lambda val: int(round(val)))
+                w_se = w_se.apply(_round_to_int)
             else:
                 w_se = int(round(w_se))
             self.w_se = w_se

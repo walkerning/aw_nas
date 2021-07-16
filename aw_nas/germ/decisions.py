@@ -382,6 +382,13 @@ class BinaryNonleafChoices(BinaryNonleafDecision, BaseChoices):
     def num_choices(self):
         return len(self.choices)
 
+class BinaryNonleafChoiceGetter(object):
+    def __call__(self, sub_class_name):
+        cls = BinaryNonleafChoices.get_class_(sub_class_name)
+        instance = BinaryNonleafChoiceGetter()
+        instance.__class__ = cls
+        return instance
+
 
 def helper_register_nonleaf_binary_choice(
         binary_op, class_name_suffix, registry_name, operator_func_name=None):
@@ -391,13 +398,22 @@ def helper_register_nonleaf_binary_choice(
     def _constructor(self, dec1, dec2):
         BinaryNonleafDecision.__init__(self, dec1, dec2, binary_op)
 
+    def _reduce_decision_cls(self):
+        return (BinaryNonleafChoiceGetter(), ("__" + registry_name + "_decision",), self.__dict__.copy())
+
+    def _reduce_choice_cls(self):
+        return (BinaryNonleafChoiceGetter(), (registry_name,), self.__dict__.copy())
+
     class_name = "Decision{}".format(class_name_suffix.capitalize())
     BinaryNonleafDecisionCls = type(class_name, (BinaryNonleafDecision,), {
         "__init__": _constructor, # constructor
+        "NAME": "__" + registry_name + "_decision",
+        "__reduce__": _reduce_decision_cls
     })
     class_name = "Choice{}".format(class_name_suffix.capitalize())
     BinaryNonleafChoiceCls = type(class_name, (BinaryNonleafDecisionCls, BinaryNonleafChoices), {
         "NAME": registry_name, # registry name
+        "__reduce__": _reduce_choice_cls
     })
     if operator_func_name is not None:
         def _override_operator(self, choices):

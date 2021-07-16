@@ -65,7 +65,7 @@ class GermSuperNet(Component, nn.Module):
         for name, mod in supernet.named_modules():
             if isinstance(mod, SearchableBlock):
                 mod.block_id = name
-                for d_name, decision in mod.named_decisions(avoid_repeat=False):
+                for d_name, decision in mod.named_decisions(avoid_repeat=False, recurse=False):
                     if decision not in all_decisions:
                         if isinstance(decision, NonleafDecision):
                             sub_dict = nonleaf_decisions
@@ -89,7 +89,7 @@ class GermSuperNet(Component, nn.Module):
         ss_cfg = self.generate_search_space_ref()
         self.search_space.set_cfg(ss_cfg)
 
-    def named_decisions(self, prefix="", recurse=False, avoid_repeat=True):
+    def named_decisions(self, prefix="", recurse=True, avoid_repeat=True):
         # By default, not recursive
         def _get_named_decisions(mod):
             return mod._decisions.items()

@@ -275,7 +275,7 @@ class SearchableBlock(Component, nn.Module):
                 return self.__dict__["_decisions"][name]
         return super().__getattr__(name)
 
-    def named_decisions(self, prefix="", recurse=False, avoid_repeat=True):
+    def named_decisions(self, prefix="", recurse=True, avoid_repeat=True):
         # By default, not recursive
         _get_named_decisions = lambda mod: mod._decisions.items()
         memo = set()

@@ -1,6 +1,7 @@
 #pylint: disable=invalid-name
-import copy
 import os
+import copy
+import pickle
 from pprint import pprint
 
 import pytest
@@ -430,3 +431,14 @@ def test_nonleaf_decisions():
           rollout2[supernet.c5], rollout2[supernet.c6],
           rollout2[supernet.c7], rollout2[supernet.c8],
           rollout2[supernet.c9])
+
+def test_nonleaf_pickle():
+    from aw_nas import germ
+    c1 = germ.Choices([1, 2, 3])
+    c2 = germ.Choices([1, 2, 3])
+    c3 = c1 * c2
+    # pickling
+    dump_res = pickle.dumps(c3)
+    reloaded_c3 = pickle.loads(dump_res)
+    print(reloaded_c3)
+
