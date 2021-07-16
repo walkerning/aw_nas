@@ -189,6 +189,7 @@ class GermWeightsManager(BaseBackboneWeightsManager, nn.Module):
         germ_supernet_cfg=None,
         # support load a code snippet
         germ_def_file=None,
+        candidate_eval_no_grad=True,
         max_grad_norm=None,
         schedule_cfg=None,
     ):
@@ -203,6 +204,7 @@ class GermWeightsManager(BaseBackboneWeightsManager, nn.Module):
                 code = compile(source_file.read(), germ_def_file, "exec")
                 exec(code, self.germ_def_module)
 
+        self.candidate_eval_no_grad = candidate_eval_no_grad
         self.max_grad_norm = max_grad_norm
         self.super_net = GermSuperNet.get_class_(germ_supernet_type)(
             search_space, **(germ_supernet_cfg or {})
@@ -236,7 +238,7 @@ class GermWeightsManager(BaseBackboneWeightsManager, nn.Module):
         return self
 
     def assemble_candidate(self, rollout):
-        return GermCandidateNet(self, rollout)
+        return GermCandidateNet(self, rollout, self.candidate_eval_no_grad)
 
     def step(self, gradients, optimizer):
         self.zero_grad()  # clear all gradients

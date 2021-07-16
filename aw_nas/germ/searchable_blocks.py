@@ -283,6 +283,7 @@ class SearchableConv(germ.SearchableBlock, nn.Conv2d):
         stride=1,
         bias=False,
         groups=1,
+        force_use_ordinal_channel_handler=False,
         **kwargs
     ):
         super().__init__(ctx)
@@ -292,6 +293,7 @@ class SearchableConv(germ.SearchableBlock, nn.Conv2d):
         self.k_choices = kernel_size
         self.s_choices = stride
         self.g_choices = groups
+        self.force_use_ordinal_channel_handler = force_use_ordinal_channel_handler
 
         if groups == 1 or out_channels == in_channels == groups:
             # regular conv or depthwise conv
@@ -302,8 +304,12 @@ class SearchableConv(germ.SearchableBlock, nn.Conv2d):
 
             self.g_handler = None
 
-            self.ci_handler = ChannelMaskHandler(ctx, self, "in_channels", in_channels)
-            self.co_handler = ChannelMaskHandler(ctx, self, "out_channels", out_channels)
+            if not self.force_use_ordinal_channel_handler:
+                self.ci_handler = ChannelMaskHandler(ctx, self, "in_channels", in_channels)
+                self.co_handler = ChannelMaskHandler(ctx, self, "out_channels", out_channels)
+            else:
+                self.ci_handler = OrdinalChannelMaskHandler(ctx, self, "in_channels", in_channels)
+                self.co_handler = OrdinalChannelMaskHandler(ctx, self, "out_channels", out_channels)
             self.k_handler = KernelMaskHandler(ctx, self, "kernel_size", kernel_size)
             self.s_handler = StrideMaskHandler(ctx, self, "stride", stride)
 
@@ -314,7 +320,7 @@ class SearchableConv(germ.SearchableBlock, nn.Conv2d):
 
             self.g_handler = GroupMaskHandler(ctx, self, "groups", self.g_choices)
 
-            self.ci_handler = OrdinalChannelMaskHandler(ctx, self, "in_Channels", in_channels)
+            self.ci_handler = OrdinalChannelMaskHandler(ctx, self, "in_channels", in_channels)
             self.co_handler = OrdinalChannelMaskHandler(ctx, self, "out_channels", out_channels)
             self.k_handler = KernelMaskHandler(ctx, self, "kernel_size", kernel_size)
             self.s_handler = StrideMaskHandler(ctx, self, "stride", stride)
@@ -382,10 +388,14 @@ class SearchableConv(germ.SearchableBlock, nn.Conv2d):
 class SearchableBN(germ.SearchableBlock, nn.BatchNorm2d):
     NAME = "bn"
 
-    def __init__(self, ctx, channels, **kwargs):
+    def __init__(self, ctx, channels, force_use_ordinal_channel_handler=False, **kwargs):
         super().__init__(ctx)
         self.c_choices = channels
-        self.handler = ChannelMaskHandler(ctx, self, "channel", channels)
+        self.force_use_ordinal_channel_handler = force_use_ordinal_channel_handler
+        if self.force_use_ordinal_channel_handler:
+            self.handler = OrdinalChannelMaskHandler(ctx, self, "channel", channels)
+        else:
+            self.handler = ChannelMaskHandler(ctx, self, "channel", channels)
         nn.BatchNorm2d.__init__(self, self.handler.max, **kwargs)
 
     def rollout_context(self, rollout, detach=False):
@@ -422,6 +432,7 @@ class SearchableConvBNBlock(germ.SearchableBlock):
         kernel_size,
         stride=1,
         groups=1,
+        force_use_ordinal_channel_handler=False,
         conv_cfg={},
         norm_cfg={},
     ):
@@ -435,9 +446,13 @@ class SearchableConvBNBlock(germ.SearchableBlock):
             stride,
             bias=False,
             groups=groups,
+            force_use_ordinal_channel_handler=force_use_ordinal_channel_handler,
             **conv_cfg
         )
-        self.bn = SearchableBN(ctx, out_channels, **norm_cfg)
+        self.bn = SearchableBN(
+            ctx, out_channels,
+            force_use_ordinal_channel_handler=force_use_ordinal_channel_handler,
+            **norm_cfg)
 
     def forward(self, inputs):
         out = self.bn(self.conv(inputs))

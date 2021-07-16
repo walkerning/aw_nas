@@ -30,7 +30,7 @@ class MaskHandler(object):
         registry mask attributes in module
 
         Args:
-            module: pytorch module to registry mask buffer. 
+            module: pytorch module to registry mask buffer.
                 !NOTICE that the mask handler needs to be deleted when you want
                 to release the memory of the module, or it would cause memory
                 leak.
@@ -228,14 +228,20 @@ class ChannelMaskHandler(MaskHandler):
             mask_idx = self.ctx.rollout.masks.get(self.choices.decision_id)
             if mask_idx is None:
                 if isinstance(module, nn.BatchNorm2d):
-                    mask_idx = sorted(module.weight.data.argsort()[choice:].detach().numpy())
+                    if module.weight is None:
+                        raise ValueError(
+                            "ChannelMaskHandler does not support infering affine-less "
+                            "BatchNorm2d before Conv2d."
+                        )
+                    mask_idx = sorted(
+                        module.weight.data.argsort()[choice:].detach().numpy()
+                    )
                     self.ctx.rollout.masks[self.choices.decision_id] = mask_idx
                 elif isinstance(module, nn.Conv2d) and module.groups > 1 and axis == 1:
                     # no need to calculate mask idx
                     pass
                 else:
-                    mask_idx = _get_channel_mask(
-                        module.weight.data, choice, axis)
+                    mask_idx = _get_channel_mask(module.weight.data, choice, axis)
                     self.ctx.rollout.masks[self.choices.decision_id] = mask_idx
 
             if isinstance(module, nn.Conv2d):
@@ -377,44 +383,53 @@ class GroupMaskHandler(MaskHandler):
                 yield
                 return
 
-        assert choice % module.groups == 0, f"choice must be divisible by module.groups, got {choice} and {module.groups} instead."
+            assert (
+                choice % module.groups == 0
+            ), f"choice must be divisible by module.groups, got {choice} and {module.groups} instead."
 
-        ori_groups = module.groups
-        sub_groups_per_group = choice // ori_groups
+            ori_groups = module.groups
+            sub_groups_per_group = choice // ori_groups
 
-        ori_weight = module.weight
+            ori_weight = module.weight
 
-        # 1 when choice == in_channels
-        num_inshape = module.in_channels // choice
-        num_outshape = module.out_channels // choice
+            # num_inshape=1 when choice == in_channels
+            num_inshape = module.in_channels // choice
+            num_outshape = module.out_channels // choice
 
-        out_index = sum([[[i + offset * num_inshape for i in range(num_inshape)]] * num_outshape
-                     for offset in range(sub_groups_per_group)], [])
-        out_index *= ori_groups
+            # get the input-channel indices in one biggest group
+            out_index = sum(
+                [
+                    [[i + offset * num_inshape for i in range(num_inshape)]]
+                    * num_outshape
+                    for offset in range(sub_groups_per_group)
+                ],
+                [],
+            )
+            # repeat the input-channel indices for `ori_groups` times
+            out_index *= ori_groups
 
-        assert len(out_index) == module.out_channels
-        out_index = torch.tensor(out_index).to(ori_weight.device)
-        out_index = out_index.unsqueeze(-1).unsqueeze(-1)
-        out_index = out_index.repeat(1, 1, ori_weight.shape[-2], ori_weight.shape[-1])
+            assert len(out_index) == module.out_channels
+            out_index = torch.tensor(out_index, dtype=torch.long).to(ori_weight.device)
+            out_index = out_index.unsqueeze(-1).unsqueeze(-1)
+            # repeat along kernel size height/width
+            out_index = out_index.repeat(
+                1, 1, ori_weight.shape[-2], ori_weight.shape[-1]
+            )
 
-        new_weight = ori_weight.gather(1, out_index)
+            new_weight = ori_weight.gather(1, out_index)
+            assert new_weight.shape[0] == module.out_channels
+            assert new_weight.shape[1] == num_inshape
 
-        assert new_weight.shape[0] == module.out_channels
-        assert new_weight.shape[1] == num_inshape
+            if detach:
+                new_weight = nn.Parameter(new_weight)
 
-        if detach:
-            new_weight = nn.Parameter(new_weight)
-
-        module._parameters["weight"] = new_weight
-        module.groups = int(choice)
-
-        yield
-
-        if detach:
-            return
-
-        module._parameters["weight"] = ori_weight
-        module.groups = ori_groups
+            module._parameters["weight"] = new_weight
+            module.groups = int(choice)
+            yield
+            if detach:
+                return
+            module._parameters["weight"] = ori_weight
+            module.groups = ori_groups
 
 
 class OrdinalChannelMaskHandler(MaskHandler):
@@ -433,6 +448,7 @@ class OrdinalChannelMaskHandler(MaskHandler):
 
         if ctx is None:
             ctx = nullcontext()
+
         with ctx:
             if self.is_none():
                 yield
@@ -441,18 +457,37 @@ class OrdinalChannelMaskHandler(MaskHandler):
             assert hasattr(
                 self.ctx, "rollout"
             ), "context should have rollout attribute."
-
-            assert choice % module.groups == 0, f"choice must divisible by module.groups, got {choice} and {module.groups} instead."
+            mask_idx = self.ctx.rollout.masks.get(self.choices.decision_id)
+            if mask_idx is None:
+                if isinstance(module, nn.BatchNorm2d):
+                    raise ValueError(
+                        "OrdinalChannelMaskHandler is not support infering mask by "
+                        "BatchNorm2d yet."
+                    )
+                elif isinstance(module, nn.Conv2d) and module.groups > 1 and axis == 1:
+                    # no need to calculate mask idx
+                    pass
+                else:
+                    mask_idx = []
+                    step = module.out_channels // module.groups
+                    num_per_group = choice // module.groups
+                    for offset in range(0, module.out_channels, step):
+                        mask_idx += [offset + i for i in range(num_per_group)]
+                    self.ctx.rollout.masks[self.choices.decision_id] = mask_idx
 
             if isinstance(module, nn.Conv2d):
+                assert (
+                    choice % module.groups == 0
+                ), f"choice must divisible by module.groups, got {choice} and {module.groups} instead."
+
                 ori_weight = module.weight
                 ori_bias = module.bias
 
                 if axis == 1:
-
+                    # input channel handler
                     ori_in = module.in_channels
                     module.in_channels = choice
-                    new_weight = ori_weight[:, :choice // module.groups]
+                    new_weight = ori_weight[:, : choice // module.groups]
                     if detach:
                         new_weight = nn.Parameter(new_weight)
 
@@ -466,13 +501,7 @@ class OrdinalChannelMaskHandler(MaskHandler):
                     module._parameters["weight"] = ori_weight
 
                 else:
-                    mask_idx = []
-                    step = module.in_channels // module.groups
-                    num_per_group = choice // module.groups
-                    for offset in range(0, module.in_channels, step):
-                        for i in range(step):
-                            mask_idx += [offset + i]
-
+                    # output channel handler
                     new_weight = ori_weight[mask_idx]
                     new_bias = ori_bias[mask_idx] if ori_bias is not None else None
                     if detach:
@@ -497,13 +526,6 @@ class OrdinalChannelMaskHandler(MaskHandler):
 
             elif isinstance(module, nn.BatchNorm2d):
                 ori = {}
-                mask_idx = []
-                step = module.in_channels // module.groups
-                num_per_group = choice // module.groups
-                for offset in range(0, module.in_channels, step):
-                    for i in range(step):
-                        mask_idx += [offset + i]
-
                 module.num_features = len(mask_idx)
                 for k in ["running_mean", "running_var", "weight", "bias"]:
                     ori[k] = getattr(module, k)
@@ -521,7 +543,7 @@ class OrdinalChannelMaskHandler(MaskHandler):
                 if detach:
                     return
 
-                module.num_features = len(ori["weight"])
+                module.num_features = len(ori["running_mean"])
                 for k in ["running_mean", "running_var", "weight", "bias"]:
                     if k in module._parameters:
                         module._parameters[k] = ori[k]

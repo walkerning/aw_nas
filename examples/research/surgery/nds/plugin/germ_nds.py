@@ -43,11 +43,21 @@ class GermBasicTransform(germ.SearchableBlock):
             w_out,
             3,
             stride=stride,
+            force_use_ordinal_channel_handler=_params.get(
+                "force_use_ordinal_channel_handler", False
+            ),
             norm_cfg={"affine": _params["bn_affine"]},
         )
         self.act = activation()
         self.layer_b = germ.SearchableConvBNBlock(
-            ctx, w_out, w_out, 3, norm_cfg={"affine": _params["bn_affine"]}
+            ctx,
+            w_out,
+            w_out,
+            3,
+            force_use_ordinal_channel_handler=_params.get(
+                "force_use_ordinal_channel_handler", False
+            ),
+            norm_cfg={"affine": _params["bn_affine"]},
         )
         self.layer_b.bn.final_bn = True
 
@@ -71,6 +81,9 @@ class GermResBasicBlock(germ.SearchableBlock):
                 w_out,
                 kernel_size=1,
                 stride=stride,
+                force_use_ordinal_channel_handler=params.get(
+                    "force_use_ordinal_channel_handler", False
+                ),
                 norm_cfg={"affine": params["bn_affine"]},
             )
         self.func = GermBasicTransform(ctx, w_in, w_out, stride, params)
@@ -88,13 +101,27 @@ class GermResBasicBlock(germ.SearchableBlock):
 class GermSE(germ.SearchableBlock):
     """Germ Squeeze-and-Excitation (SE) block: AvgPool, FC, Act, FC, Sigmoid."""
 
-    def __init__(self, ctx, w_in, w_se):
+    def __init__(self, ctx, w_in, w_se, force_use_ordinal_channel_handler=False):
         super(GermSE, self).__init__(ctx)
         self.avg_pool = gap2d(w_in)
         self.f_ex = nn.Sequential(
-            germ.SearchableConv(ctx, w_in, w_se, 1, bias=True),
+            germ.SearchableConv(
+                ctx,
+                w_in,
+                w_se,
+                1,
+                bias=True,
+                force_use_ordinal_channel_handler=force_use_ordinal_channel_handler,
+            ),
             activation(),
-            germ.SearchableConv(ctx, w_se, w_in, 1, bias=True),
+            germ.SearchableConv(
+                ctx,
+                w_se,
+                w_in,
+                1,
+                bias=True,
+                force_use_ordinal_channel_handler=force_use_ordinal_channel_handler,
+            ),
             nn.Sigmoid(),
         )
 
@@ -110,6 +137,7 @@ class GermBottleneckTransform(germ.SearchableBlock):
         self.bot_mul = params["bot_mul"]
         self.se_r = params["se_r"]
         w_b = self.w_b = (w_out * self.bot_mul).apply(lambda val: int(round(val)))
+
         if self.se_r:
             w_se = w_in * self.se_r
             if isinstance(w_se, germ.BaseDecision):
@@ -117,19 +145,53 @@ class GermBottleneckTransform(germ.SearchableBlock):
             else:
                 w_se = int(round(w_se))
             self.w_se = w_se
-        self.a_convbn = germ.SearchableConvBNBlock(ctx, w_in, w_b, 1)
+        self.a_convbn = germ.SearchableConvBNBlock(
+            ctx,
+            w_in,
+            w_b,
+            1,
+            force_use_ordinal_channel_handler=params.get(
+                "force_use_ordinal_channel_handler", False
+            ),
+            norm_cfg={"affine": params["bn_affine"]},
+        )
 
         self.a_act = activation()
         num_group = params["num_group"]
         self.b_convbn = germ.SearchableConvBNBlock(
-            ctx, w_b, w_b, 3, stride=stride, groups=num_group
+            ctx,
+            w_b,
+            w_b,
+            3,
+            stride=stride,
+            groups=num_group,
+            force_use_ordinal_channel_handler=params.get(
+                "force_use_ordinal_channel_handler", False
+            ),
+            norm_cfg={"affine": params["bn_affine"]},
         )
         self.b_af = activation()
         if self.se_r:
-            self.se_block = GermSE(ctx, w_b, w_se)
+            self.se_block = GermSE(
+                ctx,
+                w_b,
+                w_se,
+                force_use_ordinal_channel_handler=params.get(
+                    "force_use_ordinal_channel_handler", False
+                ),
+            )
         else:
             self.se_block = None
-        self.c_convbn = germ.SearchableConvBNBlock(ctx, w_b, w_out, 1)
+        self.c_convbn = germ.SearchableConvBNBlock(
+            ctx,
+            w_b,
+            w_out,
+            1,
+            force_use_ordinal_channel_handler=params.get(
+                "force_use_ordinal_channel_handler", False
+            ),
+            norm_cfg={"affine": params["bn_affine"]},
+        )
         self.c_convbn.bn.final_bn = True
 
     def forward(self, x):
@@ -151,6 +213,9 @@ class GermResBottleneckBlock(germ.SearchableBlock):
                 w_out,
                 kernel_size=1,
                 stride=stride,
+                force_use_ordinal_channel_handler=params.get(
+                    "force_use_ordinal_channel_handler", False
+                ),
                 norm_cfg={"affine": params["bn_affine"]},
             )
         self.func = GermBottleneckTransform(ctx, w_in, w_out, stride, params)
@@ -209,14 +274,28 @@ class GermAnyHead(germ.SearchableBlock):
         self.head_width = head_width
         if head_width > 0:
             self.conv_bn = germ.SearchableConvBNBlock(
-                ctx, w_in, head_width, 1, norm_cfg={"affine": _params["bn_affine"]}
+                ctx,
+                w_in,
+                head_width,
+                1,
+                force_use_ordinal_channel_handler=_params.get(
+                    "force_use_ordinal_channel_handler", False
+                ),
+                norm_cfg={"affine": _params["bn_affine"]},
             )
             self.act = activation()
             w_in = head_width
         self.avg_pool = gap2d(w_in)
         # use a conv1x1 as fc layer
         self.fc_layer = germ.SearchableConv(
-            ctx, w_in, num_classes, kernel_size=1, bias=True
+            ctx,
+            w_in,
+            num_classes,
+            kernel_size=1,
+            bias=True,
+            force_use_ordinal_channel_handler=_params.get(
+                "force_use_ordinal_channel_handler", False
+            ),
         )
 
     def forward(self, x):
@@ -255,6 +334,7 @@ class GermAnyNet(germ.GermSuperNet):
         se_r=0.25,
         head_w=0,
         bn_affine=False,
+        force_use_ordinal_channel_handler=False,
     ):
         super(GermAnyNet, self).__init__(search_space)
 
@@ -320,6 +400,7 @@ class GermAnyNet(germ.GermSuperNet):
                     "num_group": num_group,
                     "se_r": se_r if use_se else 0,
                     "bn_affine": bn_affine,
+                    "force_use_ordinal_channel_handler": force_use_ordinal_channel_handler,
                 }
                 stage = GermAnyStage(
                     ctx, prev_w, width, stride, depth, block_fun, params
@@ -344,7 +425,13 @@ class GermAnyNet(germ.GermSuperNet):
 class GermResNet(GermAnyNet):
     NAME = "nds_resnet"
 
-    def __init__(self, search_space, num_classes=10, stem_type="res_stem_cifar"):
+    def __init__(
+        self,
+        search_space,
+        num_classes=10,
+        stem_type="res_stem_cifar",
+        force_ordinal=False,
+    ):
         super(GermResNet, self).__init__(
             search_space,
             block_type="res_basic_block",
@@ -360,13 +447,21 @@ class GermResNet(GermAnyNet):
             se_r=0.25,
             head_w=0,
             bn_affine=False,
+            force_use_ordinal_channel_handler=force_ordinal,
         )
 
 
 class GermResNextA(GermAnyNet):
     NAME = "nds_resnexta"
 
-    def __init__(self, search_space, num_classes=10, group_search=True, stem_type="res_stem_cifar"):
+    def __init__(
+        self,
+        search_space,
+        num_classes=10,
+        stem_type="res_stem_cifar",
+        group_search=True,
+        force_ordinal=False,
+    ):
         super(GermResNextA, self).__init__(
             search_space,
             block_type="res_bottleneck_block",
@@ -382,4 +477,5 @@ class GermResNextA(GermAnyNet):
             se_r=0.25,
             head_w=0,
             bn_affine=False,
+            force_use_ordinal_channel_handler=force_ordinal,
         )
