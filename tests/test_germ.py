@@ -1,4 +1,5 @@
 #pylint: disable=invalid-name
+from aw_nas.germ.decisions import SelectNonleafChoices
 import os
 import copy
 import pickle
@@ -452,7 +453,7 @@ def test_nonleaf_derive_decisions():
                     [
                         self.c1,
                         self.c2,
-                        self.c3,
+                        5,
                         self.c4,
                         self.c5,
                         self.c6,
@@ -488,14 +489,14 @@ def test_nonleaf_derive_decisions():
     print(rollout2.arch)
     print(rollout2[supernet.c8])
 
-    
+
 def test_nonleaf_pickle():
     from aw_nas import germ
     c1 = germ.Choices([1, 2, 3])
     c2 = germ.Choices([1, 2, 3])
     c3 = c1 * c2
+    c4 = SelectNonleafChoices([c1, c2, c3], c1 - 1)
     # pickling
-    dump_res = pickle.dumps(c3)
-    reloaded_c3 = pickle.loads(dump_res)
-    print(reloaded_c3)
-
+    dump_res = pickle.dumps(c4)
+    reloaded_c4 = pickle.loads(dump_res)
+    print(reloaded_c4)

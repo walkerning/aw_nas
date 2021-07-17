@@ -169,6 +169,9 @@ class RootRecord(object):
         self.__id_list = list()
         self.__id_value_dict = defaultdict(list)
 
+    def _clear_map(self):
+        self.__init__()
+
     def set_target(self, id_list, value_list, target):
         self._update(id_list, value_list)
         gen_key = self._gen_key(id_list, value_list)
@@ -265,6 +268,14 @@ class BaseDecision(Component):
 
 
 class BaseChoices(BaseDecision):
+    """
+    _CHOICES_EFFECT_DICT: key is id of leaf choices,
+        value is the affected non leaf choices
+    _choices_graph: the values of non leaf and leaf choices
+        corresponding to leaf choices
+    _derive_flag: flag for deriving of not
+    """
+    _CHOICES_EFFECT_DICT = defaultdict(list)
     _MAX_DECISION_THRES = 256
     def __init__(self, post_fn=None, schedule_cfg=None):
         super().__init__(post_fn=post_fn, schedule_cfg=schedule_cfg)
@@ -318,6 +329,36 @@ class BaseChoices(BaseDecision):
         choices = self.choices
         return len(choices)
 
+    @classmethod
+    def expand_choices_effect_list(cls, source_list, target):
+        for source in source_list:
+            # for leaf Choices
+            if isinstance(source, Choices):
+                cls._CHOICES_EFFECT_DICT[str(id(source))].append(
+                    target
+                )
+            elif isinstance(source, BaseChoices) and \
+                source.__class__.__name__ != 'BaseChoices':
+                for k, v in cls._CHOICES_EFFECT_DICT.items():
+                    v_id = map(lambda x: id(x), v)
+                    if id(source) in v_id:
+                        cls._CHOICES_EFFECT_DICT[k].append(
+                            target
+                        )
+            else:
+                pass
+
+    # set all affected Choices _derive_flag as False
+    @classmethod
+    def set_choices_effect_flag(cls, source):
+        for choices in cls._CHOICES_EFFECT_DICT[
+            str(id(source))
+        ]:
+            if isinstance(choices, BaseChoices):
+                choices._derive_flag = False
+                choices._choices = None
+                choices._choices_graph._clear_map()
+
 class Choices(BaseChoices):
     """
     Leaf choices.
@@ -342,6 +383,7 @@ class Choices(BaseChoices):
         if epoch_callback is not None:
             epoch_callback = partial(epoch_callback, self)
         self.epoch_callback = epoch_callback
+        self.expand_choices_effect_list([self], self)
 
     @property
     def size(self):
@@ -358,8 +400,10 @@ class Choices(BaseChoices):
 
     @choices.setter
     def choices(self, value):
-        self._choices = value
         self._p = None
+        if len(set(value) ^ set(self._choices)) != 0:
+            self.set_choices_effect_flag(self)
+            self._choices = value
 
     @property
     def p(self):
@@ -478,7 +522,7 @@ class NonleafDecision(BaseDecision):
         """
         get the output _choices for possible_value_list
         """
-      
+
     @abc.abstractmethod
     def set_children_id(self):
         pass
@@ -562,9 +606,6 @@ class BinaryNonleafChoices(BinaryNonleafDecision, BaseChoices):
     Optionally, one can override corresponding operator special methods of
     some BaseDecision classes (e.g., BaseChoices)
     """
-    def __init__(self, dec1, dec2, binary_op=None, optional_choices=None):
-        super().__init__(dec1, dec2, binary_op)
-        self._optional_choices = optional_choices
     @property
     def size(self):
         if isinstance(self.dec1, BaseChoices):
@@ -628,6 +669,11 @@ def helper_register_nonleaf_binary_choice(
     def _constructor(self, dec1, dec2):
         BinaryNonleafDecision.__init__(self, dec1, dec2, binary_op)
 
+    def _choices_constructor(self, dec1, dec2, optional_choices=None):
+        super(BinaryNonleafChoiceCls, self).__init__(dec1, dec2)
+        self._optional_choices = optional_choices
+        self.expand_choices_effect_list([dec1, dec2], self)
+
     def _reduce_choice_cls(self):
         return (
             BinaryNonleafChoiceGetter(),
@@ -641,6 +687,7 @@ def helper_register_nonleaf_binary_choice(
     })
     class_name = "Choice{}".format(class_name_suffix.capitalize())
     BinaryNonleafChoiceCls = type(class_name, (BinaryNonleafDecisionCls, BinaryNonleafChoices), {
+        "__init__": _choices_constructor, # choices constructor
         "NAME": registry_name, # registry name
         "__reduce__": _reduce_choice_cls
     })
@@ -673,7 +720,7 @@ class SelectNonleafDecision(NonleafDecision):
 
         if isinstance(select_key, str):
             for select_ele in select_list:
-                if not isinstance(select_ele, str):
+                if not isinstance(select_ele, (int, float, str)):
                     raise Exception(
                         "When select key is decision_id, all of the select_list should be decision_id"
                     )
@@ -713,7 +760,7 @@ class SelectNonleafDecision(NonleafDecision):
         return "{}(select_list=[{}], select_key={})".format(
             self.__class__.__name__,
             ",".join([
-                getattr(select_ele, "decision_id", select_ele) \
+                str(getattr(select_ele, "decision_id", select_ele)) \
                 for select_ele in self.select_list
             ]),
             getattr(self.select_key, "decision_id", self.select_key)
@@ -759,6 +806,7 @@ class SelectNonleafChoices(SelectNonleafDecision, BaseChoices):
     def __init__(self, select_list, select_key, optional_choices=None):
         super().__init__(select_list=select_list, select_key=select_key)
         self._optional_choices = optional_choices
+        self.expand_choices_effect_list(select_list + [select_key], self)
     @property
     def size(self):
         return self.select_key.size
@@ -790,4 +838,12 @@ class SelectNonleafChoices(SelectNonleafDecision, BaseChoices):
                 post_fn(outputs_value),
             )
         self._choices = list(np.unique(self._choices))
-    
+
+    def set_children_id(self):
+        decs = []
+        for i, dec in enumerate(self.select_list + [self.select_key], 1):
+            if isinstance(dec, BaseDecision):
+                decs.append(dec)
+                if not hasattr(dec, "decision_id") or dec.decision_id is None:
+                    dec.decision_id = ".".join([self.decision_id, str(i)])
+        return decs
