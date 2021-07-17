@@ -11,3 +11,4 @@ from aw_nas.evaluator.shared_weight import *
 from aw_nas.evaluator.tune import TuneEvaluator
 from aw_nas.evaluator.compare import ArchNetworkEvaluator
 from aw_nas.evaluator.arch_network import *
+from aw_nas.evaluator.few_shot_shared_weight import *

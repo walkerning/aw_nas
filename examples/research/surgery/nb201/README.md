@@ -34,7 +34,7 @@ awnas derive --load results/oneshot-example/1000/ --out-file results/oneshot-exa
 
 The `--runtime-save` option is optional, and it enables `awnas derive` to continue from a previously interrupted derive process.
 
-To run multiple derive/eval-arch processes using multiple different checkpoints in a batched manner (on multiple GPUs), check `examples/research/surgery/run_derive_ckpts.py`.
+To run multiple `derive` processes using multiple different checkpoints in a batched manner (on multiple GPUs), check `examples/research/surgery/run_derive_ckpts.py`.
 
 ### Get the evaluation results
 

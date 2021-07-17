@@ -14,7 +14,7 @@ from aw_nas.base import Component
 from aw_nas.utils.registry import RegistryMeta
 from aw_nas.utils import expect
 from aw_nas.germ.germ import SearchableBlock, finalize_rollout
-from aw_nas.germ.decisions import NonleafDecision
+from aw_nas.germ.decisions import BaseDecision, NonleafDecision
 
 
 class SearchableContext(object):
@@ -65,7 +65,7 @@ class GermSuperNet(Component, nn.Module):
         for name, mod in supernet.named_modules():
             if isinstance(mod, SearchableBlock):
                 mod.block_id = name
-                for d_name, decision in mod.named_decisions(avoid_repeat=False):
+                for d_name, decision in mod.named_decisions(avoid_repeat=False, recurse=False):
                     if decision not in all_decisions:
                         if isinstance(decision, NonleafDecision):
                             sub_dict = nonleaf_decisions
@@ -76,10 +76,20 @@ class GermSuperNet(Component, nn.Module):
                             and decision.decision_id is not None
                         ):
                             abs_name = decision.decision_id
+                            if decision not in all_decisions:
+                                all_decisions[decision] = sub_dict[decision] = abs_name
                         else:
                             abs_name = ((name + ".") if name else "") + d_name
                             decision.decision_id = sub_dict[decision] \
                                                 = all_decisions[decision] = abs_name
+                        if isinstance(decision, NonleafDecision):
+                            decs = decision.set_children_id()
+                            for dec in decs:
+                                if isinstance(dec, NonleafDecision):
+                                    sub_dict = nonleaf_decisions
+                                else:
+                                    sub_dict = leaf_decisions
+                                sub_dict[dec] = all_decisions[dec] = dec.decision_id
                     else:
                         # use existing decision id (abs name)
                         abs_name = all_decisions[decision]
@@ -89,7 +99,7 @@ class GermSuperNet(Component, nn.Module):
         ss_cfg = self.generate_search_space_ref()
         self.search_space.set_cfg(ss_cfg)
 
-    def named_decisions(self, prefix="", recurse=False, avoid_repeat=True):
+    def named_decisions(self, prefix="", recurse=True, avoid_repeat=True):
         # By default, not recursive
         def _get_named_decisions(mod):
             return mod._decisions.items()
@@ -168,13 +178,11 @@ class GermSuperNet(Component, nn.Module):
         final_mod = copy.deepcopy(self)
         final_mod = finalize_rollout(final_mod, rollout)
         self.ctx.rollout = None
-        final_mod.ctx.rollout = None
         return final_mod
 
     def on_epoch_start(self, epoch):
         for _, decs in self.named_decisions(recurse=True):
             decs.on_epoch_start(epoch)
-
 
 class GermWeightsManager(BaseBackboneWeightsManager, nn.Module):
     NAME = "germ"
@@ -189,6 +197,7 @@ class GermWeightsManager(BaseBackboneWeightsManager, nn.Module):
         germ_supernet_cfg=None,
         # support load a code snippet
         germ_def_file=None,
+        candidate_eval_no_grad=True,
         max_grad_norm=None,
         schedule_cfg=None,
     ):
@@ -203,6 +212,7 @@ class GermWeightsManager(BaseBackboneWeightsManager, nn.Module):
                 code = compile(source_file.read(), germ_def_file, "exec")
                 exec(code, self.germ_def_module)
 
+        self.candidate_eval_no_grad = candidate_eval_no_grad
         self.max_grad_norm = max_grad_norm
         self.super_net = GermSuperNet.get_class_(germ_supernet_type)(
             search_space, **(germ_supernet_cfg or {})
@@ -236,7 +246,7 @@ class GermWeightsManager(BaseBackboneWeightsManager, nn.Module):
         return self
 
     def assemble_candidate(self, rollout):
-        return GermCandidateNet(self, rollout)
+        return GermCandidateNet(self, rollout, self.candidate_eval_no_grad)
 
     def step(self, gradients, optimizer):
         self.zero_grad()  # clear all gradients

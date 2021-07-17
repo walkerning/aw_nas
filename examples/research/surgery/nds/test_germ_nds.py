@@ -1,4 +1,6 @@
 #pylint: disable-all
+import pickle
+
 from aw_nas.utils.torch_utils import random_cnn_data
 
 def test_germ_resnet():
@@ -65,3 +67,22 @@ def test_germ_resnexta():
         }
     )
     assert ss_nogroup.get_size() == 421875 # no group
+
+def test_germ_resnexta_pickle():
+    from aw_nas.germ import GermSearchSpace
+    from aw_nas.weights_manager.base import BaseWeightsManager
+
+    ss = GermSearchSpace()
+    wm = BaseWeightsManager.get_class_("germ")(
+        ss, "cuda", rollout_type="germ",
+        germ_supernet_type="nds_resnexta",
+        germ_supernet_cfg={
+            "num_classes": 10,
+            "stem_type": "res_stem_cifar",
+            "group_search": True
+        }
+    )
+    dump_res = pickle.dumps(wm.super_net)
+    reloaded_supernet = pickle.loads(dump_res)
+    for name, decision in reloaded_supernet.named_decisions():
+        print(name, decision.to_string())

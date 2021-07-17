@@ -94,7 +94,7 @@ class GermSearchSpace(SearchSpace):
         # non-leaf
         if not isinstance(decision_or_id, NonleafDecision):
             # decision id
-            assert decision_or_id in self.nonleaf_decisions
+            assert decision_or_id in self.nonleaf_decisions, decision_or_id
             nonleaf_decision = self.nonleaf_decisions[decision_or_id]
         else:
             nonleaf_decision = decision_or_id
@@ -275,7 +275,7 @@ class SearchableBlock(Component, nn.Module):
                 return self.__dict__["_decisions"][name]
         return super().__getattr__(name)
 
-    def named_decisions(self, prefix="", recurse=False, avoid_repeat=True):
+    def named_decisions(self, prefix="", recurse=True, avoid_repeat=True):
         # By default, not recursive
         _get_named_decisions = lambda mod: mod._decisions.items()
         memo = set()
@@ -348,9 +348,6 @@ def finalize_rollout(final_mod, rollout):
         else:
             final_sub_mod = finalize_rollout(mod, rollout)
         final_mod._modules[mod_name] = final_sub_mod
-    if isinstance(final_mod, SearchableBlock):
-        final_mod.finalized_rollout = rollout
-
     return final_mod
 
 
