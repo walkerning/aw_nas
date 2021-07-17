@@ -8,6 +8,7 @@ from torch.nn import functional as F
 from aw_nas import ops, germ
 from aw_nas.utils import nullcontext
 from .utils import *
+from aw_nas.utils.common_utils import _get_channel_mask, _get_feature_mask
 
 
 class GermOpOnEdge(germ.SearchableBlock):
@@ -461,6 +462,49 @@ class SearchableConvBNBlock(germ.SearchableBlock):
         out = self.bn(self.conv(inputs))
         return out
 
+class SearchableFC(germ.SearchableBlock, nn.Linear):
+    NAME = "fc"
+
+    def __init__(
+        self,
+        ctx,
+        in_features,
+        out_features,
+    ):
+        super().__init__(ctx)
+        self.fi_choices = in_features
+        self.fo_choices = out_features
+        self.fi_handler = FeatureMaskHandler(ctx, self, "in_features", in_features)
+        self.fo_handler = FeatureMaskHandler(ctx, self, "out_features", out_features)
+        _modules = self._modules
+        nn.Linear.__init__(
+            self,
+            in_features=self.fi_handler.max,
+            out_features=self.fo_handler.max,
+        )
+        self._modules.update(_modules)
+    def rollout_context(self, rollout=None, detach=False):
+        if rollout is None:
+            return nullcontext()
+        # in features and out features
+        r_i_f = self._get_decision(self.fi_handler.choices, rollout)
+        r_o_f = self._get_decision(self.fo_handler.choices, rollout)
+        # apply
+        ctx = self.fi_handler.apply(self, r_i_f, axis=1, detach=detach)
+        ctx = self.fo_handler.apply(self, r_o_f, axis=0, ctx=ctx, detach=detach)
+        return ctx
+    def forward(self, inputs):
+        with self.rollout_context(self.ctx.rollout):
+            out = super().forward(inputs)
+        return out
+    def finalize_rollout(self, rollout):
+        with self.rollout_context(self.ctx.rollout):
+            fc = nn.Linear(self.in_features, self.out_features)
+            fc.weight.data.copy_(self.weight.data)
+            if self.bias is not None:
+                fc.bias.data.copy_(self.bias.data)
+        return fc
+
 
 class SearchableSepConv(germ.SearchableBlock):
     NAME = "sep_conv"
@@ -727,7 +771,7 @@ class RepConv(germ.SearchableBlock):
         return out
 
     def reparameter(self):
-        """ 
+        """
         call this function after calling finalize_rollout
         """
         conv_w = self.conv.weight.data

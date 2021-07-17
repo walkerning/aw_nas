@@ -16,7 +16,7 @@ def _cnn_data(device="cuda", batch_size=2, shape=28, input_c=3):
     )
 
 code_snippet = """
-from aw_nas import germ    
+from aw_nas import germ
 from torch import nn
 import torch.nn.functional as F
 from aw_nas.germ import GermSuperNet
@@ -59,7 +59,7 @@ def test_germ_supernet(tmp_path):
     from aw_nas.germ import GermWeightsManager
     from aw_nas.common import get_search_space, rollout_from_genotype_str, genotype_from_str
 
-    from aw_nas import germ    
+    from aw_nas import germ
     from torch import nn
     import torch.nn.functional as F
     from aw_nas.germ import GermSuperNet
@@ -432,6 +432,63 @@ def test_nonleaf_decisions():
           rollout2[supernet.c7], rollout2[supernet.c8],
           rollout2[supernet.c9])
 
+def test_nonleaf_derive_decisions():
+    from aw_nas import germ
+    from aw_nas.germ import GermSearchSpace
+
+    class _tmp_supernet(germ.GermSuperNet, germ.SearchableBlock):
+        NAME = "tmp_code_snippet_nonleaf_derive_decisions"
+        def __init__(self, search_space):
+            super().__init__(search_space)
+            with self.begin_searchable() as ctx:
+                self.c1 = germ.Choices([1, 2, 3])
+                self.c2 = self.c1 + 8
+                self.c3 = germ.Choices([1, 2, 3])
+                self.c4 = self.c3 + 4
+                self.c5 = self.c1 + self.c3
+                self.c6 = self.c2 + self.c4
+                self.c7 = self.c6 - self.c5
+                self.c8 = germ.SelectNonleafChoices(
+                    [
+                        self.c1,
+                        self.c2,
+                        self.c3,
+                        self.c4,
+                        self.c5,
+                        self.c6,
+                        self.c7,
+                    ],
+                    self.c5,
+                    optional_choices = [1, 4, 5, 6, 12]
+                )
+
+    ss = GermSearchSpace()
+    supernet = _tmp_supernet(ss)
+    print(supernet.c8.choices)
+    print(supernet.c7.choices)
+    print(supernet.c6.choices)
+    print(supernet.c5.choices)
+    print(supernet.c4.choices)
+    print(supernet.c3.choices)
+    print(supernet.c2.choices)
+    print(supernet.c1.choices)
+    pprint(supernet.generate_search_space_cfg())
+    rollout = ss.random_sample()
+    print(rollout.arch)
+    print(rollout[supernet.c8])
+    print("--- after mutate ---")
+    rollout_m = ss.mutate(rollout, mutate_num=2)
+    print(rollout_m.arch)
+    print(rollout_m[supernet.c8])
+
+    # serialize decisions and reload
+    ss2 = GermSearchSpace()
+    ss2.set_cfg(supernet.generate_search_space_cfg())
+    rollout2 = ss2.random_sample()
+    print(rollout2.arch)
+    print(rollout2[supernet.c8])
+
+    
 def test_nonleaf_pickle():
     from aw_nas import germ
     c1 = germ.Choices([1, 2, 3])

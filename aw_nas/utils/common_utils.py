@@ -536,6 +536,13 @@ def _get_channel_mask(filters: torch.Tensor, num_channels: int, p=1):
     mask = channel_order[:num_channels].sort()[0]
     return mask
 
+def _get_feature_mask(filters: torch.Tensor, num_features: int, p=1):
+    assert p in (0, 1)
+    dim = (0) if p == 1 else (1)
+    feature_order = filters.norm(p=1, dim=dim).argsort(descending=True)
+    mask = feature_order[:num_features].sort()[0]
+    return mask
+
 
 #---- Detection Task Utils ----
 def feature_level_to_stage_index(strides, offset=1):
