@@ -3,30 +3,39 @@
 import torch
 from torch import nn
 
-from aw_nas.utils.torch_utils import accuracy
+from aw_nas.utils.torch_utils import accuracy, count_parameters
 from aw_nas.objective.base import BaseObjective
 
 class ClassificationObjective(BaseObjective):
     NAME = "classification"
 
-    def __init__(self, search_space, label_smooth=None, schedule_cfg=None):
+    def __init__(self, search_space, label_smooth=None, aggregate_as_list=False,
+                 return_param=False, schedule_cfg=None):
         super(ClassificationObjective, self).__init__(search_space, schedule_cfg=schedule_cfg)
         self.label_smooth = label_smooth
         self._criterion = nn.CrossEntropyLoss() if not self.label_smooth \
                           else CrossEntropyLabelSmooth(self.label_smooth)
+        self.aggregate_as_list = aggregate_as_list
+        self.return_param = return_param # return parameter number
 
     @classmethod
     def supported_data_types(cls):
         return ["image"]
 
     def perf_names(self):
-        return ["acc"]
+        if self.return_param:
+            return ["acc", "param_size"]
+        else:
+            return ["acc"]
 
     def get_perfs(self, inputs, outputs, targets, cand_net):
         """
         Get top-1 acc.
         """
-        return [float(accuracy(outputs, targets)[0]) / 100]
+        perfs = [float(accuracy(outputs, targets)[0]) / 100]
+        if self.return_param:
+            perfs.append(count_parameters(cand_net)[0] / 1.e6) # in million (M)
+        return perfs
 
     def get_reward(self, inputs, outputs, targets, cand_net):
         return self.get_perfs(inputs, outputs, targets, cand_net)[0]
@@ -42,6 +51,11 @@ class ClassificationObjective(BaseObjective):
         """
         return self._criterion(outputs, targets)
 
+    def aggregate_fn(self, perf_name, is_training=True):
+        if self.aggregate_as_list and perf_name == "acc":
+            return list
+        else:
+            return super().aggregate_fn(perf_name, is_training)
 
 
 class FLOPsRegClassificationObjective(ClassificationObjective):

@@ -12,10 +12,11 @@ import six
 
 from torch import nn
 
-from aw_nas.common import assert_rollout_type, group_and_sort_by_to_node
+from aw_nas.common import assert_rollout_type, group_and_sort_by_to_node, BaseRollout
 from aw_nas.weights_manager.base import CandidateNet
 from aw_nas.weights_manager.shared import SharedNet, SharedCell, SharedOp
 from aw_nas.utils import data_parallel, use_params
+from aw_nas.utils.parallel_utils import _check_support_candidate_member_mask
 
 __all__ = ["SubCandidateNet", "SuperNet"]
 
@@ -204,6 +205,7 @@ class SuperNet(SharedNet):
                  cell_use_preprocess=True, cell_group_kwargs=None,
                  cell_use_shortcut=False,
                  cell_shortcut_op_type="skip_connect",
+                 bn_affine=False,
                  candidate_member_mask=True, candidate_cache_named_members=False,
                  candidate_virtual_parameter_only=False, candidate_eval_no_grad=True):
         """
@@ -220,6 +222,8 @@ class SuperNet(SharedNet):
                 `begin_virtual` will only store/restore parameters, not buffers (e.g. running
                 mean/running std in BN layer).
         """
+        _check_support_candidate_member_mask(gpus, candidate_member_mask, self.NAME)
+
         super(SuperNet, self).__init__(search_space, device, rollout_type,
                                        cell_cls=DiscreteSharedCell, op_cls=DiscreteSharedOp,
                                        gpus=gpus,
@@ -232,7 +236,8 @@ class SuperNet(SharedNet):
                                        cell_use_preprocess=cell_use_preprocess,
                                        cell_group_kwargs=cell_group_kwargs,
                                        cell_use_shortcut=cell_use_shortcut,
-                                       cell_shortcut_op_type=cell_shortcut_op_type)
+                                       cell_shortcut_op_type=cell_shortcut_op_type,
+                                       bn_affine=bn_affine)
 
         # candidate net with/without parameter mask
         self.candidate_member_mask = candidate_member_mask
@@ -311,6 +316,20 @@ class SuperNet(SharedNet):
                 yield n, v
 
     # ---- APIs ----
+    def extract_features(self, inputs, rollout_or_genotypes, **kwargs):
+        if isinstance(rollout_or_genotypes, BaseRollout):
+            # from extract_features
+            genotype_list = rollout_or_genotypes.genotype_list()
+            genotypes = [g[1] for g in genotype_list]
+            genotypes_grouped = list(zip(
+                [group_and_sort_by_to_node(conns)
+                 for conns in genotypes[:self.search_space.num_cell_groups]],
+                genotypes[self.search_space.num_cell_groups:]))
+        else:
+            # from candidate net
+            genotypes_grouped = rollout_or_genotypes
+        return super().extract_features(inputs, genotypes_grouped, **kwargs)
+
     def assemble_candidate(self, rollout):
         return SubCandidateNet(self, rollout,
                                gpus=self.gpus,

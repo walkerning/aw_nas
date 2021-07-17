@@ -3,6 +3,7 @@
 import sys
 import math
 import copy
+import contextlib
 from functools import partial
 from collections import defaultdict, OrderedDict
 
@@ -16,6 +17,20 @@ from aw_nas.base import Component
 from aw_nas.evaluator.base import BaseEvaluator
 from aw_nas.utils.exception import expect, ConfigException
 
+
+def _dropout_eval_forward(module, inputs):
+    module.training = False
+    return nn.Dropout.forward(module, inputs)
+
+@contextlib.contextmanager
+def _patch_dropout_forward(model):
+    for _, module in model.named_modules():
+        if isinstance(module, nn.Dropout):
+            module.forward = partial(_dropout_eval_forward, module)
+    yield
+    for _, module in model.named_modules():
+        if isinstance(module, nn.Dropout):
+            module.forward = partial(nn.Dropout.forward, module)
 
 def _summary_inner_diagnostics(t_accs,
                                t_losses,
@@ -296,6 +311,7 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
             # If true, `evaluate_rollout` evaluates using the whole controller queue
             # rather a batch during training
             evaluate_with_whole_queue=False,
+            update_evaluator_report_perfs=True,
             # data queue configs: (surrogate, mepa, controller)
             data_portion=(0.1, 0.4, 0.5),
             mepa_as_surrogate=False,
@@ -303,6 +319,7 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
             shuffle_indice_file=None,
             shuffle_data_before_split_seed=None,
             workers_per_queue=2,
+            pin_memory_per_queue=True,
             # only work for differentiable controller now
             rollout_batch_size=1,
             # only for rnn data
@@ -406,6 +423,7 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
         self.disable_step_current = disable_step_current
         self.data_portion = data_portion
         self.workers_per_queue = workers_per_queue
+        self.pin_memory_per_queue = pin_memory_per_queue
         self.shuffle_data_before_split = shuffle_data_before_split
         self.shuffle_indice_file = shuffle_indice_file
         self.shuffle_data_before_split_seed = shuffle_data_before_split_seed
@@ -425,6 +443,7 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
         self.strict_load_weights_manager = strict_load_weights_manager
         self.report_inner_diagnostics = report_inner_diagnostics
         self.report_cont_data_diagnostics = report_cont_data_diagnostics
+        self.update_evaluator_report_perfs = update_evaluator_report_perfs
 
         # rnn specific configs
         self.bptt_steps = bptt_steps
@@ -627,47 +646,51 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
                                                 num_surrogate_step,
                                                 phase="controller_update")
         else:  # only for test
-            if eval_batches is not None:
-                eval_steps = eval_batches
-            else:
-                eval_steps = len(data_queue)
-                if portion is not None:
-                    expect(0.0 < portion < 1.0)
-                    eval_steps = int(portion * eval_steps)
+            # We need to use train mode BN
+            # let's make dropout in the eval mode
+            with _patch_dropout_forward(self.weights_manager):
+                if eval_batches is not None:
+                    eval_steps = eval_batches
+                else:
+                    eval_steps = len(data_queue)
+                    if portion is not None:
+                        expect(0.0 < portion < 1.0)
+                        eval_steps = int(portion * eval_steps)
 
-            for rollout in eval_rollouts:
-                cand_net = self.weights_manager.assemble_candidate(rollout)
-                if return_candidate_net:
-                    rollout.candidate_net = cand_net
-                # prepare criterions
-                criterions = [self._scalar_reward_func
-                              ] + self._report_loss_funcs
-                criterions = [
-                    partial(func, cand_net=cand_net) for func in criterions
-                ]
+                for i_rollout, rollout in enumerate(eval_rollouts):
+                    print("\r{}/{}".format(i_rollout, len(eval_rollouts)), end="")
+                    cand_net = self.weights_manager.assemble_candidate(rollout)
+                    if return_candidate_net:
+                        rollout.candidate_net = cand_net
+                    # prepare criterions
+                    criterions = [self._scalar_reward_func
+                                  ] + self._report_loss_funcs
+                    criterions = [
+                        partial(func, cand_net=cand_net) for func in criterions
+                    ]
 
-                # run surrogate steps and evalaute on queue
-                # NOTE: if virtual buffers, must use train mode here...
-                # if not virtual buffers(virtual parameter only), can use train/eval mode
-                aggregate_fns = [
-                    self.objective.aggregate_fn(name, is_training=False)
-                    for name in self._all_perf_names
-                ]
-                eval_func = lambda: cand_net.eval_queue(
-                    data_queue,
-                    criterions=criterions,
-                    steps=eval_steps,
-                    # NOTE: In parameter-sharing evaluation, let's keep using train-mode BN!!!
-                    mode="train",
-                    # if test, differentiable rollout does not need to set detach_arch=True too
-                    aggregate_fns=aggregate_fns,
-                    **hid_kwargs)
-                res = self._run_surrogate_steps(eval_func,
-                                                cand_net,
-                                                self.derive_surrogate_steps,
-                                                phase="controller_test")
-                rollout.set_perfs(OrderedDict(zip(
-                    self._all_perf_names, res)))  # res is already flattend
+                    # run surrogate steps and evalaute on queue
+                    # NOTE: if virtual buffers, must use train mode here...
+                    # if not virtual buffers(virtual parameter only), can use train/eval mode
+                    aggregate_fns = [
+                        self.objective.aggregate_fn(name, is_training=False)
+                        for name in self._all_perf_names
+                    ]
+                    eval_func = lambda: cand_net.eval_queue(
+                        data_queue,
+                        criterions=criterions,
+                        steps=eval_steps,
+                        # NOTE: In parameter-sharing evaluation, let's keep using train-mode BN!!!
+                        mode="train",
+                        # if test, differentiable rollout does not need to set detach_arch=True too
+                        aggregate_fns=aggregate_fns,
+                        **hid_kwargs)
+                    res = self._run_surrogate_steps(eval_func,
+                                                    cand_net,
+                                                    self.derive_surrogate_steps,
+                                                    phase="controller_test")
+                    rollout.set_perfs(OrderedDict(zip(
+                        self._all_perf_names, res)))  # res is already flattend
 
         # support CompareRollout
         if self.rollout_type == "compare":
@@ -727,8 +750,12 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
             cand_net = self.weights_manager.assemble_candidate(rollout)
 
             # prepare criterions
-            eval_criterions = [self._scalar_reward_func
-                               ] + self._report_loss_funcs
+            if self.update_evaluator_report_perfs:
+                # report get_perfs results
+                eval_criterions = [self._scalar_reward_func] + self._report_perf_funcs
+            else:
+                eval_criterions = [self._scalar_reward_func]
+
             eval_criterions = [
                 partial(func, cand_net=cand_net) for func in eval_criterions
             ]
@@ -814,12 +841,21 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
 
         del all_gradients
 
+        stats_res = OrderedDict(
+            zip(self._all_perf_names_update_evaluator, np.mean(report_stats, axis=0)))
+
         if isinstance(self.mepa_scheduler,
                       torch.optim.lr_scheduler.ReduceLROnPlateau):
-            self.plateau_scheduler_loss.append(report_stats[0][1])
+            self.plateau_scheduler_loss.append(stats_res["loss"])
         # return stats
-        return OrderedDict(
-            zip(self._all_perf_names, np.mean(report_stats, axis=0)))
+        return stats_res
+
+    def reset_dataloader(self, is_training):
+        if is_training:
+            for queue in [self.surrogate_queue, self.mepa_queue, self.controller_queue]:
+                queue.reset()
+        else:
+            self.derive_queue.reset()
 
     def on_epoch_start(self, epoch):
         super(MepaEvaluator, self).on_epoch_start(epoch)
@@ -1256,11 +1292,16 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
         self._perf_names = self.objective.perf_names()
         self._all_perf_names = utils.flatten_list(
             ["reward", "loss", self._perf_names])
+        self._all_perf_names_update_evaluator = utils.flatten_list(
+            ["loss", "reward", self._perf_names])
         # criterion funcs for meta parameter training
         self._mepa_loss_func = partial(self.objective.get_loss,
                                        add_controller_regularization=False,
                                        add_evaluator_regularization=True)
         # criterion funcs for log/report
+        self._report_perf_funcs = [
+            self.objective.get_perfs
+        ]
         self._report_loss_funcs = [
             partial(self.objective.get_loss_item,
                     add_controller_regularization=False,
@@ -1270,7 +1311,7 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
         self._criterions_related_attrs = [
             "_reward_func", "_reward_kwargs", "_scalar_reward_func",
             "_reward_kwargs", "_perf_names", "_mepa_loss_func",
-            "_report_loss_funcs"
+            "_report_perf_funcs", "_report_loss_funcs"
         ]
 
     def _init_data_queues_and_hidden(self, data_type, data_portion,
@@ -1374,6 +1415,7 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
                                         shuffle=self.shuffle_data_before_split,
                                         shuffle_seed=self.shuffle_data_before_split_seed,
                                         num_workers=self.workers_per_queue,
+                                        pin_memory=self.pin_memory_per_queue,
                                         multiprocess=self.multiprocess,
                                         shuffle_indice_file=self.shuffle_indice_file)
 
@@ -1426,8 +1468,15 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
     def set_dataset(self, dataset):
         self.dataset = dataset
         self._data_type = self.dataset.data_type()
-        self._init_data_queues_and_hidden(self._data_type, self.data_portion,
-                                          self.mepa_as_surrogate)
+        if self.multiprocess:
+            self.logger.warning(
+                "When loading a multiprocess evaluator from a pickle file, "
+                "if no process group is initialized, "
+                "the data queues cannot be initialized properly, evaluator methods might not work. "
+                "However, `evaluator.weights_manager` can be used without problem.")
+        else:
+            self._init_data_queues_and_hidden(
+                self._data_type, self.data_portion, self.mepa_as_surrogate)
 
     def __setstate__(self, state):
         super(MepaEvaluator, self).__setstate__(state)

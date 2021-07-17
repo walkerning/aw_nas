@@ -1,0 +1,73 @@
+controller_cfg:
+  avoid_repeat: true
+  deiso: true
+  mode: eval
+  rollout_type: nasbench-201
+controller_type: nasbench-201-rs
+dataset_cfg:
+  cutout: null
+dataset_type: cifar10
+evaluator_cfg:
+  batch_size: 128
+  bptt_steps: 35
+  controller_surrogate_steps: 0
+  data_portion:
+  - 0.0
+  - 0.8
+  - 0.2
+  mepa_as_surrogate: false
+  mepa_optimizer:
+    lr: 0.05
+    momentum: 0.9
+    type: SGD
+    weight_decay: 0.0005
+  mepa_samples: 1
+  mepa_scheduler:
+    factor: 0.5
+    patience: 30
+    type: ReduceLROnPlateau
+  mepa_surrogate_steps: 0
+  rollout_type: nasbench-201
+  schedule_cfg: null
+  surrogate_optimizer: null
+  surrogate_scheduler: null
+evaluator_type: mepa
+
+objective_type: zero-shot
+objective_cfg:
+  # Schedulable attributes:
+  perf_names: ['grad_norm', 'snip', 'grasp', 'fisher', 'jacob_cov', 'plain', 'synflow_bn', 'synflow']
+  schedule_cfg: null
+  aggregate_as_list: true
+
+rollout_type: nasbench-201
+search_space_cfg:
+  load_nasbench: false
+  num_layers: 17
+  vertices: 4
+search_space_type: nasbench-201
+trainer_cfg:
+  controller_optimizer: false
+  controller_samples: 1
+  controller_scheduler: null
+  controller_steps: 0
+  controller_train_begin: 2000
+  controller_train_every: 1
+  derive_samples: 10
+  epochs: 1400
+  evaluator_steps: null
+  interleave_controller_every: null
+  rollout_type: nasbench-201
+  schedule_cfg: null
+  test_every: 2000
+trainer_type: simple
+weights_manager_cfg:
+  candidate_cache_named_members: true
+  candidate_member_mask: true
+  dropout_rate: 0.1
+  init_channels: 16
+  max_grad_norm: 5.0
+  num_classes: 10
+  rollout_type: nasbench-201
+  stem_multiplier: 1
+weights_manager_type: nasbench-201

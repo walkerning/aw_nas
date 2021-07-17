@@ -1,0 +1,138 @@
+rollout_type: nb301
+## ---- Component search_space ----
+# ---- Type nb301 ----
+search_space_type: nb301
+search_space_cfg:
+  # Schedulable attributes: 
+  {}
+# ---- End Type nb301 ----
+## ---- End Component search_space ----
+
+## ---- Component dataset ----
+# ---- Type cifar10 ----
+dataset_type: cifar10
+dataset_cfg:
+  # Schedulable attributes: 
+  cutout: null
+# ---- End Type cifar10 ----
+# ## ---- End Component dataset ----
+
+## ---- Component controller ----
+# ---- Type random_sample ----
+controller_type: random_sample
+controller_cfg:
+  # Schedulable attributes: 
+  rollout_type: nb301
+  mode: eval
+  schedule_cfg: null
+# ---- End Type random_sample ----
+## ---- End Component controller ----
+
+## ---- Component evaluator ----
+# ---- Type mepa ----
+# NOTE: shared weights evaluator
+evaluator_type: mepa
+evaluator_cfg:
+  # Schedulable attributes: controller_surrogate_steps, mepa_surrogate_steps, mepa_samples
+  rollout_type: nb301
+  batch_size: 128
+  mepa_optimizer:
+    lr: 0.05
+    momentum: 0.9
+    type: SGD
+    weight_decay: 0.0005
+  mepa_scheduler:
+    patience: 30
+    factor: 0.5
+    type: ReduceLROnPlateau
+  surrogate_optimizer: null
+  surrogate_scheduler: null
+  mepa_as_surrogate: false
+  bptt_steps: 35
+  mepa_samples: 1
+  evaluate_with_whole_queue: false
+
+  data_portion:
+  - 0.0
+  - 0.8
+  - 0.2
+  shuffle_data_before_split: false
+  shuffle_indice_file: null
+  shuffle_data_before_split_seed: null
+
+  load_optimizer: true
+  load_scheduler: true
+  strict_load_weights_manager: true
+
+  controller_surrogate_steps: 0
+  mepa_surrogate_steps: 0
+  surrogate_optimizer: null
+  schedule_every_batch: false
+  workers_per_queue: 2
+  rollout_batch_size: 1
+  multiprocess: false
+  schedule_cfg: null
+# ---- End Type mepa ----
+## ---- End Component evaluator ----
+
+## ---- Component weights_manager ----
+# ---- Type supernet ----
+# NOTE: CNN search space supernet, use together with mepa evaluator
+weights_manager_type: supernet
+weights_manager_cfg:
+  # Schedulable attributes: 
+  rollout_type: nb301
+  gpus: []
+  num_classes: 10
+  init_channels: 16
+  stem_multiplier: 3
+  max_grad_norm: 5.0
+  dropout_rate: 0.1
+  use_stem: conv_bn_3x3
+  stem_stride: 1
+  stem_affine: true
+  preprocess_op_type: null
+  cell_use_preprocess: true
+  cell_group_kwargs: null
+  cell_use_shortcut: false
+  cell_shortcut_op_type: skip_connect
+  candidate_member_mask: true
+  candidate_cache_named_members: false
+  candidate_virtual_parameter_only: false
+  candidate_eval_no_grad: false
+# ---- End Type supernet ----
+## ---- End Component weights_manager ----
+
+## ---- Component objective ----
+# ---- Type classification ----
+objective_type: zero-shot
+objective_cfg:
+  # Schedulable attributes:
+  perf_names: ['grad_norm', 'snip', 'grasp', 'fisher', 'jacob_cov', 'plain', 'synflow_bn', 'synflow']
+  schedule_cfg: null
+# ---- End Type classification ----
+## ---- End Component objective ----
+
+## ---- Component trainer ----
+# ---- Type simple ----
+trainer_type: simple
+trainer_cfg:
+  # Schedulable attributes: controller_samples, derive_samples
+  rollout_type: nb301
+  is_differentiable: false
+  epochs: 1500
+  test_every: 2000
+  controller_optimizer: null
+  controller_scheduler: null
+  controller_samples: 1
+  derive_samples: 8
+  rollout_batch_size: 1
+  evaluator_steps: 0
+  #controller_steps: null
+  controller_train_every: 1
+  controller_train_begin: 1
+  interleave_controller_every: null
+  schedule_cfg: null
+# ---- End Type simple ----
+## ---- End Component trainer ----
+

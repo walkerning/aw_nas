@@ -13,6 +13,7 @@ from typing import List, Optional, NamedTuple
 from collections import defaultdict, OrderedDict
 
 import six
+import yaml
 import numpy as np
 import torch
 from torch import nn
@@ -33,6 +34,7 @@ from aw_nas.utils import (
     use_params,
     softmax,
 )
+from aw_nas.utils.parallel_utils import _check_support_candidate_member_mask
 from aw_nas.weights_manager.base import BaseWeightsManager, CandidateNet
 from aw_nas.final.base import FinalModel
 
@@ -75,9 +77,37 @@ class NasBench201SearchSpace(SearchSpace):
         if self.load_nasbench:
             self._init_nasbench()
 
+    def canonicalize(self, rollout):
+        # TODO
+        arch = rollout.arch
+        num_vertices = rollout.search_space.num_vertices
+        op_choices = rollout.search_space.ops_choices
+        S = []
+        S.append("0")
+        res = ""
+        for i in range(1, num_vertices):
+            preS = []
+            s = ""
+            for j in range(i):
+                if ((int(arch[i][j]) == 0) or (S[j] == "#")):
+                    s = "#"
+                elif (int(arch[i][j]) == 1):
+                    s = S[j]
+                else:
+                    s = "(" + S[j] + ")" + "@" + op_choices[int(arch[i][j])]
+                preS.append(s)
+            preS.sort()
+            s = ""
+            for j in range(i):
+                s = s + preS[j]
+            S.append(s)
+            res = s
+        return res
+
     def __getstate__(self):
         state = super(NasBench201SearchSpace, self).__getstate__().copy()
-        del state["api"]
+        if "api" in state:
+            del state["api"]
         return state
 
     def __setstate__(self, state):
@@ -387,6 +417,7 @@ class NasBench201RSController(BaseController):
         op_type=0,
         pickle_file="",
         text_file="",
+            shuffle_indices_avoid_repeat=True,
         schedule_cfg=None,
     ):
         super(NasBench201RSController, self).__init__(
@@ -405,15 +436,35 @@ class NasBench201RSController(BaseController):
         self.deiso = deiso
         self.pickle_file = pickle_file
         self.text_file = text_file
+        self.shuffle_indices_avoid_repeat = shuffle_indices_avoid_repeat
+        self.lines = None
         if self.text_file:
-            fo = open(self.text_file)
-            self.lines = fo.readlines()
-            fo.close()
-            self.arch_num = len(self.lines)
+            with open(self.text_file) as rf:
+                self.lines = rf.readlines()
         elif self.pickle_file:
-            fo = open(self.pickle_file, "rb")
-            self.lines = pickle.load(fo)
-            fo.close()
+            with open(self.pickle_file, "rb") as rf:
+                self.lines = pickle.load(rf)
+        else:
+            # if neither text_file nor pickle_file is speficied,
+            # assume non-isom{num op choices}.txt is under the awnas data dir
+            base_dir = os.path.join(utils.get_awnas_dir("AWNAS_DATA", "data"), "nasbench-201")
+            isom_table_fname = os.path.join(base_dir, "non-isom{}.txt".format(self.num_op_choices))
+            if self.deiso:
+                assert os.path.exists(isom_table_fname)
+                with open(isom_table_fname) as rf:
+                    self.lines = rf.readlines()
+        if self.lines is not None:
+            self.arch_num = len(self.lines)
+        else:
+            self.arch_num = 15625
+
+        if self.deiso:
+            print("Deiso arch num: ", self.arch_num)
+
+        self.index = 0
+        self.indices = np.arange(self.arch_num)
+        if self.shuffle_indices_avoid_repeat:
+            np.random.shuffle(self.indices)
 
     def random_sample_nonisom(self):
         ind = np.random.randint(low=0, high=self.arch_num)
@@ -448,7 +499,7 @@ class NasBench201RSController(BaseController):
         rollouts = []
         if self.avoid_repeat:
             if self.deiso or self.num_op_choices != 5:
-                assert n == self.arch_num
+                # assert n == self.arch_num
                 for i in range(n):
                     line = self.lines[i].strip()
                     rollouts.append(
@@ -460,32 +511,57 @@ class NasBench201RSController(BaseController):
                 for line in self.lines:
                     rollouts.append(NasBench201Rollout(line[0], self.search_space))
             else:
-                indexes = np.random.choice(np.arange(15625), size=n, replace=False)
-                for i in indexes:
-                    rollouts.append(
-                        NasBench201Rollout(
+                next_index = self.index + n
+                # indexes = np.random.choice(np.arange(15625), size=n, replace=False)
+                if self.text_file:
+                    rollouts = [NasBench201Rollout(
+                        self.search_space.str2matrix(self.lines[self.indices[i]].strip()),
+                        self.search_space)
+                                for i in range(self.index, min(next_index, 15625))]
+                else:
+                    rollouts = [NasBench201Rollout(
+                        self.search_space.api.str2matrix(
+                            self.search_space.api.query_by_index(self.indices[i]).arch_str
+                        ),
+                        self.search_space,
+                    ) for i in range(self.index, min(next_index, 15625))]
+
+                if next_index >= 15625:
+                    # reshuffle the indices
+                    if self.shuffle_indices_avoid_repeat:
+                        np.random.shuffle(self.indices)
+                    next_index = next_index - 15625
+                    if self.text_file:
+                        rollouts += [NasBench201Rollout(
+                            self.search_space.str2matrix(self.lines[self.indices[i]].strip()),
+                            self.search_space)
+                                     for i in range(0, next_index)]
+                    else:
+                        rollouts += [NasBench201Rollout(
                             self.search_space.api.str2matrix(
-                                self.search_space.api.query_by_index(i).arch_str
+                                self.search_space.api.query_by_index(self.indices[i]).arch_str
                             ),
-                            self.search_space,
-                        )
-                    )
+                            self.search_space)
+                                     for i in range(0, next_index)]
+
+                self.index = next_index
             return rollouts
+
         if self.fair:
             assert n == self.num_op_choices
-            archs = np.zeros([self.num_ops, self.num_op_choices])
-            for i in range(self.num_ops):
-                archs[i, :] = np.random.permutation(np.arange(self.num_op_choices))
+            archs = np.zeros([self.num_op_choices,
+                              self.search_space.num_vertices,
+                              self.search_space.num_vertices])
+            ops = np.array([
+                np.random.permutation(np.arange(self.num_op_choices))
+                for _ in range(self.num_ops)
+            ]).T
             for i in range(self.num_op_choices):
-                arch = np.zeros([self.num_vertices, self.num_vertices])
-                ind = 0
-                for from_ in range(self.num_vertices - 1):
-                    for to_ in range(from_ + 1, self.num_vertices):
-                        arch[to_, from_] = archs[ind, i]
-                        ind += 1
-                if self.check_valid_arch(arch) or not self.check_valid:
-                    rollouts.append(NasBench201Rollout(arch, self.search_space))
+                archs[i][self.search_space.idx] = ops[i]
+            rollouts = [NasBench201Rollout(arch, self.search_space) for arch in archs
+                        if self.check_valid_arch(arch) or not self.check_valid]
             return rollouts
+
         for i in range(n):
             while 1:
                 if self.deiso:
@@ -523,7 +599,7 @@ class NasBench201RSController(BaseController):
         pass
 
     def load(self, path):
-        pass
+        self.logger.info("nasbench-201-rs controller would not be loaded from the disk")
 
 
 class GCN(nn.Module):
@@ -1462,7 +1538,7 @@ class NB201DiffSharedCell(nn.Module):
 
 class NB201SharedCell(nn.Module):
     def __init__(
-        self, op_cls, search_space, layer_index, num_channels, num_out_channels, stride
+            self, op_cls, search_space, layer_index, num_channels, num_out_channels, stride, bn_affine=False
     ):
         super(NB201SharedCell, self).__init__()
         self.search_space = search_space
@@ -1484,6 +1560,7 @@ class NB201SharedCell(nn.Module):
                     self.num_out_channels,
                     stride=self.stride,
                     primitives=self._primitives,
+                    bn_affine=bn_affine
                 )
                 self.edge_mod.add_module(
                     "f_{}_t_{}".format(from_, to_), self.edges[from_][to_]
@@ -1502,19 +1579,26 @@ class NB201SharedCell(nn.Module):
             from_, to_ = self._edge_name_pattern.match(edge_name).groups()
             self.edges[int(from_)][int(to_)] = edge_mod
 
-    def forward(self, inputs, genotype):
+    def forward(self, inputs, genotype, **kwargs):
         states_ = [inputs]
-        valid_input = [0]
-        for to_ in range(1, self.search_space.num_vertices):
-            for input_ in valid_input:
-                if genotype[to_][input_] > 0:
-                    valid_input.append(to_)
-                    break
-        valid_output = [self.search_space.num_vertices - 1]
-        for from_ in range(self.search_space.num_vertices - 2, -1, -1):
-            for output_ in valid_output:
-                if genotype[output_][from_] > 0:
-                    valid_output.append(from_)
+        if "valid_input" in kwargs:
+            valid_input = kwargs["valid_input"]
+        else:
+            valid_input = [0]
+            for to_ in range(1, self.search_space.num_vertices):
+                for input_ in valid_input:
+                    if genotype[to_][input_] > 0:
+                        valid_input.append(to_)
+                        break
+        if "valid_output" in kwargs:
+            valid_output = kwargs["valid_output"]
+        else:
+            valid_output = [self.search_space.num_vertices - 1]
+            for from_ in range(self.search_space.num_vertices - 2, -1, -1):
+                for output_ in valid_output:
+                    if genotype[output_][from_] > 0:
+                        valid_output.append(from_)
+
         for to_ in range(1, self._vertices):
             state_ = torch.zeros(inputs.shape).to(inputs.device)
             for from_ in range(to_):
@@ -1546,13 +1630,13 @@ class NB201SharedOp(nn.Module):
     The operation on an edge, consisting of multiple primitives.
     """
 
-    def __init__(self, C, C_out, stride, primitives):
+    def __init__(self, C, C_out, stride, primitives, bn_affine=False):
         super(NB201SharedOp, self).__init__()
         self.primitives = primitives
         self.stride = stride
         self.p_ops = nn.ModuleList()
         for primitive in self.primitives:
-            op = ops.get_op(primitive)(C, C_out, stride, False)
+            op = ops.get_op(primitive)(C, C_out, stride, affine=bn_affine)
             self.p_ops.append(op)
 
     def forward(self, x, op_type):
@@ -1574,7 +1658,7 @@ class NB201CandidateNet(CandidateNet):
         member_mask,
         gpus=tuple(),
         cache_named_members=False,
-        eval_no_grad=True,
+        eval_no_grad=True
     ):
         super(NB201CandidateNet, self).__init__(eval_no_grad=eval_no_grad)
         self.super_net = super_net
@@ -1591,6 +1675,21 @@ class NB201CandidateNet(CandidateNet):
 
         self.genotype_arch = rollout.arch
         self.genotype = rollout.genotype
+
+        # get valid input/output
+        valid_input = [0]
+        for to_ in range(1, self.search_space.num_vertices):
+            for input_ in valid_input:
+                if self.genotype_arch[to_][input_] > 0:
+                    valid_input.append(to_)
+                    break
+        valid_output = [self.search_space.num_vertices - 1]
+        for from_ in range(self.search_space.num_vertices - 2, -1, -1):
+            for output_ in valid_output:
+                if self.genotype_arch[output_][from_] > 0:
+                    valid_output.append(from_)
+        self.valid_input = set(valid_input)
+        self.valid_output = set(valid_output)
 
     def reset_flops(self):
         self._flops_calculated = False
@@ -1609,7 +1708,8 @@ class NB201CandidateNet(CandidateNet):
             ]
         else:
             arch = self.genotype_arch
-        return self.super_net.forward(inputs, arch)
+        return self.super_net.forward(
+            inputs, arch, valid_input=self.valid_input, valid_output=self.valid_output)
 
     def forward(self, inputs, single=False, **kwargs):  # pylint: disable=arguments-differ
         if single or not self.gpus or len(self.gpus) == 1:
@@ -1729,15 +1829,25 @@ class BaseNB201SharedNet(BaseWeightsManager, nn.Module):
         use_stem="conv_bn_3x3",
         stem_stride=1,
         stem_affine=True,
+        reduce_affine=True,
+        cell_bn_affine=False,
         candidate_member_mask=True,
         candidate_cache_named_members=False,
         candidate_eval_no_grad=True,
+        iso_mapping_file=None
     ):
         super(BaseNB201SharedNet, self).__init__(search_space, device, rollout_type)
         nn.Module.__init__(self)
 
+        if iso_mapping_file is not None:
+            with open(iso_mapping_file, "r") as rf:
+                self.iso_mapping = yaml.load(rf)
+        else:
+            self.iso_mapping = None
+
         # optionally data parallelism in SharedNet
         self.gpus = gpus
+        _check_support_candidate_member_mask(self.gpus, candidate_member_mask, self.NAME)
 
         self.num_classes = num_classes
         # init channel number of the first cell layers,
@@ -1798,10 +1908,11 @@ class BaseNB201SharedNet(BaseWeightsManager, nn.Module):
                     num_channels=_num_channels,
                     num_out_channels=_num_out_channels,
                     stride=stride,
+                    bn_affine=cell_bn_affine
                 )
             else:
                 cell = ops.get_op("NB201ResidualBlock")(
-                    _num_channels, _num_out_channels, stride=2, affine=True
+                    _num_channels, _num_out_channels, stride=2, affine=reduce_affine
                 )
             self.cells.append(cell)
         self.lastact = nn.Sequential(
@@ -1895,6 +2006,11 @@ class BaseNB201SharedNet(BaseWeightsManager, nn.Module):
         self.to(device)
 
     def forward(self, inputs, genotype, **kwargs):  # pylint: disable=arguments-differ
+        if self.iso_mapping:
+            # map to the representing arch
+            genotype = self.search_space.rollout_from_genotype(
+                self.iso_mapping[NasBench201Rollout(
+                    genotype, search_space=self.search_space).genotype]).arch
         if not self.use_stem:
             states = inputs
         elif isinstance(self.use_stem, (list, tuple)):
@@ -1959,9 +2075,12 @@ class NB201SharedNet(BaseNB201SharedNet):
         use_stem="conv_bn_3x3",
         stem_stride=1,
         stem_affine=True,
+        reduce_affine=True,
+        cell_bn_affine=False,
         candidate_member_mask=True,
         candidate_cache_named_members=False,
         candidate_eval_no_grad=True,
+        iso_mapping_file=None
     ):
         super(NB201SharedNet, self).__init__(
             search_space,
@@ -1978,9 +2097,12 @@ class NB201SharedNet(BaseNB201SharedNet):
             use_stem=use_stem,
             stem_stride=stem_stride,
             stem_affine=stem_affine,
+            reduce_affine=reduce_affine,
+            cell_bn_affine=cell_bn_affine,
             candidate_member_mask=candidate_member_mask,
             candidate_cache_named_members=candidate_cache_named_members,
             candidate_eval_no_grad=candidate_eval_no_grad,
+            iso_mapping_file=iso_mapping_file
         )
 
 
@@ -2001,6 +2123,7 @@ class NB201DiffSharedNet(BaseNB201SharedNet):
         use_stem="conv_bn_3x3",
         stem_stride=1,
         stem_affine=True,
+        reduce_affine=True,
         candidate_member_mask=True,
         candidate_cache_named_members=False,
         candidate_eval_no_grad=True,
@@ -2020,6 +2143,7 @@ class NB201DiffSharedNet(BaseNB201SharedNet):
             use_stem=use_stem,
             stem_stride=stem_stride,
             stem_affine=stem_affine,
+            reduce_affine=reduce_affine,
             candidate_member_mask=candidate_member_mask,
             candidate_cache_named_members=candidate_cache_named_members,
             candidate_eval_no_grad=candidate_eval_no_grad,
@@ -2044,6 +2168,7 @@ class NB201GenotypeModel(FinalModel):
         use_stem="conv_bn_3x3",
         stem_stride=1,
         stem_affine=True,
+        reduce_affine=True,
         schedule_cfg=None,
     ):
         super(NB201GenotypeModel, self).__init__(schedule_cfg)
@@ -2108,7 +2233,7 @@ class NB201GenotypeModel(FinalModel):
                 )
             else:
                 cell = ops.get_op("NB201ResidualBlock")(
-                    _num_channels, _num_out_channels, stride=2, affine=True
+                    _num_channels, _num_out_channels, stride=2, affine=reduce_affine
                 )
             # TODO: support specify concat explicitly
             self.cells.append(cell)
@@ -2197,6 +2322,7 @@ class NB201GenotypeCell(nn.Module):
         num_channels,
         num_out_channels,
         stride,
+        bn_affine=False
     ):
         super(NB201GenotypeCell, self).__init__()
         self.search_space = search_space
@@ -2220,7 +2346,7 @@ class NB201GenotypeCell(nn.Module):
                     self.num_channels,
                     self.num_out_channels,
                     stride=self.stride,
-                    affine=False,
+                    affine=bn_affine
                 )
 
                 self.edge_mod.add_module(

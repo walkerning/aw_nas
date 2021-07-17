@@ -1,0 +1,107 @@
+rollout_type: nasbench-201
+## ---- Component search_space ----
+# ---- Type nasbench-201 ----
+search_space_type: nasbench-201
+search_space_cfg:
+  # Schedulable attributes: 
+  num_layers: 17
+  vertices: 4
+  load_nasbench: false
+# ---- End Type nasbench-201 ----
+## ---- End Component search_space ----
+
+## ---- Component dataset ----
+# ---- Type cifar10 ----
+dataset_type: cifar10
+dataset_cfg:
+  # Schedulable attributes: 
+  cutout: null
+# ---- End Type cifar10 ----
+## ---- End Component dataset ----
+
+## ---- Component controller ----
+controller_type: nasbench-201-rs
+controller_cfg:
+  # Schedulable attributes: 
+  rollout_type: nasbench-201
+  mode: eval
+  deiso: true
+## ---- End Component controller ----
+
+## ---- Component evaluator ----
+# ---- Type mepa ----
+evaluator_type: mepa
+evaluator_cfg:
+  # Schedulable attributes: controller_surrogate_steps, mepa_surrogate_steps, mepa_samples
+  rollout_type: nasbench-201
+  batch_size: 512
+  controller_surrogate_steps: 0
+  mepa_surrogate_steps: 0
+  mepa_optimizer:
+    lr: 0.05
+    momentum: 0.9
+    type: SGD
+    weight_decay: 0.0005
+  mepa_scheduler:
+    patience: 30
+    factor: 0.5
+    type: ReduceLROnPlateau
+  surrogate_optimizer: null
+  surrogate_scheduler: null
+  mepa_samples: 1
+  data_portion:
+  - 0.0
+  - 0.8
+  - 0.2
+  mepa_as_surrogate: false
+  bptt_steps: 35
+  schedule_cfg: null
+# ---- End Type mepa ----
+## ---- End Component evaluator ----
+
+## ---- Component weights_manager ----
+# ---- Type supernet ----
+weights_manager_type: nasbench-201
+weights_manager_cfg:
+  # Schedulable attributes: 
+  rollout_type: nasbench-201
+  num_classes: 10
+  init_channels: 16
+  stem_multiplier: 1
+  max_grad_norm: 5.0
+  dropout_rate: 0.1
+  candidate_member_mask: true
+  candidate_cache_named_members: true
+# ---- End Type supernet ----
+## ---- End Component weights_manager ----
+
+## ---- Component objective ----
+# ---- Type classification ----
+objective_type: classification
+objective_cfg:
+  # Schedulable attributes: 
+  {}
+# ---- End Type classification ----
+## ---- End Component objective ----
+
+## ---- Component trainer ----
+# ---- Type simple ----
+trainer_type: simple
+trainer_cfg:
+  # Schedulable attributes: controller_samples, derive_samples
+  rollout_type: nasbench-201
+  epochs: 1400
+  test_every: 2000
+  controller_optimizer: null
+  controller_scheduler: null
+  controller_samples: 1
+  derive_samples: 10
+  evaluator_steps: null
+  controller_steps: 0
+  controller_train_every: 1
+  controller_train_begin: 2000
+  interleave_controller_every: null
+  schedule_cfg: null
+  controller_optimizer: false
+# ---- End Type simple ----
+## ---- End Component trainer ----

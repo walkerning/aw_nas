@@ -7,13 +7,13 @@ import torch
 from torch import nn
 
 from aw_nas.common import assert_rollout_type
-from aw_nas.ops import *
+from aw_nas import utils
 from aw_nas.utils import data_parallel
 from aw_nas.utils.common_utils import make_divisible
 from aw_nas.utils.exception import expect
-from aw_nas.utils import DistributedDataParallel
 from aw_nas.weights_manager.base import BaseWeightsManager, CandidateNet
 from aw_nas.weights_manager.ofa_backbone import BaseBackboneArch
+from aw_nas.weights_manager.wrapper import BaseBackboneWeightsManager
 
 try:
     from torch.nn import SyncBatchNorm
@@ -26,7 +26,7 @@ except ImportError:
 __all__ = ["OFACandidateNet", "OFASupernet"]
 
 
-class OFASupernet(BaseWeightsManager, nn.Module):
+class OFASupernet(BaseBackboneWeightsManager, nn.Module):
     NAME = "ofa_supernet"
 
     def __init__(
@@ -37,8 +37,6 @@ class OFASupernet(BaseWeightsManager, nn.Module):
         backbone_type="mbv2_backbone",
         backbone_cfg={},
         num_classes=10,
-        multiprocess=False,
-        gpus=tuple(),
         schedule_cfg=None,
     ):
         super(OFASupernet, self).__init__(
@@ -49,20 +47,8 @@ class OFASupernet(BaseWeightsManager, nn.Module):
             device, schedule_cfg=schedule_cfg, **backbone_cfg
         )
 
-        self.multiprocess = multiprocess
-        self.gpus = gpus
-        object.__setattr__(self, "parallel_model", self)
-
         self.reset_flops()
         self.set_hook()
-        self._parallelize()
-
-    def _parallelize(self):
-        if self.multiprocess:
-            net = convert_sync_bn(self).to(self.device)
-            object.__setattr__(
-                self, "parallel_model", DistributedDataParallel(net, self.gpus, find_unused_parameters=True)
-            )
 
     def reset_flops(self):
         self._flops_calculated = False
@@ -71,8 +57,11 @@ class OFASupernet(BaseWeightsManager, nn.Module):
     def forward(self, inputs, rollout=None):
         return self.backbone.forward_rollout(inputs, rollout)
 
-    def extract_features(self, inputs, p_levels, rollout=None):
-        return self.backbone.extract_features(inputs, p_levels, rollout)
+    def extract_features(self, inputs, rollout=None):
+        return self.backbone.extract_features(inputs, rollout)
+
+    def get_feature_channel_num(self, p_levels):
+        return self.backbone.get_feature_channel_num(p_levels)
 
     def set_hook(self):
         for name, module in self.named_modules():
@@ -97,7 +86,7 @@ class OFASupernet(BaseWeightsManager, nn.Module):
 
     # ---- APIs ----
     def assemble_candidate(self, rollout):
-        model = OFACandidateNet(self, rollout, gpus=self.gpus)
+        model = OFACandidateNet(self, rollout)
         return model
 
     @classmethod
@@ -113,7 +102,6 @@ class OFASupernet(BaseWeightsManager, nn.Module):
             {
                 "epoch": self.epoch,
                 "state_dict": self.state_dict(),
-                # "norms": self.norms
             },
             path,
         )
@@ -138,18 +126,19 @@ class OFASupernet(BaseWeightsManager, nn.Module):
         self.device = device
         self.to(device)
 
+    def finalize(self, rollout):
+        pass
+
 
 class OFACandidateNet(CandidateNet):
     """
     The candidate net for SuperNet weights manager.
     """
 
-    def __init__(self, super_net, rollout, gpus=tuple()):
+    def __init__(self, super_net, rollout):
         super(OFACandidateNet, self).__init__()
         self.super_net = super_net
         self._device = self.super_net.device
-        self.gpus = gpus
-        self.multiprocess = super_net.multiprocess
         self.search_space = super_net.search_space
 
         self._flops_calculated = False
@@ -159,16 +148,6 @@ class OFACandidateNet(CandidateNet):
     def get_device(self):
         return self._device
 
-    def _forward(self, inputs):
+    def forward(self, inputs):
         out = self.super_net.forward(inputs, self.rollout)
         return out
-
-    def forward(self, inputs, single=False):  # pylint: disable=arguments-differ
-        if self.multiprocess:
-            out = self.super_net.parallel_model.forward(inputs, self.rollout)
-        elif len(self.gpus) > 1:
-            out = data_parallel(
-                self, (inputs,), self.gpus, module_kwargs={"single": True}
-            )
-        else:
-            return self._forward(inputs)

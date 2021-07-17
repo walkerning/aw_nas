@@ -22,7 +22,7 @@ dataset_cfg:
 controller_type: random_sample
 controller_cfg:
   # Schedulable attributes: 
-  rollout_type: null
+  rollout_type: nb301
   mode: eval
   schedule_cfg: null
 # ---- End Type random_sample ----
@@ -85,7 +85,7 @@ controller_cfg:
 # controller_type: evo
 # controller_cfg:
 #   # Schedulable attributes: 
-#   rollout_type: null
+#   rollout_type: nb301
 #   mode: eval
 #   population_size: 100
 #   parent_pool_size: 10
@@ -161,7 +161,7 @@ evaluator_cfg:
 # weights_manager_type: stub
 # weights_manager_cfg:
 #   # Schedulable attributes: 
-#   rollout_type: null
+#   rollout_type: nb301
 # # ---- End Type stub ----
 # ---- Type supernet ----
 # NOTE: CNN search space supernet, use together with mepa evaluator

@@ -3,16 +3,19 @@ Patch replicate function, to ignore those parameters/buffers that are not copied
 Bring a 1.4x performance increase for super_net weights_manager using discrete rollout.
 """
 # pylint: disable-all
-
+import os
 from itertools import chain
 import functools
 
 import torch
+from torch import distributed as dist
 from torch.nn.parallel.scatter_gather import scatter_kwargs, gather
 from torch.nn.parallel.parallel_apply import parallel_apply
 from torch.cuda._utils import _get_device_index
 from torch.nn.parallel import DataParallel as _DataParallel
 from torch.nn.parallel import DistributedDataParallel as _DistributedDataParallel
+
+from aw_nas.utils import logger as _logger
 
 _torch_version_major, _torch_version_minor = [
     int(v) for v in torch.__version__.split(".")[:2]
@@ -266,3 +269,88 @@ class DistributedDataParallel(_DistributedDataParallel):
     def replicate(self, module, device_ids):
         replicas = replicate(module, device_ids, not torch.is_grad_enabled())
         return replicas
+
+
+def parallelize(override_forward=True):
+    def decorator(cls):
+        ori_init = cls.__init__
+        ori_forward = cls.forward
+        ori_getstate = cls.__getstate__
+
+        def __getstate__(self):
+            state = ori_getstate(self)
+            state.pop("parallel_model", None)
+            return state
+
+        @functools.wraps(ori_init)
+        def __init__(self, *args, multiprocess=False, **kwargs):
+            self.multiprocess = multiprocess
+            ori_init(self, *args, **kwargs)
+
+            if self.multiprocess:
+                sync_bn = os.environ.get("AWNAS_SET_SYNC_BN", None)
+                if sync_bn and sync_bn != "0":
+                    LOGGER.warning("Convert model to SyncBN in search process may cause some "
+                            "exception that SyncBN module expect nn.Parameter type weight, but "
+                            "sliced weight is torch.Tensor type.")
+                    net = SyncBatchNorm.convert_sync_batchnorm(self).to(self.device)
+                else:
+                    net = self
+                object.__setattr__(
+                    self,
+                    "parallel_model",
+                    DistributedDataParallel(
+                        net,
+                        (self.device,),
+                        find_unused_parameters=True,
+                        check_reduction=True,
+                    ),
+                )
+            else:
+                object.__setattr__(self, "parallel_model", self)
+
+        @functools.wraps(ori_forward)
+        def forward(self, *args, **kwargs):
+            if not self.multiprocess:
+                return ori_forward(self, *args, **kwargs)
+            self.multiprocess = False
+            out = self.parallel_model(*args, **kwargs)
+            self.multiprocess = True
+            return out
+
+        cls.__init__ = __init__
+        cls.__getstate__ = __getstate__
+        if override_forward:
+            cls.forward = forward
+        return cls
+
+    return decorator
+
+
+def get_dist_info():
+    if torch.__version__ < '1.0':
+        initialized = dist._initialized
+    else:
+        if dist.is_available():
+            initialized = dist.is_initialized()
+        else:
+            initialized = False
+    if initialized:
+        rank = dist.get_rank()
+        world_size = dist.get_world_size()
+    else:
+        rank = 0
+        world_size = 1
+    return rank, world_size
+
+
+def _check_support_candidate_member_mask(gpus, candidate_member_mask, wm_name):
+    """
+    Helper function for checking that `candidate_member_mask` cannot be used for
+    supernet weights managers, when using torch>=1.4.0.
+    """
+    if len(gpus) > 1:
+        if not (_torch_version_major == 1 and _torch_version_minor <= 3):
+            assert not candidate_member_mask, \
+                ("When torch>=1.4.0 and data parallel is used, "
+                 "{} weights manager do not suport candidate_member_mask=True".format(wm_name))
