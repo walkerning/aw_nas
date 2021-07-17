@@ -699,7 +699,7 @@ class SelectNonleafDecision(NonleafDecision):
 
 class SelectNonleafChoices(SelectNonleafDecision, BaseChoices):
     """
-    The first para should be list of Choices or number (int or float)
+    The first paramater should be list of Choices or number (int or float)
     The second para must be instance of Choices
     Optional_choices give the possible choices of the node, without deriving
     You can use Like:
