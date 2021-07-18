@@ -66,6 +66,9 @@ class SSD(BaseNeck, FlexibleBlock):
             features.append(out)
         return features
 
+    def forward_rollout(self, rollout, features):
+        return self.forward(features, rollout)
+
     def set_mask(self, expansions, kernel_sizes):
         assert len(expansions) == len(kernel_sizes) == len(self.blocks)
         for block, exp, kernel in zip(self.blocks, expansions, kernel_sizes):

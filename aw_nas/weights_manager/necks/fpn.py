@@ -151,6 +151,9 @@ class FPN(BaseNeck, FlexibleBlock):
                 outs.append(self.fpn_convs[i](outs[-1]))
         return tuple(outs)
 
+    def forward_rollout(self, rollout, features):
+        return self.forward(features, rollout)
+
     def set_mask(self, kernel_sizes):
         pass
 
