@@ -151,9 +151,9 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
         if self.calib_bn_setup:
             self.model = calib_bn(self.model, self.train_queue)
 
-        if self.model is not None:
-            self.optimizer = self._init_optimizer()
-            self.scheduler = self._init_scheduler(self.optimizer, self.optimizer_scheduler_cfg)
+        # optimizer and scheduler is called in `trainer.setup` call
+        self.optimizer = None
+        self.scheduler = None
 
         # states of the trainer
         self.last_epoch = 0
@@ -174,11 +174,14 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
             if load_state_dict is not None:
                 self._load_state_dict(load_state_dict)
 
-            self.logger.info("param size = {} M".format( \
-                             utils.count_parameters(
-                                 self.model,
-                                 count_binary=isinstance(self.model, BNNGenotypeModel))/1.e6))
+        self.logger.info("param size = {} M".format( \
+                        utils.count_parameters(
+                            self.model,
+                            count_binary=isinstance(self.model, BNNGenotypeModel))/1.e6))
+        if self.model is not None:
             self._parallelize()
+            self.optimizer = self._init_optimizer()
+            self.scheduler = self._init_scheduler(self.optimizer, self.optimizer_scheduler_cfg)
 
         self.save_every = save_every
         self.train_dir = train_dir
@@ -326,9 +329,9 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
 
     def _parallelize(self):
         if self.multiprocess:
-            net = convert_sync_bn(self.model).to(self.device)
+            self.model = convert_sync_bn(self.model).to(self.device)
             self.parallel_model = DistributedDataParallel(
-                net, self.gpus, broadcast_buffers=False, find_unused_parameters=True)
+                self.model, self.gpus, broadcast_buffers=False, find_unused_parameters=True)
         elif len(self.gpus) >= 2:
             self.parallel_model = DataParallel(self.model, self.gpus).to(self.device)
         else:

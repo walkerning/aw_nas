@@ -385,7 +385,9 @@ def test_nonleaf_decisions():
         def __init__(self, search_space):
             super().__init__(search_space)
             with self.begin_searchable() as ctx:
-                self.c1 = germ.Choices([4, 8, 16]).apply(lambda value: value + 1)
+                self.c1 = germ.Choices([4, 8, 16])\
+                              .apply(lambda value: value + 1)\
+                              .apply(lambda value: value - 1)
                 self.c2 = germ.Choices([0.25, 0.5, 1.0])
                 self.c3 = self.c1 * self.c2
                 self.c4 = (self.c1 * self.c2).apply(lambda value: value - 2)
