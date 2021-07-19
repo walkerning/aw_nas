@@ -8,7 +8,7 @@ import torch.nn as nn
 
 from aw_nas.objective.base import BaseObjective
 
-# from aw_nas.objective.zerocost import get_measures
+from aw_nas.objective.zerocost import get_measures
 
 
 def parameters_saliency(model, batch_inputs, saliency_fn):
@@ -131,7 +131,7 @@ class ZeroShot(BaseObjective):
     def get_perfs(self, inputs, outputs, targets, cand_net):
         # scores = calc_scores(cand_net, inputs, self.perf_names())
         # return [scores[p] for p in self.perf_names()]
-        measures = get_measures(cand_net, inputs.device, inputs, targets)
+        measures = get_measures(cand_net, inputs.device, inputs, targets, measure_names=self.perf_names())
         return [measures[p] for p in self.perf_names()]
 
     def get_reward(self, inputs, outputs, targets, cand_net):

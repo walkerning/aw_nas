@@ -94,7 +94,7 @@ def get_measures(
 
     measures = {}
     for k, v in measures_arr.items():
-        if k == "jacob_cov":
+        if ("jacob_cov" in k) or ("relu" in k):
             measures[k] = v
         else:
             measures[k] = sum_arr(v)
