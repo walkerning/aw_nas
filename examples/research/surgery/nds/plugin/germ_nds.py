@@ -406,7 +406,8 @@ class GermAnyNet(germ.GermSuperNet):
                     "force_use_ordinal_channel_handler": force_use_ordinal_channel_handler,
                 }
                 stage = GermAnyStage(
-                    ctx, prev_w, width, stride, depth, block_fun, params
+                    ctx, w_in=prev_w, w_out=width, depth=depth,
+                    stride=stride, block_fun=block_fun, params=params
                 )
                 self.stages.append(stage)
                 prev_w = width
@@ -434,12 +435,14 @@ class GermResNet(GermAnyNet):
         num_classes=10,
         stem_type="res_stem_cifar",
         force_ordinal=False,
+        depths=[[1, 2, 3, 4, 6, 8, 12, 16, 24]] * 3,
+        widths=[[16, 24, 32, 40, 48, 64, 80, 96, 128, 160, 192, 256]] * 3,
     ):
         super(GermResNet, self).__init__(
             search_space,
             block_type="res_basic_block",
-            depths=[[1, 2, 3, 4, 6, 8, 12, 16, 24]] * 3,
-            widths=[[16, 24, 32, 40, 48, 64, 80, 96, 128, 160, 192, 256]] * 3,
+            depths=depths,
+            widths=widths,
             strides=[1, 2, 2],
             bot_muls=None,
             num_groups=None,

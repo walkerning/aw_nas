@@ -6,9 +6,15 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+from aw_nas import utils
 from aw_nas.objective.base import BaseObjective
 
-from aw_nas.objective.zerocost import get_measures
+try:
+    from aw_nas.objective.zerocost import get_measures
+except ImportError as e:
+    utils.getLogger("objective.zeroshot").warn(
+        ("Cannot import `get_measures` from `aw_nas.objective.zerocost`, zeroshot objectives cannot work normally! {}\n"
+         "\tSee examples/research/surgery/README.md for more information").format(e))
 
 
 def parameters_saliency(model, batch_inputs, saliency_fn):

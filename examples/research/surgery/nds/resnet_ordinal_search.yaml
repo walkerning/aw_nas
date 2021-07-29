@@ -4,8 +4,8 @@ search_space_type: germ
 
 weights_manager_cfg:
   germ_def_file: null
-  germ_supernet_type: nds_resnexta
-  germ_supernet_cfg: {}
+  germ_supernet_type: nds_resnet
+  germ_supernet_cfg: {"force_ordinal": true}
   rollout_type: germ
 weights_manager_type: germ
 
@@ -31,7 +31,7 @@ evaluator_type: mepa
 evaluator_cfg:
   # Schedulable attributes: controller_surrogate_steps, mepa_surrogate_steps, mepa_samples
   rollout_type: germ
-  batch_size: 64
+  batch_size: 128
   controller_surrogate_steps: 0
   mepa_surrogate_steps: 0
   mepa_optimizer:
