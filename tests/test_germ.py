@@ -160,18 +160,19 @@ def test_germ_nb201_and_finalize(tmp_path):
                                                    "dropout_rate": 0.
                                                })
 
-    # ---- test finalize ----
-    final_net = wm.super_net.finalize_rollout(rollout)
-    print(final_net)
-    outputs = final_net(data[0])
-    assert outputs.shape == (2, 10)
-
     with pytest.raises(Exception):
         outputs_2 = wm.super_net(data[0])
     cand_net = wm.assemble_candidate(rollout)
     outputs_2 = cand_net(data[0])
     assert outputs_2.shape == (2, 10)
+
+    # ---- test finalize ----
+    final_net = wm.super_net.finalize_rollout(rollout)
+    print(final_net)
+    outputs = final_net(data[0])
+    assert outputs.shape == (2, 10)
     assert (outputs == outputs_2).all().item()
+
 
 def test_op_on_edge_finalize(tmp_path):
     from aw_nas import germ

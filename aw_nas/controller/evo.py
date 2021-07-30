@@ -459,8 +459,8 @@ class ParetoEvoController(BaseController):
         A * B^T = C, c_ij = \sum_k {a_ik * b_jk}, i.e. the dot of the ith
         vector in A and the jth vector in B.
 
-        A_mode_sq: shape (N, 1), i.e. the sqaure of the mode of each vector in A.
-        B_mode_sq: shape (M, 1), i.e. the sqaure of the mode of each vector in B.
+        A_mode_sq: shape (N, 1), i.e. the square of the mode of each vector in A.
+        B_mode_sq: shape (M, 1), i.e. the square of the mode of each vector in B.
 
         Then repeat them to the same shape:
         A': shape(N, M), a'_ij = mode(vec_a_i) ** 2

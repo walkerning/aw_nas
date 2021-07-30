@@ -408,11 +408,13 @@ class SharedweightEvaluator(
 
         del all_gradients
 
+        stats_res = OrderedDict(zip(self._all_perf_names_update_evaluator,
+                                    np.mean(report_stats, axis=0)))
+
         if isinstance(self.eval_scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
-            self.plateau_scheduler_loss.append(report_stats[0][1])
+            self.plateau_scheduler_loss.append(stats_res["loss"])
         # return stats
-        return OrderedDict(zip(self._all_perf_names_update_evaluator,
-                               np.mean(report_stats, axis=0)))
+        return stats_res
 
     def on_epoch_start(self, epoch):
         super(SharedweightEvaluator, self).on_epoch_start(epoch)

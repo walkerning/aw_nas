@@ -147,7 +147,7 @@ class MetaTrainer(BaseTrainer):
             # `evaluator.suggested_controller_steps_per_epoch`
             expect(
                 suggested is not None,
-                "Cannot infer `controller_steps`! Neigher `controller_steps` is given in "
+                "Cannot infer `controller_steps`! Neither `controller_steps` is given in "
                 "configuration, nor the evaluator return"
                 " a suggested `controller_steps`.",
                 ConfigException,
