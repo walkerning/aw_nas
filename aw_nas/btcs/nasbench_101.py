@@ -858,10 +858,23 @@ class NasBench101Rollout(BaseRollout):
     supported_components = [("evaluator", "mepa"), ("trainer", "simple")]
 
     def __init__(self, matrix, ops, search_space):
-        self.arch = (matrix, ops)
+        self._arch = (matrix, ops)
         self.search_space = search_space
         self.perf = collections.OrderedDict()
         self._genotype = None
+
+    @property
+    def arch(self):
+        return self._arch
+
+    @property
+    def pruned_arch(self):
+        matrix, ops = self._arch
+        index = [i for i, op in enumerate(ops) if op != 3]
+        ops = [ops[i] for i in index]
+        index = [0] + [i + 1 for i in index] + [6]
+        matrix = matrix[index][:, index]
+        return matrix, ops
 
     def set_candidate_net(self, c_net):
         raise Exception("Should not be called")
@@ -874,7 +887,7 @@ class NasBench101Rollout(BaseRollout):
     @property
     def genotype(self):
         if self._genotype is None:
-            self._genotype = self.search_space.genotype(self.arch)
+            self._genotype = self.search_space.genotype(self.pruned_arch)
         return self._genotype
 
     def __repr__(self):
@@ -1440,16 +1453,25 @@ class NasBench101SAController(BaseController):
                         cur_matrix = new_matrix
                         break
             else:
-                ops_ind = np.random.randint(0, ss.num_ops, size=1)[0]
-                new_ops = np.random.randint(0, ss.num_op_choices, size=1)[0]
-                while new_ops == cur_ops[ops_ind]:
-                    new_ops = np.random.randint(
-                        0, ss.num_op_choices, size=1)[0]
-                cur_ops[ops_ind] = new_ops
-            rollouts.append(
-                NasBench101Rollout(cur_matrix, cur_ops,
-                                   search_space=self.search_space)
-            )
+                while 1:
+                    ops_ind = np.random.randint(0, ss.num_ops, size=1)[0]
+                    new_ops = np.random.randint(0, ss.num_op_choices, size=1)[0]
+                    while new_ops == cur_ops[ops_ind]:
+                        new_ops = np.random.randint(0, ss.num_op_choices, size=1)[0]
+                    cur_ops[ops_ind] = new_ops
+                    new_rollout = NasBench101Rollout(cur_matrix, cur_ops,
+                            search_space=self.search_space)
+                    try:
+                        ss.nasbench._check_spec(new_rollout.genotype)
+                    except api.OutOfDomainError:
+                        continue
+                    else:
+                        break
+            rollouts.append(NasBench101Rollout(
+                cur_matrix,
+                cur_ops,
+                search_space=self.search_space
+            ))
         return rollouts
 
     def step(self, rollouts, optimizer, perf_name):
