@@ -136,9 +136,20 @@ class _OrderedCommandGroup(click.Group):
 def nullcontext():
     yield
 
-def makedir(path, remove=False):
+def makedir(path, remove=False, quiet=False):
     if os.path.exists(path) and remove:
-        shutil.rmtree(path)
+        if not quiet:
+            response = input(
+                "The {} already exists.".format(path) + \
+                "Do you want to delete it anyway. [Y/y/yes] or [N/n/no/others], default is N\n"
+            )
+            if str(response) in ["Y", "y", "yes"]:
+                shutil.rmtree(path)
+            else:
+                print("exit!")
+                sys.exit(0)
+        else:
+            shutil.rmtree(path)
     if not os.path.isdir(path):
         os.makedirs(path)
     return path
@@ -352,7 +363,7 @@ def _parse_derive_file(input_f):
                               r"(?P<perfstr># Perfs: [^\n]+\n)?\n*- (?P<genotype>[^#]+)",
                               content)
 
-    genotype_perf_dict = {}
+    genotype_perf_dict = OrderedDict()
     for match in regexp_iter:
         genotype = yaml.load(io.StringIO(match.group("genotype")))
         if match.group("perfstr"):
@@ -529,11 +540,18 @@ def get_sub_kernel(kernel, sub_kernel_size):
     return kernel[:, :, left:right, left:right].contiguous()
 
 
-def _get_channel_mask(filters: torch.Tensor, num_channels: int):
-    mask = torch.zeros(filters.shape[1], dtype=torch.bool)
-    channel_order = filters.norm(p=1, dim=(0, 2, 3)).argsort(descending=True)
-    mask[channel_order[:num_channels]] = True
+def _get_channel_mask(filters: torch.Tensor, num_channels: int, p=1):
+    assert p in (0, 1)
+    dim = (0, 2, 3) if p == 1 else (1, 2, 3)
+    channel_order = filters.norm(p=1, dim=dim).argsort(descending=True)
+    mask = channel_order[:num_channels].sort()[0]
+    return mask
 
+def _get_feature_mask(filters: torch.Tensor, num_features: int, p=1):
+    assert p in (0, 1)
+    dim = (0) if p == 1 else (1)
+    feature_order = filters.norm(p=1, dim=dim).argsort(descending=True)
+    mask = feature_order[:num_features].sort()[0]
     return mask
 
 
@@ -544,3 +562,9 @@ def feature_level_to_stage_index(strides, offset=1):
     """
     levels = itertools.accumulate([offset] + list(strides), lambda x, y: x + y - 1)
     return {l: i for i, l in enumerate(levels, -1)}
+
+def format_as_float(container_or_float, float_fmt):
+    if isinstance(container_or_float, (list, tuple)):
+        return "[" + ", ".join([format_as_float(value, float_fmt) for value in container_or_float])\
+            + "]"
+    return float_fmt.format(container_or_float)

@@ -1,4 +1,4 @@
-#pylint: disable=unused-import
+#pylint: disable=unused-import,wrong-import-position
 
 from aw_nas.utils import getLogger
 _LOGGER = getLogger("final")
@@ -15,8 +15,11 @@ from .dense import DenseGenotypeModel
 
 from .ofa_model import OFAGenotypeModel
 
+from .wrapper_model import WrapperFinalModel
+from .wrapper_trainer import WrapperFinalTrainer
+
 try:
-    from .ssd_model import SSDFinalModel, SSDHeadFinalModel
+    from .det_model import DetectionFinalModel
     from .det_trainer import DetectionFinalTrainer
 except ImportError as e:
     _LOGGER.warn(

@@ -10,10 +10,12 @@ from torch import nn
 
 from aw_nas import ops
 from aw_nas.weights_manager.base import BaseWeightsManager
+from aw_nas.weights_manager.wrapper import BaseBackboneWeightsManager
 from aw_nas.utils.common_utils import Context
 from aw_nas.utils.exception import expect, ConfigException
 
-class SharedNet(BaseWeightsManager, nn.Module):
+
+class SharedNet(BaseBackboneWeightsManager, nn.Module):
     def __init__(self, search_space, device, rollout_type,
                  cell_cls, op_cls,
                  gpus=tuple(),
@@ -24,6 +26,7 @@ class SharedNet(BaseWeightsManager, nn.Module):
                  cell_use_preprocess=True,
                  cell_group_kwargs=None,
                  cell_use_shortcut=False,
+                 bn_affine=False,
                  cell_shortcut_op_type="skip_connect"):
         super(SharedNet, self).__init__(search_space, device, rollout_type)
         nn.Module.__init__(self)
@@ -76,6 +79,7 @@ class SharedNet(BaseWeightsManager, nn.Module):
         self.cells = nn.ModuleList()
         num_channels = self.init_channels
         prev_num_channels = [c_stem] * self._num_init
+        self.all_num_channels = [c_stem]
         strides = [2 if self._is_reduce(i_layer) else 1 for i_layer in range(self._num_layers)]
 
         for i_layer, stride in enumerate(strides):
@@ -106,9 +110,12 @@ class SharedNet(BaseWeightsManager, nn.Module):
                             preprocess_op_type=preprocess_op_type,
                             use_shortcut=cell_use_shortcut,
                             shortcut_op_type=cell_shortcut_op_type,
+                            bn_affine=bn_affine,
                             **kwargs)
             prev_num_channel = cell.num_out_channel()
             prev_num_channels.append(prev_num_channel)
+            # currently, add all stem and cell outputs
+            self.all_num_channels.append(prev_num_channel)
             prev_num_channels = prev_num_channels[1:]
             self.cells.append(cell)
 
@@ -128,7 +135,18 @@ class SharedNet(BaseWeightsManager, nn.Module):
         self.device = device
         self.to(device)
 
-    def forward(self, inputs, genotypes, **kwargs): #pylint: disable=arguments-differ
+    def get_feature_channel_num(self, feature_levels=None):
+        if feature_levels is None:
+            return self.all_num_channels
+        return [self.all_num_channels[level] for level in feature_levels]
+
+    def extract_features(self, inputs, genotypes, keep_all=True, **kwargs):
+        # only support use genotypes/arch
+        # the two subclasses (diff_)supernet support using rollout
+        # * genotypes: for the commonly-used classification NAS API
+        # * rollout (discrete) / arch (diff):
+        #    used as the backbone weights manager in the wrapper weights manager
+
         if not self.use_stem:
             stemed = inputs
             states = [inputs] * self._num_init
@@ -142,11 +160,22 @@ class SharedNet(BaseWeightsManager, nn.Module):
             stemed = self.stem(inputs)
             states = [stemed] * self._num_init
 
+        if keep_all:
+            all_states = [stemed]
+
         for cg_idx, cell in zip(self._cell_layout, self.cells):
             genotype = genotypes[cg_idx]
             states.append(cell(states, genotype, **kwargs))
             states = states[1:]
+            if keep_all:
+                all_states.append(states[-1])
+        return all_states if keep_all else states
 
+    def forward(self, inputs, genotypes, **kwargs): #pylint: disable=arguments-differ
+        states = self.extract_features(inputs, genotypes, keep_all=False, **kwargs)
+        # classification head
+        # for compatibility of old checkpoints,
+        # we do not reuse aw_nas.weights_manager.wrapper.ClassificationHead
         out = self.global_pooling(states[-1])
         out = self.dropout(out)
         logits = self.classifier(out.view(out.size(0), -1))
@@ -208,10 +237,15 @@ class SharedNet(BaseWeightsManager, nn.Module):
     def supported_data_types(cls):
         return ["image"]
 
+    def finalize(self, rollout):
+        # TODO: implement this
+        raise NotImplementedError()
+
+
 class SharedCell(nn.Module):
     def __init__(self, op_cls, search_space, layer_index, num_channels, num_out_channels,
                  prev_num_channels, stride, prev_strides, use_preprocess, preprocess_op_type,
-                 use_shortcut, shortcut_op_type,
+                 use_shortcut, shortcut_op_type, bn_affine,
                  **op_kwargs):
         super(SharedCell, self).__init__()
         self.search_space = search_space
@@ -224,6 +258,7 @@ class SharedCell(nn.Module):
         self.preprocess_op_type = preprocess_op_type
         self.use_shortcut = use_shortcut
         self.shortcut_op_type = shortcut_op_type
+        self.bn_affine = bn_affine
         self.op_kwargs = op_kwargs
 
         self._steps = self.search_space.get_layer_num_steps(layer_index)
@@ -260,21 +295,21 @@ class SharedCell(nn.Module):
             if self.preprocess_op_type is not None:
                 # specificy other preprocess op
                 preprocess = ops.get_op(self.preprocess_op_type)(
-                    C=prev_c, C_out=num_channels, stride=int(prev_s), affine=False)
+                    C=prev_c, C_out=num_channels, stride=int(prev_s), affine=bn_affine)
             else:
                 if prev_s > 1:
                     # need skip connection, and is not the connection from the input image
                     preprocess = ops.FactorizedReduce(C_in=prev_c,
                                                       C_out=num_channels,
                                                       stride=prev_s,
-                                                      affine=False)
+                                                      affine=bn_affine)
                 else: # prev_c == _steps * num_channels or inputs
                     preprocess = ops.ReLUConvBN(C_in=prev_c,
                                                 C_out=num_channels,
                                                 kernel_size=1,
                                                 stride=1,
                                                 padding=0,
-                                                affine=False)
+                                                affine=bn_affine)
             self.preprocess_ops.append(preprocess)
         assert len(self.preprocess_ops) == self._num_init
 
@@ -290,7 +325,8 @@ class SharedCell(nn.Module):
             for from_ in range(to_):
                 self.edges[from_][to_] = op_cls(self.num_channels, self.num_out_channels,
                                                 stride=self.stride if from_ < self._num_init else 1,
-                                                primitives=self._primitives, **op_kwargs)
+                                                primitives=self._primitives, bn_affine=bn_affine,
+                                                **op_kwargs)
                 self.edge_mod.add_module("f_{}_t_{}".format(from_, to_), self.edges[from_][to_])
 
         self._edge_name_pattern = re.compile("f_([0-9]+)_t_([0-9]+)")
@@ -313,7 +349,8 @@ class SharedOp(nn.Module):
     The operation on an edge, consisting of multiple primitives.
     """
 
-    def __init__(self, C, C_out, stride, primitives, partial_channel_proportion=None):
+    def __init__(self, C, C_out, stride, primitives, partial_channel_proportion=None,
+                 bn_affine=False):
         super(SharedOp, self).__init__()
 
         self.primitives = primitives
@@ -330,8 +367,8 @@ class SharedOp(nn.Module):
 
         self.p_ops = nn.ModuleList()
         for primitive in self.primitives:
-            op = ops.get_op(primitive)(C, C_out, stride, False)
+            op = ops.get_op(primitive)(C, C_out, stride, bn_affine)
             if "pool" in primitive:
-                op = nn.Sequential(op, nn.BatchNorm2d(C_out, affine=False))
+                op = nn.Sequential(op, nn.BatchNorm2d(C_out, affine=bn_affine))
 
             self.p_ops.append(op)

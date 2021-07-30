@@ -8,6 +8,7 @@ from __future__ import print_function
 import os
 import re
 import sys
+import time
 import random
 import shutil
 import pickle
@@ -23,7 +24,7 @@ from torch.backends import cudnn
 
 import aw_nas
 from aw_nas.dataset import AVAIL_DATA_TYPES
-from aw_nas import btcs, utils, BaseRollout
+from aw_nas import btcs, germ, utils, BaseRollout
 from aw_nas.common import rollout_from_genotype_str
 from aw_nas.utils.common_utils import _OrderedCommandGroup, _dump, _dump_with_perf
 from aw_nas.utils.vis_utils import WrapWriter
@@ -31,10 +32,22 @@ from aw_nas.utils import RegistryMeta
 from aw_nas.utils import logger as _logger
 from aw_nas.utils.exception import expect
 
+torch.multiprocessing.set_sharing_strategy('file_system')
+
 # patch click.option to show the default values
 click.option = functools.partial(click.option, show_default=True)
 
 LOGGER = _logger.getChild("main")
+
+
+# To be compatible with MMDet config which assert tuple as input
+def construct_python_tuple(loader, node):
+    return tuple(loader.construct_sequence(node))
+
+yaml.SafeLoader.add_constructor(
+    u'tag:yaml.org,2002:python/tuple',
+    construct_python_tuple)
+
 
 def _onlycopy_py(src, names):
     return [name for name in names if not \
@@ -167,11 +180,14 @@ def main(local_rank):
               "need `tensorboard` extra, `pip install aw_nas[tensorboard]`")
 @click.option("--develop", default=False, type=bool, is_flag=True,
               help="in develop mode, will copy the `aw_nas` source files into train_dir for backup")
+@click.option("--quiet", "-q", is_flag=True, default=False)
 def search(cfg_file, gpu, seed, load, save_every, save_controller_every, interleave_report_every,
-           train_dir, vis_dir, develop):
+           train_dir, vis_dir, develop, quiet):
     # check dependency and initialize visualization writer
     if vis_dir:
-        vis_dir = utils.makedir(vis_dir, remove=True)
+        extra_path = os.path.basename(train_dir) \
+            if train_dir else time.strftime("%Y-%m-%d/%H:%M", time.localtime())
+        vis_dir = utils.makedir(os.path.join(vis_dir, extra_path), remove=True, quiet=quiet)
         try:
             import tensorboardX
         except ImportError:
@@ -186,7 +202,7 @@ def search(cfg_file, gpu, seed, load, save_every, save_controller_every, interle
 
     if train_dir:
         # backup config file, and if in `develop` mode, also backup the aw_nas source code
-        train_dir = utils.makedir(train_dir, remove=True)
+        train_dir = utils.makedir(train_dir, remove=True, quiet=quiet)
         shutil.copyfile(cfg_file, os.path.join(train_dir, "config.yaml"))
 
         if develop:
@@ -229,7 +245,8 @@ def search(cfg_file, gpu, seed, load, save_every, save_controller_every, interle
     trainer = _init_components_from_cfg(cfg, device)[-1]
 
     # setup trainer and train
-    trainer.setup(load, save_every, save_controller_every if save_controller_every is not None else save_every,
+    trainer.setup(load, save_every,
+                  save_controller_every if save_controller_every is not None else save_every,
                   train_dir, writer=writer,
                   interleave_report_every=interleave_report_every)
     trainer.train()
@@ -255,8 +272,9 @@ def search(cfg_file, gpu, seed, load, save_every, save_controller_every, interle
               "need `tensorboard` extra, `pip install aw_nas[tensorboard]`")
 @click.option("--develop", default=False, type=bool, is_flag=True,
               help="in develop mode, will copy the `aw_nas` source files into train_dir for backup")
+@click.option("--quiet", "-q", is_flag=True, default=False)
 def mpsearch(cfg_file, seed, load, save_every, save_controller_every, interleave_report_every,
-           train_dir, vis_dir, develop):
+           train_dir, vis_dir, develop, quiet):
     # check dependency and initialize visualization writer
     local_rank = int(os.environ["LOCAL_RANK"])
     # set gpu
@@ -266,7 +284,7 @@ def mpsearch(cfg_file, seed, load, save_every, save_controller_every, interleave
                                          world_size=int(os.environ["WORLD_SIZE"]))
 
     if vis_dir and local_rank == 0:
-        vis_dir = utils.makedir(vis_dir, remove=True)
+        vis_dir = utils.makedir(vis_dir, remove=False, quiet=quiet)
         try:
             import tensorboardX
         except ImportError:
@@ -282,7 +300,7 @@ def mpsearch(cfg_file, seed, load, save_every, save_controller_every, interleave
     if train_dir:
         if local_rank == 0:
             # backup config file, and if in `develop` mode, also backup the aw_nas source code
-            train_dir = utils.makedir(train_dir, remove=True)
+            train_dir = utils.makedir(train_dir, remove=True, quiet=quiet)
             shutil.copyfile(cfg_file, os.path.join(train_dir, "config.yaml"))
 
             if develop:
@@ -340,7 +358,7 @@ def mpsearch(cfg_file, seed, load, save_every, save_controller_every, interleave
                                         rollout_type=rollout_type)
 
     _data_type = whole_dataset.data_type()
-    
+
     if _data_type == "sequence":
         # get the num_tokens
         num_tokens = whole_dataset.vocab_size
@@ -348,13 +366,13 @@ def mpsearch(cfg_file, seed, load, save_every, save_controller_every, interleave
         weights_manager = _init_component(cfg, "weights_manager",
                                 search_space=search_space,
                                 device=device,
-                                gpus=[device],
+                                #gpus=[device],
                                 rollout_type=rollout_type,
                                 num_tokens=num_tokens)
     else:
         weights_manager = _init_component(cfg, "weights_manager",
                                 search_space=search_space,
-                                device=device, gpus=[device],
+                                device=device, #gpus=[device],
                                 rollout_type=rollout_type)
     # check model support for data type
     expect(_data_type in weights_manager.supported_data_types())
@@ -540,7 +558,7 @@ def sample(load, out_file, n, save_plot, gpu, seed, dump_mode, prob_thresh, uniq
 @main.command(help="Eval architecture from file.")
 @click.argument("cfg_file", required=True, type=str)
 @click.argument("arch_file", required=True, type=str)
-@click.option("--load", required=True, type=str,
+@click.option("--load", default=None, type=str,
               help="the directory to load checkpoint")
 @click.option("--gpu", default=0, type=int,
               help="the gpu to run training on")
@@ -553,10 +571,16 @@ def sample(load, out_file, n, save_plot, gpu, seed, dump_mode, prob_thresh, uniq
               "Only tested for CNN now.")
 @click.option("--steps", default=None, type=int,
               help="number of batches to eval for each arch, default to be the whole derive queue.")
+@click.option("--reset-dataloader-each-rollout", default=False, type=bool, is_flag=True,
+              help="This option is useful when you specify `--step n` "
+              "and want to use the same data for every arch rollout. "
+              "If true, would reset the dataloader before evaluating each rollout. "
+              "You should specify proper configuration for the derive queue "
+              "in the cfg file: e.g., `- [train_testTransform, [0.8, 0.9], {shuffle: false}]`.")
 @click.option("--dump-rollouts", default=None, type=str,
               help="dump evaluated rollouts to path")
 def eval_arch(cfg_file, arch_file, load, gpu, seed, save_plot, save_state_dict, steps,
-              dump_rollouts):
+              dump_rollouts, reset_dataloader_each_rollout):
     setproctitle.setproctitle("awnas-eval-arch config: {}; arch_file: {}; load: {}; cwd: {}"\
                               .format(cfg_file, arch_file, load, os.getcwd()))
 
@@ -586,9 +610,15 @@ def eval_arch(cfg_file, arch_file, load, gpu, seed, save_plot, save_state_dict, 
     res = _init_components_from_cfg(cfg, device, evaluator_only=True)
     search_space = res[0] #pylint: disable=unused-variable
     evaluator = res[-1]
-    path = os.path.join(load, "evaluator")
-    LOGGER.info("Loading evalutor from %s", path)
-    evaluator.load(path)
+    if load is not None:
+        path = os.path.join(load, "evaluator")
+        LOGGER.info("Loading evalutor from %s", path)
+        evaluator.load(path)
+    else:
+        LOGGER.warn("No `--load` cmdline argument is specified, currently, this is only reasonable"
+                    " for zero-shot estimations.")
+
+    expect((not reset_dataloader_each_rollout) or hasattr(evaluator, "reset_dataloader"))
 
     # create the directory for saving plots
     if save_plot is not None:
@@ -600,6 +630,10 @@ def eval_arch(cfg_file, arch_file, load, gpu, seed, save_plot, save_state_dict, 
     num_r = len(rollouts)
 
     for i, r in enumerate(rollouts):
+        if reset_dataloader_each_rollout:
+            # reset the derive data queue
+            evaluator.reset_dataloader(is_training=False)
+
         evaluator.evaluate_rollouts([r], is_training=False,
                                     eval_batches=steps,
                                     return_candidate_net=save_state_dict)[0]
@@ -615,7 +649,7 @@ def eval_arch(cfg_file, arch_file, load, gpu, seed, save_plot, save_state_dict, 
             )
         print("Finish test {}/{}\r".format(i+1, num_r), end="")
         LOGGER.info("Arch %3d: %s", i, "; ".join(
-            ["{}: {:.3f}".format(n, v) for n, v in r.perf.items()]))
+            ["{}: {}".format(n, utils.format_as_float(v, "{:.4f}")) for n, v in r.perf.items()]))
 
     if dump_rollouts is not None:
         LOGGER.info("Dump the evaluated rollouts into file %s", dump_rollouts)
@@ -740,7 +774,8 @@ def derive(cfg_file, load, out_file, n, save_plot, test, steps, gpu, seed, dump_
               help="the number of epochs to save checkpoint every")
 @click.option("--train-dir", default=None, type=str,
               help="the directory to save checkpoints")
-def mptrain(seed, cfg_file, load, load_state_dict, save_every, train_dir):
+@click.option("--quiet", "-q", is_flag=True, default=False)
+def mptrain(seed, cfg_file, load, load_state_dict, save_every, train_dir, quiet):
     local_rank = int(os.environ["LOCAL_RANK"])
     # set gpu
     _set_gpu(local_rank)
@@ -750,9 +785,9 @@ def mptrain(seed, cfg_file, load, load_state_dict, save_every, train_dir):
     if train_dir:
         # backup config file, and if in `develop` mode, also backup the aw_nas source code
         if local_rank == 0:
-            train_dir = utils.makedir(train_dir, remove=False)
+            train_dir = utils.makedir(train_dir, remove=False, quiet=quiet)
             shutil.copyfile(cfg_file, os.path.join(train_dir, "train_config.yaml"))
-    
+
     torch.distributed.barrier()
 
     if train_dir:
@@ -832,6 +867,8 @@ def mptrain(seed, cfg_file, load, load_state_dict, save_every, train_dir):
               help="the gpus to run training on, split by single comma")
 @click.option("--seed", default=None, type=int,
               help="the random seed to run training")
+@click.option("--load-supernet", default=None, type=str,
+              help="load supernet weights before finalized")
 @click.option("--load", default=None, type=str,
               help="the checkpoint to load")
 @click.option("--load-state-dict", default=None, type=str,
@@ -840,10 +877,11 @@ def mptrain(seed, cfg_file, load, load_state_dict, save_every, train_dir):
               help="the number of epochs to save checkpoint every")
 @click.option("--train-dir", default=None, type=str,
               help="the directory to save checkpoints")
-def train(gpus, seed, cfg_file, load, load_state_dict, save_every, train_dir):
+@click.option("--quiet", "-q", is_flag=True, default=False)
+def train(gpus, seed, cfg_file, load_supernet, load, load_state_dict, save_every, train_dir, quiet):
     if train_dir:
         # backup config file, and if in `develop` mode, also backup the aw_nas source code
-        train_dir = utils.makedir(train_dir, remove=True)
+        train_dir = utils.makedir(train_dir, remove=True, quiet=quiet)
         shutil.copyfile(cfg_file, os.path.join(train_dir, "train_config.yaml"))
 
         # add log file handler
@@ -871,11 +909,16 @@ def train(gpus, seed, cfg_file, load, load_state_dict, save_every, train_dir):
         np.random.seed(seed)
         random.seed(seed)
         torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
 
     # load components config
     LOGGER.info("Loading configuration files.")
     with open(cfg_file, "r") as f:
         cfg = yaml.safe_load(f)
+
+    if load_supernet is not None:
+        # load supernet weights and finetune
+        cfg["final_model_cfg"]["supernet_state_dict"] = load_supernet
 
     # initialize components
     LOGGER.info("Initializing components.")
@@ -957,6 +1000,7 @@ def test(cfg_file, load, load_state_dict, split, gpus, seed): #pylint: disable=r
     LOGGER.info("Initializing components.")
     whole_dataset = _init_component(cfg, "dataset")
     search_space = _init_component(cfg, "search_space")
+
     objective = _init_component(cfg, "objective", search_space=search_space)
     trainer = _init_component(cfg, "final_trainer",
                               dataset=whole_dataset,

@@ -1,0 +1,109 @@
+rollout_type: germ
+search_space_cfg:
+  search_space_cfg_file: example_code_snippet.py.sscfg.yaml
+search_space_type: germ
+weights_manager_cfg:
+  germ_def_file: ./example_code_snippet.py
+  germ_supernet_type: tmp_code_snippet
+  rollout_type: germ
+weights_manager_type: germ
+
+## ---- Component dataset ----
+# ---- Type cifar10 ----
+dataset_type: cifar10
+dataset_cfg:
+  # Schedulable attributes: 
+  cutout: null
+# ---- End Type cifar10 ----
+## ---- End Component dataset ----
+
+
+## ---- Component controller ---
+# ---- Type evo ----
+controller_type: evo
+controller_cfg:
+  # Schedulable attributes: 
+  rollout_type: germ
+  mode: eval
+  population_size: 100
+  parent_pool_size: 10
+  mutate_kwargs: {mutate_num: 1} # mutate 1 choice each time
+  eval_sample_strategy: population
+  elimination_strategy: perf
+  avoid_repeat: false
+  avoid_mutate_repeat: false
+  schedule_cfg: null
+# ---- End Type evo ----
+## ---- End Component controller ---
+
+
+## ---- Component evaluator ----
+# ---- Type discrete_shared_weights ----
+evaluator_type: discrete_shared_weights
+evaluator_cfg:
+  # Schedulable attributes: eval_samples
+  rollout_type: germ
+  batch_size: 128
+  eval_optimizer:
+    lr: 0.05
+    momentum: 0.9
+    type: SGD
+    weight_decay: 0.0001
+  eval_scheduler:
+    eta_min: 0.0001
+    factor: 2.0
+    t_0: 10
+    type: CosineWithRestarts
+  schedule_every_batch: false
+  load_optimizer: true
+  load_scheduler: true
+  strict_load_weights_manager: true
+  eval_samples: 1
+  disable_step_current: false
+  evaluate_with_whole_queue: false
+  data_portion:
+  - 0.8
+  - 0.2
+  shuffle_data_before_split: false
+  shuffle_indice_file: null
+  shuffle_data_before_split_seed: null
+  workers_per_queue: 2
+  update_evaluator_report_perfs: true
+  rollout_batch_size: 1
+  bptt_steps: 35
+  multiprocess: false
+  schedule_cfg: null
+# ---- End Type discrete_shared_weights ----
+## ---- End Component weights_manager ----
+
+
+## ---- Component objective ----
+# ---- Type classification ----
+objective_type: classification
+objective_cfg: {}
+# ---- End Type classification ----
+## ---- End Component objective ----
+
+
+## ---- Component trainer ----
+# ---- Type simple ----
+trainer_type: simple
+trainer_cfg:
+  # Schedulable attributes: controller_samples, derive_samples
+  rollout_type: germ
+  is_differentiable: false
+  epochs: 200
+  test_every: 200
+  controller_optimizer: null
+  controller_scheduler: null
+  controller_samples: 1
+  derive_samples: 8
+  rollout_batch_size: 1
+  evaluator_steps: null
+  controller_steps: null
+  controller_train_every: 1
+  controller_train_begin: 1
+  interleave_controller_every: null
+  schedule_cfg: null
+# ---- End Type simple ----
+## ---- End Component trainer ----

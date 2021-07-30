@@ -111,35 +111,39 @@ class BaseTrainer(Component):
         if self.train_dir:
             # final saving
             dir_ = utils.makedir(os.path.join(self.train_dir, "final"))
-            torch.save(self.controller, os.path.join(dir_, "controller.pt"))
             rank = os.environ.get("LOCAL_RANK")
             if rank is None or rank == '0':
-                self.controller.save(os.path.join(dir_, "controller"))
-            try:
-                torch.save(self.evaluator, os.path.join(dir_, "evaluator.pt"))
-                if rank is None or rank == '0':
-                    self.evaluator.save(os.path.join(dir_, "evaluator"))
-            except pickle.PicklingError as e:
-                self.logger.warning("Final saving: torch.save(evaluator) fail, fallback to call "
-                                    "`evaluator.save`: %s", e)
-                self.evaluator.save(os.path.join(dir_, "evaluator.pt"))
-            self.logger.info("Final Saving: Dump controller to directory %s", dir_)
+                try:
+                    torch.save(self.controller, os.path.join(dir_, "controller.pt"))
+                except pickle.PicklingError as e:
+                    self.logger.warning("Final saving: torch.save(controller) fail, "
+                                        "fallback to call `controller.save`: %s", e)
+                    self.controller.save(os.path.join(dir_, "controller"))
+                try:
+                    torch.save(self.evaluator, os.path.join(dir_, "evaluator.pt"))
+                except pickle.PicklingError as e:
+                    self.logger.warning("Final saving: torch.save(evaluator) fail, "
+                                        "fallback to call `evaluator.save`: %s", e)
+                    self.evaluator.save(os.path.join(dir_, "evaluator.pt"))
+                self.logger.info("Final Saving: Dump controller/evaluator to directory %s", dir_)
 
     def maybe_save(self):
         rank = os.environ.get("LOCAL_RANK")
         if self.save_every is not None and self.train_dir:
-            assert self.save_controller_every is not None # when save-eevery is not None, save-controller every should also not be None, since its default value should be save-every
+            assert self.save_controller_every is not None, \
+                ("when save-every is not None, save-controller every should also not be None,"
+                 " since its default value should be save-every")
             if self.epoch % self.save_every == 0:
-                if rank is None or rank == '0':
+                if rank is None or rank == "0":
                     self.controller.save(self._save_path("controller"))
                     self.evaluator.save(self._save_path("evaluator"))
                     self.save(self._save_path("trainer"))
                     self.logger.info("Epoch %3d: Save all checkpoints to directory %s",
                                     self.epoch, self._save_path())
             elif self.epoch % self.save_controller_every == 0:
-                    self.controller.save(self._save_path("controller"))
-                    self.logger.info("Epoch %3d: Save Controller to directory %s",
-                                    self.epoch, self._save_path())
+                self.controller.save(self._save_path("controller"))
+                self.logger.info("Epoch %3d: Save Controller to directory %s",
+                                 self.epoch, self._save_path())
 
     def _save_path(self, name=""):
         if self.train_dir is None:

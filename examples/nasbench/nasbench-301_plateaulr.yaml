@@ -1,0 +1,229 @@
+rollout_type: nb301
+## ---- Component search_space ----
+# ---- Type nb301 ----
+search_space_type: nb301
+search_space_cfg:
+  # Schedulable attributes: 
+  {}
+# ---- End Type nb301 ----
+## ---- End Component search_space ----
+
+## ---- Component dataset ----
+# ---- Type cifar10 ----
+dataset_type: cifar10
+dataset_cfg:
+  # Schedulable attributes: 
+  cutout: null
+# ---- End Type cifar10 ----
+# ## ---- End Component dataset ----
+
+## ---- Component controller ----
+# ---- Type random_sample ----
+controller_type: random_sample
+controller_cfg:
+  # Schedulable attributes: 
+  rollout_type: nb301
+  mode: eval
+  schedule_cfg: null
+# ---- End Type random_sample ----
+# # ---- Type predictor-based ----
+# NOTE: The predictor can use the arch embedder cellss-flow (GATES)
+# controller_type: predictor-based
+# controller_cfg:
+#   # Schedulable attributes: 
+#   mode: eval
+#   inner_controller_type: evo
+#   inner_controller_cfg:
+#     population_size: 20
+#     parent_pool_size: 5
+#     elimination_strategy: perf
+#     eval_sample_strategy: all
+#   arch_network_type: pointwise_comparator
+#   arch_network_cfg:
+#     arch_embedder_cfg:
+#        op_embedding_dim: 48
+#        node_embedding_dim: 48
+#        hid_dim: 48
+#        gcn_out_dims: [32, 32, 32, 32, 32]
+#        share_op_attention: false
+#        use_bn: false
+#        use_final_only: false
+#        share_self_op_emb: false
+#        dropout: 0.
+#     arch_embedder_type: cellss-flow
+#     compare_loss_type: margin_linear
+#     compare_margin: 0.1
+#     mlp_dropout: 0.1
+#     mlp_hiddens: [256, 256, 256]
+#     optimizer: {lr: 0.001, type: Adam}
+#     scheduler: null
+#   inner_sample_n: 1
+#   inner_samples: 1
+#   inner_steps: 50
+#   inner_report_freq: 10
+#   predict_batch_size: 50
+#   inner_random_init: true
+#   inner_iter_random_init: false
+#   inner_enumerate_search_space: false
+#   inner_enumerate_sample_ratio: null
+#   min_inner_sample_ratio: 10
+#   begin_train_num: 200
+#   predictor_train_cfg:
+#     batch_size: 50
+#     compare: true
+#     compare_threshold: 0.0
+#     epochs: 200
+#     max_compare_ratio: 4
+#     n_cross_valid: null
+#     num_workers: 2
+#     report_freq: 50
+#     train_valid_split: null
+#   training_on_load: false
+#   schedule_cfg: null
+# # ---- End Type predictor-based ----
+# # ---- Type evo ----
+# controller_type: evo
+# controller_cfg:
+#   # Schedulable attributes: 
+#   rollout_type: nb301
+#   mode: eval
+#   population_size: 100
+#   parent_pool_size: 10
+#   mutate_kwargs: {}
+#   eval_sample_strategy: population
+#   elimination_strategy: regularized
+#   avoid_repeat: false
+#   avoid_mutate_repeat: false
+#   avoid_repeat_worst_threshold: 10
+#   avoid_mutate_repeat_worst_threshold: 10
+#   avoid_repeat_fallback: return
+#   schedule_cfg: null
+# # ---- End Type evo ----
+# ## ---- End Component controller ----
+
+## ---- Component evaluator ----
+# ---- Type mepa ----
+# NOTE: shared weights evaluator
+evaluator_type: mepa
+evaluator_cfg:
+  # Schedulable attributes: controller_surrogate_steps, mepa_surrogate_steps, mepa_samples
+  rollout_type: nb301
+  batch_size: 512
+  mepa_optimizer:
+    lr: 0.05
+    momentum: 0.9
+    type: SGD
+    weight_decay: 0.0005
+  mepa_scheduler:
+    patience: 30
+    factor: 0.5
+    type: ReduceLROnPlateau
+  surrogate_optimizer: null
+  surrogate_scheduler: null
+  mepa_as_surrogate: false
+  bptt_steps: 35
+  mepa_samples: 1
+  evaluate_with_whole_queue: false
+
+  data_portion:
+  - 0.0
+  - 0.8
+  - 0.2
+  shuffle_data_before_split: false
+  shuffle_indice_file: null
+  shuffle_data_before_split_seed: null
+
+  load_optimizer: true
+  load_scheduler: true
+  strict_load_weights_manager: true
+
+  controller_surrogate_steps: 0
+  mepa_surrogate_steps: 0
+  surrogate_optimizer: null
+  schedule_every_batch: false
+  workers_per_queue: 2
+  rollout_batch_size: 1
+  multiprocess: false
+  schedule_cfg: null
+# ---- End Type mepa ----
+
+# # ---- Type nb301 ----
+# NOTE: Nasbench-301 query, can benchmark sample-based search strategies (controllers)
+# evaluator_type: nb301
+# evaluator_cfg:
+#   # Schedulable attributes: 
+#   rollout_type: nb301
+#   with_noise: true
+#   path: null
+#   schedule_cfg: null
+# # ---- End Type nb301 ----
+## ---- End Component evaluator ----
+
+## ---- Component weights_manager ----
+# # ---- Type stub ----
+# # NOTE: Stub weights manager, use together with nb301 evaluator
+# weights_manager_type: stub
+# weights_manager_cfg:
+#   # Schedulable attributes: 
+#   rollout_type: nb301
+# # ---- End Type stub ----
+# ---- Type supernet ----
+# NOTE: CNN search space supernet, use together with mepa evaluator
+weights_manager_type: supernet
+weights_manager_cfg:
+  # Schedulable attributes: 
+  rollout_type: nb301
+  gpus: []
+  num_classes: 10
+  init_channels: 16
+  stem_multiplier: 3
+  max_grad_norm: 5.0
+  dropout_rate: 0.1
+  use_stem: conv_bn_3x3
+  stem_stride: 1
+  stem_affine: true
+  preprocess_op_type: null
+  cell_use_preprocess: true
+  cell_group_kwargs: null
+  cell_use_shortcut: false
+  cell_shortcut_op_type: skip_connect
+  candidate_member_mask: true
+  candidate_cache_named_members: false
+  candidate_virtual_parameter_only: false
+  candidate_eval_no_grad: true
+# ---- End Type supernet ----
+## ---- End Component weights_manager ----
+
+## ---- Component objective ----
+# ---- Type classification ----
+objective_type: classification
+objective_cfg:
+  # Schedulable attributes: 
+  label_smooth: null
+  schedule_cfg: null
+# ---- End Type classification ----
+## ---- End Component objective ----
+
+## ---- Component trainer ----
+# ---- Type simple ----
+trainer_type: simple
+trainer_cfg:
+  # Schedulable attributes: controller_samples, derive_samples
+  rollout_type: nb301
+  is_differentiable: false
+  epochs: 1500
+  test_every: 2000
+  controller_optimizer: null
+  controller_scheduler: null
+  controller_samples: 1
+  derive_samples: 8
+  rollout_batch_size: 1
+  evaluator_steps: null
+  controller_steps: null
+  controller_train_every: 1
+  controller_train_begin: 2000
+  interleave_controller_every: null
+  schedule_cfg: null
+# ---- End Type simple ----
+## ---- End Component trainer ----
+

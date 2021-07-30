@@ -171,12 +171,12 @@ See [Develop New Components](doc/development.md) for the development guide of ne
 ## Researches
 We use this codebase to finish the following researches
 * Wenshuo Li*, Xuefei Ning*, Guangjun Ge, Xiaoming Chen, Yu Wang, Huazhong Yang, FTT-NAS: Discovering Fault-Tolerant Neural Architecture, in ASP-DAC 2020.
-* Shulin Zeng*, Hanbo Sun*, Yu Xing, Xuefei Ning, Yi Shan, Xiaoming Chen, Yu Wang, Huazhong Yang, Black Box Search Space Profiling for Accelerator-Aware Neural Architecture Search, in ASP-DAC 2020.
-* Xuefei Ning, Guangjun Ge, Wenshuo Li, Zhenhua Zhu, Yin Zheng, Xiaoming Chen, Zhen Gao, Yu Wang, and Huazhong Yang, FTT-NAS: Discovering Fault-Tolerant Neural Architecture, in https://arxiv.org/abs/2003.10375, 2020.
-* Xuefei Ning, Yin Zheng, Tianchen Zhao, Yu Wang, Huazhong Yang, A Generic Graph-based Neural Architecture Encoding Scheme for Predictor-based NAS, in ECCV 2020, https://arxiv.org/abs/2004.01899
-* Xuefei Ning*, Wenshuo Li*, Zixuan Zhou*, Tianchen Zhao, Yin Zheng, Shuang Liang, Huazhong Yang, Yu Wang, A Surgery of the Neural Architecture Evaluators, in https://arxiv.org/abs/2008.03064
-* Xuefei Ning*, Junbo Zhao*, Wenshuo Li, Tianchen Zhao, Huazhong Yang, Yu Wang, Multi-shot NAS for Discovering Adversarially Robust Convolutional Neural Architectures at Targeted Capacities, in https://arxiv.org/abs/2012.11835
-* Tianchen Zhao*, Xuefei Ning*, Songyi Yang, Shuang Liang, Peng Lei, Jianfei Chen, Huazhong Yang, Yu Wang, BARS: Joint Search of Cell Topology and Layout for Accurate and Efficient Binary ARchitectures, in https://arxiv.org/abs/2011.10804, 2020.
+* Xuefei Ning, Guangjun Ge, Wenshuo Li, Zhenhua Zhu, Yin Zheng, Xiaoming Chen, Zhen Gao, Yu Wang, and Huazhong Yang, FTT-NAS: Discovering Fault-Tolerant Neural Architecture, in https://arxiv.org/abs/2003.10375, to be appeared in TODAES 2021. [instructions](./examples/research/ftt-nas)
+* Shulin Zeng*, Hanbo Sun*, Yu Xing, Xuefei Ning, Yi Shan, Xiaoming Chen, Yu Wang, Huazhong Yang, Black Box Search Space Profiling for Accelerator-Aware Neural Architecture Search, in ASP-DAC 2020. [instructions](./examples/research/bbssp/)
+* Xuefei Ning, Yin Zheng, Tianchen Zhao, Yu Wang, Huazhong Yang, A Generic Graph-based Neural Architecture Encoding Scheme for Predictor-based NAS, in ECCV 2020, https://arxiv.org/abs/2004.01899. [instructions](./examples/research/gates/)
+* Xuefei Ning, Changcheng Tang, Wenshuo Li, Zixuan Zhou, Shuang Liang, Huazhong Yang, Yu Wang, Evaluating Efficient Performance Estimators of Neural Architectures, in https://arxiv.org/abs/2008.03064. [instructions](./examples/research/surgery/)
+* Xuefei Ning*, Junbo Zhao*, Wenshuo Li, Tianchen Zhao, Yin Zheng, Huazhong Yang, Yu Wang, Multi-shot NAS for Discovering Adversarially Robust Convolutional Neural Architectures at Targeted Capacities, in https://arxiv.org/abs/2012.11835. [instructions](./examples/research/multishot-robnas/)
+* Tianchen Zhao*, Xuefei Ning*, Songyi Yang, Shuang Liang, Peng Lei, Jianfei Chen, Huazhong Yang, Yu Wang, BARS: Joint Search of Cell Topology and Layout for Accurate and Efficient Binary ARchitectures, in https://arxiv.org/abs/2011.10804, 2020. [instructions](./examples/research/bnn/)
 
 
 See the sub-directories under `examples/research/` for more details.

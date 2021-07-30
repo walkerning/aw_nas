@@ -1,0 +1,93 @@
+rollout_type: germ
+search_space_cfg: {}
+search_space_type: germ
+
+weights_manager_cfg:
+  germ_def_file: null
+  germ_supernet_type: nds_resnexta
+  germ_supernet_cfg:
+    force_ordinal: true
+  rollout_type: germ
+weights_manager_type: germ
+
+## ---- Component dataset ----
+# ---- Type cifar10 ----
+dataset_type: cifar10
+dataset_cfg:
+  # Schedulable attributes: 
+  cutout: null
+# ---- End Type cifar10 ----
+## ---- End Component dataset ----
+
+## ---- Component controller ---
+# ---- Type random_sample ----
+controller_type: random_sample
+controller_cfg: {}
+# ---- End Type random_sample ----
+## ---- End Component controller ---
+
+## ---- Component evaluator ----
+# ---- Type mepa ----
+evaluator_type: mepa
+evaluator_cfg:
+  # Schedulable attributes: controller_surrogate_steps, mepa_surrogate_steps, mepa_samples
+  rollout_type: germ
+  batch_size: 64
+  controller_surrogate_steps: 0
+  mepa_surrogate_steps: 0
+  mepa_optimizer:
+    lr: 0.05
+    momentum: 0.9
+    type: SGD
+    weight_decay: 0.00005
+  mepa_scheduler:
+    patience: 30
+    factor: 0.5
+    type: ReduceLROnPlateau
+  surrogate_optimizer: null
+  surrogate_scheduler: null
+  mepa_samples: 1
+  data_portion:
+  - 0.0
+  - 0.8
+  - 0.2
+  mepa_as_surrogate: false
+  bptt_steps: 35
+  workers_per_queue: 0
+  schedule_cfg: null
+# ---- End Type mepa ----
+## ---- End Component evaluator ----
+
+## ---- Component objective ----
+# ---- Type classification ----
+objective_type: zero-shot
+objective_cfg:
+  perf_names: ["relu_logdet", "grad_norm", "grasp", "jacob_cov", "plain", "relu", "synflow"]
+  schedule_cfg: null
+  aggregate_as_list: true
+# ---- End Type classification ----
+## ---- End Component objective ----
+
+
+## ---- Component trainer ----
+# ---- Type simple ----
+trainer_type: simple
+trainer_cfg:
+  # Schedulable attributes: controller_samples, derive_samples
+  rollout_type: germ
+  is_differentiable: false
+  epochs: 1000
+  test_every: 2000
+  controller_optimizer: null
+  controller_scheduler: null
+  controller_samples: 1
+  derive_samples: 10
+  evaluator_steps: null
+  controller_steps: 0
+  controller_train_every: 1
+  controller_train_begin: 2000
+  interleave_controller_every: null
+  schedule_cfg: null
+  controller_optimizer: false
+# ---- End Type simple ----
+## ---- End Component trainer ----

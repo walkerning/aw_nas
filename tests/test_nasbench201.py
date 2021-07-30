@@ -255,3 +255,40 @@ def test_gcn_controller(tmp_path):
     optimizer = optim.SGD(controller.parameters(), lr=0.001, momentum=0.9)
     controller.step(rollouts, optimizer)
 
+@pytest.mark.skipif(
+        not AWNAS_TEST_NASBENCH, reason="do not test the nasbench-201 BTC bu default")
+def test_canonical_rejector_and_sampler():
+    from aw_nas.controller.rejection import CanonicalTableRejector, RejectionSampleController
+    from aw_nas.common import get_search_space
+    from aw_nas.btcs.nasbench_201 import NasBench201Rollout
+
+    search_space = get_search_space(cls="nasbench-201", load_nasbench=True)
+    rejector = CanonicalTableRejector(search_space)
+    indices = np.tril_indices(4, k=-1)
+    def _pop_rollout(ops):
+        arch = np.zeros((4, 4))
+        arch[indices] = ops
+        return NasBench201Rollout(arch, search_space=search_space)
+    rollout_1 = _pop_rollout([1, 4, 4, 4, 1, 4])
+    rollout_1_iso = _pop_rollout([1, 4, 4, 1, 4, 4])
+    rollout_2 = _pop_rollout([1, 0, 0, 4, 1, 2])
+    assert rejector.accept(rollout_1)
+    assert rejector.accept(rollout_2)
+    assert not rejector.accept(rollout_1_iso)
+
+    # controller = RejectionSampleController(
+    #         search_space, "cuda", rollout_type="nasbench-201", maximum_sample_threshold=1, base_sampler_cfg={})
+    # # num should be definitely < 7000, since there are 6466 isomorphic groups in total
+    # sampled_rollouts = controller.sample(n=7000, batch_size=1)
+    # assert len(sampled_rollouts) < 7000
+    # print(len(sampled_rollouts))
+
+    # TODO: use sequential inner sampler, check table size equal 6466
+    controller = RejectionSampleController(
+        search_space, "cuda", rollout_type="nasbench-201", maximum_sample_threshold=1,
+        base_sampler_type="nasbench-201-rs",
+        base_sampler_cfg={"avoid_repeat": True, "deiso": False})
+    # num should be 6466
+    sampled_rollouts = controller.sample(n=16000, batch_size=1)
+    print(len(sampled_rollouts))
+    assert len(sampled_rollouts) == 6466

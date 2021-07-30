@@ -1,19 +1,25 @@
 # -*- coding: utf-8 -*-
 
 import os
-import six
+import random
+import functools
 
+import six
+import numpy as np
 import torch
 from torch import nn
 from torch.utils.data.distributed import DistributedSampler
 
 from aw_nas import utils
 from aw_nas.final.base import FinalTrainer
+from aw_nas.final.bnn_model import BNNGenotypeModel
 from aw_nas.utils.common_utils import nullcontext
 from aw_nas.utils.exception import expect
 from aw_nas.utils import DataParallel
 from aw_nas.utils import DistributedDataParallel
-from aw_nas.utils.torch_utils import calib_bn
+from aw_nas.utils.torch_utils import calib_bn, GroupSampler, DistributedGroupSampler
+from aw_nas.utils.parallel_utils import get_dist_info
+
 
 try:
     from torch.nn import SyncBatchNorm
@@ -23,13 +29,19 @@ except ImportError:
         "Import convert_sync_bn failed! SyncBatchNorm might not work!")
     convert_sync_bn = lambda m: m
 
-def _warmup_update_lr(optimizer, epoch, init_lr, warmup_epochs):
+def _warmup_update_lr(optimizer, epoch, init_lr, warmup_epochs, warmup_ratio=0.0):
     """
     update learning rate of optimizers
     """
-    lr = init_lr * epoch / warmup_epochs
+    lr = (init_lr - warmup_ratio) * epoch / warmup_epochs + warmup_ratio
     for param_group in optimizer.param_groups:
         param_group["lr"] = lr
+    return lr
+
+def worker_init_fn(worker_id, num_workers, rank, seed):
+    worker_seed = num_workers * rank + worker_id + seed
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
 
 class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attributes
     NAME = "cnn_trainer"
@@ -53,7 +65,9 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                  workers_per_queue=2,
                  eval_no_grad=True,
                  eval_every=1,
+                 eval_batch_size=1,
                  calib_bn_setup=False, # for OFA final model
+                 seed=None,
                  schedule_cfg=None):
         super(CNNFinalTrainer, self).__init__(schedule_cfg)
 
@@ -95,28 +109,51 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
         train_kwargs = getattr(_splits["train"], "kwargs", {})
         test_kwargs = getattr(_splits["test"], "kwargs", train_kwargs)
 
+        """
+        GroupSampler is needed when `keep_ratio` in dataset is set True.
+        It makes two group of images: aspect ratio > 1 , and aspect ratio < 1.
+
+        `shuffle` is invalid when using GroupSampler because it cannot
+        guarantee the original order of images.
+        """
+        group = train_kwargs.pop("group_sample", False)
+        test_kwargs["shuffle"] = False
+
         if self.multiprocess:
-            self.train_queue = torch.utils.data.DataLoader(
-                _splits["train"], batch_size=batch_size, pin_memory=True,
-                num_workers=workers_per_queue,
-                sampler=DistributedSampler(_splits["train"], shuffle=True), **train_kwargs)
-            self.valid_queue = torch.utils.data.DataLoader(
-                _splits["test"], batch_size=batch_size, pin_memory=True,
-                num_workers=workers_per_queue, shuffle=False, **test_kwargs)
+            sampler = DistributedGroupSampler(_splits["train"], None,
+                    batch_size) if group \
+                      else DistributedSampler(_splits["train"], shuffle=True)
+            test_kwargs["sampler"] = DistributedSampler(_splits["test"],
+                    shuffle=False)
         else:
-            self.train_queue = torch.utils.data.DataLoader(
-                _splits["train"], batch_size=batch_size, pin_memory=True,
-                num_workers=workers_per_queue, shuffle=True, **train_kwargs)
-            self.valid_queue = torch.utils.data.DataLoader(
-                _splits["test"], batch_size=batch_size, pin_memory=True,
-                num_workers=workers_per_queue, shuffle=False, **test_kwargs)
+            sampler = GroupSampler(_splits["train"], None, batch_size) if group \
+                      else None
+        if sampler is None:
+            train_kwargs["shuffle"] = True
+        else:
+            train_kwargs.pop("shuffle", None)
+            train_kwargs["sampler"] = sampler
+
+        rank, world_size = get_dist_info()
+        init_fn = functools.partial(worker_init_fn, num_workers=workers_per_queue, rank=rank,
+                seed=seed) if seed is not None else None
+
+        self.train_queue = torch.utils.data.DataLoader(
+            _splits["train"], batch_size=batch_size, pin_memory=False,
+            num_workers=workers_per_queue,
+            worker_init_fn=init_fn,
+            **train_kwargs)
+
+        self.valid_queue = torch.utils.data.DataLoader(
+            _splits["test"], batch_size=eval_batch_size, pin_memory=False,
+            num_workers=workers_per_queue, **test_kwargs)
 
         if self.calib_bn_setup:
             self.model = calib_bn(self.model, self.train_queue)
 
-        if self.model is not None:
-            self.optimizer = self._init_optimizer()
-            self.scheduler = self._init_scheduler(self.optimizer, self.optimizer_scheduler_cfg)
+        # optimizer and scheduler is called in `trainer.setup` call
+        self.optimizer = None
+        self.scheduler = None
 
         # states of the trainer
         self.last_epoch = 0
@@ -137,9 +174,14 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
             if load_state_dict is not None:
                 self._load_state_dict(load_state_dict)
 
-            self.logger.info("param size = {} M".format( \
-                             utils.count_parameters(self.model, count_binary=False)/1.e6))
+        self.logger.info("param size = {} M".format( \
+                        utils.count_parameters(
+                            self.model,
+                            count_binary=isinstance(self.model, BNNGenotypeModel))/1.e6))
+        if self.model is not None:
             self._parallelize()
+            self.optimizer = self._init_optimizer()
+            self.scheduler = self._init_scheduler(self.optimizer, self.optimizer_scheduler_cfg)
 
         self.save_every = save_every
         self.train_dir = train_dir
@@ -200,7 +242,7 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                 log_strs.append("scheduler from {}".format(s_path))
 
         self.logger.info("param size = %f M",
-                         utils.count_parameters(self.model)/1.e6)
+                         utils.count_parameters(self.model) / 1.e6)
         self.logger.info("Loaded checkpoint from %s: %s", path, ", ".join(log_strs))
         self.logger.info("Last epoch: %d", self.last_epoch)
 
@@ -227,6 +269,10 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                                                     self.device, epoch)
             self.logger.info("train_acc %f ; train_obj %f", train_acc, train_obj)
 
+            if self.save_every and epoch % self.save_every == 0:
+                path = os.path.join(self.train_dir, str(epoch))
+                self.save(path)
+
             if epoch % self.eval_every == 0:
                 valid_acc, valid_obj, valid_perfs = self.infer_epoch(self.valid_queue,
                                                                     self.parallel_model,
@@ -236,9 +282,6 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                                 "; ".join(
                                     ["{}: {:.3f}".format(n, v) for n, v in valid_perfs.items()]))
 
-            if self.save_every and epoch % self.save_every == 0:
-                path = os.path.join(self.train_dir, str(epoch))
-                self.save(path)
             self.on_epoch_end(epoch)
 
         self.save(os.path.join(self.train_dir, "final"))
@@ -286,9 +329,9 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
 
     def _parallelize(self):
         if self.multiprocess:
-            net = convert_sync_bn(self.model).to(self.device)
+            self.model = convert_sync_bn(self.model).to(self.device)
             self.parallel_model = DistributedDataParallel(
-                net, self.gpus, find_unused_parameters=True)
+                self.model, self.gpus, broadcast_buffers=False, find_unused_parameters=True)
         elif len(self.gpus) >= 2:
             self.parallel_model = DataParallel(self.model, self.gpus).to(self.device)
         else:
@@ -357,7 +400,8 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                                       add_evaluator_regularization=self.add_regularization)
             #torch.distributed.all_reduce(loss, op=torch.distributed.ReduceOp.SUM)
             loss.backward()
-            nn.utils.clip_grad_norm_(model.parameters(), self.grad_clip)
+            if isinstance(self.grad_clip, (int, float)) and self.grad_clip > 0:
+                nn.utils.clip_grad_norm_(model.parameters(), self.grad_clip)
             optimizer.step()
 
             prec1, prec5 = utils.accuracy(logits, target, topk=(1, 5))

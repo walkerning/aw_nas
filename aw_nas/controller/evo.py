@@ -79,9 +79,9 @@ class EvoController(BaseController):
         super(EvoController, self).__init__(
             search_space, rollout_type, mode, schedule_cfg)
 
-        expect(eval_sample_strategy in {"population", "all"},
+        expect(eval_sample_strategy in {"population", "all", "population_random"},
                "Invalid `eval_sample_strategy` {}, choices: {}".format(
-                   eval_sample_strategy, ["population", "all"]),
+                   eval_sample_strategy, ["population", "all", "population_random"]),
                ConfigException)
         expect(elimination_strategy in {"regularized", "perf"},
                "Invalid `elimination_strategy` {}, choices: {}".format(
@@ -170,6 +170,13 @@ class EvoController(BaseController):
                 # return n archs with best rewards ever seen
                 best_inds = np.argpartition(self._gt_scores, -n)[-n:]
                 rollouts = [self._gt_rollouts[ind] for ind in best_inds]
+            elif self.eval_sample_strategy == "population_random":
+                size = min(len(self.population), n)
+                genotypes = list(self.population.keys())
+                all_inds = np.arange(len(self.population))
+                inds = np.random.choice(all_inds, size=size)
+                rollouts = [self.search_space.rollout_from_genotype(genotypes[ind])
+                            for ind in inds]
             # if the population size or number of seen rollout is not large enough,
             # fill with random sample
             rollouts += [self.search_space.random_sample() for _ in range(n - len(rollouts))]
@@ -356,7 +363,7 @@ class ParetoEvoController(BaseController):
 
     def sample(self, n, batch_size=1):
         if self.mode == "eval":
-            self.pareto_frontier = self.find_pareto_opt()
+            self.pareto_frontier = self.find_pareto_opt(self.population)
             if self.eval_sample_strategy == "all":
                 # return all archs on the pareto curve,
                 # note that number of sampled rollouts does not necessarily equals `n`
@@ -452,8 +459,8 @@ class ParetoEvoController(BaseController):
         A * B^T = C, c_ij = \sum_k {a_ik * b_jk}, i.e. the dot of the ith
         vector in A and the jth vector in B.
 
-        A_mode_sq: shape (N, 1), i.e. the sqaure of the mode of each vector in A.
-        B_mode_sq: shape (M, 1), i.e. the sqaure of the mode of each vector in B.
+        A_mode_sq: shape (N, 1), i.e. the square of the mode of each vector in A.
+        B_mode_sq: shape (M, 1), i.e. the square of the mode of each vector in B.
 
         Then repeat them to the same shape:
         A': shape(N, M), a'_ij = mode(vec_a_i) ** 2
@@ -483,10 +490,11 @@ class ParetoEvoController(BaseController):
         distances = self._euclidean_distance(perfs, pareto).min(-1)
         return distances
 
-    def find_pareto_opt(self):
-        pop_keys = list(self.population.keys())
+    @classmethod
+    def find_pareto_opt(cls, population):
+        pop_keys = list(population.keys())
         pop_size = len(pop_keys)
-        population = {k: v for k, v in self.population.items()}
+        population = {k: v for k, v in population.items()}
         for ind1 in range(pop_size):
             key1 = pop_keys[ind1]
             if key1 not in population:

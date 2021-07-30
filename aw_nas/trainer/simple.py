@@ -66,6 +66,7 @@ class SimpleTrainer(BaseTrainer):
                  controller_steps=None,
                  controller_train_every=1,
                  controller_train_begin=1,
+                 addi_controller_train_epochs=tuple(),
                  interleave_controller_every=None,
 
                  schedule_cfg=None):
@@ -110,6 +111,7 @@ class SimpleTrainer(BaseTrainer):
         self.controller_steps = controller_steps
         self.controller_train_every = controller_train_every
         self.controller_train_begin = controller_train_begin
+        self.addi_controller_train_epochs = addi_controller_train_epochs
         self.interleave_controller_every = interleave_controller_every
 
         # prepare `self.controller_steps`
@@ -118,7 +120,7 @@ class SimpleTrainer(BaseTrainer):
             # if `controller_steps` not specified, use the suggested value by calling
             # `evaluator.suggested_controller_steps_per_epoch`
             expect(suggested is not None,
-                   "Cannot infer `controller_steps`! Neigher `controller_steps` is given in "
+                   "Cannot infer `controller_steps`! Neither `controller_steps` is given in "
                    "configuration, nor the evaluator return"
                    " a suggested `controller_steps`.", ConfigException)
             self.controller_steps = suggested
@@ -286,7 +288,8 @@ class SimpleTrainer(BaseTrainer):
                     finished_e_steps += evaluator_steps
 
                 if epoch >= self.controller_train_begin and \
-                   epoch % self.controller_train_every == 0 and controller_steps > 0:
+                   (epoch % self.controller_train_every == 0 or \
+                    epoch in self.addi_controller_train_epochs) and controller_steps > 0:
                     # controller training
                     c_loss, rollout_stats, c_stats \
                         = self._controller_update(controller_steps,
@@ -375,14 +378,16 @@ class SimpleTrainer(BaseTrainer):
         save_path = self._save_path("rollout/cell")
         if save_path is not None:
             # NOTE: If `train_dir` is None, the image will not be saved to tensorboard too
+            os.makedirs(self._save_path("rollout"), exist_ok=True)
             fnames = rollouts[idx].plot_arch(save_path, label="epoch {}".format(self.epoch))
             if not self.writer.is_none() and fnames is not None:
-                for cg_n, fname in fnames:
-                    try:
+                try:
+                    for cg_n, fname in fnames:
                         image = imageio.imread(fname)
-                        self.writer.add_image("genotypes/{}".format(cg_n), image, self.epoch, dataformats="HWC")
-                    except:
-                        pass
+                        self.writer.add_image("genotypes/{}".format(cg_n),
+                                              image, self.epoch, dataformats="HWC")
+                except Exception as e:
+                    self.logger.warn("Adding genotype images to Tensorboard failed: {}".format(e))
 
         self.logger.info("TEST Epoch %3d: Among %d sampled archs: "
                          "BEST (in reward): %.5f (mean: %.5f); Performance: %s",
@@ -415,9 +420,14 @@ class SimpleTrainer(BaseTrainer):
                     derive_out_file, derive_out_file + ".tmp"), shell=True)
                 with open(derive_out_file) as r_f:
                     save_dict = _parse_derive_file(r_f)
-                out_f = open(derive_out_file, "w")
-                yield out_f, save_dict
-                out_f.close()
+            else:
+                dir_name = os.path.dirname(derive_out_file)
+                if dir_name:
+                    os.makedirs(os.path.dirname(derive_out_file), exist_ok=True)
+                save_dict = {}
+            out_f = open(derive_out_file, "w")
+            yield out_f, save_dict
+            out_f.close()
 
     def derive(self, n, steps=None, out_file=None):
         # # some scheduled value will be used in test too, e.g. surrogate_lr, gumbel temperature...
@@ -429,8 +439,8 @@ class SimpleTrainer(BaseTrainer):
             with self._open_derive_out_file(out_file) as (out_f, save_dict):
                 for i_sample, rollout in enumerate(rollouts):
                     if str(rollout.genotype) in save_dict:
+                        rollout.perf = save_dict[str(rollout.genotype)]
                         _dump_with_perf(rollout, "str", out_f, index=i_sample)
-                        rollout.set_perf(save_dict[str(rollout.genotype)])
                         continue
                     rollout = self.evaluator.evaluate_rollouts([rollout],
                                                                is_training=False,
@@ -456,9 +466,15 @@ class SimpleTrainer(BaseTrainer):
         checkpoint = torch.load(path, map_location=torch.device("cpu"))
         self.last_epoch = self.epoch = checkpoint["epoch"]
         if self.controller_optimizer is not None:
-            self.controller_optimizer.load_state_dict(checkpoint["controller_optimizer"])
+            if checkpoint["controller_optimizer"] is not None:
+                self.controller_optimizer.load_state_dict(checkpoint["controller_optimizer"])
+            else:
+                self.logger.info("Controller optimizer state not exist, not loaded")
         if self.controller_scheduler is not None:
-            self.controller_scheduler.load_state_dict(checkpoint["controller_scheduler"])
+            if checkpoint["controller_scheduler"] is not None:
+                self.controller_scheduler.load_state_dict(checkpoint["controller_scheduler"])
+            else:
+                self.logger.info("Controller scheduler state not exist, not loaded")
         self.on_epoch_start(self.last_epoch)
 
     def on_epoch_start(self, epoch):

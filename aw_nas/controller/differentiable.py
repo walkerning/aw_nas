@@ -96,6 +96,12 @@ class DiffController(BaseController, nn.Module):
         else:
             self.cg_betas = None
 
+        # meta learning related
+        self.params_clone = None
+        self.buffers_clone = None
+        self.grad_clone = None
+        self.grad_count = 0
+
         self.to(self.device)
 
     def on_epoch_start(self, epoch):
@@ -119,7 +125,7 @@ class DiffController(BaseController, nn.Module):
     def forward(self, n=1):  # pylint: disable=arguments-differ
         return self.sample(n=n)
 
-    def sample(self, n=1, batch_size=1):
+    def sample(self, n=1, batch_size=1, support_set=None):
         rollouts = []
         for _ in range(n):
             # op_weights.shape: [num_edges, [batch_size,] num_ops]
@@ -203,6 +209,54 @@ class DiffController(BaseController, nn.Module):
         self.load_state_dict(checkpoint["state_dict"])
         self.on_epoch_start(checkpoint["epoch"])
         self.logger.info("Loaded controller network from %s", path)
+
+    def base_update_parameters(self):
+        return self.parameters()
+
+    def meta_clone(self, include_buffers=False):
+        """
+        Clone parameters and optionally buffers
+        Initialize zero grads for parameters
+        """
+        if include_buffers:
+            self.buffers_clone = {k: v.data.clone()
+                                  for k, v in self.named_buffers()}
+        self.params_clone = {k: v.data.clone()
+                             for k, v in self.named_parameters()}
+        self.grad_clone = {k: torch.zeros_like(v.data)
+                           for k, v in self.named_parameters()}
+        self.grad_count = 0
+
+    def meta_gradient(self, method, base_lr=None):
+        """
+        Accumulate gradients for each episode
+        """
+        if method == "fo_maml":
+            self.grad_clone = {k: self.grad_clone[k] + v.grad.clone()
+                               for k, v in self.named_parameters()}
+        elif method == "reptile":
+            assert base_lr is not None
+            self.grad_clone = {k: self.grad_clone[k] +\
+                               (self.params_clone[k] - v.data.clone()) / base_lr
+                               for k, v in self.named_parameters()}
+        else:
+            raise Exception(f"Unrecognized meta method {method}")
+        self.grad_count += 1
+
+    def meta_recover(self, include_buffers=False):
+        """
+        Recover cloned parameters and optionally buffers
+        """
+        if include_buffers:
+            for k, v in self.named_buffers():
+                v.data.copy_(self.buffers_clone[k])
+        for k, v in self.named_parameters():
+            v.data.copy_(self.params_clone[k])
+
+    def meta_update(self, optimizer):
+        for k, v in self.named_parameters():
+            v.grad.copy_(self.grad_clone[k] / self.grad_count)
+        self.step_current_gradient(optimizer)
 
     def _entropy_loss(self):
         # if self.entropy_coeff > 0:

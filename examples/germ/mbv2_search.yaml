@@ -1,0 +1,201 @@
+controller_cfg:
+  rollout_type: wrapper
+  schedule_cfg: null
+controller_type: random_sample
+dataset_cfg:
+  train_crop_size: [800, 480]
+  test_crop_size: [800, 480]
+  load_train_only: false
+  random_choose: false
+  remove_no_anno: true
+  remove_invalid_labels: true
+  has_background: false
+  train_pipeline:
+    - type: Resize
+      img_scale: !!python/tuple [800, 480]
+      keep_ratio: true
+    - type: RandomFlip
+      flip_ratio: 0.5
+    - type: Normalize
+      mean: [123.675, 116.28, 103.53]
+      #std: [1, 1, 1]
+      std: [58.395, 57.12, 57.375]
+      to_rgb: true
+    - type: Pad
+      size_divisor: 32
+    - type: DefaultFormatBundle
+      #- type: Collect
+      #keys: [img, gt_bboxes, gt_labels]
+  test_pipeline: 
+    - type: MultiScaleFlipAug
+      img_scale: !!python/tuple [800, 480]
+      flip: false
+      transforms: 
+        - type: Resize
+          keep_ratio: true
+        - type: RandomFlip
+        - type: Normalize
+          #mean: [0., 0., 0.]
+          mean: [123.675, 116.28, 103.53]
+          #std: [1, 1, 1]
+          std: [58.395, 57.12, 57.375]
+          to_rgb: true
+        - type: Pad
+          size_divisor: 32
+        - type: DefaultFormatBundle
+
+
+dataset_type: coco
+evaluator_cfg:
+  batch_size: 24    
+  bptt_steps: 35
+  data_portion: [0.95, [train_testTransform, 0.05]]
+  disable_step_current: false
+  eval_optimizer: {lr: 0.05, momentum: 0.9, type: SGD, weight_decay: 0.00005}
+  eval_samples: 1
+  eval_scheduler: {eta_min: 0.0, T_max: 20, type: CosineAnnealingLR}
+  evaluate_with_whole_queue: false
+  load_optimizer: true
+  load_scheduler: true
+  rollout_batch_size: 1
+  rollout_type: wrapper
+  schedule_cfg: null
+  schedule_every_batch: false
+  shuffle_data_before_split: false
+  shuffle_data_before_split_seed: null
+  shuffle_indice_file: null
+  strict_load_weights_manager: true
+  update_evaluator_report_perfs: true
+  workers_per_queue: 2
+evaluator_type: discrete_shared_weights
+objective_type: mmdetection_head
+objective_cfg:
+  # Schedulable attributes:
+  num_classes: 80
+  metrics_type: coco
+  metrics_cfg:
+      remove_invalid_labels: true
+      has_background: false
+  head_type: ATSSHead
+  head_cfg:
+      num_classes: 80
+      in_channels: 64
+      stacked_convs: 3
+      feat_channels: 64
+      norm_cfg:
+          type: BN
+          requires_grad: true
+      anchor_generator:
+          type: AnchorGenerator
+          ratios: [1.0]
+          octave_base_scale: 5
+          scales_per_octave: 1
+          strides: [8, 16, 32, 64, 128]
+      bbox_coder:
+          type: DeltaXYWHBBoxCoder
+          target_means: [.0, .0, .0, .0]
+          target_stds: [0.1, 0.1, 0.2, 0.2]
+      loss_cls:
+          type: FocalLoss
+          use_sigmoid: True
+          gamma: 2.0
+          alpha: 0.25
+          loss_weight: 1.0
+      loss_bbox:
+          type: GIoULoss
+          loss_weight: 2.0
+      loss_centerness:
+          type: CrossEntropyLoss
+          use_sigmoid: True
+          loss_weight: 1.0
+      train_cfg:
+        assigner:
+          type: ATSSAssigner
+          topk: 9
+        allowed_border: -1
+        smoothl1_beta: 1.
+        pos_weight: -1
+        debug: false
+      test_cfg:
+          nms_pre: 1000
+          min_bbox_size: 0
+          nms:
+              type: nms
+              iou_threshold: 0.6
+          min_bbox_size: 0
+          score_thr: 0.05
+          max_per_img: 100
+rollout_type: wrapper
+search_space_cfg:
+    backbone_search_space_type: germ
+    backbone_search_space_cfg: {}
+    backbone_rollout_type: germ
+    neck_search_space_type: germ
+    neck_search_space_cfg: {}
+    neck_rollout_type: germ
+search_space_type: germ_wrapper
+
+trainer_cfg: {controller_optimizer: null, controller_samples: 1, controller_scheduler: null,
+  controller_steps: null, controller_train_begin: 1000, controller_train_every: 1, derive_samples: 8,
+  epochs: 500, evaluator_steps: null, interleave_controller_every: null, is_differentiable: false,
+  rollout_batch_size: 1, rollout_type: wrapper, schedule_cfg: null, test_every: 500}
+trainer_type: simple
+weights_manager_cfg:
+  backbone_type: germ
+  backbone_cfg:
+    germ_supernet_type: mbv2 
+    germ_supernet_cfg:
+        num_classes: 80
+        depth_choices: [2, 3, 4]
+        strides: [2, 2, 2, 1, 2, 1]
+        mult_ratio_choices: [0.25, 0.5, 0.75, 1.0]
+        channels: [32, 16, 24, 40, 80, 96, 192, 320, 1280]
+        kernel_sizes: [3, 5, 7]
+        expansion_choices: [2, 3, 4, 6]
+        stem_stride: 2
+        schedule_cfg:
+            kernel_sizes:
+                - epoch: 0
+                  choices: [7]
+                - epoch: 61
+                  choices: [5, 7]
+                - epoch: 91
+                  choices: [3, 5, 7]
+            expansion_choices:
+                - epoch: 0
+                  choices: [6]
+                - epoch: 121
+                  choices: [4, 6]
+                - epoch: 181
+                  choices: [2, 3, 4, 6]
+            mult_ratio_choices:
+                - epoch: 0
+                  choices: [1.0]
+                - epoch: 241
+                  choices: [0.75, 1]
+                - epoch: 301
+                  choices: [0.5, 0.75, 1]
+            depth_choices:
+                - epoch: 0
+                  choices: [4]
+                - epoch: 361
+                  choices: [3, 4]
+                - epoch: 421
+                  choices: [2, 3, 4]
+  rollout_type: wrapper
+  neck_type: fpn_germ
+  neck_cfg:
+    out_channels: 256
+    pyramid_layers: 5
+    kernel_sizes: [3]
+  head_type: atss
+  head_cfg:
+    num_classes: 80
+    num_anchors: 1
+    stacked_convs: 3
+    has_background: false
+    in_channels: 256
+    activation: relu6
+  feature_levels: [3, 4, 5]
+
+weights_manager_type: wrapper
