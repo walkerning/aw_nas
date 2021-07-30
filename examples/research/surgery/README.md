@@ -31,7 +31,7 @@ There are several helper scripts provided under this directory. They are
 * `run_zero_shot.py`: Run zero-shot estimations. By default, multiple random initialization seeds would be used (20, 2020, 202020). Optionally, one can specificy `--evaluators` to calculate the zero-shot indicators on pretrained one-shot supernets.
 * `evaluation.py`: Evaluate the `derive` (NB201) or `eval-arch` (NB301/101) results, and dump the corresponding criteria (i.e., One-shot average, Kendall's Tau, SpearmanR, P@top/bottom Ks, B/WR@K, etc.) into a pickle file with the `_statistics.pkl` suffix.
 
-
+Please check the help messages as well as the codes to see how to run these helper scripts.
 
 ### NAS-Bench-201
 
@@ -44,11 +44,14 @@ See instructions under `nb301/`.
 
 See instructions under `nb101/`.
 
+### NDS ResNet and ResNeXt (Non-topological search spaces)
+
+See instructions under `nds/`.
+
 ### Zero-shot Estimators (ZSEs)
 
 We appreciate the authors of [Zero-Cost Proxies for Lightweight NAS, ICLR2021] for their efforts in providing the research codes.
 In order to evaluate ZSEs, we integrate their lib into our framework in `aw_nas/objective/zerocost.py`. Thus [their lib](https://github.com/SamsungLabs/zero-cost-nas) should be installed for evaluating ZSEs.
 To evaluate `relu_logdet` and `relu` scores, one should use [our fork](https://github.com/zhouzx17/zero-cost-nas) of their lib.
 
-The zeroshot configurations on different search spaces are `nb101/zeroshot.yaml`, `nb201/zeroshot.yaml`, and `nb301/zeroshot.yaml`.
-
+The zeroshot configuration files on different search spaces are `nb101/zeroshot.yaml`, `nb201/zeroshot.yaml`, `nb301/zeroshot.yaml`, `nds/resnet_zeroshot.yaml`, and `resnexta_zeroshot.yaml`.
