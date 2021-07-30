@@ -136,9 +136,20 @@ class _OrderedCommandGroup(click.Group):
 def nullcontext():
     yield
 
-def makedir(path, remove=False):
+def makedir(path, remove=False, quiet=False):
     if os.path.exists(path) and remove:
-        shutil.rmtree(path)
+        if not quiet:
+            response = input(
+                "The {} already exists.".format(path) + \
+                "Do you want to delete it anyway. [Y/y/yes] or [N/n/no/others], default is N\n"
+            )
+            if str(response) in ["Y", "y", "yes"]:
+                shutil.rmtree(path)
+            else:
+                print("exit!")
+                sys.exit(0)
+        else:
+            shutil.rmtree(path)
     if not os.path.isdir(path):
         os.makedirs(path)
     return path

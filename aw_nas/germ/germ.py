@@ -173,7 +173,7 @@ class GermSearchSpace(SearchSpace):
     def plot_arch(self, genotypes, filename, label, **kwargs):
         with open(filename, "w") as w_f:
             w_f.write(genotypes)
-        return [filename]
+        return [(genotypes, filename)]
 
     @classmethod
     def supported_rollout_types(cls):
@@ -206,7 +206,9 @@ class GermRollout(BaseRollout):
         self.search_space = search_space
         self.candidate_net = candidate_net
         self._perf = OrderedDict()
+        # _genotype to construct rollout, _net_genotype is the true gene
         self._genotype = None
+        self._net_genotype = None
 
     def __getitem__(self, decision_or_id):
         return self.search_space.get_value(self, decision_or_id)
@@ -331,7 +333,7 @@ def finalize_rollout(final_mod, rollout):
             final_sub_mod = nn.Sequential(
                 *[
                     m.finalize_rollout(rollout)
-                    if isinstance(mod, SearchableBlock)
+                    if isinstance(m, SearchableBlock)
                     else finalize_rollout(m, rollout)
                     for m in mod
                 ]
@@ -340,7 +342,7 @@ def finalize_rollout(final_mod, rollout):
             final_sub_mod = nn.ModuleList(
                 [
                     m.finalize_rollout(rollout)
-                    if isinstance(mod, SearchableBlock)
+                    if isinstance(m, SearchableBlock)
                     else finalize_rollout(m, rollout)
                     for m in mod
                 ]
@@ -407,7 +409,7 @@ class DecisionDict(SearchableBlock):
                     )
                 if not len(p) == 2:
                     raise ValueError(
-                        "DecisionyDict update sequence element "
+                        "DecisionsDict update sequence element "
                         "#" + str(j) + " has length " + str(len(p)) + "; 2 is required"
                     )
                 self[p[0]] = p[1]

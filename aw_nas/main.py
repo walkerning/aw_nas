@@ -8,6 +8,7 @@ from __future__ import print_function
 import os
 import re
 import sys
+import time
 import random
 import shutil
 import pickle
@@ -179,11 +180,14 @@ def main(local_rank):
               "need `tensorboard` extra, `pip install aw_nas[tensorboard]`")
 @click.option("--develop", default=False, type=bool, is_flag=True,
               help="in develop mode, will copy the `aw_nas` source files into train_dir for backup")
+@click.option("--quiet", "-q", is_flag=True, default=False)
 def search(cfg_file, gpu, seed, load, save_every, save_controller_every, interleave_report_every,
-           train_dir, vis_dir, develop):
+           train_dir, vis_dir, develop, quiet):
     # check dependency and initialize visualization writer
     if vis_dir:
-        vis_dir = utils.makedir(vis_dir, remove=True)
+        extra_path = os.path.basename(train_dir) \
+            if train_dir else time.strftime("%Y-%m-%d/%H:%M", time.localtime())
+        vis_dir = utils.makedir(os.path.join(vis_dir, extra_path), remove=True, quiet=quiet)
         try:
             import tensorboardX
         except ImportError:
@@ -198,7 +202,7 @@ def search(cfg_file, gpu, seed, load, save_every, save_controller_every, interle
 
     if train_dir:
         # backup config file, and if in `develop` mode, also backup the aw_nas source code
-        train_dir = utils.makedir(train_dir, remove=True)
+        train_dir = utils.makedir(train_dir, remove=True, quiet=quiet)
         shutil.copyfile(cfg_file, os.path.join(train_dir, "config.yaml"))
 
         if develop:
@@ -268,8 +272,9 @@ def search(cfg_file, gpu, seed, load, save_every, save_controller_every, interle
               "need `tensorboard` extra, `pip install aw_nas[tensorboard]`")
 @click.option("--develop", default=False, type=bool, is_flag=True,
               help="in develop mode, will copy the `aw_nas` source files into train_dir for backup")
+@click.option("--quiet", "-q", is_flag=True, default=False)
 def mpsearch(cfg_file, seed, load, save_every, save_controller_every, interleave_report_every,
-           train_dir, vis_dir, develop):
+           train_dir, vis_dir, develop, quiet):
     # check dependency and initialize visualization writer
     local_rank = int(os.environ["LOCAL_RANK"])
     # set gpu
@@ -279,7 +284,7 @@ def mpsearch(cfg_file, seed, load, save_every, save_controller_every, interleave
                                          world_size=int(os.environ["WORLD_SIZE"]))
 
     if vis_dir and local_rank == 0:
-        vis_dir = utils.makedir(vis_dir, remove=True)
+        vis_dir = utils.makedir(vis_dir, remove=False, quiet=quiet)
         try:
             import tensorboardX
         except ImportError:
@@ -295,7 +300,7 @@ def mpsearch(cfg_file, seed, load, save_every, save_controller_every, interleave
     if train_dir:
         if local_rank == 0:
             # backup config file, and if in `develop` mode, also backup the aw_nas source code
-            train_dir = utils.makedir(train_dir, remove=True)
+            train_dir = utils.makedir(train_dir, remove=True, quiet=quiet)
             shutil.copyfile(cfg_file, os.path.join(train_dir, "config.yaml"))
 
             if develop:
@@ -353,7 +358,7 @@ def mpsearch(cfg_file, seed, load, save_every, save_controller_every, interleave
                                         rollout_type=rollout_type)
 
     _data_type = whole_dataset.data_type()
-    
+
     if _data_type == "sequence":
         # get the num_tokens
         num_tokens = whole_dataset.vocab_size
@@ -769,7 +774,8 @@ def derive(cfg_file, load, out_file, n, save_plot, test, steps, gpu, seed, dump_
               help="the number of epochs to save checkpoint every")
 @click.option("--train-dir", default=None, type=str,
               help="the directory to save checkpoints")
-def mptrain(seed, cfg_file, load, load_state_dict, save_every, train_dir):
+@click.option("--quiet", "-q", is_flag=True, default=False)
+def mptrain(seed, cfg_file, load, load_state_dict, save_every, train_dir, quiet):
     local_rank = int(os.environ["LOCAL_RANK"])
     # set gpu
     _set_gpu(local_rank)
@@ -779,9 +785,9 @@ def mptrain(seed, cfg_file, load, load_state_dict, save_every, train_dir):
     if train_dir:
         # backup config file, and if in `develop` mode, also backup the aw_nas source code
         if local_rank == 0:
-            train_dir = utils.makedir(train_dir, remove=False)
+            train_dir = utils.makedir(train_dir, remove=False, quiet=quiet)
             shutil.copyfile(cfg_file, os.path.join(train_dir, "train_config.yaml"))
-    
+
     torch.distributed.barrier()
 
     if train_dir:
@@ -871,10 +877,11 @@ def mptrain(seed, cfg_file, load, load_state_dict, save_every, train_dir):
               help="the number of epochs to save checkpoint every")
 @click.option("--train-dir", default=None, type=str,
               help="the directory to save checkpoints")
-def train(gpus, seed, cfg_file, load_supernet, load, load_state_dict, save_every, train_dir):
+@click.option("--quiet", "-q", is_flag=True, default=False)
+def train(gpus, seed, cfg_file, load_supernet, load, load_state_dict, save_every, train_dir, quiet):
     if train_dir:
         # backup config file, and if in `develop` mode, also backup the aw_nas source code
-        train_dir = utils.makedir(train_dir, remove=True)
+        train_dir = utils.makedir(train_dir, remove=True, quiet=quiet)
         shutil.copyfile(cfg_file, os.path.join(train_dir, "train_config.yaml"))
 
         # add log file handler

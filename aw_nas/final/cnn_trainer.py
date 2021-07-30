@@ -400,7 +400,8 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                                       add_evaluator_regularization=self.add_regularization)
             #torch.distributed.all_reduce(loss, op=torch.distributed.ReduceOp.SUM)
             loss.backward()
-            nn.utils.clip_grad_norm_(model.parameters(), self.grad_clip)
+            if isinstance(self.grad_clip, (int, float)) and self.grad_clip > 0:
+                nn.utils.clip_grad_norm_(model.parameters(), self.grad_clip)
             optimizer.step()
 
             prec1, prec5 = utils.accuracy(logits, target, topk=(1, 5))

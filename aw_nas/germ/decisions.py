@@ -221,6 +221,7 @@ class BaseDecision(Component):
     def __init__(self, post_fn=None, schedule_cfg=None):
         super().__init__(schedule_cfg=schedule_cfg)
         self.post_fn = post_fn
+        self.decision_id = None
 
     def __repr__(self):
         return self.to_string()

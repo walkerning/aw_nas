@@ -237,7 +237,7 @@ class GermMixedOp(germ.SearchableBlock):
 
         self.op_list = op_list
         if op_choice is None:
-            # initalize new choice
+            # initialize new choice
             self.op_choice = germ.Choices(
                 choices=list(range(len(self.op_list))), size=1
             )
@@ -738,7 +738,7 @@ class SearchableFusedConv(germ.SearchableBlock):
 
     def forward(self, inputs):
         out = self.fused_conv(inputs)
-        if self.stride == 1 and out.shape[1] == inputs.shape[1]: 
+        if self.stride == 1 and out.shape[1] == inputs.shape[1]:
             #self.in_channels == self.out_channels:
             out += inputs
         return out
@@ -793,4 +793,3 @@ class RepConv(germ.SearchableBlock):
 
         conv.weight.data.copy_(weight)
         return nn.Sequential(conv, self.bn)
-

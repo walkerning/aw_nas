@@ -110,6 +110,13 @@ class MaskHandler(object):
     def is_none(self):
         return not isinstance(self.choices, germ.BaseDecision)
 
+    def __del__(self):
+        """
+        update MaskHandler.REGISTRED if del
+        """
+        # MaskHandler.REGISTRED.add((id(module), name))
+        MaskHandler.REGISTRED = set(filter(lambda x: x[0] != id(self.module), MaskHandler.REGISTRED))
+
     @abc.abstractmethod
     def apply(self, module, choice, ctx=None, detach=False):
         pass

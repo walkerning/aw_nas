@@ -155,7 +155,7 @@ class WrapperFinalTrainer(CNNFinalTrainer):  # pylint: disable=too-many-instance
             #    if p.grad is not None:
             #        print(p.grad.sum())
 
-            if self.grad_clip is not None:
+            if isinstance(self.grad_clip, (int, float)) and self.grad_clip > 0:
                 nn.utils.clip_grad_norm_(model.parameters(), self.grad_clip)
             optimizer.step()
             prec1, prec5 = self._acc_func(inputs, predictions, targets, model)

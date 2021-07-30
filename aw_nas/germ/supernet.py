@@ -177,7 +177,7 @@ class GermSuperNet(Component, nn.Module):
         self.ctx.rollout = rollout
         final_mod = copy.deepcopy(self)
         final_mod = finalize_rollout(final_mod, rollout)
-        self.ctx.rollout = None
+        final_mod.ctx.rollout = None
         return final_mod
 
     def on_epoch_start(self, epoch):
@@ -207,10 +207,10 @@ class GermWeightsManager(BaseBackboneWeightsManager, nn.Module):
 
         if germ_def_file is not None:
             # python 3
-            self.germ_def_module = {}
+            germ_def_module = {}
             with open(germ_def_file, "rb") as source_file:
                 code = compile(source_file.read(), germ_def_file, "exec")
-                exec(code, self.germ_def_module)
+                exec(code, germ_def_module)
 
         self.candidate_eval_no_grad = candidate_eval_no_grad
         self.max_grad_norm = max_grad_norm

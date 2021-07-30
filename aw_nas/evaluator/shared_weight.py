@@ -89,7 +89,7 @@ class SharedweightEvaluator(
         disable_step_current=False,
         evaluate_with_whole_queue=False,
         data_portion=(0.5, 0.5),
-        shuffle_data_before_split=False,  # by default not shuffle data before train-val splito
+        shuffle_data_before_split=False,  # by default not shuffle data before train-val split
         shuffle_indice_file=None,
         shuffle_data_before_split_seed=None,
         workers_per_queue=2,
@@ -270,6 +270,8 @@ class SharedweightEvaluator(
                     callback=callback,
                     rollout=rollout,
                 )
+                if hasattr(cand_net, "get_net_genotype") and hasattr(rollout, "_net_genotype"):
+                    rollout._net_genotype = cand_net.get_net_genotype()
 
         else:  # only for test
             self.objective.set_mode("eval")
@@ -390,10 +392,6 @@ class SharedweightEvaluator(
             # record stats of this arch
             report_stats.append(res)
 
-        if self.schedule_every_batch:
-            # schedule learning rate every evaluator step
-            self._scheduler_step(self.step)
-
         self.step += 1
         # average the gradients and update the meta parameters
         if not self.eval_step_current:
@@ -402,6 +400,11 @@ class SharedweightEvaluator(
         else:
             # call step_current_gradients; eval_sample == 1
             self.weights_manager.step_current_gradients(self.eval_optimizer)
+
+        if self.schedule_every_batch:
+            # schedule learning rate every evaluator step
+            self._scheduler_step(self.step)
+
 
         del all_gradients
 
@@ -416,11 +419,6 @@ class SharedweightEvaluator(
         self.weights_manager.on_epoch_start(epoch)
         self.objective.on_epoch_start(epoch)
 
-        if not self.schedule_every_batch:
-            self._scheduler_step(epoch - 1, log=True)
-
-        else:
-            self._scheduler_step(self.step, log=True)
 
     def on_epoch_end(self, epoch):
         super(SharedweightEvaluator, self).on_epoch_end(epoch)
@@ -434,6 +432,13 @@ class SharedweightEvaluator(
         # reset all meters
         for meter in self.epoch_average_meters.values():
             meter.reset()
+
+        # schedule after epoch
+        if not self.schedule_every_batch:
+            self._scheduler_step(epoch - 1, log=True)
+
+        else:
+            self._scheduler_step(self.step, log=True)
 
     def save(self, path):
         optimizer_states = {}
@@ -586,7 +591,7 @@ class SharedweightEvaluator(
 
         if len(queue_cfgs) == 2:
             self.logger.warn(
-                "We suggest explictly specifiying the configuration for "
+                "We suggest explicitly specifying the configuration for "
                 'derive_queue. For example, by adding a 3rd item "- '
                 '[train_testTransform, [0.8, 1.0], {shuffle: false}]"'
                 "into the `data_portion` configuration field"
@@ -682,7 +687,8 @@ class SharedweightEvaluator(
     def _scheduler_step(self, step, log=False):
         lr_str = ""
         if self.eval_scheduler is not None:
-            self.eval_scheduler.step(step)
+            # self.eval_scheduler.step(step)
+            self.eval_scheduler.step()
             lr_str += "eval LR: {:.5f}; ".format(
                 self.eval_optimizer.param_groups[0]["lr"]
             )
