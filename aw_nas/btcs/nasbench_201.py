@@ -11,6 +11,7 @@ import itertools
 import collections
 from typing import List, Optional, NamedTuple
 from collections import defaultdict, OrderedDict
+import contextlib
 
 import six
 import yaml
@@ -26,6 +27,7 @@ from aw_nas.common import SearchSpace
 from aw_nas.rollout.base import BaseRollout
 from aw_nas.evaluator.base import BaseEvaluator
 from aw_nas.controller.base import BaseController
+from aw_nas.controller import DiffController
 from aw_nas.evaluator.arch_network import ArchEmbedder
 from aw_nas.utils import (
     DenseGraphSimpleOpEdgeFlow,
@@ -666,6 +668,136 @@ class MLP(nn.Module):
                 out = self.forward_single(torch.cat([x[j], x[i]]))
                 prob.append(out)
         return prob
+
+
+class NasBench201DiffController(DiffController, nn.Module):
+    """
+    Differentiable controller for nasbench-201.
+    """
+
+    NAME = "nasbench-201-differentiable"
+
+    SCHEDULABLE_ATTRS = [
+        "gumbel_temperature",
+        "entropy_coeff",
+        "force_uniform"
+    ]
+
+    def __init__(self, search_space: SearchSpace, device: torch.device, 
+                 rollout_type: str = "nasbench-201-differentiable",
+                 use_prob: bool = False, gumbel_hard: bool = False, 
+                 gumbel_temperature: float = 1.0, entropy_coeff: float = 0.01, 
+                 max_grad_norm: float = None, force_uniform: bool = False, 
+                 inspect_hessian_every: int = -1, schedule_cfg = None):
+        BaseController.__init__(self, search_space, rollout_type, schedule_cfg = schedule_cfg)
+        nn.Module.__init__(self)
+
+        self.device = device
+
+        # sampling
+        self.use_prob = use_prob
+        self.gumbel_hard = gumbel_hard
+        self.gumbel_temperature = gumbel_temperature
+
+        # training
+        self.entropy_coeff = entropy_coeff
+        self.max_grad_norm = max_grad_norm
+        self.force_uniform = force_uniform
+
+        self.inspect_hessian_every = inspect_hessian_every
+        self.inspect_hessian = False
+
+        self.cg_alpha = nn.Parameter(1e-3 * 
+            torch.randn(self.search_space.num_possible_edges, self.search_space.num_op_choices)
+        )
+
+        # meta learning related
+        self.params_clone = None
+        self.buffers_clone = None
+        self.grad_clone = None
+        self.grad_count = 0
+
+        self.to(self.device)
+
+    def sample(self, n: int = 1, batch_size: int = None):
+        assert batch_size is None or batch_size == 1, "Do not support sample batch size for now"
+        rollouts = []
+
+        for _ in range(n):
+            alpha = torch.zeros_like(self.cg_alpha) if self.force_uniform else self.cg_alpha
+            
+            if self.use_prob:
+                sampled = F.softmax(alpha / self.gumbel_temperature, dim = -1)
+            else:
+                # gumbel sampling
+                sampled, _ = utils.gumbel_softmax(alpha, self.gumbel_temperature, hard = False)
+
+            op_weights_list = utils.straight_through(sampled) if self.gumbel_hard else sampled
+            sampled_list = utils.get_numpy(sampled)
+            logits_list = utils.get_numpy(alpha)
+
+            arch_list = [
+                DiffArch(op_weights = op_weights, edge_norms = None) 
+                for op_weights in op_weights_list
+            ]
+
+            rollouts.append(
+                NasBench201DiffRollout(
+                    arch_list, sampled_list, logits_list, self.search_space
+                )
+            )
+
+        return rollouts
+
+    def _entropy_loss(self):
+        if self.entropy_coeff is not None:
+            prob = F.softmax(self.cg_alpha, dim = -1)
+            return - self.entropy_coeff * (torch.log(prob) * prob).sum()
+        return 0.
+
+    def summary(self, rollouts, log: bool = False, log_prefix: str = "", step: int = None):
+        num = len(rollouts)
+        logits_list = [[utils.get_numpy(logits) for logits in r.logits] for r in rollouts]
+        if self.gumbel_hard:
+            cg_logprob = 0.
+        cg_entro = 0.
+        for rollout, logits in zip(rollouts, logits_list):
+            prob = utils.softmax(logits)
+            logprob = np.log(prob)
+            if self.gumbel_hard:
+                op_weights = [arch.op_weights.tolist() for arch in rollout.arch]
+                inds = np.argmax(utils.get_numpy(op_weights), axis=-1)
+                cg_logprob += np.sum(logprob[range(len(inds)), inds])
+            cg_entro += -(prob * logprob).sum()
+
+        # mean across rollouts
+        if self.gumbel_hard:
+            cg_logprob /= num
+            cg_logprobs_str = "{:.2f}".format(cg_logprob)
+
+        cg_entro /= num
+        cg_entro_str = "{:.2f}".format(cg_entro)
+
+        if log:
+            # maybe log the summary
+            self.logger.info("%s%d rollouts: %s ENTROPY: %2f (%s)",
+                    log_prefix, num,
+                    "-LOG_PROB: %.2f (%s) ;" % (-cg_logprob, cg_logprobs_str) \
+                        if self.gumbel_hard else "",
+                    cg_entro, cg_entro_str)
+            if step is not None and not self.writer.is_none():
+                if self.gumbel_hard:
+                    self.writer.add_scalar("log_prob", cg_logprob, step)
+                self.writer.add_scalar("entropy", cg_entro, step)
+
+        stats = [("ENTRO", cg_entro)]
+        if self.gumbel_hard:
+            stats += [("LOGPROB", cg_logprob)]
+        return OrderedDict(stats)
+
+    @classmethod
+    def supported_rollout_types(cls):
+        return ["nasbench-201-differentiable"]
 
 
 class NasBench201GcnController(BaseController, nn.Module):
@@ -1393,7 +1525,7 @@ class NasBench201Evaluator(BaseEvaluator):
 
     @classmethod
     def supported_rollout_types(cls):
-        return ["nasbench-201", "compare"]
+        return ["nasbench-201", "compare", "nasbench-201-differentiable"]
 
     def suggested_controller_steps_per_epoch(self):
         return None
@@ -1478,9 +1610,8 @@ class NasBench201Evaluator(BaseEvaluator):
 
 
 class NB201DiffSharedCell(nn.Module):
-    def __init__(
-        self, op_cls, search_space, layer_index, num_channels, num_out_channels, stride
-    ):
+    def __init__(self, op_cls, search_space, layer_index, 
+            num_channels, num_out_channels, stride, bn_affine: bool = False):
         super(NB201DiffSharedCell, self).__init__()
         self.search_space = search_space
         self.stride = stride
@@ -1501,6 +1632,7 @@ class NB201DiffSharedCell(nn.Module):
                     self.num_out_channels,
                     stride=self.stride,
                     primitives=self._primitives,
+                    bn_affine = bn_affine
                 )
                 self.edge_mod.add_module(
                     "f_{}_t_{}".format(from_, to_), self.edges[from_][to_]
@@ -1690,7 +1822,7 @@ class NB201CandidateNet(CandidateNet):
                     valid_output.append(from_)
         self.valid_input = set(valid_input)
         self.valid_output = set(valid_output)
-
+        
     def reset_flops(self):
         self._flops_calculated = False
         self.total_flops = 0
@@ -1761,6 +1893,9 @@ class NB201CandidateNet(CandidateNet):
     def named_buffers(
         self, prefix="", recurse=True
     ):  # pylint: disable=arguments-differ
+        if isinstance(self.super_net, NB201DiffSharedNet):
+            return self.super_net.named_buffers()
+
         if self.member_mask:
             if self.cache_named_members:
                 if self._cached_nb is None:
@@ -1810,6 +1945,74 @@ class NB201CandidateNet(CandidateNet):
             member_lst.append((n, v))
         state_dict = OrderedDict(member_lst)
         return state_dict
+
+
+class NB201DiffCandidateNet(NB201CandidateNet):
+    def __init__(
+        self,
+        super_net,
+        rollout,
+        member_mask,
+        gpus=tuple(),
+        cache_named_members=False,
+        eval_no_grad=True
+    ):
+        CandidateNet.__init__(self, eval_no_grad = eval_no_grad)
+        self.super_net = super_net
+        self._device = self.super_net.device
+        self.gpus = gpus
+        self.search_space = super_net.search_space
+        self.member_mask = member_mask
+        self.cache_named_members = cache_named_members
+        self._cached_np = None
+        self._cached_nb = None
+
+        self._flops_calculated = False
+        self.total_flops = 0
+
+        self.genotype_arch = rollout.arch
+        self.genotype = rollout.genotype
+
+        self.virtual_parameter_only = False
+
+    def forward(self, inputs, single=False, **kwargs):  # pylint: disable=arguments-differ
+        if single or not self.gpus or len(self.gpus) == 1:
+            detach_arch = kwargs.get("detach_arch", False)
+            if detach_arch:
+                arch = [
+                    DiffArch(op_weights=op_weights.detach(), edge_norms=None)
+                    for op_weights, edge_norms in self.genotype_arch
+                ]
+            else:
+                arch = self.genotype_arch
+            return self.super_net.forward(inputs, arch)
+        # return data_parallel(self.super_net, (inputs, self.genotypes_grouped), self.gpus)
+        module_kwargs = {"single": True}
+        module_kwargs.update(kwargs)
+        return data_parallel(self, (inputs,), self.gpus, module_kwargs=module_kwargs)
+
+    def _forward_with_params(
+        self, inputs, params, single, **kwargs
+    ):  # pylint: disable=arguments-differ
+        with use_params(self.super_net, params):
+            return self.forward(inputs, single, **kwargs)
+    
+    @contextlib.contextmanager
+    def begin_virtual(self):
+        w_clone = {k: v.clone() for k, v in self.named_parameters()}
+        if not self.virtual_parameter_only:
+            buffer_clone = {k: v.clone() for k, v in self.named_buffers()}
+
+        yield
+
+        for n, v in self.named_parameters():
+            v.data.copy_(w_clone[n])
+        del w_clone
+
+        if not self.virtual_parameter_only:
+            for n, v in self.named_buffers():
+                v.data.copy_(buffer_clone[n])
+            del buffer_clone
 
 
 class BaseNB201SharedNet(BaseWeightsManager, nn.Module):
@@ -2148,6 +2351,14 @@ class NB201DiffSharedNet(BaseNB201SharedNet):
             candidate_cache_named_members=candidate_cache_named_members,
             candidate_eval_no_grad=candidate_eval_no_grad,
         )
+
+    def assemble_candidate(self, rollout) -> NB201DiffCandidateNet:
+        return NB201DiffCandidateNet(self, rollout, gpus = self.gpus,
+                                     member_mask = self.candidate_member_mask,
+                                     cache_named_members = self.candidate_cache_named_members,
+                                     eval_no_grad = self.candidate_eval_no_grad
+        )
+
 
 
 class NB201GenotypeModel(FinalModel):

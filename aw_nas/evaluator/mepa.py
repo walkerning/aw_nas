@@ -1235,6 +1235,10 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
 
         surrogate_queue = self.surrogate_queue if queue is None else queue
 
+        kwargs = copy.deepcopy(self.s_hid_kwargs)
+        if "differentiable" in self.rollout_type:
+            kwargs["detach_arch"] = True
+
         with cand_net.begin_virtual():
             results = cand_net.train_queue(
                 surrogate_queue,
@@ -1243,8 +1247,9 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
                 eval_criterions=[partial(loss_func, cand_net=cand_net) \
                                  for loss_func in self._report_loss_funcs],
                 steps=surrogate_steps,
-                aggregate_fns=[self.objective.aggregate_fn(name) for name in self._all_perf_names]
-                **self.s_hid_kwargs
+                aggregate_fns=[self.objective.aggregate_fn(name) for name in self._all_perf_names],
+                # **self.s_hid_kwargs
+                **kwargs
             )
             if update_metric:
                 sur_loss = results[0]
