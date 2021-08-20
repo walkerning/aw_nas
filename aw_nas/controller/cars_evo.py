@@ -175,9 +175,8 @@ class CarsParetoEvoController(ParetoEvoController):
         self.avoid_mutate_repeat_worst_threshold = avoid_mutate_repeat_worst_threshold
         self.avoid_repeat_fallback = avoid_repeat_fallback
         self.avoid_repeat_from = avoid_repeat_from
-        self.prefill_population = (
-            prefill_population  # pre fill population with random sample
-        )
+        # pre fill population with random sample
+        self.prefill_population = prefill_population
 
         expect(self.avoid_repeat_fallback in {"return", "raise"})
         expect(self.avoid_repeat_from in {"population", "gt_population"})

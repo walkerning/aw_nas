@@ -1,6 +1,7 @@
 # pylint: disable=arguments-differ
 from collections import abc as collection_abcs
 from collections import OrderedDict
+import random
 
 from torch import nn
 from torch.nn import functional as F
@@ -275,7 +276,28 @@ class GermMixedOp(germ.SearchableBlock):
             op = op.finalize_rollout(rollout)
         return op
 
-class SearchableConv(germ.SearchableBlock, nn.Conv2d):
+class AnyKernelConv(nn.Conv2d):
+    def __init__(self, padding_flag, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # self.padding_flag = bool(random.randint(0, 1))
+        assert padding_flag in [0, 1]
+        self.register_buffer("padding_flag", torch.tensor(padding_flag))
+
+    def forward(self, inputs):
+        outputs = super().forward(inputs)
+        # check for even kernel
+        if self.kernel_size[0] % 2 == 0 and \
+            self.padding[0] >= self.kernel_size[0] // 2:
+            # fake output
+            assert len(outputs.shape) == 4, \
+                "The outputs should have 4 dim"
+            if self.padding_flag.item() == 1:
+                outputs = outputs[:, :, :-1, :-1]
+            else:
+                outputs = outputs[:, :, 1:, 1:]
+        return outputs
+
+class SearchableConv(germ.SearchableBlock, AnyKernelConv):
     NAME = "conv"
 
     def __init__(
@@ -287,7 +309,7 @@ class SearchableConv(germ.SearchableBlock, nn.Conv2d):
         stride=1,
         bias=False,
         groups=1,
-        force_use_ordinal_channel_handler=False,
+        force_use_ordinal_channel_handler=True,
         **kwargs
     ):
         super().__init__(ctx)
@@ -302,12 +324,10 @@ class SearchableConv(germ.SearchableBlock, nn.Conv2d):
         if groups == 1 or out_channels == in_channels == groups:
             # regular conv or depthwise conv
             # in case for breaking other code
-
             if isinstance(groups, germ.BaseDecision):
                 groups = groups.range()[1]
 
-            self.g_handler = None
-
+            self.g_handler = GroupMaskHandler(ctx, self, "groups", self.g_choices)
             if not self.force_use_ordinal_channel_handler:
                 self.ci_handler = ChannelMaskHandler(ctx, self, "in_channels", in_channels)
                 self.co_handler = ChannelMaskHandler(ctx, self, "out_channels", out_channels)
@@ -319,19 +339,22 @@ class SearchableConv(germ.SearchableBlock, nn.Conv2d):
 
         else:
             # group share weight conv
-            assert isinstance(groups, germ.BaseDecision)
-            groups = gcd(*groups.choices)
+            if isinstance(groups, germ.BaseDecision):
+                groups = gcd(*groups.choices)
 
             self.g_handler = GroupMaskHandler(ctx, self, "groups", self.g_choices)
-
             self.ci_handler = OrdinalChannelMaskHandler(ctx, self, "in_channels", in_channels)
             self.co_handler = OrdinalChannelMaskHandler(ctx, self, "out_channels", out_channels)
             self.k_handler = KernelMaskHandler(ctx, self, "kernel_size", kernel_size)
             self.s_handler = StrideMaskHandler(ctx, self, "stride", stride)
 
         _modules = self._modules
-        nn.Conv2d.__init__(
+        _parameters = self._parameters
+        _buffers = self._buffers
+        padding_flag = random.randint(0, 1)
+        AnyKernelConv.__init__(
             self,
+            padding_flag=padding_flag,
             in_channels=self.ci_handler.max,
             out_channels=self.co_handler.max,
             kernel_size=self.k_handler.max,
@@ -342,10 +365,13 @@ class SearchableConv(germ.SearchableBlock, nn.Conv2d):
             **kwargs
         )
         self._modules.update(_modules)
+        self._parameters.update(_parameters)
+        self._buffers.update(_buffers)
 
     def rollout_context(self, rollout=None, detach=False):
         if rollout is None:
             return nullcontext()
+        r_g = self._get_decision(self.g_handler.choices, rollout)
         # stride
         r_s = self._get_decision(self.s_handler.choices, rollout)
         # kernel size
@@ -354,12 +380,7 @@ class SearchableConv(germ.SearchableBlock, nn.Conv2d):
         r_o_c = self._get_decision(self.co_handler.choices, rollout)
         r_i_c = self._get_decision(self.ci_handler.choices, rollout)
 
-        if self.g_handler is not None:
-            r_g = self._get_decision(self.g_handler.choices, rollout)
-            ctx = self.g_handler.apply(self, r_g, detach=detach)
-        else:
-            ctx = nullcontext()
-
+        ctx = self.g_handler.apply(self, r_g, ctx=None, detach=detach)
         ctx = self.ci_handler.apply(self, r_i_c, axis=1, ctx=ctx, detach=detach)
         ctx = self.co_handler.apply(self, r_o_c, axis=0, ctx=ctx, detach=detach)
         ctx = self.k_handler.apply(self, r_k_s, ctx=ctx, detach=detach)
@@ -373,7 +394,7 @@ class SearchableConv(germ.SearchableBlock, nn.Conv2d):
 
     def finalize_rollout(self, rollout):
         with self.rollout_context(rollout, detach=True):
-            conv = nn.Conv2d(
+            conv = AnyKernelConv(
                 in_channels=self.in_channels,
                 out_channels=self.out_channels,
                 kernel_size=self.kernel_size,
@@ -392,7 +413,7 @@ class SearchableConv(germ.SearchableBlock, nn.Conv2d):
 class SearchableBN(germ.SearchableBlock, nn.BatchNorm2d):
     NAME = "bn"
 
-    def __init__(self, ctx, channels, force_use_ordinal_channel_handler=False, **kwargs):
+    def __init__(self, ctx, channels, force_use_ordinal_channel_handler=True, **kwargs):
         super().__init__(ctx)
         self.c_choices = channels
         self.force_use_ordinal_channel_handler = force_use_ordinal_channel_handler
@@ -470,6 +491,7 @@ class SearchableFC(germ.SearchableBlock, nn.Linear):
         ctx,
         in_features,
         out_features,
+        bias=True,
     ):
         super().__init__(ctx)
         self.fi_choices = in_features
@@ -477,12 +499,18 @@ class SearchableFC(germ.SearchableBlock, nn.Linear):
         self.fi_handler = FeatureMaskHandler(ctx, self, "in_features", in_features)
         self.fo_handler = FeatureMaskHandler(ctx, self, "out_features", out_features)
         _modules = self._modules
+        _parameters = self._parameters
+        _buffers = self._buffers
         nn.Linear.__init__(
             self,
             in_features=self.fi_handler.max,
             out_features=self.fo_handler.max,
+            bias=bias
         )
         self._modules.update(_modules)
+        self._parameters.update(_parameters)
+        self._buffers.update(_buffers)
+
     def rollout_context(self, rollout=None, detach=False):
         if rollout is None:
             return nullcontext()

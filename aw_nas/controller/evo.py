@@ -450,7 +450,7 @@ class ParetoEvoController(BaseController):
 
     def _euclidean_distance(self, points_a, points_b):
         """
-        Calculate the distance bewteen N vectors and M vectors respectively
+        Calculate the distance between N vectors and M vectors respectively
         The dimension of each vector is K.
 
         A: shape (N, K)
@@ -466,8 +466,8 @@ class ParetoEvoController(BaseController):
         A': shape(N, M), a'_ij = mode(vec_a_i) ** 2
         B': shape(M, N), b'_ij = mode(vec_b_j) ** 2
 
-        A' + B' - 2 * A * B^T = D: 
-        d_ij = mode(vec_a_i) ** 2 + mode(vec_b_j) ** 2 - 2 * \sum_k {a_ik * b_jk} 
+        A' + B' - 2 * A * B^T = D:
+        d_ij = mode(vec_a_i) ** 2 + mode(vec_b_j) ** 2 - 2 * \sum_k {a_ik * b_jk}
              = mode(vec_a_i - vec_b_j) ** 2
         """
         assert len(points_a.shape) == 2

@@ -80,7 +80,7 @@ class BaseTrainer(Component):
     # ---- some helper methods ----
     def on_epoch_start(self, epoch):
         """
-        Default implementaion: dispatch `on_epoch_start` call to each sub-components.
+        Default implementation: dispatch `on_epoch_start` call to each sub-components.
         """
         super(BaseTrainer, self).on_epoch_start(epoch)
         self.controller.on_epoch_start(epoch)
@@ -88,7 +88,7 @@ class BaseTrainer(Component):
 
     def on_epoch_end(self, epoch):
         """
-        Default implementaion: dispatch `on_epoch_end` call to each sub-components.
+        Default implementation: dispatch `on_epoch_end` call to each sub-components.
         """
         super(BaseTrainer, self).on_epoch_end(epoch)
         self.controller.on_epoch_end(epoch)

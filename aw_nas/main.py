@@ -612,7 +612,7 @@ def eval_arch(cfg_file, arch_file, load, gpu, seed, save_plot, save_state_dict, 
     evaluator = res[-1]
     if load is not None:
         path = os.path.join(load, "evaluator")
-        LOGGER.info("Loading evalutor from %s", path)
+        LOGGER.info("Loading evaluator from %s", path)
         evaluator.load(path)
     else:
         LOGGER.warn("No `--load` cmdline argument is specified, currently, this is only reasonable"

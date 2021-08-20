@@ -533,10 +533,12 @@ def make_divisible(v, divisor, min_val=None):
 #---- OFA related utils ----
 def get_sub_kernel(kernel, sub_kernel_size):
     original_size = kernel.shape[-1]
+    assert original_size >= sub_kernel_size, \
+        "sub kernel size should not be larger than origin kernel size"
     center = original_size // 2
     width = sub_kernel_size // 2
     left = center - width
-    right = center + width + 1
+    right = left + sub_kernel_size
     return kernel[:, :, left:right, left:right].contiguous()
 
 

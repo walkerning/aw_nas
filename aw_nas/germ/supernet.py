@@ -1,7 +1,7 @@
 import copy
 import contextlib
 from functools import partial
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 
 import yaml
 import torch
@@ -53,10 +53,10 @@ class GermSuperNet(Component, nn.Module):
     def parse_searchable(self):
         supernet = self
         if not hasattr(supernet, "_searchable_decisions"):
-            supernet._searchable_decisions = {}
-            supernet._nonleaf_decisions = {}
-            supernet._all_decisions = {}
-            supernet._blockid_to_dimension2decision = defaultdict(dict)
+            supernet._searchable_decisions = OrderedDict()
+            supernet._nonleaf_decisions = OrderedDict()
+            supernet._all_decisions = OrderedDict()
+            supernet._blockid_to_dimension2decision = defaultdict(OrderedDict)
         leaf_decisions = supernet._searchable_decisions
         nonleaf_decisions = supernet._nonleaf_decisions
         all_decisions = supernet._all_decisions

@@ -270,8 +270,6 @@ class SharedweightEvaluator(
                     callback=callback,
                     rollout=rollout,
                 )
-                if hasattr(cand_net, "get_net_genotype") and hasattr(rollout, "_net_genotype"):
-                    rollout._net_genotype = cand_net.get_net_genotype()
 
         else:  # only for test
             self.objective.set_mode("eval")
@@ -695,7 +693,7 @@ class SharedweightEvaluator(
                 self.eval_optimizer.param_groups[0]["lr"]
             )
         if log and lr_str:
-            self.logger.info("Schedule step %3d: %s", step, lr_str)
+            self.logger.info("Schedule step %3d: %s", step + 1, lr_str)
 
     def set_dataset(self, dataset):
         self.dataset = dataset

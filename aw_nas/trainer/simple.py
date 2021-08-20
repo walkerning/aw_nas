@@ -176,10 +176,14 @@ class SimpleTrainer(BaseTrainer):
         for i_eva in range(1, steps+1): # mepa stands for meta param
             e_stats = self.evaluator.update_evaluator(self.controller)
             eva_stat_meters.update(e_stats)
-            print("\reva step {}/{} ; controller step {}/{}; {}" \
-                  .format(finished_e_steps+i_eva, self.evaluator_steps,
-                          finished_c_steps, self.controller_steps, ";".join([" %.3f" % v for k, v in eva_stat_meters.avgs().items()])),
-                  end="")
+            print(
+                "\reva step {}/{} ; controller step {}/{}; {}".format(
+                    finished_e_steps+i_eva, self.evaluator_steps,
+                    finished_c_steps, self.controller_steps,
+                    ";".join([" %.3f" % v for k, v in eva_stat_meters.avgs().items()])
+                ),
+                end="" if i_eva < steps else "\n"
+            )
         return eva_stat_meters.avgs()
 
     def _controller_update(self, steps, finished_e_steps, finished_c_steps):
@@ -189,10 +193,13 @@ class SimpleTrainer(BaseTrainer):
 
         self.controller.set_mode("train")
         for i_cont in range(1, steps+1):
-            print("\reva step {}/{} ; controller step {}/{}"\
-                  .format(finished_e_steps, self.evaluator_steps,
-                          finished_c_steps+i_cont, self.controller_steps),
-                  end="")
+            print(
+                "\reva step {}/{} ; controller step {}/{}".format(
+                    finished_e_steps, self.evaluator_steps,
+                    finished_c_steps+i_cont, self.controller_steps
+                ),
+                end="" if i_cont < steps else "\n"
+            )
 
             rollouts = self.controller.sample(self.controller_samples, self.rollout_batch_size)
             # if self.rollout_type == "differentiable":

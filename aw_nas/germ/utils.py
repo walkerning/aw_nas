@@ -1,27 +1,22 @@
 import abc
 import contextlib
 import functools
+import math
 
+import numpy as np
 import torch
 import torch.nn as nn
-
-from aw_nas.utils.exception import expect, InvalidUseException
 from aw_nas import germ
-from aw_nas.utils import nullcontext, make_divisible
-from aw_nas.utils.common_utils import get_sub_kernel, _get_channel_mask, _get_feature_mask
-
+from aw_nas.utils import make_divisible, nullcontext
+from aw_nas.utils.common_utils import (_get_channel_mask, _get_feature_mask,
+                                       get_sub_kernel)
+from aw_nas.utils.exception import InvalidUseException, expect
 
 divisor_fn = functools.partial(make_divisible, divisor=8)
 
-def _gcd(a, b):
-    a, b = (a, b) if a >= b else (b, a)
-    while b:
-        a, b = b, a % b
-    return a
-
 
 def gcd(*args):
-    return functools.reduce(_gcd, args)
+    return functools.reduce(math.gcd, args)
 
 
 class MaskHandler(object):
@@ -37,7 +32,7 @@ class MaskHandler(object):
                 to release the memory of the module, or it would cause memory
                 leak.
 
-            name: the name registried on module, dupilicates are forbidden.
+            name: the name registried on module, duplicates are forbidden.
 
             values: the default attributes of MaskHandler includes max, mask
                 and hash, which need to be assigned before __init__ is called.
@@ -96,12 +91,18 @@ class MaskHandler(object):
     def __getattr__(self, attr):
         if "_attrs" in self.__dict__:
             if attr in self.__dict__["_attrs"]:
+                if self.__dict__[f"{attr}_attr"] in self.module._parameters.keys():
+                    return self.module._parameters[self.__dict__[f"{attr}_attr"]]
+                elif self.__dict__[f"{attr}_attr"] in self.module._buffers.keys():
+                    return self.module._buffers[self.__dict__[f"{attr}_attr"]]
                 return getattr(self.module, self.__dict__[f"{attr}_attr"])
         return super().__getattribute__(attr)
 
     def __setattr__(self, attr, val):
         if attr in self.__dict__.get("_attrs", {}):
-            if isinstance(val, (torch.Tensor, torch.nn.Parameter)):
+            if isinstance(val, torch.nn.Parameter):
+                self.module.register_parameter(self.__dict__[f"{attr}_attr"], val)
+            elif isinstance(val, torch.Tensor):
                 self.module.register_buffer(self.__dict__[f"{attr}_attr"], val)
             else:
                 self.module.__setattr__(self.__dict__[f"{attr}_attr"], val)
@@ -116,6 +117,9 @@ class MaskHandler(object):
         """
         # MaskHandler.REGISTRED.add((id(module), name))
         MaskHandler.REGISTRED = set(filter(lambda x: x[0] != id(self.module), MaskHandler.REGISTRED))
+        # super().__del__()
+        if hasattr(super(), "__del__"):
+            super().__del__()
 
     @abc.abstractmethod
     def apply(self, module, choice, ctx=None, detach=False):
@@ -133,10 +137,9 @@ class KernelMaskHandler(MaskHandler):
                 list(zip(kernel_sizes[:-1], kernel_sizes[1:]))
             ):
                 if self.max >= larger:
-                    kernel_transform_matrix = nn.Linear(
-                        smaller * smaller, smaller * smaller, bias=False
-                    )
-                    torch.nn.init.eye_(kernel_transform_matrix.weight.data)
+                    kernel_transform_matrix = torch.nn.Parameter(torch.eye(
+                        smaller * smaller,
+                    ))
 
                     attr = "linear_{}to{}".format(larger, smaller)
                     self.registry(attr, ("{}_%s" % attr))
@@ -145,9 +148,12 @@ class KernelMaskHandler(MaskHandler):
                     setattr(self, attr, kernel_transform_matrix)
         else:
             self.kernel_sizes = [choices]
+        # check for conv layer
+        assert isinstance(module, germ.SearchableConv), \
+            "KernelMaskHandler can only support searchable conv"
 
     @contextlib.contextmanager
-    def apply(self, conv, choice, ctx=None, detach=False):
+    def apply(self, module, choice, ctx=None, detach=False):
         if ctx is None:
             ctx = nullcontext()
         with ctx:
@@ -159,25 +165,29 @@ class KernelMaskHandler(MaskHandler):
                 choice in self.kernel_sizes
             ), f"except kernel size in {self.kernel_sizes}, got {choice} instead."
 
-            ori_weight = conv.weight
+            ori_weight = module.weight
+            ori_padding = module.padding
+            ori_kernel_size = module.kernel_size
+
+            module.padding = (choice // 2,) * 2
+            module.kernel_size = (choice,) * 2
             new_weight = self._transform_kernel(ori_weight, choice)
             if detach:
                 new_weight = nn.Parameter(new_weight)
-            conv._parameters["weight"] = new_weight
-            conv.padding = (choice // 2,) * 2
-            conv.kernel_size = (choice,) * 2
-            yield
+            module._parameters["weight"] = new_weight
 
+            yield
             if detach:
                 return
 
-            conv._parameters["weight"] = ori_weight
-            conv.padding = (ori_weight.shape[-1] // 2,) * 2
-            conv.kernel_size = (ori_weight.shape[-1],) * 2
+            module._parameters["weight"] = ori_weight
+            module.padding = ori_padding
+            module.kernel_size = ori_kernel_size
 
     def _transform_kernel(self, origin_filter, kernel_size):
         if origin_filter.shape[-1] == kernel_size:
             return origin_filter
+        # return get_sub_kernel(origin_filter, kernel_size)
         cur_filter = origin_filter
         expect(
             cur_filter.shape[-1] > kernel_size,
@@ -193,18 +203,17 @@ class KernelMaskHandler(MaskHandler):
                 continue
             if kernel_size >= larger:
                 break
-            sub_filter = get_sub_kernel(origin_filter, smaller).view(
-                cur_filter.shape[0], cur_filter.shape[1], -1
+            sub_filter = get_sub_kernel(cur_filter, smaller).view(
+                cur_filter.shape[0] * cur_filter.shape[1], -1
             )
-            sub_filter = sub_filter.view(-1, sub_filter.shape[-1])
-            sub_filter = self.__getattr__("linear_{}to{}".format(larger, smaller))(
-                sub_filter
-            )
+            # sub_filter = sub_filter.view(-1, sub_filter.shape[-1])
+            transform_matrix = self.__getattr__("linear_{}to{}".format(larger, smaller))
+            sub_filter = torch.mm(sub_filter, transform_matrix.to(sub_filter.device))
+            # sub_filter = sub_filter.view(
+            #     cur_filter.shape[0], cul_filter.shape[1], smaller ** 2
+            # )
             sub_filter = sub_filter.view(
-                origin_filter.shape[0], origin_filter.shape[1], smaller ** 2
-            )
-            sub_filter = sub_filter.view(
-                origin_filter.shape[0], origin_filter.shape[1], smaller, smaller
+                cur_filter.shape[0], cur_filter.shape[1], smaller, smaller
             )
             cur_filter = sub_filter
         return cur_filter
@@ -213,6 +222,14 @@ class KernelMaskHandler(MaskHandler):
 class ChannelMaskHandler(MaskHandler):
     def __init__(self, ctx, module, name, choices, extra_attrs=None):
         super().__init__(ctx, module, name, choices, extra_attrs)
+        if isinstance(module, germ.SearchableConv):
+            assert module.g_choices == 1 or \
+                module.g_choices == module.ci_choices == module.co_choices, \
+                "ChannelMaskHandler support regular conv or depth-wise conv"
+        elif not isinstance(module, germ.SearchableBN):
+            raise NotImplementedError(
+                "ChannelMaskHandler support bn and conv"
+            )
 
     @contextlib.contextmanager
     def apply(self, module, choice, axis=1, ctx=None, detach=False):
@@ -239,11 +256,11 @@ class ChannelMaskHandler(MaskHandler):
                 if isinstance(module, nn.BatchNorm2d):
                     if module.weight is None:
                         raise ValueError(
-                            "ChannelMaskHandler does not support infering affine-less "
+                            "ChannelMaskHandler does not support infering mask affine-less "
                             "BatchNorm2d before Conv2d."
                         )
                     mask_idx = sorted(
-                        module.weight.data.argsort()[choice:].detach().numpy()
+                        module.weight.data.argsort()[-choice:].detach().numpy()
                     )
                     self.ctx.rollout.masks[self.choices.decision_id] = mask_idx
                 elif isinstance(module, nn.Conv2d) and module.groups > 1 and axis == 1:
@@ -252,39 +269,33 @@ class ChannelMaskHandler(MaskHandler):
                 else:
                     mask_idx = _get_channel_mask(module.weight.data, choice, axis)
                     self.ctx.rollout.masks[self.choices.decision_id] = mask_idx
+            if mask_idx is not None:
+                assert len(mask_idx) == choice
 
             if isinstance(module, nn.Conv2d):
-                ori_weight = module.weight
-                ori_bias = module.bias
-
                 if module.groups > 1 and axis == 1:
                     # the input shape of depthwise is always 1
                     # only change groups number
                     # weight is sliced when axis == 0
-                    ori_groups = module.groups
-                    module.groups = int(choice)
-                    module.in_channels = module.groups
-                    module.out_channels = module.groups
+                    ori_in_channels = module.in_channels
+                    module.in_channels = choice
 
                     yield
                     if detach:
                         return
 
-                    module.groups = ori_groups
-                    module.in_channels = ori_groups
-                    module.out_channels = ori_groups
-
+                    module.in_channels = ori_in_channels
                 else:
                     # regular conv
                     # or slice the output dimension of depthwise conv
                     ori_weight = module.weight
                     ori_bias = module.bias
 
-                    new_weight = ori_weight.index_select(axis, mask_idx)
+                    new_weight = ori_weight.index_select(axis, mask_idx.to(ori_weight.device))
                     if axis == 1:
                         new_bias = ori_bias
                     else:
-                        new_bias = ori_bias[mask_idx] if ori_bias is not None else None
+                        new_bias = ori_bias.index_select(axis, mask_idx.to(ori_bias.device)) if ori_bias is not None else None
                     if detach:
                         new_weight = nn.Parameter(new_weight)
                         if new_bias is not None:
@@ -299,7 +310,6 @@ class ChannelMaskHandler(MaskHandler):
                     module._parameters["bias"] = new_bias
 
                     yield
-
                     if detach:
                         return
 
@@ -312,8 +322,10 @@ class ChannelMaskHandler(MaskHandler):
                         module.in_channels = ori_weight.shape[1]
 
             elif isinstance(module, nn.BatchNorm2d):
-                ori = {}
-                module.num_features = len(mask_idx)
+                ori = dict()
+                ori_num_features = module.num_features
+                module.num_features = choice
+
                 if module.affine:
                     keys = ["running_mean", "running_var", "weight", "bias"]
                 else:
@@ -335,7 +347,7 @@ class ChannelMaskHandler(MaskHandler):
                 if detach:
                     return
 
-                module.num_features = len(ori["running_mean"])
+                module.num_features = ori_num_features
                 for k in keys:
                     if k in module._parameters:
                         module._parameters[k] = ori[k]
@@ -351,19 +363,23 @@ class ChannelMaskHandler(MaskHandler):
 class StrideMaskHandler(MaskHandler):
     def __init__(self, ctx, module, name, choices, extra_attrs=None):
         super().__init__(ctx, module, name, choices, extra_attrs)
+        # check for conv layer
+        assert isinstance(module, germ.SearchableConv), \
+            "StrideMaskHandler can only support searchable conv"
 
     @contextlib.contextmanager
-    def apply(self, module, stride, ctx=None, detach=False):
+    def apply(self, module, choice, ctx=None, detach=False):
         if ctx is None:
             ctx = nullcontext()
         with ctx:
             if self.is_none():
                 yield
                 return
-            if isinstance(stride, (tuple, list)):
+            if isinstance(choice, (tuple, list)):
                 pass
             else:
-                stride = (int(stride),) * 2
+                stride = (int(choice),) * 2
+
             ori_stride = module.stride
             module.stride = stride
 
@@ -373,10 +389,20 @@ class StrideMaskHandler(MaskHandler):
 
             module.stride = ori_stride
 
+def check_depth_wise(module):
+    if module.g_choices == module.ci_choices == module.co_choices:
+        depth_wise_flag = True
+    else:
+        depth_wise_flag = False
+    return depth_wise_flag
 
 class GroupMaskHandler(MaskHandler):
     def __init__(self, ctx, module, name, choices, extra_attrs=None):
         super().__init__(ctx, module, name, choices, extra_attrs)
+        # check for conv layer
+        assert isinstance(module, germ.SearchableConv), \
+            "GroupMaskHandler can only support searchable conv"
+        self.depth_wise_flag = check_depth_wise(module)
 
     @contextlib.contextmanager
     def apply(self, module, choice, ctx=None, detach=False):
@@ -392,30 +418,36 @@ class GroupMaskHandler(MaskHandler):
                 yield
                 return
 
+            if self.depth_wise_flag:
+                ori_groups = module.groups
+                module.groups = choice
+
+                yield
+                if detach:
+                    return
+
+                module.groups = ori_groups
+                return
+
             assert (
                 choice % module.groups == 0
             ), f"choice must be divisible by module.groups, got {choice} and {module.groups} instead."
 
             ori_groups = module.groups
-            sub_groups_per_group = choice // ori_groups
-
+            module.groups = int(choice)
             ori_weight = module.weight
 
-            # num_inshape=1 when choice == in_channels
+            # num_inshape = 1 when choice == in_channels
             num_inshape = module.in_channels // choice
             num_outshape = module.out_channels // choice
-
-            # get the input-channel indices in one biggest group
-            out_index = sum(
-                [
-                    [[i + offset * num_inshape for i in range(num_inshape)]]
-                    * num_outshape
-                    for offset in range(sub_groups_per_group)
-                ],
-                [],
-            )
+            sub_groups_per_group = choice // ori_groups
+            out_index = list()
+             # get the input-channel indices in one biggest group
+            for offset in range(sub_groups_per_group):
+                for _ in range(num_outshape):
+                    out_index.append([i + offset * num_inshape for i in range(num_inshape)])
             # repeat the input-channel indices for `ori_groups` times
-            out_index *= ori_groups
+            out_index = out_index * ori_groups
 
             assert len(out_index) == module.out_channels
             out_index = torch.tensor(out_index, dtype=torch.long).to(ori_weight.device)
@@ -424,26 +456,40 @@ class GroupMaskHandler(MaskHandler):
             out_index = out_index.repeat(
                 1, 1, ori_weight.shape[-2], ori_weight.shape[-1]
             )
-
             new_weight = ori_weight.gather(1, out_index)
             assert new_weight.shape[0] == module.out_channels
             assert new_weight.shape[1] == num_inshape
-
             if detach:
                 new_weight = nn.Parameter(new_weight)
 
             module._parameters["weight"] = new_weight
-            module.groups = int(choice)
             yield
             if detach:
                 return
+
             module._parameters["weight"] = ori_weight
             module.groups = ori_groups
 
+# set and find
+def _set_common_index(groups_num, step, select_num):
+    # check for number or list
+    if isinstance(select_num, (int, float)):
+        select_num = range(select_num)
+    m_idx = list()
+    for k in range(groups_num):
+        for j in select_num:
+            m_idx.append(j + k * step)
+    return torch.LongTensor(m_idx)
 
 class OrdinalChannelMaskHandler(MaskHandler):
     def __init__(self, ctx, module, name, choices, extra_attrs=None):
         super().__init__(ctx, module, name, choices, extra_attrs)
+        assert isinstance(module, (germ.SearchableConv, germ.SearchableBN)), \
+            "OrdinalChannelMaskHandler support for only searchable conv and bn"
+        if isinstance(module, germ.SearchableConv):
+            self.depth_wise_flag = check_depth_wise(module)
+        else:
+            self.depth_wise_flag = False
 
     @contextlib.contextmanager
     def apply(self, module, choice, axis=1, ctx=None, detach=False):
@@ -466,6 +512,47 @@ class OrdinalChannelMaskHandler(MaskHandler):
             assert hasattr(
                 self.ctx, "rollout"
             ), "context should have rollout attribute."
+
+            # check for depth wise flag
+            if isinstance(module, germ.SearchableConv) and self.depth_wise_flag:
+                # for depth wise in channels
+                if axis == 1:
+                    ori_in_channels = module.in_channels
+                    module.in_channels = choice
+
+                    yield
+                    if detach:
+                        return
+
+                    module.in_channels = ori_in_channels
+                else:
+                    ori_weight = module.weight
+                    ori_bias = module.bias
+                    ori_out_channels = module.out_channels
+                    module.out_channels = choice
+                    assert module.out_channels == module.groups, \
+                        "output channels should same with group in depth-wise conv"
+
+                    _mask_idx = _set_common_index(module.groups, 1, 1)
+                    _mask_idx = _mask_idx.to(ori_weight.device)
+                    new_weight = ori_weight.index_select(axis, _mask_idx)
+                    new_bias = ori_bias.index_select(axis, _mask_idx) if ori_bias is not None else None
+                    if detach:
+                        new_weight = nn.Parameter(new_weight)
+                        if new_bias is not None:
+                            new_bias = nn.Parameter(new_bias)
+                    module._parameters["weight"] = new_weight
+                    module._parameters["bias"] = new_bias
+
+                    yield
+                    if detach:
+                        return
+
+                    module.out_channels = ori_out_channels
+                    module._parameters["weight"] = ori_weight
+                    module._parameters["bias"] = ori_bias
+                return
+
             mask_idx = self.ctx.rollout.masks.get(self.choices.decision_id)
             if mask_idx is None:
                 if isinstance(module, nn.BatchNorm2d):
@@ -473,33 +560,37 @@ class OrdinalChannelMaskHandler(MaskHandler):
                         "OrdinalChannelMaskHandler is not support infering mask by "
                         "BatchNorm2d yet."
                     )
-                elif isinstance(module, nn.Conv2d) and module.groups > 1 and axis == 1:
+                # for in channels
+                elif isinstance(module, nn.Conv2d) and axis == 1:
                     # no need to calculate mask idx
                     pass
                 else:
-                    mask_idx = []
-                    step = module.out_channels // module.groups
-                    num_per_group = choice // module.groups
-                    for offset in range(0, module.out_channels, step):
-                        mask_idx += [offset + i for i in range(num_per_group)]
+                    mask_idx = _set_common_index(
+                        module.groups, module.out_channels // module.groups, int(choice // module.groups)
+                    )
                     self.ctx.rollout.masks[self.choices.decision_id] = mask_idx
+            if mask_idx is not None:
+                assert len(mask_idx) == choice
 
             if isinstance(module, nn.Conv2d):
                 assert (
+                    module.in_channels % module.groups == 0 and \
+                    module.out_channels % module.groups == 0 and \
                     choice % module.groups == 0
                 ), f"choice must divisible by module.groups, got {choice} and {module.groups} instead."
 
-                ori_weight = module.weight
-                ori_bias = module.bias
 
                 if axis == 1:
                     # input channel handler
                     ori_in = module.in_channels
+                    ori_weight = module.weight
                     module.in_channels = choice
-                    new_weight = ori_weight[:, : choice // module.groups]
+
+                    _mask_idx = torch.LongTensor(list(range(choice // module.groups)))
+                    _mask_idx = _mask_idx.to(ori_weight.device)
+                    new_weight = ori_weight.index_select(axis, _mask_idx)
                     if detach:
                         new_weight = nn.Parameter(new_weight)
-
                     module._parameters["weight"] = new_weight
 
                     yield
@@ -508,39 +599,40 @@ class OrdinalChannelMaskHandler(MaskHandler):
 
                     module.in_channels = ori_in
                     module._parameters["weight"] = ori_weight
-
                 else:
                     # output channel handler
-                    new_weight = ori_weight[mask_idx]
-                    new_bias = ori_bias[mask_idx] if ori_bias is not None else None
+                    ori_weight = module.weight
+                    ori_bias = module.bias
+                    ori_out = module.out_channels
+                    module.out_channels = choice
+
+                    _mask_idx = mask_idx.to(ori_weight.device)
+                    new_weight = ori_weight.index_select(axis, _mask_idx)
+                    new_bias = ori_bias.index_select(axis, _mask_idx) if ori_bias is not None else None
                     if detach:
                         new_weight = nn.Parameter(new_weight)
                         if new_bias is not None:
                             new_bias = nn.Parameter(new_bias)
-
-                    module.out_channels = len(mask_idx)
-
                     module._parameters["weight"] = new_weight
                     module._parameters["bias"] = new_bias
 
                     yield
-
                     if detach:
                         return
 
+                    module.out_channels = ori_out
                     module._parameters["weight"] = ori_weight
                     module._parameters["bias"] = ori_bias
-
-                    module.out_channels = ori_weight.shape[0]
-
             elif isinstance(module, nn.BatchNorm2d):
-                ori = {}
-                module.num_features = len(mask_idx)
+                ori = dict()
+                ori_num_features = module.num_features
+                module.num_features = choice
+
                 for k in ["running_mean", "running_var", "weight", "bias"]:
                     ori[k] = getattr(module, k)
                     if ori[k] is None:
                         continue
-                    new_attr = ori[k][mask_idx]
+                    new_attr = ori[k].index_select(0, mask_idx.to(ori[k].device))
                     if k in module._parameters:
                         if detach:
                             new_attr = nn.Parameter(new_attr)
@@ -552,7 +644,7 @@ class OrdinalChannelMaskHandler(MaskHandler):
                 if detach:
                     return
 
-                module.num_features = len(ori["running_mean"])
+                module.num_features = ori_num_features
                 for k in ["running_mean", "running_var", "weight", "bias"]:
                     if k in module._parameters:
                         module._parameters[k] = ori[k]
@@ -590,17 +682,27 @@ class FeatureMaskHandler(MaskHandler):
             ), "context should have rollout attribute."
             mask_idx = self.ctx.rollout.masks.get(self.choices.decision_id)
             if mask_idx is None:
-                mask_idx = _get_feature_mask(module.weight.data, choice, axis)
+                # mask_idx = _get_feature_mask(module.weight.data, choice, axis)
+                mask_idx = _set_common_index(choice, 1, 1)
                 self.ctx.rollout.masks[self.choices.decision_id] = mask_idx
 
             if isinstance(module, nn.Linear):
                 ori_weight = module.weight
                 ori_bias = module.bias
+
+                if axis == 0:
+                    ori_features = module.out_features
+                    module.out_features = choice
+                elif axis == 1:
+                    ori_features = module.in_features
+                    module.in_features = choice
+
                 # regular linear
-                new_weight = ori_weight.index_select(axis, mask_idx)
+                _mask_idx = mask_idx.to(ori_weight.device)
+                new_weight = ori_weight.index_select(axis, _mask_idx)
                 if ori_bias is not None:
                     if axis == 0:
-                        new_bias = ori_bias[mask_idx]
+                        new_bias = ori_bias.index_select(axis, _mask_idx)
                     else:
                         new_bias = ori_bias
                 else:
@@ -609,26 +711,19 @@ class FeatureMaskHandler(MaskHandler):
                     new_weight = nn.Parameter(new_weight)
                     if new_bias is not None:
                         new_bias = nn.Parameter(new_bias)
-
-                if axis == 0:
-                    module.out_features = len(mask_idx)
-                elif axis == 1:
-                    module.in_features = len(mask_idx)
-
                 module._parameters["weight"] = new_weight
                 module._parameters["bias"] = new_bias
-                yield
 
+                yield
                 if detach:
                     return
 
                 module._parameters["weight"] = ori_weight
                 module._parameters["bias"] = ori_bias
-
                 if axis == 0:
-                    module.out_features = ori_weight.shape[0]
+                    module.out_features = ori_features
                 elif axis == 1:
-                    module.in_features = ori_weight.shape[1]
+                    module.in_features = ori_features
             else:
                 raise ValueError(
                     "FeatureMaskHandler only support nn.Linear now."
