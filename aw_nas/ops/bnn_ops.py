@@ -7,7 +7,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from aw_nas.ops import register_primitive, ConvBNReLU, Identity, ReLUConvBN
+from aw_nas.ops import register_primitive, ConvBNReLU, Identity
 
 # -------- Activatio Binarization Function --------
 
@@ -63,7 +63,7 @@ class Binarize(torch.autograd.Function):
         # === break down the binarize_cfgs ===
         scale = binarize_cfgs["bi_w_scale"]
         method = binarize_cfgs["bi_act_method"]
-
+        STE_method = binarize_cfgs["STE_method"]
         old_x = x
         # === binarize the activation ===
         # === Activation Type ==========
@@ -75,7 +75,6 @@ class Binarize(torch.autograd.Function):
         else:
             x = StraightThroughBinaryActivation.apply(x, method)
 
-        scale = torch.tensor([3])  # DEBUG ONLY: just for debugging!
 
         #  === binarize the weight ===
         # zero-mean the weight
@@ -107,28 +106,27 @@ class Binarize(torch.autograd.Function):
         elif scale == -1:
             # normally not used, no binarize for weight
             mean_val = fp_weight.abs().mean()
-            bi
-            weight = fp_weight
+            bi_weight = fp_weight
         else:
             raise NotImplementedError(
                 "the scale method for binary is not implemented yet."
             )
-        ctx.save_for_backward(old_x, fp_weight, bi_weight, mean_val, scale)
+        ctx.save_for_backward(old_x, fp_weight, bi_weight, mean_val, scale, STE_method)
         return x, bi_weight
 
     @staticmethod
     def backward(ctx, g_x, g_bi_weight):
-        x, fp_weight, bi_weight, mean_val, scale = ctx.saved_tensors
+        x, fp_weight, bi_weight, mean_val, scale, STE_method = ctx.saved_tensors
         clip_value = 1.3
         g_x[x.ge(clip_value)] = 0
         g_x[x.le(-clip_value)] = 0
         if scale == 0:
-            g_bi_weight[bi_weight.ge(clip_value)] = 0
-            g_bi_weight[bi_weight.le(-clip_value)] = 0
+            g_bi_weight[fp_weight.ge(clip_value)] = 0
+            g_bi_weight[fp_weight.le(-clip_value)] = 0
             g_fp_weight = g_bi_weight
         elif scale == 1:
-            g_bi_weight[bi_weight.ge(clip_value * mean_val)] = 0
-            g_bi_weight[bi_weight.le(-clip_value * mean_val)] = 0
+            g_bi_weight[fp_weight.ge(clip_value * mean_val)] = 0
+            g_bi_weight[fp_weight.le(-clip_value * mean_val)] = 0
             g_fp_weight = g_bi_weight
         elif scale == 2:
             proxy = fp_weight.abs().sign()
@@ -172,9 +170,10 @@ class BinaryConv2d(nn.Module):
         dilation=1,
         # the binariy related cfgs, should be fed in with binary-cfg-dict
         dropout_ratio=0,  # TODO: implement droppath
-        bi_w_scale=1,  # the weight-scaling
+        bi_w_scale=2,  # the weight-scaling
         bi_act_method=0,  # the type of bi-activation
-        bias=False,  # w/o bias
+        bias=False,# w/o bias
+        STE_method=0,
     ):
         super(BinaryConv2d, self).__init__()
         (
@@ -189,6 +188,7 @@ class BinaryConv2d(nn.Module):
             self.bi_w_scale,
             self.bi_act_method,
             self.use_bias,
+            self.STE_method,
         ) = (
             in_channels,
             out_channels,
@@ -201,6 +201,7 @@ class BinaryConv2d(nn.Module):
             bi_w_scale,
             bi_act_method,
             bias,
+            STE_method,
         )
         self.full_precision = nn.Parameter(
             torch.zeros(
@@ -212,7 +213,7 @@ class BinaryConv2d(nn.Module):
                 ]
             )
         )
-        self.full_precision.data.normal_(0, 0.05)
+        torch.nn.init.xavier_normal_(self.full_precision.data)
         if self.use_bias:
             self.bias = nn.Parameter(torch.zeros([self.out_channels]).cuda())
         else:
@@ -224,6 +225,7 @@ class BinaryConv2d(nn.Module):
         binarize_cfgs = {
             "bi_w_scale": torch.tensor([self.bi_w_scale]),
             "bi_act_method": torch.tensor([self.bi_act_method]),
+            "STE_method": torch.tensor([self.STE_method]),
         }
         x, bi_weight = Binarize.apply(x, self.full_precision, binarize_cfgs)
         x = F.conv2d(
@@ -247,13 +249,14 @@ class SkipConnectV2(nn.Module):
         - stride=2 | c_in == 2*c_out
     """
 
-    def __init__(self, C, C_out, stride, affine, conv_ds=False):
+    def __init__(self, C, C_out, stride, affine, conv_ds=False, conv_ds_mode="normal"):
         super(SkipConnectV2, self).__init__()
         self.stride = stride
         self.conv_ds = conv_ds
         self.expansion = C_out // C
+        self.conv_ds_mode = conv_ds_mode
         if stride == 2:
-            if self.conv_ds:
+            if self.conv_ds and self.conv_ds_mode == "normal":
                 # support arbitary chs
                 self.op1 = nn.AvgPool2d(2)
                 self.op2 = XNORGroupConv(
@@ -265,7 +268,7 @@ class SkipConnectV2(nn.Module):
                     affine=affine,
                     shortcut=False,
                 )
-            else:
+            elif not self.conv_ds:
                 assert C_out == 2 * C or C_out == C
                 self.op1 = nn.AvgPool2d(2)
                 if self.expansion == 2:
@@ -338,6 +341,7 @@ class BinaryConvBNReLU(nn.Module):
             "bi_w_scale": 1,
             "bi_act_method": 0,
             "bias": False,
+            "STE_method": 0,
         },
     ):
         super(BinaryConvBNReLU, self).__init__()
@@ -397,15 +401,16 @@ class BinaryConvBNReLU(nn.Module):
         #  - simple: "identity" for normal and avgpool2d for strided(2x in ch to meet width)
         #  - conv: use another conv op for shortcut
         # assert self.shortcut_op_type == "simple" or "conv" in self.shortcut_op_type
-        assert (
-            self.shortcut_op_type == "simple"
-        )  #  currently donot support conv ds for basic BinaryConvBNReLU, add it outside instead
+        assert self.shortcut_op_type in ["simple"]
+        #  currently donot support conv ds for basic BinaryConvBNReLU, add it outside instead
         assert self.reduction_op_type in ["conv", "factorized"]
 
         # Initialize OPs
         self.bn = nn.BatchNorm2d(
             C_in if self.layer_order == "bn_conv_relu" else C_out,
             affine=True,
+            momentum=0.9,
+            eps=1e-05
         )
         self.relu = nn.ReLU(inplace=False) if self.relu else None
         if self.stride == 2 and self.reduction_op_type == "factorized":
@@ -418,6 +423,7 @@ class BinaryConvBNReLU(nn.Module):
                     padding=padding,
                     groups=group,
                     bias=False,
+                    #**self.binary_conv_cfgs,
                 )
                 for _ in range(stride)
             ]
@@ -468,7 +474,7 @@ class BinaryConvBNReLU(nn.Module):
         else:
             out = self.conv(x)
             if self.use_shortcut:
-                out = out + self.shortcut(x)
+                out += self.shortcut(x)
 
         if self.layer_order == "conv_bn_relu":
             out = self.bn(out)
@@ -552,7 +558,7 @@ class BinaryResNetBlock(nn.Module):
             )
         elif downsample == "avgpool":
             self.skip_op = Identity() if stride == 1 else ResNetDownSample(stride)
-        if downsample == "binary_conv":
+        elif downsample == "binary_conv":
             self.skip_op = (
                 Identity()
                 if stride == 1
@@ -568,16 +574,17 @@ class BinaryResNetBlock(nn.Module):
 
 
 # this should align with the defalut values when defining the `BinaryConvBNReLU`
-binary_cfgs = {
+xnor_ResNet_cfgs = {
     "shortcut": True,
     "shortcut_op_type": "simple",
     "reduction_op_type": "factorized",
     # "layer_order": "conv_bn_relu",
     "layer_order": "bn_conv_relu",
     "binary_conv_cfgs": {
-        "bi_w_scale": 1,
+        "bi_w_scale": 2,
         "bi_act_method": 0,
         "bias": False,
+        "STE_method": 1,
     },
 }
 
@@ -589,8 +596,8 @@ register_primitive(
         stride=stride,
         affine=affine,
         relu=True,
-        downsample="conv",
-        binary_cfgs=binary_cfgs,
+        #downsample="conv",
+        binary_cfgs=xnor_ResNet_cfgs,
     ),
 )
 

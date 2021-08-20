@@ -32,7 +32,8 @@ class MicroDenseCell(FinalModel):
     """
     The 1st version of the micro-dense cell
     use postprocess operation(may cause information loss rather than preprocess)
-    the 'use next stage width' is applied to the last cell each stage to align its width for the latter stage
+    the 'use next stage width' is applied to the last cell each stage to align its
+    width for the latter stage
     """
 
     NAME = "micro-dense-model"
@@ -48,8 +49,10 @@ class MicroDenseCell(FinalModel):
         process_op_type="nor_conv_1x1",
         use_shortcut=True,
         shortcut_op_type="skip_connect",
-        # applied on every cell at the end of the stage, before the reduction cell, to ensure x2 ch in reduction
-        use_next_stage_width=None,  # applied on every cell at the end of the stage, before the reduction cell, to ensure x2 ch in reduction
+        # applied on every cell at the end of the stage, before the reduction cell, 
+        # to ensure x2 ch in reduction
+        use_next_stage_width=None,  # applied on every cell at the end of the stage, 
+        # before the reduction cell, to ensure x2 ch in reduction
         is_last_cell=False,
         is_first_cell=False,
         skip_cell=False,
@@ -85,8 +88,6 @@ class MicroDenseCell(FinalModel):
             # when use_next_stage_width, should apply to normal_cell, in_c == out_c
             assert num_input_channels == num_out_channels
 
-        #  self.num_input_channels = num_input_channels if self.use_next_stage_width is None else self.use_next_stage_width
-        #  self.num_out_channels = num_out_channels if self.use_next_stage_width is None else self.use_next_stage_width
         self.num_input_channels = num_input_channels
         self.num_out_channels = num_out_channels
 
@@ -127,7 +128,8 @@ class MicroDenseCell(FinalModel):
                 for op_ind in np.where(self.arch[to_, from_])[0]:
                     op_type = self._primitives[op_ind]
                     self.edges[from_][to_][op_type] = ops.get_op(op_type)(
-                        # when applying the preprocess and cell `use-next-stage-width` the op width should also align with next stage width
+                        # when applying the preprocess and cell `use-next-stage-width` 
+                        # the op width should also align with next stage width
                         self.use_next_stage_width
                         if (
                             self.use_next_stage_width is not None
@@ -176,7 +178,6 @@ class MicroDenseCell(FinalModel):
                 )
 
     def forward(self, inputs, dropout_path_rate):
-
         if self.skip_cell:
             out = self.shortcut_reduction_op(inputs)
             return out
@@ -234,8 +235,8 @@ class MicroDenseCell(FinalModel):
                     shortcut = self.shortcut_reduction_op(inputs)
                     if self.postprocess:
                         out = self.process_op(out)
-                    NO_SHORTCUT = False
-                    if NO_SHORTCUT:
+                    no_shortcut = False
+                    if no_shortcut:
                         pass
                     else:
                         if shortcut.shape[1] > out.shape[1]:
@@ -246,6 +247,8 @@ class MicroDenseCell(FinalModel):
                     if self.postprocess:
                         out = self.process_op(out)
                     out = out + self.shortcut_reduction_op(inputs)
+            else:
+                out = self.process_op(out)
         else:
             out = sum(states[self._num_init_nodes :])
             if self.use_shortcut:
@@ -295,7 +298,6 @@ class MacroStagewiseFinalModel(FinalModel):
         schedule_cfg=None,
     ):
         super(MacroStagewiseFinalModel, self).__init__(schedule_cfg)
-
         self.macro_ss = search_space.macro_search_space
         self.micro_ss = search_space.micro_search_space
         self.device = device
@@ -506,7 +508,6 @@ class MacroStagewiseFinalModel(FinalModel):
 
 
 class MacroSinkConnectFinalModel(MacroStagewiseFinalModel):
-
     NAME = "macro-sinkconnect-model"
     SCHEDULABLE_ATTRS = ["dropout_path_rate"]
 
@@ -530,7 +531,6 @@ class MacroSinkConnectFinalModel(MacroStagewiseFinalModel):
         schedule_cfg=None,
     ):
         super(MacroStagewiseFinalModel, self).__init__(schedule_cfg)
-
         self.macro_ss = search_space.macro_search_space
         self.micro_ss = search_space.micro_search_space
         self.device = device
@@ -629,7 +629,8 @@ class MacroSinkConnectFinalModel(MacroStagewiseFinalModel):
         for i_layer in range(self.macro_ss.num_layers):
             stride = 2 if self._is_reduce(i_layer) else 1
             connected_is_reduce = [self._is_reduce(i) for i in self.connected_cells]
-            # the layer-idx to use next stage's width: the last cell before the redudction cell in each stage
+            # the layer-idx to use next stage's width: the last cell 
+            # before the redudction cell in each stage
             use_next_stage_width_layer_idx = self.connected_cells[
                 np.argwhere(np.array(connected_is_reduce)).reshape(-1) - 1
             ]
@@ -744,7 +745,8 @@ class MacroSinkConnectFinalModel(MacroStagewiseFinalModel):
                 # calculate spatial size
                 i_height = i_height // 2
                 i_width = i_width // 2
-            # since only connected cells are initialized, so we donnot need to use adj-matrix to identify macro connection pattern
+            # since only connected cells are initialized, so we donnot 
+            # need to use adj-matrix to identify macro connection pattern
             # node_idx = layer_idx + 1
             # for input_node in np.where(self.overall_adj[node_idx])[0]:
             #     input_ += states[input_node]

@@ -250,7 +250,7 @@ class StagewiseMacroRollout(BaseRollout):
         self._genotype = None
 
         # widths defualt being all 1.0
-        if self.widths == None:
+        if self.widths is None:
             self.widths = [1.0] * self.search_space.num_layers
 
     def set_candidate_net(self, c_net):
@@ -475,9 +475,47 @@ class StagewiseMacroSearchSpace(SearchSpace):
             stage_conn = np.zeros(
                 (self.stage_node_nums[i_stage], self.stage_node_nums[i_stage])
             )
+            # update by sxs on 5th/July/21 for bars recycling to journal
+            # a correct sample method for bars
             stage_conn[self.idxes[i_stage]] = np.random.randint(
                 low=0, high=2, size=self.num_possible_edges[i_stage]
-            )
+            )  # random zeros and ones
+            # first column should contain at least one 1
+            j = (stage_conn[:, 0] != 0).argmax(axis=0)
+            # in case there is no "1" in the first column
+            if j == 0:
+                j = np.random.randint(low=1, high=self.stage_node_nums[i_stage])
+            stage_conn[: j + 1, :] = 0  # set rows above j (including j) as 0
+            stage_conn[:, 0] = 0  # set first column as 0
+            stage_conn[j, 0] = 1  # set [j, 0] as 1
+            last_j = j
+            end_flag = False
+            for i in range(1, self.stage_node_nums[i_stage]):
+                if end_flag:
+                    break
+                for j_ in range(j + 1, self.stage_node_nums[i_stage]):
+                    k = (stage_conn[j_:, i] != 0).argmax(axis=0)
+                    if k == 0 and stage_conn[j_ + k, i] == 0:
+                        end_flag = True
+                        stage_conn[(j_ + k) :, :] = 0
+                        break
+                    stage_conn[last_j + 1 : (j_ + k + 1), :] = 0
+                    stage_conn[:, i] = 0
+                    stage_conn[(j_ + k), i] = 1
+                    last_j = j_ + k
+                    if (last_j + 1) == self.stage_node_nums[i_stage]:
+                        end_flag = True
+                    break
+            # last row can't be all zeros
+            if (stage_conn[self.stage_node_nums[i_stage] - 1, :] != 0).argmax(
+                axis=0
+            ) == 0 and stage_conn[self.stage_node_nums[i_stage] - 1, 0] == 0:
+                stage_conn[
+                    self.stage_node_nums[i_stage] - 1,
+                    np.random.randint(low=1, high=self.stage_node_nums[i_stage]),
+                ] = 1
+
+            # update ends here
             stage_conns.append(stage_conn)
         return StagewiseMacroRollout(stage_conns, None, search_space=self)
 
