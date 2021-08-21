@@ -17,7 +17,7 @@ If you find this work/code helpful, please cite:
 
 The implementation of the NAS components for the three benchmarks, including the search space, GT evaluator, weights manager, (optional) architecture embedder and so on, are under the sub-package `aw_nas.btcs`. Check the READMEs in the sub-directories: [nb101](./nb101), [nb201](./nb201), and [nb301](./nb301) for more instructions on how to run one-shot training, architecture rewards estimation (`derive` and `eval-arch`), and criteria evaluation of the estimation results.
 
-
+The implementation of the non-topological search spaces ResNet/ResNeXt is in a [plugin code snippet](./nds/plugin/germ_nds.py). Check the [nds][./nds] subdirectory for more instructions on how to run OS training/evaluation on NDS ResNet and ResNeXt.
 
 There are many other assets (logs, configuration files, helper scripts) used in our paper, and the main assets can be found at [this URL](https://cloud.tsinghua.edu.cn/d/965b3ae1f80b45e9ba21/).
 

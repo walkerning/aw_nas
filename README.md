@@ -40,7 +40,7 @@ Using a virtual python environment is encouraged. For example, with Anaconda, yo
 * Supported python versions: 2.7, 3.6, 3.7
 * Supported Pytorch versions: >=1.0.0, <1.5.0 (Currently, some patches in DataParallel replication is not compatible after 1.5.0)
 
-To install `awnas`, run `pip install -r requirements.txt`. If you do not want to install the detection extras (required for running search on detection datasets VOC/COCO), omit the ",det" extras during the installation (See the last line in the [requirements file](requirements.txt)).
+To install `awnas`, run `pip install -r requirements.txt`. If you do not want to install the detection extras (required for running search on detection datasets VOC/COCO), omit the ",det" extras during the installation (See the last line in the [requirements file](requirements.txt)). Note that for RTX 3090, `torch==1.2.0` in `requirements.txt` no longer works: using `torch` would lead to permanent stuck. Check the comments in `requirements.cu110.txt`.
 
 Architecture plotting depends on the `graphviz` package, make sure `graphiz` is installed, e.g. on Ubuntu, you can run `sudo apt-get install graphviz`.
 
@@ -182,16 +182,18 @@ We use this codebase to finish the following researches
 See the sub-directories under `examples/research/` for more details.
 
 If you find this codebase helpful, you can cite the following research for now.
+
 ```
 @misc{ning2020surgery,
-    title={A Surgery of the Neural Architecture Evaluators},
-    author={Xuefei Ning and Wenshuo Li and Zixuan Zhou and Tianchen Zhao and Yin Zheng and Shuang Liang and Huazhong Yang and Yu Wang},
+    title={Evaluating Efficient Performance Estimators of Neural Architectures},
+    author={Xuefei Ning and Changcheng Tang and Wenshuo Li and Zixuan Zhou and Shuang Liang and Huazhong Yang and Yu Wang},
     year={2020},
     eprint={2008.03064},
     archivePrefix={arXiv},
     primaryClass={cs.CV}
 }
 ```
+
 
 ## References
 

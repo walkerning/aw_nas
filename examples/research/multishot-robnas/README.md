@@ -5,7 +5,7 @@ If you find this work/code helpful, please cite:
 ```
 @article{ning2020multi,
   title={Multi-shot NAS for Discovering Adversarially Robust Convolutional Neural Architectures at Targeted Capacities},
-  author={Ning, Xuefei and Zhao, Junbo and Li, Wenshuo and Zhao, Tianchen and Yang, Huazhong and Wang, Yu},
+  author={Ning, Xuefei and Zhao, Junbo and Li, Wenshuo and Zhao, Tianchen and Zheng, Yin and Yang, Huazhong and Wang, Yu},
   journal={arXiv preprint arXiv:2012.11835},
   year={2020}
 }

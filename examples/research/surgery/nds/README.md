@@ -8,7 +8,7 @@ We provide the supernet implementations of ResNet/ResNeXt-A search spaces in `pl
 
 ### Prepare
 
-1. Install required packages by `pip install -r ./requirements.txt`, including the [`pycls` package](https://github.com/facebookresearch/pycls).
+1. Install required packages by `pip install -r ./requirements.txt`, including the [`pycls` package](https://github.com/facebookresearch/pycls). (Note that `pycls` need Python>=3.7.6)
 2. We should make the python module `plugin/germ_nds.py` accessible by `aw_nas` using the plugin mechanism: Just put the python modules under the plugin directory by  `ln -s $(readlink -f plugin/) $AWNAS_HOME/plugins/nds/`. During initialization, `awnas` will traverse and import all python modules under the plugin directory. Note that if the `AWNAS_HOME` environmental variable is not explicitly specified, the command should be `$ln -s $(readlink -f plugin/) $HOME/awnas/plugins/nds`.
 3. After linking, if you have the `pytest` tool/package installed, you can try run `pytest -x ./test_germ_nds.py` to run unit test for the ResNet/ResNeXt-A supernet. The tests should pass.
 4. For derive and evaluation, one should download the data files from the [assets url](https://cloud.tsinghua.edu.cn/d/965b3ae1f80b45e9ba21/).
