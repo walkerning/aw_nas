@@ -31,4 +31,4 @@ class AnchorHead(BaseHead):
         self.pretrained_path = pretrained_path
 
     def forward(self, features):
-        return self.classification(features), self.regression(features)
+        return features, self.classification(features), self.regression(features)

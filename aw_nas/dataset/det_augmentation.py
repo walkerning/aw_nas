@@ -185,7 +185,7 @@ def preproc_for_test(image, insize):
                       cv2.INTER_AREA, cv2.INTER_NEAREST, cv2.INTER_LANCZOS4]
     interp_method = interp_methods[random.randrange(5)]
     image = cv2.resize(image, insize, interpolation=interp_method)
-    image = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     return image.transpose(2, 0, 1)
 
 

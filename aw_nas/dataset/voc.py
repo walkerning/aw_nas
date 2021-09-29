@@ -14,14 +14,14 @@ from aw_nas.dataset.det_transform import *
 from aw_nas.utils.box_utils import *
 
 
-def _collate_fn(batch):
+def collate_fn(batch):
     inputs = [b[0] for b in batch]
     targets = [b[1] for b in batch]
     inputs = torch.stack(inputs, 0)
     return inputs, targets
 
 
-def collate_fn(batch):
+def _collate_fn(batch):
     """
     For GroupSampler to stack images when `keep_ratio` is True.
     """
@@ -119,7 +119,9 @@ class VOCDataset(object):
         self.kwargs = {"collate_fn": collate_fn}
 
     def __getitem__(self, index):
-        return self._getitem(index)
+        res = self._getitem(index)
+        if isinstance(res, dict):
+            return res
         (
             img_id,
             image,
@@ -129,7 +131,7 @@ class VOCDataset(object):
             width,
             is_difficult,
             ori_boxes,
-        ) = self._getitem(index)
+        ) = res
         return (
             image,
             {
@@ -152,20 +154,23 @@ class VOCDataset(object):
             results = self.transform(image, ori_boxes.copy(), labels)
             ori_boxes[:, 2] -= ori_boxes[:, 0]
             ori_boxes[:, 3] -= ori_boxes[:, 1]
-            results.update(
-                {
-                    "ori_boxes": ori_boxes,
-                    # "anno_ids": annIds,
-                    "shape": (height, width),
-                    "ori_shape": (height, width, 3),
-                    "labels": labels,
-                    "image_id": self.ids[index],
-                    "is_difficult": is_difficult,
-                }
-            )
-            return results
 
-        return img_id, image, boxes, labels, height, width, is_difficult, ori_boxes
+            if isinstance(results, dict):
+                results.update(
+                    {
+                        "ori_boxes": ori_boxes,
+                        # "anno_ids": annIds,
+                        "shape": (height, width),
+                        "ori_shape": (height, width, 3),
+                        "labels": labels,
+                        "image_id": self.ids[index],
+                        "is_difficult": is_difficult,
+                    }
+                )
+                return results
+
+            image, boxes, labels = results
+        return img_id, torch.from_numpy(image), torch.from_numpy(boxes).float(), torch.from_numpy(labels).to(torch.long), height, width, is_difficult, ori_boxes
 
     def get_image(self, index):
         image_id = self.ids[index]
@@ -254,9 +259,10 @@ class VOC(BaseDataset):
         self.class_name_file = class_name_file
         self.has_background = has_background
 
+
         train_transform = TrainAugmentation(
             train_pipeline,
-            train_crop_size,
+            tuple(train_crop_size),
             np.array(image_mean),
             np.array(image_std),
             image_norm_factor,
@@ -264,7 +270,7 @@ class VOC(BaseDataset):
         )
         test_transform = TestTransform(
             test_pipeline,
-            test_crop_size,
+            tuple(test_crop_size),
             np.array(image_mean),
             np.array(image_std),
             image_norm_factor,
