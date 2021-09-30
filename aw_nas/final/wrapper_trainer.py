@@ -35,8 +35,8 @@ class WrapperFinalTrainer(CNNFinalTrainer):  # pylint: disable=too-many-instance
             momentum=0.9,
             freeze_base_net=False,
             base_net_lr=1e-4,
-            warmup_epochs=0,
-            warmup_steps=0,
+            warmup_epochs=1,
+            warmup_steps=1,
             warmup_ratio=0.,
             optimizer_scheduler={
                 "type": "CosineAnnealingLR",

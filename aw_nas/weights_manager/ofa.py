@@ -127,7 +127,7 @@ class OFASupernet(BaseBackboneWeightsManager, nn.Module):
         self.to(device)
 
     def finalize(self, rollout):
-        pass
+        return self.backbone.finalize(rollout.depth, rollout.width, rollout.kernel)
 
 
 class OFACandidateNet(CandidateNet):
