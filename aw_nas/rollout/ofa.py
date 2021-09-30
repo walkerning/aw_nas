@@ -155,20 +155,26 @@ class MNasNetOFASearchSpace(SearchSpace):
         if mutation_prob is None:
             num_each_arch = [1, len(arch["depth"]) - 1, sum(arch["depth"][1:]),
                              sum(arch["depth"][1:])]
-            mutation_prob = [n / sum(num_each_arch) for n in num_each_arch]
+            _mutation_prob = [n / sum(num_each_arch) for n in num_each_arch]
 
         mutation_part_choices = []
         num_imgsize_choice, num_depth_choice, num_width_choice, num_kernel_choice = \
             len(self.image_size_choice), len(self.depth_choice), len(self.width_choice), \
             len(self.kernel_choice)
+        mutation_prob = []
         if num_imgsize_choice > 1:
             mutation_part_choices.append("image_size")
+            mutation_prob.append(_mutation_prob[0])
         if num_depth_choice > 1:
             mutation_part_choices.append("depth")
+            mutation_prob.append(_mutation_prob[1])
         if num_width_choice > 1:
             mutation_part_choices.append("width")
+            mutation_prob.append(_mutation_prob[2])
         if num_kernel_choice > 1:
             mutation_part_choices.append("kernel")
+            mutation_prob.append(_mutation_prob[3])
+        mutation_prob = [p / sum(mutation_prob) for p in mutation_prob]
         mutation_part = np.random.choice(mutation_part_choices, p=mutation_prob)
 
         new_arch = copy.deepcopy(arch)

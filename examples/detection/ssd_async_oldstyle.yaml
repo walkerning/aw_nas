@@ -1,27 +1,23 @@
-rollout_type: ssd_ofa
+rollout_type: ofa
 
-## ---- Component search_space ----
-# ---- Type ofa ----
-search_space_type: ssd_ofa
+search_space_type: ofa
 search_space_cfg:
   num_cell_groups: [1, 4, 4, 4, 4, 4]
   expansions: [1, 6, 6, 6, 6, 6]
   image_size_choice: [300]
-  head_width_choice: [0.5]
-  num_head: 4
   schedule_cfg:
     kernel_choice:
         type: value
-        boundary: [1, 81]
-        value: [[7], [7, 5, 3]]
+        boundary: [1, 1]
+        value: [[7, 5, 3], [7, 5, 3]]
     width_choice:
       type: value
-      boundary: [1, 161, 241]
-      value: [[6], [6, 4], [6, 4, 3]]
+      boundary: [1, 241, 321]
+      value: [[6, 4, 3], [6, 4], [6, 4, 3]]
     depth_choice:
       type: value
-      boundary: [1, 321, 401]
-      value: [[4], [4, 3], [4, 3, 2]]
+      boundary: [1, 401, 481]
+      value: [[4, 3, 2], [4, 3], [4, 3, 2]]
 # ---- End Type mnsanet_ofa ----
 ## ---- End Component search_space ----
 
@@ -31,8 +27,8 @@ dataset_cfg:
   load_train_only: false
   random_choose: false
   random_seed: 123
-  train_crop_size: 300
-  test_crop_size: 300
+  train_crop_size: [300, 300]
+  test_crop_size: [300, 300]
   image_mean: 0.
   image_std: 1.
   image_norm_factor: 128.
@@ -42,10 +38,12 @@ dataset_cfg:
 
 ## ---- Component controller ----
 # ---- Type rl ----
-controller_type: ofa
+controller_type: pareto-evo
 controller_cfg:
   # Schedulable attributes:
   rollout_type: ofa
+  perf_names: [mAP, FLOPs]
+  mode: train
 # ---- End Type rl ----
 ## ---- End Component controller ----
 
@@ -62,7 +60,7 @@ evaluator_cfg:
   # derive_surrogate_steps: 0
   mepa_surrogate_steps: 0
   mepa_optimizer:
-    lr: 0.005
+    lr: 0.05
     momentum: 0.9
     type: SGD
     weight_decay: 0.0001
@@ -76,22 +74,23 @@ evaluator_cfg:
   data_portion:
   - 0.0
   - 0.9 # train evaluator weights
-  - 0.1 # for train controller
+  - [train_testTransform, 0.1] # for train controller
   mepa_as_surrogate: false
   bptt_steps: 35
   schedule_cfg: null
   workers_per_queue: 8
+  evaluate_with_whole_queue: true
 # ---- End Type mepa ----
 ## ---- End Component evaluator ----
 
 ## ---- Component weights_manager ----
 # ---- Type supernet ----
-weights_manager_type: det_supernet
+weights_manager_type: wrapper
 weights_manager_cfg:
   # Schedulable attributes: 
   rollout_type: ofa
-  search_backbone_type: ofa_supernet
-  search_backbone_cfg:
+  backbone_type: ofa_supernet
+  backbone_cfg:
     backbone_type: mbv3_backbone
     backbone_cfg:
       blocks: [1, 4, 4, 4, 4, 4]
@@ -101,17 +100,15 @@ weights_manager_cfg:
       layer_channels: [16, 16, 24, 40, 80, 112, 160, 960, 1280]
       mult_ratio: 1.
       kernel_sizes: [3, 5, 7]
-      num_classes: 20
       block_type: mbv3_block
       pretrained_path: null
-  head_type: ssd_header
-  head_cfg:
+  neck_type: ssd
+  neck_cfg:
     expansions: [0.5, 0.5, 0.5, 0.5]
-    channels: [512, 256, 256, 128]
-    kernel_sizes: [3]
+  head_type: anchor_based
+  head_cfg:
+    num_classes: 20
     aspect_ratios: [[2], [2, 3], [2, 3], [2, 3], [2], [2]]
-    pretrained_path: null
-  num_classes: 20
   feature_levels: [4, 5]
   
 # ---- End Type supernet ----
@@ -136,7 +133,6 @@ objective_cfg:
     gamma: 2.0
     loc_coef: 1.
   soft_losses_cfg:
-    teacher_cfg: supernet
     losses_cfg:
       type: adaptive_distillation_loss
       cfg:
@@ -160,20 +156,15 @@ objective_cfg:
 
 ## ---- Component trainer ----
 # ---- Type simple ----
-trainer_type: simple
+trainer_type: async
 trainer_cfg:
   # Schedulable attributes: controller_samples, derive_samples
   rollout_type: ofa
-  epochs: 500
-  test_every: 1
-  controller_scheduler: null
-  controller_samples: 1
-  derive_samples: 1
-  evaluator_steps: null
-  controller_steps: 0
-  controller_train_every: 1
-  controller_train_begin: 1001
-  interleave_controller_every: null
-  schedule_cfg: null
+  steps: 16
+  num_epochs: 1000
+  parallelism: 1
+  dispatcher_cfg:
+    gpu_ids: [0]
+
 # ---- End Type simple ----
 ## ---- End Component trainer ----
