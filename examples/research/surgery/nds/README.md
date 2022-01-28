@@ -42,6 +42,9 @@ awnas eval-arch resnexta_ordinal_search.yaml resnexta_archs_5k.yaml --load [chec
 
 To run multiple `eval-arch` processes using multiple different checkpoints in a batched manner (on multiple GPUs), check `examples/research/surgery/run_derive_ckpts.py`.
 
+### Checkpoints and Evaluation Logs
+
+We have uploaded the supernet checkpoints and evaluation logs onto [this URL](https://cloud.tsinghua.edu.cn/d/5e9ad61209dc4034b584/). For convenience, we also provide an example running shell script "eval_nds_example.sh", running the command in it evaluate architectures using the supernet.
 
 ### Plotting the results
 

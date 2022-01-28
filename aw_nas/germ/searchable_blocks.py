@@ -281,7 +281,8 @@ class AnyKernelConv(nn.Conv2d):
         super().__init__(*args, **kwargs)
         # self.padding_flag = bool(random.randint(0, 1))
         assert padding_flag in [0, 1]
-        self.register_buffer("padding_flag", torch.tensor(padding_flag))
+        # self.register_buffer("padding_flag", torch.tensor(padding_flag))
+        self.padding_flag = padding_flag
 
     def forward(self, inputs):
         outputs = super().forward(inputs)
@@ -291,7 +292,8 @@ class AnyKernelConv(nn.Conv2d):
             # fake output
             assert len(outputs.shape) == 4, \
                 "The outputs should have 4 dim"
-            if self.padding_flag.item() == 1:
+            # if self.padding_flag.item() == 1:
+            if self.padding_flag == 1:
                 outputs = outputs[:, :, :-1, :-1]
             else:
                 outputs = outputs[:, :, 1:, 1:]
