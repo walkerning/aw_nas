@@ -9,7 +9,7 @@ import random
 import pickle
 import itertools
 import collections
-from typing import List, Optional, NamedTuple
+from typing import List, Optional, NamedTuple, Tuple
 from collections import defaultdict, OrderedDict
 import contextlib
 
@@ -256,6 +256,48 @@ class NasBench201SearchSpace(SearchSpace):
             ind = end_ind
 
 
+class FLOPSConstrainedNasBench201SearchSpace(NasBench201SearchSpace):
+    NAME = "nasbench-201-flops-constrained"
+
+    def __init__(
+        self,
+        upper_flops: float,
+        num_layers: int = 17,
+        vertices: int = 4,
+        ops_choices: Tuple[str] = (
+            "none",
+            "skip_connect",
+            "nor_conv_1x1",
+            "nor_conv_3x3",
+            "avg_pool_3x3",
+        )
+        ):
+        super(FLOPSConstrainedNasBench201SearchSpace, self).__init__(
+                num_layers, vertices, True, ops_choices)
+        self.upper_flops = upper_flops
+
+    def _cal_flops(self, rollout) -> float:
+        query_idx = rollout.search_space.api.query_index_by_arch(rollout.genotype)
+        query_res = rollout.search_space.api.query_by_index(query_idx)
+        results = list(query_res.query("cifar10-valid").values())
+        flops = results[0].flop
+        return flops
+
+    def random_sample(self):
+        flops = np.inf
+        while flops > self.upper_flops:
+            rollout = super(FLOPSConstrainedNasBench201SearchSpace, self).random_sample()
+            flops = self._cal_flops(rollout)
+        return rollout
+
+    def mutate(self, rollout):
+        flops = np.inf
+        while flops > self.upper_flops:
+            child = super(FLOPSConstrainedNasBench201SearchSpace, self).mutate(rollout)
+            flops = self._cal_flops(child)
+        return child
+
+
 class NasBench201Rollout(BaseRollout):
     NAME = "nasbench-201"
     supported_components = [("controller", "rl"), ("evaluator", "mepa")]
@@ -419,7 +461,7 @@ class NasBench201RSController(BaseController):
         op_type=0,
         pickle_file="",
         text_file="",
-            shuffle_indices_avoid_repeat=True,
+        shuffle_indices_avoid_repeat=True,
         schedule_cfg=None,
     ):
         super(NasBench201RSController, self).__init__(

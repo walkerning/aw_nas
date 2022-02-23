@@ -86,6 +86,7 @@ def train_epoch(logger, train_loader, model, epoch, cfg):
                     n_diff_pairs_meter.avg, n_pair_per_batch) if cfg["compare"] else ""))
     return objs.avg
 
+
 class PredictorBasedController(BaseController):
     NAME = "predictor-based"
 
@@ -121,6 +122,7 @@ class PredictorBasedController(BaseController):
                      "n_cross_valid": None,
                  },
                  training_on_load=False, # force retraining on load
+                 pretrained_predictor_path: str = None, # load pretrained predictor
                  schedule_cfg=None):
         super(PredictorBasedController, self).__init__(
             search_space, rollout_type, mode, schedule_cfg)
@@ -172,7 +174,7 @@ class PredictorBasedController(BaseController):
 
         # initialize the predictor
         arch_network_cfg = arch_network_cfg or {}
-        expect(arch_network_type == "pointwise_comparator",
+        expect(arch_network_type in ["pointwise_comparator", "dynamic_ensemble_pointwise_comparator"],
                "only support pointwise_comparator arch network for now", ConfigException)
         model_cls = ArchNetwork.get_class_(arch_network_type)
         self.model = model_cls(self.search_space, **arch_network_cfg)
@@ -184,6 +186,9 @@ class PredictorBasedController(BaseController):
         # self.train_loader = None
         # self.val_loader = None
         self.is_predictor_trained = False
+
+        if pretrained_predictor_path:
+            self.init_load_predictor(pretrained_predictor_path)
 
     def _predict_rollouts(self, rollouts):
         num_r = len(rollouts)
@@ -232,7 +237,7 @@ class PredictorBasedController(BaseController):
             return [self.search_space.random_sample() for _ in range(n)]
 
         if n % self.inner_sample_n != 0:
-            self.logger.warn("samle number %d cannot be divided by inner_sample_n %d",
+            self.logger.warn("sample number %d cannot be divided by inner_sample_n %d",
                              n, self.inner_sample_n)
 
         # the arch rollouts that have already evaled, avoid sampling them
@@ -301,7 +306,6 @@ class PredictorBasedController(BaseController):
         cur_sampled_mean_max = (0, 0, 0)
         i_iter = 1
         while i_iter <= num_iter:
-        # for i_iter in range(1, num_iter+1):
             # random init
             if self.inner_iter_random_init \
                and hasattr(self.inner_controller, "reinit"):
@@ -327,7 +331,7 @@ class PredictorBasedController(BaseController):
             iter_r_set = []
             iter_s_set = []
             sampled_r_set = sampled_rollouts
-            for i_inner in range(1, self.inner_steps+1):
+            for i_inner in range(1, self.inner_steps + 1):
                 # self.inner_controller.on_epoch_begin(i_inner)
                 # while 1:
                 #     rollouts = self.inner_controller.sample(self.inner_samples)
@@ -474,6 +478,11 @@ class PredictorBasedController(BaseController):
         if self.is_predictor_trained:
             # only save when the predictor is trained
             self.model.save("{}_predictor".format(path))
+
+    def init_load_predictor(self, path):
+        assert os.path.exists(path)
+        self.model.load(path)
+        self.logger.info("Initial load predictor from {}.".format(os.path.abspath(path)))
 
     def load(self, path):
         # load the evaled rollouts, predictor, controller

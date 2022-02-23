@@ -65,7 +65,7 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
                  workers_per_queue=2,
                  eval_no_grad=True,
                  eval_every=1,
-                 eval_batch_size=1,
+                 eval_batch_size=None,
                  calib_bn_setup=False, # for OFA final model
                  seed=None,
                  schedule_cfg=None):
@@ -145,7 +145,7 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
             **train_kwargs)
 
         self.valid_queue = torch.utils.data.DataLoader(
-            _splits["test"], batch_size=eval_batch_size, pin_memory=False,
+            _splits["test"], batch_size=eval_batch_size or batch_size, pin_memory=False,
             num_workers=workers_per_queue, **test_kwargs)
 
         if self.calib_bn_setup:
@@ -478,4 +478,5 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
         # forward the model once to get the flops calculated
         self.logger.info("Training parallel: Forward one batch for the flops information")
         inputs, _ = next(iter(self.train_queue))
-        model(inputs.to(self.device))
+        with torch.no_grad():
+            model(inputs.to(self.device))

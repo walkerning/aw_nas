@@ -1,0 +1,38 @@
+arch_network_type: pointwise_comparator
+arch_network_cfg:
+  arch_embedder_cfg:
+    gcn_kwargs:
+      residual_only: 1
+    gcn_out_dims:
+    - 128
+    - 128
+    - 128
+    - 128
+    - 128
+    hid_dim: 96
+    node_embedding_dim: 48
+    op_embedding_dim: 48
+    use_final_only: true
+  arch_embedder_type: nb201-flow
+  compare_loss_type: margin_linear
+  compare_margin: 0.1
+  mlp_dropout: 0.1
+  mlp_hiddens:
+  - 300
+  - 300
+  - 300
+  - 300
+  - 300
+  optimizer:
+    lr: 0.001
+    type: Adam
+  scheduler: null
+batch_size: 512
+choose_pair_criterion: random
+compare: true
+compare_threshold: 0.0
+epochs: 200
+finetune_epochs: 200
+finetune_only_mlp: false
+low_fidelity_normalize: true
+max_compare_ratio: 4.0
