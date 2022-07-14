@@ -178,6 +178,7 @@ We use this codebase to finish the following researches (*: Equal contribution; 
 * Xuefei Ning\*, Junbo Zhao\*, Wenshuo Li, Tianchen Zhao, Yin Zheng, Huazhong Yang, Yu Wang, Multi-shot NAS for Discovering Adversarially Robust Convolutional Neural Architectures at Targeted Capacities, in https://arxiv.org/abs/2012.11835. [instructions](./examples/research/multishot-robnas/)
 * Tianchen Zhao\*, Xuefei Ning\*, Songyi Yang, Shuang Liang, Peng Lei, Jianfei Chen, Huazhong Yang, Yu Wang, BARS: Joint Search of Cell Topology and Layout for Accurate and Efficient Binary ARchitectures, in https://arxiv.org/abs/2011.10804, 2020. [instructions](./examples/research/bnn/)
 * Hanbo Sun\*, Chenyu Wang\*, Zhenhua Zhu, Xuefei Ning^, Guohao Dai, Huazhong Yang, Yu Wang^, Gibbon: Efficient Co-Exploration of NN Model and Processing-In-Memory Architecture, in DATE 2022. [instructions](./examples/research/gibbon/)
+* Zixuan Zhou\*, Xuefei Ning\*, Yi Cai, Jiashu Han, Yiping Deng, Yuhan Dong, Huazhong Yang, Yu Wang, CLOSE: Curriculum Learning On the Sharing Extent Towards Better One-shot NAS, in ECCV2022. [instructions](./examples/research/close/)
 
 See the sub-directories under `examples/research/` for more details.
 

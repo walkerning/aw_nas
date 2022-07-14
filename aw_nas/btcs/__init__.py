@@ -34,3 +34,4 @@ except ImportError as e:
          "@65420f5595c0fdfab99fe3e914b04bffebf8fffe").format(e))
 
 from aw_nas.btcs import layer2
+from aw_nas.btcs import nasbench_201_close

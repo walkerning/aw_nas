@@ -330,7 +330,7 @@ class SuperNet(SharedNet):
             genotypes_grouped = rollout_or_genotypes
         return super().extract_features(inputs, genotypes_grouped, **kwargs)
 
-    def assemble_candidate(self, rollout):
+    def assemble_candidate(self, rollout, **kwargs):
         return SubCandidateNet(self, rollout,
                                gpus=self.gpus,
                                member_mask=self.candidate_member_mask,

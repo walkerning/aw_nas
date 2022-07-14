@@ -1474,7 +1474,7 @@ class NasBench201FlowArchEmbedder(ArchEmbedder):
         # x: (batch_size, vertices, hid_dim)
         return adjs, x, op_embs
 
-    def forward(self, archs):
+    def forward(self, archs, return_all=False):
         # adjs: (batch_size, vertices, vertices)
         # x: (batch_size, vertices, hid_dim)
         # op_emb: (batch_size, vertices, emb_dim)
@@ -1491,6 +1491,8 @@ class NasBench201FlowArchEmbedder(ArchEmbedder):
                 y = F.relu(y)
             y = F.dropout(y, self.dropout, training=self.training)
         # y: (batch_size, vertices, gcn_out_dims[-1])
+        if return_all:
+            return y
         if self.use_final_only:
             # only use the output node's info embedding as the embedding
             y = y[:, -1, :]
@@ -2184,7 +2186,7 @@ class BaseNB201SharedNet(BaseWeightsManager, nn.Module):
                 yield n, v
 
     # ---- APIs ----
-    def assemble_candidate(self, rollout):
+    def assemble_candidate(self, rollout, **kwargs):
         return NB201CandidateNet(
             self,
             rollout,

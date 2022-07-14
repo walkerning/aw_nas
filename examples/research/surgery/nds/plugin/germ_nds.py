@@ -1,6 +1,8 @@
+from functools import partial
 from collections import abc as collection_abcs
 
 import numpy as np
+import torch
 from torch import nn
 
 from pycls.models.anynet import (
@@ -10,8 +12,11 @@ from pycls.models.anynet import (
     BasicTransform,
     AnyHead,
 )
-from aw_nas import germ
 
+from aw_nas import germ
+from aw_nas import utils
+from aw_nas.utils import getLogger
+from aw_nas.utils.parallel_utils import parallelize
 
 def _round_to_int(float_):
     return int(round(float_))
@@ -338,6 +343,7 @@ class GermAnyNet(germ.GermSuperNet):
         head_w=0,
         bn_affine=False,
         force_use_ordinal_channel_handler=False,
+        stage_cls=GermAnyStage,
     ):
         super(GermAnyNet, self).__init__(search_space)
 
@@ -405,7 +411,7 @@ class GermAnyNet(germ.GermSuperNet):
                     "bn_affine": bn_affine,
                     "force_use_ordinal_channel_handler": force_use_ordinal_channel_handler,
                 }
-                stage = GermAnyStage(
+                stage = stage_cls(
                     ctx, w_in=prev_w, w_out=width, depth=depth,
                     stride=stride, block_fun=block_fun, params=params
                 )
@@ -485,3 +491,281 @@ class GermResNextA(GermAnyNet):
             bn_affine=False,
             force_use_ordinal_channel_handler=force_ordinal,
         )
+
+class GermCloseNet(GermAnyNet):
+    def __init__(
+        self,
+        search_space,
+        block_type,
+        depths,
+        widths,
+        strides,
+        bot_muls,
+        num_groups,
+        stem_type,
+        stem_w,
+        num_classes,
+        use_se=False,
+        se_r=0.25,
+        head_w=0,
+        bn_affine=False,
+        force_use_ordinal_channel_handler=False,
+        num_curriculums=1,
+    ):
+        super(GermCloseNet, self).__init__(
+            search_space,
+            block_type,
+            depths,
+            widths,
+            strides,
+            bot_muls,
+            num_groups,
+            stem_type,
+            stem_w,
+            num_classes,
+            use_se,
+            se_r,
+            head_w,
+            bn_affine,
+            force_use_ordinal_channel_handler,
+            stage_cls=partial(GermCloseStage, num_curriculums=num_curriculums),
+        )
+        self.num_curriculums = num_curriculums
+    
+    def forward(self, x, gate, is_training):
+        x = self.stem(x)
+        for i, stage in enumerate(self.stages):
+            x = stage(x, gate[i], is_training)
+        x = self.head(x)
+        return x
+
+    def new_curriculum(self, from_, to_):
+        for stage in self.stages:
+            stage.new_curriculum(from_, to_)
+        self.logger.info("Successfully add a new curriculum of level {}".format(to_ + 1))
+
+
+class GermCloseStage(germ.SearchableBlock):
+    def __init__(self, ctx, w_in, w_out, depth, stride, block_fun, params, num_curriculums):
+        super(GermCloseStage, self).__init__(ctx)
+        self.depth = depth
+        self.num_curriculums = num_curriculums
+        self.max_depth = max(depth.choices) if isinstance(depth, germ.Choices) else depth
+        self.curriculums = []
+        self.preprocess_block = block_fun(ctx, w_in, w_out, stride, params)
+        for i in range(self.num_curriculums):
+            block = block_fun(ctx, w_out, w_out, 1, params)
+            self.curriculums.append(block)
+            self.add_module("c{}".format(i + 1), block)
+    
+    @property
+    def logger(self):
+        if self._logger is None:
+            self._logger = getLogger(self.__class__.__name__)
+        return self._logger
+
+    def new_curriculum(self, from_, to_):
+        params_1 = self.curriculums[from_].state_dict()
+        params_2 = self.curriculums[to_].state_dict()
+        assert len(params_1) == len(params_2)
+
+        for par1, par2 in zip(params_1, params_2):
+            params_2[par2] += params_1[par1]
+
+        self.curriculums[to_].load_state_dict(params_2)
+        self.logger.info("Successfully add a new global op weight from {} to {}".format(from_, to_))
+    
+    def forward(self, x, gate, is_training):
+        _depth = self._get_decision(self.depth, self.ctx.rollout)
+        x = self.preprocess_block(x)
+        for i in range(_depth - 1):
+            x = self.curriculums[gate[i]](x)
+        return x
+
+class GermCloseCandidateNet(germ.GermCandidateNet):
+    def __init__(self, weights_manager, rollout, eval_no_grad=True, for_eval=False):
+        super(GermCloseCandidateNet, self).__init__(weights_manager, rollout, eval_no_grad)
+        self.for_eval = for_eval
+        self.gate = rollout.gate
+
+    def forward(self, inputs):
+        return self.super_net.forward_rollout(
+            self.rollout,
+            inputs,
+            self.gate,
+            is_training=not self.for_eval
+        )
+
+class GermCloseWeightsManager(germ.GermWeightsManager):
+    NAME = "germ_close"
+
+    def __init__(
+        self,
+        search_space,
+        device,
+        rollout_type="germ",
+        germ_supernet_type=None,
+        germ_supernet_cfg=None,
+        germ_def_file=None,
+        candidate_eval_no_grad=True,
+        max_grad_norm=None,
+        schedule_cfg=None,
+       
+        num_curriculums=1,
+        cl_schedule=[1],
+        cl_criteria="max",
+        eval_arch=False,
+    ):
+        germ_supernet_cfg["num_curriculums"] = num_curriculums
+        super(GermCloseWeightsManager, self).__init__(
+            search_space,
+            device,
+            rollout_type,
+            germ_supernet_type,
+            germ_supernet_cfg,
+            germ_def_file,
+            candidate_eval_no_grad,
+            max_grad_norm,
+            schedule_cfg
+        )
+    
+        self.num_curriculums = num_curriculums
+        self.curriculum_level = 1
+        self.cl_schedule = cl_schedule
+        
+        self.num_stages = self.super_net.num_stages
+        self.num_positions = self.super_net.num_positions
+        self.gate = [[0 for i in range(self.num_positions)] for j in range(self.num_stages)]
+        self.groups = {0: (0, self.num_positions)}
+
+        self.cl_criteria = cl_criteria
+        self.eval_arch = eval_arch
+
+    def assemble_candidate(self, rollout, for_eval=False):
+        rollout.gate = self.gate
+        return GermCloseCandidateNet(
+            self,
+            rollout,
+            self.candidate_eval_no_grad,
+            for_eval=for_eval
+        )
+
+    @property
+    def logger(self):
+        if self._logger is None:
+            self._logger = getLogger(self.__class__.__name__)
+        return self._logger
+    
+    def split_curriculum(self, key):
+        l = self.groups[key][0]
+        r = self.groups[key][1]
+        m = (l + r) // 2
+        self.groups[key] = (l, m)
+        for s in range(self.num_stages):
+            for i in range(m, r):
+                self.gate[s][i] = len(self.groups)
+        if not self.eval_arch:
+            self.super_net.new_curriculum(key, len(self.groups))
+        self.groups[len(self.groups)] = (m, r)
+
+    def new_curriculum(self, pre, now, tp):
+        assert tp in ["max", "pre"]
+        for _ in range(pre, now):
+            if tp == "max":
+                lens = {key: value[1] - value[0] for key, value in self.groups.items()}
+                key = max(lens, key=lens.get)
+                self.split_curriculum(key)
+            elif tp == "pre":
+                ind = 0
+                pos = self.num_curriculums + 1
+                for key, value in self.groups.items():
+                    if value[1] - value[0] > 1 and value[0] < pos:
+                        ind = key
+                        pos = value[0]
+                self.split_curriculum(ind)
+
+    def on_epoch_start(self, epoch):
+        super(GermCloseWeightsManager, self).on_epoch_start(epoch)
+        pre = self.curriculum_level
+        self.curriculum_level = np.where(np.array(self.cl_schedule) <= epoch)[0][-1] + 1
+        self.new_curriculum(pre, self.curriculum_level, self.cl_criteria)
+        self.to(self.device)
+
+
+class GermCloseResNet(GermCloseNet):
+    NAME = "nds_close_resnet"
+
+    def __init__(
+        self,
+        search_space,
+        num_classes=10,
+        stem_type="res_stem_cifar",
+        force_ordinal=False,
+        depths=[[1, 2, 3, 4, 6, 8, 12, 16, 24]] * 3,
+        widths=[[16, 24, 32, 40, 48, 64, 80, 96, 128, 160, 192, 256]] * 3,
+        num_curriculums=1,
+    ):
+        super(GermCloseResNet, self).__init__(
+            search_space,
+            block_type="res_basic_block",
+            depths=depths,
+            widths=widths,
+            strides=[1, 2, 2],
+            bot_muls=None,
+            num_groups=None,
+            stem_type=stem_type,
+            stem_w=16,
+            num_classes=num_classes,
+            use_se=False,
+            se_r=0.25,
+            head_w=0,
+            bn_affine=False,
+            force_use_ordinal_channel_handler=force_ordinal,
+            num_curriculums=num_curriculums,
+        )
+        depths=[[1, 2, 3, 4, 6, 8, 12, 16, 24]] * 3
+        widths=[[16, 24, 32, 40, 48, 64, 80, 96, 128, 160, 192, 256]] * 3
+        
+        self.num_parameters = len(depths) + len(widths)
+        self.num_stages = len(depths)
+        self.num_positions = self.stages[0].max_depth - 1
+
+
+class GermCloseResNextA(GermCloseNet):
+    NAME = "nds_close_resnexta"
+
+    def __init__(
+        self,
+        search_space,
+        num_classes=10,
+        stem_type="res_stem_cifar",
+        group_search=True,
+        force_ordinal=False,
+        num_curriculums=1,
+    ):
+        super(GermCloseResNextA, self).__init__(
+            search_space,
+            block_type="res_bottleneck_block",
+            depths=[[1, 2, 4, 8, 16]] * 3,
+            widths=[[16, 32, 64, 128, 256]] * 3,
+            strides=[1, 2, 2],
+            bot_muls=[[0.25, 0.5, 1]] * 3,
+            num_groups=[[1, 2, 4]] * 3 if group_search else [1, 1, 1],
+            stem_type=stem_type,
+            stem_w=16,
+            num_classes=num_classes,
+            use_se=False,
+            se_r=0.25,
+            head_w=0,
+            bn_affine=False,
+            force_use_ordinal_channel_handler=force_ordinal,
+            num_curriculums=num_curriculums,
+        )
+        depths = [[1, 2, 4, 8, 16]] * 3
+        widths = [[16, 32, 64, 128, 256]] * 3
+        bot_muls = [[0.25, 0.5, 1]] * 3
+        num_groups = [[1, 2, 4]] * 3 if group_search else [1, 1, 1]
+
+        self.num_parameters = len(depths) + len(widths) + len(bot_muls) + len(num_groups)
+        self.num_stages = len(depths)
+        self.num_positions = self.stages[0].max_depth - 1

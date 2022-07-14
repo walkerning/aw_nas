@@ -325,7 +325,10 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
             # only for rnn data
             bptt_steps=35,
             multiprocess=False,
-            schedule_cfg=None):
+            schedule_cfg=None,
+            switch_epochs=[],
+            lr_schedule=None,
+            lr_factor=1.0):
         super(MepaEvaluator,
               self).__init__(dataset, weights_manager, objective, rollout_type,
                              schedule_cfg)
@@ -444,6 +447,12 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
         self.report_inner_diagnostics = report_inner_diagnostics
         self.report_cont_data_diagnostics = report_cont_data_diagnostics
         self.update_evaluator_report_perfs = update_evaluator_report_perfs
+
+        self.switch_epochs = switch_epochs
+        self.lr_schedule = lr_schedule
+        self.lr_factor = lr_factor
+        self.mepa_optimizer_cfgs = mepa_optimizer
+        self.mepa_scheduler_cfgs = mepa_scheduler
 
         # rnn specific configs
         self.bptt_steps = bptt_steps
@@ -625,7 +634,7 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
 
             # evaluate these rollouts on one batch of data
             for rollout in eval_rollouts:
-                cand_net = self.weights_manager.assemble_candidate(rollout)
+                cand_net = self.weights_manager.assemble_candidate(rollout, for_eval=True)
                 if return_candidate_net:
                     rollout.candidate_net = cand_net
                 # prepare criterions
@@ -659,7 +668,7 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
 
                 for i_rollout, rollout in enumerate(eval_rollouts):
                     print("\r{}/{}".format(i_rollout, len(eval_rollouts)), end="")
-                    cand_net = self.weights_manager.assemble_candidate(rollout)
+                    cand_net = self.weights_manager.assemble_candidate(rollout, for_eval=True)
                     if return_candidate_net:
                         rollout.candidate_net = cand_net
                     # prepare criterions
@@ -857,10 +866,29 @@ class MepaEvaluator(BaseEvaluator):  #pylint: disable=too-many-instance-attribut
         else:
             self.derive_queue.reset()
 
+    def switch(self, epoch):
+        # lr_schedule implementation should be improved
+        # since the lr would be wrong when loading ckpt
+        mepa_optimizer_cfgs = copy.deepcopy(self.mepa_optimizer_cfgs)
+        if self.lr_schedule == "constant":
+            mepa_optimizer_cfgs["lr"] /= self.lr_factor
+
+        self.mepa_optimizer = utils.init_optimizer(
+            self.weights_manager.parameters(), mepa_optimizer_cfgs)
+        self.mepa_scheduler = utils.init_scheduler(
+            self.mepa_optimizer, self.mepa_scheduler_cfgs)
+
     def on_epoch_start(self, epoch):
         super(MepaEvaluator, self).on_epoch_start(epoch)
         self.weights_manager.on_epoch_start(epoch)
         self.objective.on_epoch_start(epoch)
+        
+        if epoch in self.switch_epochs:
+            self.switch(epoch)
+            self.logger.info(
+                "Successfully switching the curriculum, and reset lr to {:.4f} ".format(
+                    self.mepa_optimizer_cfgs["lr"]))
+        
         if self.use_maml_plus:
             self.surrogate_optimizer.on_epoch_start(epoch)
 

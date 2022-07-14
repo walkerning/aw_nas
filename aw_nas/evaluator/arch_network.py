@@ -479,7 +479,7 @@ class GCNFlowArchEmbedder(ArchEmbedder):
         # (batch_size, num_cell_groups, num_nodes, op_hid)
         return adjs, adj_op_inds_lst, x
 
-    def forward(self, archs):
+    def forward(self, archs, return_all=False):
         # adjs: (batch_size, num_cell_groups, num_nodes, num_nodes)
         # adj_op_inds: (batch_size, num_cell_groups, num_nodes, num_nodes)
         # x: (batch_size, num_cell_groups, num_nodes, op_hid)
@@ -495,6 +495,9 @@ class GCNFlowArchEmbedder(ArchEmbedder):
                 y = F.relu(y)
             y = F.dropout(y, self.dropout, training=self.training)
         # y: (batch_size, num_cell_groups, num_nodes, gcn_out_dims[-1])
+        if return_all:
+            y = F.normalize(y, 2, dim=-1) if self.normalize else y
+            return y
         y = y[:, :, 2:, :] # do not keep the init node embedding
         if self.normalize:
             y = F.normalize(y, 2, dim=-1)

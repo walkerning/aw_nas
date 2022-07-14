@@ -245,7 +245,7 @@ class GermWeightsManager(BaseBackboneWeightsManager, nn.Module):
         self.super_net = self.super_net.finalize_rollout(rollout)
         return self
 
-    def assemble_candidate(self, rollout):
+    def assemble_candidate(self, rollout, **kwargs):
         return GermCandidateNet(self, rollout, self.candidate_eval_no_grad)
 
     def step(self, gradients, optimizer):
