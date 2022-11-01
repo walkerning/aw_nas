@@ -3,6 +3,7 @@
 import os
 import random
 import functools
+import copy
 
 import six
 import numpy as np
@@ -107,7 +108,7 @@ class CNNFinalTrainer(FinalTrainer): #pylint: disable=too-many-instance-attribut
 
         _splits = self.dataset.splits()
         train_kwargs = getattr(_splits["train"], "kwargs", {})
-        test_kwargs = getattr(_splits["test"], "kwargs", train_kwargs)
+        test_kwargs = getattr(_splits["test"], "kwargs", copy.deepcopy(train_kwargs))
 
         """
         GroupSampler is needed when `keep_ratio` in dataset is set True.
