@@ -34,4 +34,5 @@ except ImportError as e:
          "pip install git+https://github.com/walkerning/nasbench301.git"
          "@65420f5595c0fdfab99fe3e914b04bffebf8fffe").format(e))
 
+from aw_nas.btcs import enas
 from aw_nas.btcs import layer2

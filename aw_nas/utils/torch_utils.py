@@ -163,7 +163,7 @@ class DenseGraphFlow(nn.Module):
 
     def __init__(self, in_features, out_features, op_emb_dim,
                  has_attention=True, plus_I=False, normalize=False, bias=True,
-                 residual_only=None):
+                 residual_only=None, reverse=False):
         super(DenseGraphFlow, self).__init__()
 
         self.plus_I = plus_I
@@ -172,6 +172,8 @@ class DenseGraphFlow(nn.Module):
         self.out_features = out_features
         self.op_emb_dim = op_emb_dim
         self.residual_only = residual_only
+        self.reverse = reverse
+
         self.weight = nn.Parameter(torch.FloatTensor(in_features, out_features))
         if has_attention:
             self.op_attention = nn.Linear(op_emb_dim, out_features)
@@ -202,13 +204,27 @@ class DenseGraphFlow(nn.Module):
         support = torch.matmul(inputs, self.weight)
         if self.residual_only is None:
             # use residual
-            output = torch.sigmoid(self.op_attention(op_emb)) * torch.matmul(adj_aug, support) + support
+            output = torch.sigmoid(self.op_attention(op_emb)) * torch.matmul(adj_aug, support) \
+                     + support
         else:
             # residual only the first `self.residual_only` nodes
-            output = torch.sigmoid(self.op_attention(op_emb)) * torch.matmul(adj_aug, support) + torch.cat(
-                (support[:, :self.residual_only, :],
-                 torch.zeros([support.shape[0], support.shape[1] - self.residual_only, support.shape[2]], device=support.device)),
-                dim=1)
+            if self.residual_only == 0:
+                residual = 0
+            else:
+                if self.reverse:
+                    residual = torch.cat(
+                        (torch.zeros([support.shape[0], support.shape[1] - self.residual_only,
+                                      support.shape[2]], device=support.device),
+                         support[:, -self.residual_only:, :]),
+                        dim=1)
+                else:
+                    residual = torch.cat(
+                        (support[:, :self.residual_only, :],
+                         torch.zeros([support.shape[0], support.shape[1] - self.residual_only,
+                                      support.shape[2]], device=support.device)),
+                        dim=1)
+            output = torch.sigmoid(self.op_attention(op_emb)) * torch.matmul(adj_aug, support)\
+                     + residual
 
         if self.bias is not None:
             return output + self.bias
@@ -228,7 +244,7 @@ class DenseGraphOpEdgeFlow(nn.Module):
                  has_attention=True, plus_I=False, share_self_op_emb=False,
                  normalize=False, bias=False,
                  residual_only=None, use_sum=False,
-                 concat=None, has_aggregate_op=False):
+                 concat=None, has_aggregate_op=False, reverse=False):
         super(DenseGraphOpEdgeFlow, self).__init__()
 
         self.plus_I = plus_I
@@ -239,6 +255,7 @@ class DenseGraphOpEdgeFlow(nn.Module):
         self.out_features = out_features
         self.op_emb_dim = op_emb_dim
         self.use_sum = use_sum
+        self.reverse = reverse
         # self.concat = concat
         self.weight = nn.Parameter(torch.FloatTensor(in_features, out_features))
         self.has_aggregate_op = has_aggregate_op
@@ -309,12 +326,21 @@ class DenseGraphOpEdgeFlow(nn.Module):
         if self.residual_only is None:
             res_output = support
         else:
-            res_output = torch.cat(
-                (support[:, :, :self.residual_only, :],
-                 torch.zeros([support.shape[0], support.shape[1],
-                              support.shape[2] - self.residual_only, support.shape[3]],
-                             device=support.device)),
-                dim=2)
+            if self.reverse:
+                res_output = torch.cat(
+                    (torch.zeros([support.shape[0], support.shape[1],
+                                  support.shape[2] - self.residual_only, support.shape[3]],
+                                 device=support.device),
+                     support[:, :, -self.residual_only:, :]
+                    ),
+                    dim=2)
+            else:
+                res_output = torch.cat(
+                    (support[:, :, :self.residual_only, :],
+                     torch.zeros([support.shape[0], support.shape[1],
+                                  support.shape[2] - self.residual_only, support.shape[3]],
+                                 device=support.device)),
+                    dim=2)
         processed_info = (attn * support.unsqueeze(2)).sum(-2)
         processed_info = processed_info.sum(0) if self.use_sum else processed_info.mean(0)
         if self.has_aggregate_op:
@@ -363,6 +389,7 @@ class DenseGraphOpEdgeFlow(nn.Module):
                + str(self.in_features) + ' -> ' \
                + str(self.out_features) + ')'
 
+
 class DenseGraphSimpleOpEdgeFlow(nn.Module):
     """
     For search space that has operation on the edge.
@@ -372,8 +399,10 @@ class DenseGraphSimpleOpEdgeFlow(nn.Module):
     def __init__(self, in_features, out_features, op_emb_dim,
                  has_attention=True, plus_I=False, share_self_op_emb=False,
                  normalize=False, bias=False,
-                 residual_only=None,
-                 concat=None, has_aggregate_op=False):
+                 residual_only=None, reverse=False,
+                 concat=None, has_aggregate_op=False,
+                 nonlinear="sigmoid", return_message=False,
+                 skip_connection_index=None, attn_scale_factor=1.0):
         super(DenseGraphSimpleOpEdgeFlow, self).__init__()
 
         self.plus_I = plus_I
@@ -383,8 +412,23 @@ class DenseGraphSimpleOpEdgeFlow(nn.Module):
         self.in_features = in_features
         self.out_features = out_features
         self.op_emb_dim = op_emb_dim
+        self.reverse = reverse
         self.weight = nn.Parameter(torch.FloatTensor(in_features, out_features))
         self.has_aggregate_op = has_aggregate_op
+        self.return_message = return_message
+        self.skip_connection_index = skip_connection_index # handle skip connection directlyy
+        self.attn_scale_factor = attn_scale_factor
+
+        if nonlinear == "sigmoid":
+            self.nonlinear = torch.sigmoid
+        elif nonlinear == "relu":
+            self.nonlinear = torch.relu
+        elif nonlinear == "softplus":
+            self.nonlinear = nn.Softplus()
+        else:
+            assert nonlinear is None, "only support three types of nonlinear: sigmoid, relu, null"
+            self.nonlinear = None
+
         if self.has_aggregate_op:
             # TODO: a non linear aggregate op can brought more representation ability?
             # but no nonlinear aggreate op that have good interpreatability
@@ -427,8 +471,17 @@ class DenseGraphSimpleOpEdgeFlow(nn.Module):
             adj = adj + eye_mask.to(torch.long)
 
         # attn: (b, V, V, h_i)
-        attn = torch.sigmoid(self.op_attention(op_emb))
-        attn = ((adj != 0).unsqueeze(-1).to(torch.float32)).detach() * attn
+        if self.nonlinear is not None:
+            attn = self.nonlinear(self.op_attention(op_emb))
+        else:
+            attn = self.op_attention(op_emb)
+        attn = ((adj != 0).unsqueeze(-1).to(torch.float32)).detach() * attn * self.attn_scale_factor
+
+        if self.skip_connection_index is not None:
+            is_skip_mask = (adj == self.skip_connection_index)\
+                           .unsqueeze(-1).to(torch.float32).detach()
+            attn = is_skip_mask * attn.new(np.ones((adj.shape[-1], adj.shape[-1], attn.shape[-1])))\
+                   + (1 - is_skip_mask) * attn
 
         if self.residual_only is None:
             res_output = support
@@ -436,21 +489,34 @@ class DenseGraphSimpleOpEdgeFlow(nn.Module):
             # residual only the first `self.residual_only` nodes
             # since there would be not inputs for the input nodes,
             # residual must be added to their output
-            res_output = torch.cat(
-                (support[:, :self.residual_only, :],
-                 torch.zeros([support.shape[0], support.shape[1] - self.residual_only,
-                              support.shape[2]],
-                             device=support.device)), dim=1)
+            if self.reverse:
+                res_output = torch.cat(
+                    (torch.zeros([support.shape[0], support.shape[1] - self.residual_only,
+                                  support.shape[2]],
+                                 device=support.device),
+                     support[:, -self.residual_only:, :]),
+                    dim=1)
+            else:
+                res_output = torch.cat(
+                    (support[:, :self.residual_only, :],
+                     torch.zeros([support.shape[0], support.shape[1] - self.residual_only,
+                                  support.shape[2]],
+                                 device=support.device)), dim=1)
 
-        processed_info = (attn * support.unsqueeze(-3)).sum(-2)
+        processed_message = attn * support.unsqueeze(-3)
+        processed_info = processed_message.sum(-2)
         if self.has_aggregate_op:
             output = self.aggregate_op(processed_info) + res_output
         else:
             output = processed_info + res_output
+
         if self.bias is not None:
             return output + self.bias
         else:
-            return output
+            if self.return_message:
+                return output, processed_message
+            else:
+                return output
 
 ## --- dataset ---
 class SimpleDataset(torch.utils.data.Dataset):

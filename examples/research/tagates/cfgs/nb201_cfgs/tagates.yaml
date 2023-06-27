@@ -1,0 +1,50 @@
+# TA-GATES on NAS-Bench-201
+
+# Search space: NAS-Bench-201
+# Train objective: Ranking loss
+# Time step number: 4
+# Symmetry_breaking_method: param_zs
+
+arch_network_cfg:
+  arch_embedder_type: nb201-fbflow
+  arch_embedder_cfg:
+    gcn_kwargs:
+      residual_only: 1
+      skip_connection_index: 1
+    gcn_out_dims: [128, 128, 128]
+    hid_dim: 96
+    node_embedding_dim: 48
+    op_embedding_dim: 48
+    use_final_only: true
+
+    # tagates-related
+    num_time_steps: 4
+    backward_gcn_out_dims: [128, 128, 128]
+    fb_conversion_dims: [128, 128]
+    updateopemb_method: concat_ofb_message
+    updateopemb_scale: 0.1
+    updateopemb_dims: [128]
+    b_use_bn: false
+
+    detach_vinfo: false
+    updateopemb_detach_opemb: true
+    updateopemb_detach_finfo: true
+
+    # symmetry breaking
+    symmetry_breaking_method: param_zs # choices: [None, random, param_zs]
+    concat_param_zs_as_opemb_dimension: 7
+
+  compare_loss_type: margin_linear
+  compare_margin: 0.1
+  mlp_dropout: 0.1
+  mlp_hiddens: [300, 300, 300, 300, 300]
+  optimizer:
+    lr: 0.001
+    type: Adam
+  scheduler: null
+batch_size: 512
+choose_pair_criterion: random
+compare: true
+compare_threshold: 0.0
+epochs: 200
+max_compare_ratio: 4.0

@@ -1,0 +1,45 @@
+arch_network_cfg:
+  arch_embedder_cfg:
+    take_adj_as_input: true
+    gcn_kwargs:
+      residual_only: 2
+    gcn_out_dims: [64, 64, 64, 64, 64]
+    hidden_dim: 32
+    node_dim: 32
+    op_dim: 32
+    use_bn: false
+    final_concat: false
+    other_node_zero: false
+    # new
+    num_time_steps: 4
+    fb_conversion_dims: [64, 64]
+    backward_gcn_out_dims: [64, 64, 64, 64, 64]
+    updateopemb_method: concat_ofb
+    updateopemb_dims: [64]
+    share_skip_and_outskip: true
+    detach_vinfo: false
+    updateopemb_scale: 0.1
+    updateopemb_detach_opemb: true
+    updateopemb_detach_finfo: true
+    mask_nonparametrized_ops: true
+
+    symmetry_breaking_method: param_zs_add
+    concat_param_zs_as_opemb_dimension: 5
+    concat_param_zs_as_opemb_scale: 1.0
+  arch_embedder_type: cellss-fbflow
+  compare_loss_type: margin_linear
+  compare_margin: 0.1
+  mlp_dropout: 0.1
+  mlp_hiddens:
+  - 200
+  optimizer:
+    lr: 0.001
+    type: Adam
+  scheduler: null
+arch_network_type: pointwise_comparator
+batch_size: 128
+choose_pair_criterion: random
+compare: true
+compare_threshold: 0.0
+epochs: 200
+max_compare_ratio: 16.0

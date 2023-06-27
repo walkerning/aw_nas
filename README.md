@@ -179,7 +179,7 @@ We use this codebase to finish the following researches (*: Equal contribution; 
 * Tianchen Zhao\*, Xuefei Ning\*, Songyi Yang, Shuang Liang, Peng Lei, Jianfei Chen, Huazhong Yang, Yu Wang, BARS: Joint Search of Cell Topology and Layout for Accurate and Efficient Binary ARchitectures, in https://arxiv.org/abs/2011.10804, 2020. [instructions](./examples/research/bnn/)
 * Hanbo Sun\*, Chenyu Wang\*, Zhenhua Zhu, Xuefei Ning^, Guohao Dai, Huazhong Yang, Yu Wang^, Gibbon: Efficient Co-Exploration of NN Model and Processing-In-Memory Architecture, in DATE 2022. [instructions](./examples/research/gibbon/)
 * Zixuan Zhou\*, Xuefei Ning\*, Yi Cai, Jiashu Han, Yiping Deng, Yuhan Dong, Huazhong Yang, Yu Wang, CLOSE: Curriculum Learning On the Sharing Extent Towards Better One-shot NAS, in ECCV2022. [instructions](./examples/research/close/)
-* Xuefei Ning\*, Zixuan Zhou\*, Junbo Zhao, Tianchen Zhao, Yiping Deng, Changcheng Tang, Shuang Liang, Huazhong Yang, Yu Wang, TA-GATES: An Encoding Scheme for Neural Network Architectures, in NeurIPS 2022.
+* Xuefei Ning\*, Zixuan Zhou\*, Junbo Zhao, Tianchen Zhao, Yiping Deng, Changcheng Tang, Shuang Liang, Huazhong Yang, Yu Wang, TA-GATES: An Encoding Scheme for Neural Network Architectures, in NeurIPS 2022. [instructions](./examples/research/tagates)
 * Junbo Zhao\*, Xuefei Ning\*, Enshu Liu, Binxin Ru, Zixuan Zhou, Tianchen Zhao, Chen Chen, Jiajin Zhang, Qingmin Liao, Yu Wang, Dynamic Ensemble of Low-fidelity Experts: Mitigating NAS "Cold-Start", 2022. [instructions](./examples/research/dele/)
 
 See the sub-directories under `examples/research/` for more details.

@@ -1207,3 +1207,148 @@ else:
 
         def on_epoch_end(self, epoch):
             pass
+
+
+class AnyTimePointwiseComparator(PointwiseComparator):
+    NAME = "any_time_pointwise_comparator"
+
+    def __init__(self, search_space, seperate_mlp: bool = True,
+            arch_embedder_type: str = "lstm", arch_embedder_cfg = None,
+            mlp_hiddens: Tuple[int] = (200, 200, 200), mlp_dropout: float = 0.1,
+            optimizer: dict = {
+                     "type": "Adam",
+                     "lr": 0.001
+                 }, scheduler = None,
+            compare_loss_type: str = "margin_linear",
+            compare_margin: float = 0.01,
+            margin_l2: bool = False,
+            use_incorrect_list_only: bool = False,
+            tanh_score: bool = None,
+            max_grad_norm: float = None,
+            schedule_cfg = None) -> None:
+        super(AnyTimePointwiseComparator, self).__init__(
+                search_space, arch_embedder_type, arch_embedder_cfg,
+                mlp_hiddens, mlp_dropout, optimizer,
+                scheduler, compare_loss_type, compare_margin,
+                margin_l2, use_incorrect_list_only, tanh_score,
+                max_grad_norm, schedule_cfg)
+
+        assert "anytime" in arch_embedder_type, \
+            "{} is not supported. Only support any time arch embedder.".format(arch_embedder_type)
+        
+        self.seperate_mlp = seperate_mlp
+        if seperate_mlp:
+            dim = self.embedding_dim
+            self.pre_mlps = nn.ModuleList([
+                    self.construct_mlp(dim, mlp_hiddens, mlp_dropout)
+                    for i in range(self.arch_embedder.num_time_steps - 1)
+            ])
+        
+        # init optimizer and scheduler
+        self.optimizer_cfg = optimizer
+        self.scheduler_cfg = scheduler
+
+        self.optimizer = utils.init_optimizer(self.parameters(), optimizer)
+        self.scheduler = utils.init_scheduler(self.optimizer, scheduler)
+
+    def reinit_optimizer_scheduler(self):
+        self.optimizer = utils.init_optimizer(self.parameters(), self.optimizer_cfg)
+        self.scheduler = utils.init_scheduler(self.optimizer, self.scheduler_cfg)
+
+    def update_predict(self, archs: np.ndarray, labels_list: List[np.ndarray]) -> float:
+        r"""
+        Update the predictor with regression loss.
+        Args:
+            archs (np.ndarray): The architecture.
+            labels_list (List[np.ndarray]): A list of labels at different time.
+        Returns:
+            loss (float): The calculated loss.
+        """
+        arch_embedding_list = self.arch_embedder(archs, any_time = True)
+        
+        if not self.seperate_mlp:
+            scores_list = [
+                torch.sigmoid(self.mlp(arch_embedding))
+                for arch_embedding in arch_embedding_list
+            ]
+        
+        else:
+            scores_list = [
+                torch.sigmoid(mlp(arch_emb))
+                for mlp, arch_emb in zip(self.pre_mlps, arch_embedding_list[:-1])
+            ]
+        
+        scores_list.append(torch.sigmoid(self.mlp(arch_embedding_list[-1])))
+
+        mse_loss = sum([
+            F.mse_loss(scores.squeeze(), scores.new(labels)) 
+            for scores, labels in zip(scores_list, labels_list)
+        ])
+        self.optimizer.zero_grad()
+        mse_loss.backward()
+        self._clip_grads()
+        self.optimizer.step()
+        return mse_loss.item()
+
+    def predict(self, arch, sigmoid=True, tanh=False, anytime = False):
+        activate_func = torch.sigmoid if sigmoid else torch.tanh
+        if not anytime:
+            score = self.mlp(self.arch_embedder(arch)).squeeze(-1)
+            score = activate_func(score)
+            return score
+        else:
+            arch_embedding_list = self.arch_embedder(arch, any_time = True)
+        
+            if not self.seperate_mlp:
+                scores_list = [
+                    activate_func(self.mlp(arch_embedding)).squeeze(-1)
+                    for arch_embedding in arch_embedding_list
+                ]
+        
+            else:
+                scores_list = [
+                    activate_func(mlp(arch_emb)).squeeze(-1)
+                    for mlp, arch_emb in zip(self.pre_mlps, arch_embedding_list[:-1])
+                ]
+                scores_list.append(activate_func(self.mlp(arch_embedding_list[-1])).squeeze(-1))
+            return scores_list
+
+          
+class MultiPredictionPointwiseComparator(PointwiseComparator):
+    r"""
+    For ablation research of TA-GATES.
+    """
+    NAME = "multi_prediction_pointwise_comparator"
+    
+    @staticmethod
+    def construct_mlp(dim: int, mlp_hiddens: Tuple[int], mlp_dropout: float) -> nn.Module:
+        mlp = []
+        for hidden_size in mlp_hiddens:
+            mlp.append(nn.Sequential(
+                nn.Linear(dim, hidden_size),
+                nn.ReLU(inplace = False),
+                nn.Dropout(p = mlp_dropout))
+            )
+            dim = hidden_size
+        mlp.append(nn.Linear(dim, 2))
+        mlp = nn.Sequential(*mlp)
+        return mlp
+
+    def update_predict(self, archs, labels_list):
+        all_scores = torch.sigmoid(self.mlp(self.arch_embedder(archs)))
+        mse_loss = sum([F.mse_loss(scores.squeeze(), scores.new(labels)) 
+            for scores, labels in zip(all_scores.transpose(1, 0), labels_list)])
+        self.optimizer.zero_grad()
+        mse_loss.backward()
+        self._clip_grads()
+        self.optimizer.step()
+        return mse_loss.item()
+
+    def predict(self, arch, sigmoid: bool = True, tanh: bool = False):
+        scores = self.mlp(self.arch_embedder(arch))
+        if sigmoid:
+            scores = torch.sigmoid(scores)
+        elif tanh:
+            scores = torch.tanh(scores)
+            
+        return [score.squeeze(-1) for score in scores.transpose(1, 0)]

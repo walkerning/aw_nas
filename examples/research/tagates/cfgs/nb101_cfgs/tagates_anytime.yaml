@@ -1,0 +1,49 @@
+arch_network_cfg:
+  arch_embedder_cfg:
+    gcn_kwargs:
+      plus_I: true
+      residual_only: 1
+    gcn_out_dims:
+    - 128
+    - 128
+    - 128
+    - 128
+    - 128
+    backward_gcn_out_dims:
+    - 128
+    - 128
+    - 128
+    - 128
+    - 128    
+    hid_dim: 96
+    node_embedding_dim: 48
+    op_embedding_dim: 48
+    num_time_steps: 2
+    fb_conversion_dims: [128, 128]
+    updateopemb_method: concat_ofb
+    updateopemb_dims: [128]
+    updateopemb_scale: 0.1
+    b_use_bn: false
+    detach_vinfo: false
+    updateopemb_detach_opemb: true
+    updateopemb_detach_finfo: true
+    symmetry_breaking_method: param_zs_add
+    concat_param_zs_as_opemb_dimension: 7
+    concat_param_zs_as_opemb_scale: 1.0
+    mask_nonparametrized_ops: false
+  arch_embedder_type: nb101-fbflow-anytime
+  compare_loss_type: margin_linear
+  compare_margin: 0.1
+  mlp_dropout: 0.1
+  mlp_hiddens:
+  - 200
+  optimizer:
+    lr: 0.001
+    type: Adam
+  scheduler: null
+batch_size: 512
+choose_pair_criterion: random
+compare: false
+compare_threshold: 0.0
+epochs: 200
+max_compare_ratio: 4.0
