@@ -169,18 +169,19 @@ See [Develop New Components](doc/development.md) for the development guide of ne
 
 
 ## Researches
-We use this codebase to finish the following researches (*: Equal contribution; ^: Co-advise and co-corresponding)
-* Wenshuo Li\*, Xuefei Ning\*, Guangjun Ge, Xiaoming Chen, Yu Wang, Huazhong Yang, FTT-NAS: Discovering Fault-Tolerant Neural Architecture, in ASP-DAC 2020.
-* Xuefei Ning, Guangjun Ge, Wenshuo Li, Zhenhua Zhu, Yin Zheng, Xiaoming Chen, Zhen Gao, Yu Wang, and Huazhong Yang, FTT-NAS: Discovering Fault-Tolerant Neural Architecture, in https://arxiv.org/abs/2003.10375, in TODAES 2021. [instructions](./examples/research/ftt-nas)
+This codebase is related to the following researches (*: Equal contribution; ^: Co-corresponding)
+* Wenshuo Li\*, Xuefei Ning\*, Guangjun Ge, Xiaoming Chen, Yu Wang, Huazhong Yang, FTT-NAS: Discovering Fault-Tolerant Neural Architecture, in ASP-DAC'20.
+* Xuefei Ning, Guangjun Ge, Wenshuo Li, Zhenhua Zhu, Yin Zheng, Xiaoming Chen, Zhen Gao, Yu Wang, and Huazhong Yang, FTT-NAS: Discovering Fault-Tolerant Neural Architecture, in https://arxiv.org/abs/2003.10375, in TODAES'21. [instructions](./examples/research/ftt-nas)
 * Shulin Zeng\*, Hanbo Sun\*, Yu Xing, Xuefei Ning, Yi Shan, Xiaoming Chen, Yu Wang, Huazhong Yang, Black Box Search Space Profiling for Accelerator-Aware Neural Architecture Search, in ASP-DAC 2020. [instructions](./examples/research/bbssp/)
-* Xuefei Ning, Yin Zheng, Tianchen Zhao, Yu Wang, Huazhong Yang, A Generic Graph-based Neural Architecture Encoding Scheme for Predictor-based NAS, in ECCV 2020, https://arxiv.org/abs/2004.01899. [instructions](./examples/research/gates/)
-* Xuefei Ning, Changcheng Tang, Wenshuo Li, Zixuan Zhou, Shuang Liang, Huazhong Yang, Yu Wang, Evaluating Efficient Performance Estimators of Neural Architectures, in NeurIPS 2021, https://arxiv.org/abs/2008.03064. [instructions](./examples/research/surgery/)
-* Xuefei Ning\*, Junbo Zhao\*, Wenshuo Li, Tianchen Zhao, Yin Zheng, Huazhong Yang, Yu Wang, Multi-shot NAS for Discovering Adversarially Robust Convolutional Neural Architectures at Targeted Capacities, in https://arxiv.org/abs/2012.11835. [instructions](./examples/research/multishot-robnas/)
+* Xuefei Ning, Yin Zheng, Tianchen Zhao, Yu Wang, Huazhong Yang, A Generic Graph-based Neural Architecture Encoding Scheme for Predictor-based NAS, in ECCV'20 and TPAMI'23, https://arxiv.org/abs/2004.01899. [instructions](./examples/research/gates/)
+* Xuefei Ning, Changcheng Tang, Wenshuo Li, Zixuan Zhou, Shuang Liang, Huazhong Yang, Yu Wang, Evaluating Efficient Performance Estimators of Neural Architectures, in NeurIPS'21, https://arxiv.org/abs/2008.03064. [instructions](./examples/research/surgery/)
+* Xuefei Ning\*, Junbo Zhao\*, Wenshuo Li, Tianchen Zhao, Yin Zheng, Huazhong Yang, Yu Wang, Multi-shot NAS for Discovering Adversarially Robust Convolutional Neural Architectures at Targeted Capacities, in https://arxiv.org/abs/2012.11835, 2020. [instructions](./examples/research/multishot-robnas/)
 * Tianchen Zhao\*, Xuefei Ning\*, Songyi Yang, Shuang Liang, Peng Lei, Jianfei Chen, Huazhong Yang, Yu Wang, BARS: Joint Search of Cell Topology and Layout for Accurate and Efficient Binary ARchitectures, in https://arxiv.org/abs/2011.10804, 2020. [instructions](./examples/research/bnn/)
-* Hanbo Sun\*, Chenyu Wang\*, Zhenhua Zhu, Xuefei Ning^, Guohao Dai, Huazhong Yang, Yu Wang^, Gibbon: Efficient Co-Exploration of NN Model and Processing-In-Memory Architecture, in DATE 2022. [instructions](./examples/research/gibbon/)
-* Zixuan Zhou\*, Xuefei Ning\*, Yi Cai, Jiashu Han, Yiping Deng, Yuhan Dong, Huazhong Yang, Yu Wang, CLOSE: Curriculum Learning On the Sharing Extent Towards Better One-shot NAS, in ECCV2022. [instructions](./examples/research/close/)
-* Xuefei Ning\*, Zixuan Zhou\*, Junbo Zhao, Tianchen Zhao, Yiping Deng, Changcheng Tang, Shuang Liang, Huazhong Yang, Yu Wang, TA-GATES: An Encoding Scheme for Neural Network Architectures, in NeurIPS 2022. [instructions](./examples/research/tagates)
-* Junbo Zhao\*, Xuefei Ning\*, Enshu Liu, Binxin Ru, Zixuan Zhou, Tianchen Zhao, Chen Chen, Jiajin Zhang, Qingmin Liao, Yu Wang, Dynamic Ensemble of Low-fidelity Experts: Mitigating NAS "Cold-Start", 2022. [instructions](./examples/research/dele/)
+* Hanbo Sun\*, Chenyu Wang\*, Zhenhua Zhu, Xuefei Ning^, Guohao Dai, Huazhong Yang, Yu Wang^, Gibbon: Efficient Co-Exploration of NN Model and Processing-In-Memory Architecture, in DATE'22 and TCAD'23. [instructions](./examples/research/gibbon/)
+* Zixuan Zhou\*, Xuefei Ning\*, Yi Cai, Jiashu Han, Yiping Deng, Yuhan Dong, Huazhong Yang, Yu Wang, CLOSE: Curriculum Learning On the Sharing Extent Towards Better One-shot NAS, in ECCV'22. [instructions](./examples/research/close/)
+* Xuefei Ning\*, Zixuan Zhou\*, Junbo Zhao, Tianchen Zhao, Yiping Deng, Changcheng Tang, Shuang Liang, Huazhong Yang, Yu Wang, TA-GATES: An Encoding Scheme for Neural Network Architectures, in NeurIPS'22. [instructions](./examples/research/tagates)
+* Junbo Zhao\*, Xuefei Ning\*, Enshu Liu, Binxin Ru, Zixuan Zhou, Tianchen Zhao, Chen Chen, Jiajin Zhang, Qingmin Liao, Yu Wang, Dynamic Ensemble of Low-fidelity Experts: Mitigating NAS "Cold-Start", in AAAI'22. [instructions](./examples/research/dele/)
+* Enshu Liu\*, Xuefei Ning\*, Zinan Lin\*, Huazhong Yang, Yu Wang, OMS-DPM: Optimizing the Model Schedule for Diffusion Probabilistic Models, in ICML'23.
 
 See the sub-directories under `examples/research/` for more details.
 
