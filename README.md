@@ -1,4 +1,4 @@
-# aw_nas: A Modularized and Extensible NAS Framework
+# (NOT MAINTAINED any more) aw_nas: A Modularized and Extensible NAS Framework
 
 <p align="middle">
   <img src="doc/pics/logo_nicsefc.jpg" width="35%" hspace="30" />
