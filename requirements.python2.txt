@@ -8,7 +8,7 @@ Pillow==6.0.0
 protobuf==3.7.1
 pytest==4.5.0
 pytest-cov==2.7.1
-PyYAML==5.1
+PyYAML==5.4
 scipy==1.1.0
 setproctitle==1.1.10
 six==1.12.0
